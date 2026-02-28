@@ -1,0 +1,82 @@
+[
+  {
+    "name": "test-k8s-cluster",
+    "projectId": "accounting_project",
+    "location": "us-central1",
+    "locationType": "regional",
+    "status": "RUNNING",
+    "currentMasterVersion": "1.31.4-gke.1183000",
+    "nodeCount": 3,
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/container.admin", "members": ["user:zagalsky@gmail.com", "user:alice@acme.com"] },
+        { "role": "roles/container.developer", "members": ["user:bob@acme.com", "serviceAccount:data-pipeline-sa@accounting_project.iam.gserviceaccount.com"] },
+        { "role": "roles/container.viewer", "members": ["user:carol@acme.com", "user:dave@acme.com"] }
+      ]
+    }
+  },
+  {
+    "name": "ml-inference-cluster",
+    "projectId": "ml_platform",
+    "location": "us-east1-b",
+    "locationType": "zonal",
+    "status": "RUNNING",
+    "currentMasterVersion": "1.31.4-gke.1183000",
+    "nodeCount": 5,
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/container.admin", "members": ["user:alice@acme.com", "user:iris@acme.com"] },
+        { "role": "roles/container.developer", "members": ["user:henry@acme.com", "serviceAccount:inference-sa@ml_platform.iam.gserviceaccount.com"] },
+        { "role": "roles/container.viewer", "members": ["user:zagalsky@gmail.com", "user:dave@acme.com"] }
+      ]
+    }
+  },
+  {
+    "name": "prod-infra-cluster",
+    "projectId": "infra_core",
+    "location": "us-central1",
+    "locationType": "regional",
+    "status": "RUNNING",
+    "currentMasterVersion": "1.31.4-gke.1183000",
+    "nodeCount": 12,
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/container.admin", "members": ["user:zagalsky@gmail.com", "user:alice@acme.com", "user:frank@acme.com"] },
+        { "role": "roles/container.developer", "members": ["user:bob@acme.com"] },
+        { "role": "roles/container.viewer", "members": ["user:carol@acme.com", "user:dave@acme.com"] }
+      ]
+    }
+  },
+  {
+    "name": "ml-training-cluster",
+    "projectId": "ml_platform",
+    "location": "us-central1-f",
+    "locationType": "zonal",
+    "status": "RUNNING",
+    "currentMasterVersion": "1.30.7-gke.1000000",
+    "nodeCount": 8,
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/container.admin", "members": ["user:alice@acme.com"] },
+        { "role": "roles/container.developer", "members": ["user:iris@acme.com", "user:henry@acme.com", "serviceAccount:training-sa@ml_platform.iam.gserviceaccount.com"] },
+        { "role": "roles/container.viewer", "members": ["user:zagalsky@gmail.com"] }
+      ]
+    }
+  },
+  {
+    "name": "frontend-cluster",
+    "projectId": "frontend_prod",
+    "location": "us-central1",
+    "locationType": "regional",
+    "status": "RUNNING",
+    "currentMasterVersion": "1.31.4-gke.1183000",
+    "nodeCount": 6,
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/container.admin", "members": ["user:grace@acme.com", "user:frank@acme.com"] },
+        { "role": "roles/container.developer", "members": ["user:bob@acme.com", "serviceAccount:web-sa@frontend_prod.iam.gserviceaccount.com"] },
+        { "role": "roles/container.viewer", "members": ["user:dave@acme.com"] }
+      ]
+    }
+  }
+]

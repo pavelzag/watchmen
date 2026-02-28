@@ -1,0 +1,102 @@
+[
+  {
+    "name": "accounting_bucket",
+    "projectId": "accounting_project",
+    "location": "US-CENTRAL1",
+    "storageClass": "STANDARD",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/storage.admin", "members": ["user:zagalsky@gmail.com", "serviceAccount:data-pipeline-sa@accounting_project.iam.gserviceaccount.com"] },
+        { "role": "roles/storage.objectViewer", "members": ["user:alice@acme.com", "user:bob@acme.com", "user:carol@acme.com", "serviceAccount:reporting-sa@accounting_project.iam.gserviceaccount.com"] },
+        { "role": "roles/storage.objectCreator", "members": ["serviceAccount:data-pipeline-sa@accounting_project.iam.gserviceaccount.com"] }
+      ]
+    }
+  },
+  {
+    "name": "accounting_audit_logs",
+    "projectId": "accounting_project",
+    "location": "US",
+    "storageClass": "COLDLINE",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/storage.admin", "members": ["user:zagalsky@gmail.com"] },
+        { "role": "roles/storage.objectViewer", "members": ["user:dave@acme.com", "serviceAccount:reporting-sa@accounting_project.iam.gserviceaccount.com"] }
+      ]
+    }
+  },
+  {
+    "name": "ml_training_data",
+    "projectId": "ml_platform",
+    "location": "US-EAST1",
+    "storageClass": "STANDARD",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/storage.admin", "members": ["user:alice@acme.com"] },
+        { "role": "roles/storage.objectAdmin", "members": ["user:iris@acme.com", "serviceAccount:training-sa@ml_platform.iam.gserviceaccount.com"] },
+        { "role": "roles/storage.objectViewer", "members": ["user:henry@acme.com", "user:carol@acme.com", "serviceAccount:inference-sa@ml_platform.iam.gserviceaccount.com"] }
+      ]
+    }
+  },
+  {
+    "name": "ml_model_registry",
+    "projectId": "ml_platform",
+    "location": "US-EAST1",
+    "storageClass": "STANDARD",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/storage.admin", "members": ["user:alice@acme.com", "user:iris@acme.com"] },
+        { "role": "roles/storage.objectViewer", "members": ["user:henry@acme.com", "serviceAccount:inference-sa@ml_platform.iam.gserviceaccount.com", "serviceAccount:training-sa@ml_platform.iam.gserviceaccount.com"] }
+      ]
+    }
+  },
+  {
+    "name": "logs_archive",
+    "projectId": "infra_core",
+    "location": "US",
+    "storageClass": "COLDLINE",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/storage.admin", "members": ["user:zagalsky@gmail.com"] },
+        { "role": "roles/storage.objectViewer", "members": ["user:dave@acme.com", "user:frank@acme.com", "serviceAccount:reporting-sa@accounting_project.iam.gserviceaccount.com"] }
+      ]
+    }
+  },
+  {
+    "name": "terraform_state",
+    "projectId": "infra_core",
+    "location": "US-CENTRAL1",
+    "storageClass": "STANDARD",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/storage.admin", "members": ["user:zagalsky@gmail.com"] },
+        { "role": "roles/storage.objectAdmin", "members": ["serviceAccount:terraform-sa@infra_core.iam.gserviceaccount.com"] },
+        { "role": "roles/storage.objectViewer", "members": ["user:frank@acme.com"] }
+      ]
+    }
+  },
+  {
+    "name": "dw_raw_ingestion",
+    "projectId": "data_warehouse",
+    "location": "US-CENTRAL1",
+    "storageClass": "STANDARD",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/storage.admin", "members": ["user:eve@acme.com", "serviceAccount:etl-sa@data_warehouse.iam.gserviceaccount.com"] },
+        { "role": "roles/storage.objectViewer", "members": ["user:carol@acme.com", "serviceAccount:dbt-sa@data_warehouse.iam.gserviceaccount.com"] }
+      ]
+    }
+  },
+  {
+    "name": "frontend_static_assets",
+    "projectId": "frontend_prod",
+    "location": "US-CENTRAL1",
+    "storageClass": "STANDARD",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/storage.admin", "members": ["user:grace@acme.com"] },
+        { "role": "roles/storage.objectAdmin", "members": ["serviceAccount:cdn-sa@frontend_prod.iam.gserviceaccount.com", "user:bob@acme.com"] },
+        { "role": "roles/storage.objectViewer", "members": ["serviceAccount:web-sa@frontend_prod.iam.gserviceaccount.com", "allUsers"] }
+      ]
+    }
+  }
+]

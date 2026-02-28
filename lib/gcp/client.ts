@@ -1,0 +1,66 @@
+import { google } from "googleapis";
+
+let _initialized = false;
+
+/**
+ * Initializes googleapis with the service account credentials globally.
+ * Must be called before any google.* API call in real (non-mock) mode.
+ */
+export function initGoogleAuth() {
+  if (_initialized) return;
+  _initialized = true;
+
+  const raw = process.env.GCP_SERVICE_ACCOUNT_KEY;
+  if (!raw) throw new Error("GCP_SERVICE_ACCOUNT_KEY is not set");
+
+  const credentials = JSON.parse(
+    Buffer.from(raw, "base64").toString("utf-8")
+  );
+
+  const auth = new google.auth.GoogleAuth({
+    credentials,
+    scopes: ["https://www.googleapis.com/auth/cloud-platform.read-only"],
+  });
+
+  // Set auth globally — avoids TypeScript overload issues on individual clients
+  google.options({ auth } as Parameters<typeof google.options>[0]);
+}
+
+export function useMockData(): boolean {
+  return process.env.USE_MOCK_DATA === "true";
+}
+
+export function getProjectIds(): string[] {
+  return (process.env.GCP_PROJECTS ?? "")
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
+}
+
+/**
+ * If GCP_ORG_ID is set (and not in mock mode), enumerate all projects in the org.
+ * Falls back to getProjectIds() if org enumeration fails or org ID is not set.
+ */
+export async function getProjectIdsForOrg(): Promise<string[]> {
+  const orgId = process.env.GCP_ORG_ID;
+  if (!orgId || process.env.USE_MOCK_DATA === "true") {
+    return getProjectIds();
+  }
+
+  try {
+    initGoogleAuth();
+    const { google } = await import("googleapis");
+    const crm = google.cloudresourcemanager("v1");
+    const res = await crm.projects.list({
+      filter: `parent.type:organization parent.id:${orgId} lifecycleState:ACTIVE`,
+    });
+    const ids = (res.data.projects ?? [])
+      .map((p) => p.projectId ?? "")
+      .filter(Boolean);
+    console.log(`[org] Discovered ${ids.length} projects in org ${orgId}`);
+    return ids.length > 0 ? ids : getProjectIds();
+  } catch (err) {
+    console.warn("[org] Failed to enumerate org projects, falling back to GCP_PROJECTS:", err);
+    return getProjectIds();
+  }
+}

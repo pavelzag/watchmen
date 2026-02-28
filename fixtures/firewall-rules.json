@@ -1,0 +1,119 @@
+[
+  {
+    "name": "default-allow-ssh",
+    "projectId": "infra_project",
+    "network": "global/networks/default",
+    "direction": "INGRESS",
+    "priority": 65534,
+    "sourceRanges": ["0.0.0.0/0"],
+    "targetTags": [],
+    "allowed": [{ "IPProtocol": "tcp", "ports": ["22"] }],
+    "disabled": false
+  },
+  {
+    "name": "default-allow-rdp",
+    "projectId": "infra_project",
+    "network": "global/networks/default",
+    "direction": "INGRESS",
+    "priority": 65534,
+    "sourceRanges": ["0.0.0.0/0"],
+    "targetTags": [],
+    "allowed": [{ "IPProtocol": "tcp", "ports": ["3389"] }],
+    "disabled": false
+  },
+  {
+    "name": "default-allow-https",
+    "projectId": "infra_project",
+    "network": "global/networks/default",
+    "direction": "INGRESS",
+    "priority": 1000,
+    "sourceRanges": ["0.0.0.0/0"],
+    "targetTags": ["https-server"],
+    "allowed": [{ "IPProtocol": "tcp", "ports": ["443"] }],
+    "disabled": false
+  },
+  {
+    "name": "allow-internal",
+    "projectId": "infra_project",
+    "network": "global/networks/default",
+    "direction": "INGRESS",
+    "priority": 65534,
+    "sourceRanges": ["10.128.0.0/9"],
+    "targetTags": [],
+    "allowed": [
+      { "IPProtocol": "tcp" },
+      { "IPProtocol": "udp" },
+      { "IPProtocol": "icmp" }
+    ],
+    "disabled": false
+  },
+  {
+    "name": "block-all-egress",
+    "projectId": "infra_project",
+    "network": "global/networks/default",
+    "direction": "EGRESS",
+    "priority": 100,
+    "sourceRanges": [],
+    "targetTags": ["restricted"],
+    "allowed": [],
+    "disabled": true
+  },
+  {
+    "name": "allow-ssh-internal",
+    "projectId": "ml_platform",
+    "network": "global/networks/ml-vpc",
+    "direction": "INGRESS",
+    "priority": 1000,
+    "sourceRanges": ["10.0.0.0/8"],
+    "targetTags": ["ssh-allowed"],
+    "allowed": [{ "IPProtocol": "tcp", "ports": ["22"] }],
+    "disabled": false
+  },
+  {
+    "name": "open-all-ports",
+    "projectId": "ml_platform",
+    "network": "global/networks/ml-vpc",
+    "direction": "INGRESS",
+    "priority": 999,
+    "sourceRanges": ["0.0.0.0/0", "::/0"],
+    "targetTags": [],
+    "allowed": [{ "IPProtocol": "all" }],
+    "disabled": false
+  },
+  {
+    "name": "allow-gke-nodes",
+    "projectId": "ml_platform",
+    "network": "global/networks/ml-vpc",
+    "direction": "INGRESS",
+    "priority": 1000,
+    "sourceRanges": ["172.16.0.0/12"],
+    "targetTags": ["gke-node"],
+    "allowed": [
+      { "IPProtocol": "tcp" },
+      { "IPProtocol": "udp" }
+    ],
+    "disabled": false
+  },
+  {
+    "name": "allow-http",
+    "projectId": "accounting_project",
+    "network": "global/networks/default",
+    "direction": "INGRESS",
+    "priority": 1000,
+    "sourceRanges": ["0.0.0.0/0"],
+    "targetTags": ["http-server"],
+    "allowed": [{ "IPProtocol": "tcp", "ports": ["80"] }],
+    "disabled": false
+  },
+  {
+    "name": "allow-db-access",
+    "projectId": "accounting_project",
+    "network": "global/networks/default",
+    "direction": "INGRESS",
+    "priority": 1000,
+    "sourceRanges": ["192.168.1.0/24"],
+    "targetTags": ["db-server"],
+    "allowed": [{ "IPProtocol": "tcp", "ports": ["5432", "3306"] }],
+    "disabled": false
+  }
+]

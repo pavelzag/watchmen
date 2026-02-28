@@ -1,0 +1,47 @@
+[
+  {
+    "name": "main-postgres",
+    "projectId": "accounting_project",
+    "region": "us-central1",
+    "databaseVersion": "POSTGRES_15",
+    "tier": "db-n1-standard-2",
+    "state": "RUNNABLE",
+    "publicIp": "34.123.45.67"
+  },
+  {
+    "name": "ml-mysql",
+    "projectId": "ml_platform",
+    "region": "us-east1",
+    "databaseVersion": "MYSQL_8_0",
+    "tier": "db-n1-highmem-4",
+    "state": "RUNNABLE",
+    "publicIp": null
+  },
+  {
+    "name": "analytics-postgres",
+    "projectId": "ml_platform",
+    "region": "europe-west1",
+    "databaseVersion": "POSTGRES_14",
+    "tier": "db-n1-standard-4",
+    "state": "RUNNABLE",
+    "publicIp": "35.234.56.78"
+  },
+  {
+    "name": "infra-mysql",
+    "projectId": "infra_project",
+    "region": "us-central1",
+    "databaseVersion": "MYSQL_5_7",
+    "tier": "db-f1-micro",
+    "state": "SUSPENDED",
+    "publicIp": null
+  },
+  {
+    "name": "backup-postgres",
+    "projectId": "accounting_project",
+    "region": "us-east1",
+    "databaseVersion": "POSTGRES_13",
+    "tier": "db-n1-standard-1",
+    "state": "RUNNABLE",
+    "publicIp": "34.89.12.34"
+  }
+]

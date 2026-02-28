@@ -1,0 +1,70 @@
+[
+  {
+    "name": "projects/infra_project/topics/deploy-events",
+    "projectId": "infra_project",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/pubsub.publisher", "members": ["serviceAccount:api-sa@infra_project.iam.gserviceaccount.com"] },
+        { "role": "roles/pubsub.subscriber", "members": ["user:devops@company.com"] }
+      ]
+    }
+  },
+  {
+    "name": "projects/infra_project/topics/alerts",
+    "projectId": "infra_project",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/pubsub.publisher", "members": ["serviceAccount:auth-sa@infra_project.iam.gserviceaccount.com"] },
+        { "role": "roles/pubsub.subscriber", "members": ["allUsers"] }
+      ]
+    }
+  },
+  {
+    "name": "projects/ml_platform/topics/training-jobs",
+    "projectId": "ml_platform",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/pubsub.publisher", "members": ["serviceAccount:pipeline-sa@ml_platform.iam.gserviceaccount.com"] },
+        { "role": "roles/pubsub.subscriber", "members": ["serviceAccount:ml-runner@ml_platform.iam.gserviceaccount.com"] }
+      ]
+    }
+  },
+  {
+    "name": "projects/ml_platform/topics/model-predictions",
+    "projectId": "ml_platform",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/pubsub.editor", "members": ["serviceAccount:ml-runner@ml_platform.iam.gserviceaccount.com"] }
+      ]
+    }
+  },
+  {
+    "name": "projects/accounting_project/topics/billing-events",
+    "projectId": "accounting_project",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/pubsub.publisher", "members": ["serviceAccount:reporting-sa@accounting_project.iam.gserviceaccount.com"] },
+        { "role": "roles/pubsub.subscriber", "members": ["user:analyst@company.com", "user:zagalsky@gmail.com"] }
+      ]
+    }
+  },
+  {
+    "name": "projects/accounting_project/topics/audit-trail",
+    "projectId": "accounting_project",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/pubsub.viewer", "members": ["user:zagalsky@gmail.com"] }
+      ]
+    }
+  },
+  {
+    "name": "projects/infra_project/topics/system-health",
+    "projectId": "infra_project",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/pubsub.publisher", "members": ["serviceAccount:api-sa@infra_project.iam.gserviceaccount.com"] },
+        { "role": "roles/pubsub.subscriber", "members": ["user:zagalsky@gmail.com", "user:devops@company.com"] }
+      ]
+    }
+  }
+]

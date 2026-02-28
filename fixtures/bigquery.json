@@ -1,0 +1,66 @@
+[
+  {
+    "datasetId": "sales_data",
+    "projectId": "accounting_project",
+    "location": "US",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/bigquery.dataEditor", "members": ["user:analyst@company.com", "serviceAccount:reporting-sa@accounting_project.iam.gserviceaccount.com"] },
+        { "role": "roles/bigquery.dataViewer", "members": ["user:zagalsky@gmail.com", "allAuthenticatedUsers"] }
+      ]
+    }
+  },
+  {
+    "datasetId": "ml_training_data",
+    "projectId": "ml_platform",
+    "location": "US",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/bigquery.dataEditor", "members": ["serviceAccount:ml-runner@ml_platform.iam.gserviceaccount.com"] },
+        { "role": "roles/bigquery.dataViewer", "members": ["user:devops@company.com"] }
+      ]
+    }
+  },
+  {
+    "datasetId": "infra_metrics",
+    "projectId": "infra_project",
+    "location": "US",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/bigquery.admin", "members": ["user:zagalsky@gmail.com"] },
+        { "role": "roles/bigquery.dataViewer", "members": ["serviceAccount:api-sa@infra_project.iam.gserviceaccount.com"] }
+      ]
+    }
+  },
+  {
+    "datasetId": "billing_export",
+    "projectId": "accounting_project",
+    "location": "EU",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/bigquery.dataViewer", "members": ["user:analyst@company.com"] }
+      ]
+    }
+  },
+  {
+    "datasetId": "model_results",
+    "projectId": "ml_platform",
+    "location": "US",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/bigquery.dataEditor", "members": ["serviceAccount:pipeline-sa@ml_platform.iam.gserviceaccount.com"] },
+        { "role": "roles/bigquery.dataViewer", "members": ["user:zagalsky@gmail.com"] }
+      ]
+    }
+  },
+  {
+    "datasetId": "audit_logs",
+    "projectId": "infra_project",
+    "location": "US",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/bigquery.dataViewer", "members": ["user:zagalsky@gmail.com", "user:devops@company.com"] }
+      ]
+    }
+  }
+]

@@ -1,0 +1,98 @@
+[
+  {
+    "name": "web-server-prod-1",
+    "projectId": "frontend_prod",
+    "zone": "us-central1-a",
+    "machineType": "e2-medium",
+    "status": "RUNNING",
+    "internalIp": "10.128.0.2",
+    "externalIp": "34.122.10.51",
+    "serviceAccount": "web-sa@frontend_prod.iam.gserviceaccount.com",
+    "tags": ["http-server", "https-server", "frontend"],
+    "createdAt": "2024-04-10T08:00:00Z"
+  },
+  {
+    "name": "web-server-prod-2",
+    "projectId": "frontend_prod",
+    "zone": "us-central1-b",
+    "machineType": "e2-medium",
+    "status": "RUNNING",
+    "internalIp": "10.128.0.3",
+    "externalIp": "34.122.10.52",
+    "serviceAccount": "web-sa@frontend_prod.iam.gserviceaccount.com",
+    "tags": ["http-server", "https-server", "frontend"],
+    "createdAt": "2024-04-10T08:05:00Z"
+  },
+  {
+    "name": "bastion-host",
+    "projectId": "infra_core",
+    "zone": "us-central1-a",
+    "machineType": "e2-micro",
+    "status": "RUNNING",
+    "internalIp": "10.128.1.2",
+    "externalIp": "35.202.88.14",
+    "serviceAccount": "terraform-sa@infra_core.iam.gserviceaccount.com",
+    "tags": ["bastion", "ssh-allowed"],
+    "createdAt": "2023-12-01T12:00:00Z"
+  },
+  {
+    "name": "nat-gateway",
+    "projectId": "infra_core",
+    "zone": "us-central1-a",
+    "machineType": "e2-small",
+    "status": "RUNNING",
+    "internalIp": "10.128.1.3",
+    "externalIp": "35.202.88.99",
+    "serviceAccount": null,
+    "tags": ["nat", "networking"],
+    "createdAt": "2023-12-01T12:10:00Z"
+  },
+  {
+    "name": "ml-training-node-1",
+    "projectId": "ml_platform",
+    "zone": "us-central1-f",
+    "machineType": "n1-standard-8",
+    "status": "RUNNING",
+    "internalIp": "10.132.0.2",
+    "externalIp": null,
+    "serviceAccount": "training-sa@ml_platform.iam.gserviceaccount.com",
+    "tags": ["ml-training", "gpu"],
+    "createdAt": "2024-09-15T07:30:00Z"
+  },
+  {
+    "name": "ml-training-node-2",
+    "projectId": "ml_platform",
+    "zone": "us-central1-f",
+    "machineType": "n1-standard-8",
+    "status": "STOPPED",
+    "internalIp": "10.132.0.3",
+    "externalIp": null,
+    "serviceAccount": "training-sa@ml_platform.iam.gserviceaccount.com",
+    "tags": ["ml-training", "gpu"],
+    "createdAt": "2024-09-15T07:35:00Z"
+  },
+  {
+    "name": "etl-batch-runner",
+    "projectId": "data_warehouse",
+    "zone": "us-central1-a",
+    "machineType": "e2-standard-4",
+    "status": "RUNNING",
+    "internalIp": "10.128.2.5",
+    "externalIp": null,
+    "serviceAccount": "etl-sa@data_warehouse.iam.gserviceaccount.com",
+    "tags": ["batch", "etl"],
+    "createdAt": "2024-06-20T10:00:00Z"
+  },
+  {
+    "name": "dev-sandbox",
+    "projectId": "accounting_project",
+    "zone": "us-central1-a",
+    "machineType": "e2-small",
+    "status": "TERMINATED",
+    "internalIp": "10.128.0.10",
+    "externalIp": null,
+    "serviceAccount": null,
+    "tags": ["dev", "sandbox"],
+    "createdAt": "2025-01-08T15:00:00Z"
+  }
+]
