@@ -8,7 +8,7 @@ let _userAuthInitialized = false;
  * Must be called before any google.* API call in real (non-mock) mode.
  */
 export function initGoogleAuth() {
-  if (_initialized) return;
+  if (_initialized || _userAuthInitialized) return;
   _initialized = true;
 
   const raw = process.env.GCP_SERVICE_ACCOUNT_KEY;
