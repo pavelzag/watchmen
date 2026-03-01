@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import {
-  Users, HardDrive, Server, KeySquare, RefreshCw, MonitorDot, ChevronRight,
+  Users, HardDrive, Server, KeySquare, MonitorDot, ChevronRight,
   Play, Database, BarChart3, Radio, Lock, Flame, ShieldAlert,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -159,33 +159,9 @@ export default function SnapshotStats({ scanVersion, onSyncRequest, isSyncing }:
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">
-          GCP Snapshot
-        </p>
-        <div className="flex items-center gap-3">
-          {/* Internal refresh — re-reads DB without triggering a new scan */}
-          <button
-            onClick={fetchStats}
-            disabled={loading}
-            className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-300 transition-colors"
-          >
-            <RefreshCw className={cn("w-3 h-3", loading && "animate-spin")} />
-            Refresh
-          </button>
-          {/* Sync — triggers a new GCP scan */}
-          {onSyncRequest && (
-            <button
-              onClick={onSyncRequest}
-              disabled={isSyncing || loading}
-              className="flex items-center gap-1 text-xs text-slate-400 hover:text-sky-400 transition-colors"
-            >
-              <RefreshCw className={cn("w-3 h-3", isSyncing && "animate-spin")} />
-              {isSyncing ? "Syncing…" : "Sync GCP"}
-            </button>
-          )}
-        </div>
-      </div>
+      <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">
+        GCP Snapshot
+      </p>
 
       {error && (
         <p className="text-xs text-red-400 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20">
