@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, ShieldAlert, ShieldCheck, RefreshCw } from "lucide-react";
+import { ArrowLeft, ShieldAlert, ShieldCheck, RefreshCw, Sparkles, Loader2, ChevronDown, ChevronUp, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { computeFindings } from "@/lib/findings";
 import type { GcpSnapshot, SecurityFinding, SecurityFindingSeverity } from "@/lib/gcp/types";
@@ -47,6 +47,148 @@ function SeverityBadge({ severity }: { severity: SecurityFindingSeverity }) {
       <span className={cn("w-1.5 h-1.5 rounded-full", cfg.dot)} />
       {cfg.label}
     </span>
+  );
+}
+
+// Minimal markdown renderer for AI recommendations
+function renderMd(text: string): string {
+  return text
+    // Code blocks
+    .replace(/```[\w]*\n?([\s\S]*?)```/g, (_, code) =>
+      `<pre class="bg-slate-900 border border-slate-700/50 rounded-lg px-3 py-2 text-xs font-mono text-slate-300 overflow-x-auto my-2 whitespace-pre-wrap">${code.trim()}</pre>`
+    )
+    // Inline code
+    .replace(/`([^`]+)`/g, '<code class="px-1 py-0.5 rounded bg-slate-800 text-sky-300 text-xs font-mono">$1</code>')
+    // ### Headers
+    .replace(/^### (.+)$/gm, '<p class="text-xs font-semibold text-slate-200 uppercase tracking-wider mt-3 mb-1">$1</p>')
+    // ## Headers
+    .replace(/^## (.+)$/gm, '<p class="text-sm font-semibold text-slate-200 mt-3 mb-1">$1</p>')
+    // Bold
+    .replace(/\*\*(.*?)\*\*/g, "<strong class=\"text-slate-200\">$1</strong>")
+    // Numbered list items
+    .replace(/^\d+\. (.+)$/gm, '<li class="ml-4 list-decimal">$1</li>')
+    // Bullet list items
+    .replace(/^[-*] (.+)$/gm, '<li class="ml-4 list-disc">$1</li>')
+    // Wrap consecutive li elements
+    .replace(/(<li[\s\S]*?<\/li>\n?)+/g, (m) => `<ul class="space-y-1 my-1">${m}</ul>`)
+    // Line breaks (non-header, non-list)
+    .replace(/\n(?!<)/g, "<br />");
+}
+
+interface RecState {
+  loading: boolean;
+  text: string | null;
+  error: string | null;
+}
+
+function FindingCard({ finding, cfg }: { finding: SecurityFinding; cfg: typeof SEVERITY_CONFIG[SecurityFindingSeverity] }) {
+  const [rec, setRec] = useState<RecState>({ loading: false, text: null, error: null });
+  const [open, setOpen] = useState(false);
+
+  async function askAI() {
+    setRec({ loading: true, text: null, error: null });
+    setOpen(true);
+    try {
+      const res = await fetch("/api/findings/recommend", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(finding),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed");
+      setRec({ loading: false, text: data.recommendation, error: null });
+    } catch (e) {
+      setRec({ loading: false, text: null, error: e instanceof Error ? e.message : "Error" });
+    }
+  }
+
+  return (
+    <div className={cn("rounded-xl border glass space-y-2", cfg.border)}>
+      {/* Main content */}
+      <div className="p-4 space-y-2">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
+            <SeverityBadge severity={finding.severity} />
+            <span className="text-xs text-slate-500 font-mono">{finding.resourceType}</span>
+          </div>
+          <span className="px-1.5 py-0.5 rounded text-xs bg-slate-700/60 text-slate-300 font-mono shrink-0">
+            {finding.projectId}
+          </span>
+        </div>
+        <p className="text-sm font-semibold text-white">{finding.title}</p>
+        <p className="text-xs text-slate-400 leading-relaxed">{finding.description}</p>
+        {finding.remediationHint && (
+          <div className="pt-1 border-t border-slate-700/50">
+            <p className="text-xs text-slate-500">
+              <span className="font-semibold text-slate-400">Hint: </span>
+              {finding.remediationHint}
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* AI recommendation area */}
+      <div className="border-t border-slate-700/50">
+        <div className="px-4 py-2 flex items-center justify-between gap-2">
+          <button
+            onClick={rec.text ? () => setOpen((o) => !o) : askAI}
+            disabled={rec.loading}
+            className={cn(
+              "flex items-center gap-1.5 text-xs font-medium transition-all duration-150 rounded-lg px-2.5 py-1",
+              rec.loading
+                ? "text-slate-500 cursor-not-allowed"
+                : rec.text
+                ? "text-violet-400 hover:text-violet-300 bg-violet-500/10 hover:bg-violet-500/15"
+                : "text-slate-400 hover:text-violet-400 hover:bg-violet-500/10"
+            )}
+          >
+            {rec.loading ? (
+              <Loader2 className="w-3 h-3 animate-spin" />
+            ) : (
+              <Sparkles className="w-3 h-3" />
+            )}
+            {rec.loading ? "Asking AI…" : rec.text ? "AI Recommendation" : "Ask AI"}
+          </button>
+
+          {rec.text && (
+            <button
+              onClick={() => setOpen((o) => !o)}
+              className="text-slate-500 hover:text-slate-300 transition-colors"
+            >
+              {open
+                ? <ChevronUp className="w-3.5 h-3.5" />
+                : <ChevronDown className="w-3.5 h-3.5" />}
+            </button>
+          )}
+        </div>
+
+        {/* Error */}
+        {rec.error && (
+          <div className="px-4 pb-3 flex items-center gap-1.5 text-xs text-red-400">
+            <AlertCircle className="w-3 h-3 shrink-0" />
+            {rec.error}
+          </div>
+        )}
+
+        {/* Recommendation */}
+        {rec.text && open && (
+          <div className="px-4 pb-4 border-t border-slate-700/30">
+            <div
+              className="mt-3 text-xs text-slate-300 leading-relaxed prose-answer"
+              dangerouslySetInnerHTML={{ __html: renderMd(rec.text) }}
+            />
+            <button
+              onClick={askAI}
+              disabled={rec.loading}
+              className="mt-3 flex items-center gap-1 text-xs text-slate-600 hover:text-violet-400 transition-colors"
+            >
+              <RefreshCw className="w-2.5 h-2.5" />
+              Regenerate
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -190,30 +332,7 @@ export default function FindingsPage() {
 
             <div className="space-y-2 pl-2">
               {items.map((finding) => (
-                <div
-                  key={finding.id}
-                  className={cn("rounded-xl p-4 border glass space-y-2", cfg.border)}
-                >
-                  <div className="flex items-start justify-between gap-4 flex-wrap">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <SeverityBadge severity={finding.severity} />
-                      <span className="text-xs text-slate-500 font-mono">{finding.resourceType}</span>
-                    </div>
-                    <span className="px-1.5 py-0.5 rounded text-xs bg-slate-700/60 text-slate-300 font-mono shrink-0">
-                      {finding.projectId}
-                    </span>
-                  </div>
-                  <p className="text-sm font-semibold text-white">{finding.title}</p>
-                  <p className="text-xs text-slate-400 leading-relaxed">{finding.description}</p>
-                  {finding.remediationHint && (
-                    <div className="pt-1 border-t border-slate-700/50">
-                      <p className="text-xs text-slate-500">
-                        <span className="font-semibold text-slate-400">Remediation: </span>
-                        {finding.remediationHint}
-                      </p>
-                    </div>
-                  )}
-                </div>
+                <FindingCard key={finding.id} finding={finding} cfg={cfg} />
               ))}
             </div>
           </div>
