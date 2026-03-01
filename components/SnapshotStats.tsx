@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import {
   Users, HardDrive, Server, KeySquare, MonitorDot, ChevronRight,
-  Play, Database, BarChart3, Radio, Lock, Flame, ShieldAlert,
+  Play, Database, BarChart3, Radio, Lock, Flame, ShieldAlert, RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
@@ -159,9 +159,21 @@ export default function SnapshotStats({ scanVersion, onSyncRequest, isSyncing }:
 
   return (
     <div className="space-y-3">
-      <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">
-        GCP Snapshot
-      </p>
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">
+          GCP Snapshot
+        </p>
+        {onSyncRequest && (
+          <button
+            onClick={onSyncRequest}
+            disabled={isSyncing || loading}
+            className="flex items-center gap-1 text-xs text-slate-400 hover:text-sky-400 transition-colors"
+          >
+            <RefreshCw className={cn("w-3 h-3", isSyncing && "animate-spin")} />
+            {isSyncing ? "Syncing…" : "Sync GCP"}
+          </button>
+        )}
+      </div>
 
       {error && (
         <p className="text-xs text-red-400 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20">
