@@ -35,7 +35,10 @@ async function getRealCloudRunServices(projectIds: string[]): Promise<CloudRunSe
   );
 
   return results
-    .filter((r): r is PromiseFulfilledResult<CloudRunService[]> => r.status === "fulfilled")
+    .filter((r, i): r is PromiseFulfilledResult<CloudRunService[]> => {
+      if (r.status === "rejected") console.warn(`[cloudrun] ${projectIds[i]} failed:`, r.reason);
+      return r.status === "fulfilled";
+    })
     .flatMap((r) => r.value);
 }
 

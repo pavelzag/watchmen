@@ -51,7 +51,10 @@ async function getRealSecrets(projectIds: string[]): Promise<Secret[]> {
   );
 
   return results
-    .filter((r): r is PromiseFulfilledResult<Secret[]> => r.status === "fulfilled")
+    .filter((r, i): r is PromiseFulfilledResult<Secret[]> => {
+      if (r.status === "rejected") console.warn(`[secretmanager] ${projectIds[i]} failed:`, r.reason);
+      return r.status === "fulfilled";
+    })
     .flatMap((r) => r.value);
 }
 

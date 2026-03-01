@@ -27,7 +27,10 @@ async function getRealCloudSqlInstances(projectIds: string[]): Promise<CloudSqlI
   );
 
   return results
-    .filter((r): r is PromiseFulfilledResult<CloudSqlInstance[]> => r.status === "fulfilled")
+    .filter((r, i): r is PromiseFulfilledResult<CloudSqlInstance[]> => {
+      if (r.status === "rejected") console.warn(`[cloudsql] ${projectIds[i]} failed:`, r.reason);
+      return r.status === "fulfilled";
+    })
     .flatMap((r) => r.value);
 }
 

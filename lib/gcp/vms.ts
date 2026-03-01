@@ -41,7 +41,10 @@ async function getRealVMs(projectIds: string[]): Promise<VM[]> {
   );
 
   return results
-    .filter((r): r is PromiseFulfilledResult<VM[]> => r.status === "fulfilled")
+    .filter((r, i): r is PromiseFulfilledResult<VM[]> => {
+      if (r.status === "rejected") console.warn(`[vms] ${projectIds[i]} failed:`, r.reason);
+      return r.status === "fulfilled";
+    })
     .flatMap((r) => r.value);
 }
 

@@ -43,7 +43,10 @@ async function getRealPubSubTopics(projectIds: string[]): Promise<PubSubTopic[]>
   );
 
   return results
-    .filter((r): r is PromiseFulfilledResult<PubSubTopic[]> => r.status === "fulfilled")
+    .filter((r, i): r is PromiseFulfilledResult<PubSubTopic[]> => {
+      if (r.status === "rejected") console.warn(`[pubsub] ${projectIds[i]} failed:`, r.reason);
+      return r.status === "fulfilled";
+    })
     .flatMap((r) => r.value);
 }
 

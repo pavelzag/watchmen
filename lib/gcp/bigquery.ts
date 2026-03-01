@@ -45,7 +45,10 @@ async function getRealBigQueryDatasets(projectIds: string[]): Promise<BigQueryDa
   );
 
   return results
-    .filter((r): r is PromiseFulfilledResult<BigQueryDataset[]> => r.status === "fulfilled")
+    .filter((r, i): r is PromiseFulfilledResult<BigQueryDataset[]> => {
+      if (r.status === "rejected") console.warn(`[bigquery] ${projectIds[i]} failed:`, r.reason);
+      return r.status === "fulfilled";
+    })
     .flatMap((r) => r.value);
 }
 

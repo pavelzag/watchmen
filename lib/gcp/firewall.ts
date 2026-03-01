@@ -32,7 +32,10 @@ async function getRealFirewallRules(projectIds: string[]): Promise<FirewallRule[
   );
 
   return results
-    .filter((r): r is PromiseFulfilledResult<FirewallRule[]> => r.status === "fulfilled")
+    .filter((r, i): r is PromiseFulfilledResult<FirewallRule[]> => {
+      if (r.status === "rejected") console.warn(`[firewall] ${projectIds[i]} failed:`, r.reason);
+      return r.status === "fulfilled";
+    })
     .flatMap((r) => r.value);
 }
 

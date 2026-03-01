@@ -36,10 +36,10 @@ async function getRealProjectPolicies(
   );
 
   return results
-    .filter(
-      (r): r is PromiseFulfilledResult<ProjectIamPolicy> =>
-        r.status === "fulfilled"
-    )
+    .filter((r, i): r is PromiseFulfilledResult<ProjectIamPolicy> => {
+      if (r.status === "rejected") console.warn(`[iam/policies] ${projectIds[i]} failed:`, r.reason);
+      return r.status === "fulfilled";
+    })
     .map((r) => r.value);
 }
 
@@ -72,10 +72,10 @@ async function getRealServiceAccounts(
   );
 
   return results
-    .filter(
-      (r): r is PromiseFulfilledResult<ServiceAccount[]> =>
-        r.status === "fulfilled"
-    )
+    .filter((r, i): r is PromiseFulfilledResult<ServiceAccount[]> => {
+      if (r.status === "rejected") console.warn(`[iam/service-accounts] ${projectIds[i]} failed:`, r.reason);
+      return r.status === "fulfilled";
+    })
     .flatMap((r) => r.value);
 }
 

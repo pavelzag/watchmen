@@ -47,10 +47,10 @@ async function getRealBuckets(projectIds: string[]): Promise<StorageBucket[]> {
   );
 
   return results
-    .filter(
-      (r): r is PromiseFulfilledResult<StorageBucket[]> =>
-        r.status === "fulfilled"
-    )
+    .filter((r, i): r is PromiseFulfilledResult<StorageBucket[]> => {
+      if (r.status === "rejected") console.warn(`[storage] ${projectIds[i]} failed:`, r.reason);
+      return r.status === "fulfilled";
+    })
     .flatMap((r) => r.value);
 }
 

@@ -46,10 +46,10 @@ async function getRealClusters(projectIds: string[]): Promise<GkeCluster[]> {
   );
 
   return results
-    .filter(
-      (r): r is PromiseFulfilledResult<GkeCluster[]> =>
-        r.status === "fulfilled"
-    )
+    .filter((r, i): r is PromiseFulfilledResult<GkeCluster[]> => {
+      if (r.status === "rejected") console.warn(`[gke] ${projectIds[i]} failed:`, r.reason);
+      return r.status === "fulfilled";
+    })
     .flatMap((r) => r.value);
 }
 
