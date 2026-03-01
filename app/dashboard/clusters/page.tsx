@@ -49,6 +49,11 @@ export default function ClustersPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  useEffect(() => {
+    const s = new URLSearchParams(window.location.search).get("search");
+    if (s) setSearch(s);
+  }, []);
+
   const toggleSort = useCallback(() => setSortDir((d) => d === "asc" ? "desc" : "asc"), []);
 
   const projectOptions = [...new Set(clusters.map((c) => c.projectId))].sort();

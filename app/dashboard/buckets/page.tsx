@@ -37,6 +37,11 @@ export default function BucketsPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  useEffect(() => {
+    const s = new URLSearchParams(window.location.search).get("search");
+    if (s) setSearch(s);
+  }, []);
+
   const projectOptions = [...new Set(buckets.map((b) => b.projectId))].sort();
 
   const filtered = buckets.filter(

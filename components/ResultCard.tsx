@@ -1,10 +1,11 @@
 "use client";
 
-import { Clock, Tag, ChevronDown, ChevronUp, ArrowRight, User, HardDrive, Server, KeySquare, MonitorDot, Play, Database, BarChart3, Radio, Lock, Flame, ShieldAlert, Users } from "lucide-react";
+import { Clock, Tag, ChevronDown, ChevronUp, ArrowRight, User, HardDrive, Server, KeySquare, MonitorDot, Play, Database, BarChart3, Radio, Lock, Flame, ShieldAlert, Users, ChevronRight } from "lucide-react";
 import { useState } from "react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import type { QueryResult } from "./QueryBox";
+import type { ResourceItem } from "@/lib/claude/query-processor";
 
 interface ResultCardProps {
   result: QueryResult;
@@ -53,6 +54,20 @@ function buildLinks(intent: QueryResult["intent"]): IntentLink[] {
   return links;
 }
 
+function resourceHref(item: ResourceItem): string {
+  const base = RESOURCE_LINKS[item.type ?? ""]?.path;
+  if (!base) return "#";
+  return `${base}?search=${encodeURIComponent(item.name)}`;
+}
+
+function ResourceIcon({ type }: { type: ResourceItem["type"] }) {
+  const cfg = RESOURCE_LINKS[type ?? ""];
+  if (!cfg) return null;
+  return <cfg.Icon className="w-3 h-3 shrink-0 text-slate-500" />;
+}
+
+const CHIP_LIMIT = 12;
+
 const INTENT_COLORS: Record<string, string> = {
   user_access: "text-violet-400 bg-violet-500/10 border-violet-500/20",
   resource_owners: "text-amber-400 bg-amber-500/10 border-amber-500/20",
@@ -73,9 +88,12 @@ function renderMarkdown(text: string): string {
 
 export default function ResultCard({ result, index }: ResultCardProps) {
   const [showIntent, setShowIntent] = useState(false);
-  const intentColor =
-    INTENT_COLORS[result.intent.queryType] ?? INTENT_COLORS.unknown;
+  const [showAllResources, setShowAllResources] = useState(false);
+  const intentColor = INTENT_COLORS[result.intent.queryType] ?? INTENT_COLORS.unknown;
   const links = buildLinks(result.intent);
+  const resources = result.resources ?? [];
+  const visibleResources = showAllResources ? resources : resources.slice(0, CHIP_LIMIT);
+  const hasMore = resources.length > CHIP_LIMIT;
 
   return (
     <div className="glass rounded-2xl overflow-hidden animate-in slide-in-from-top-2 duration-300">
@@ -107,7 +125,48 @@ export default function ResultCard({ result, index }: ResultCardProps) {
         />
       </div>
 
-      {/* Quick links */}
+      {/* Resource chips */}
+      {resources.length > 0 && (
+        <div className="px-5 pb-3 space-y-2">
+          <p className="text-xs text-slate-600 font-medium uppercase tracking-wider">
+            {resources.length} resource{resources.length !== 1 ? "s" : ""}
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {visibleResources.map((item) => (
+              <Link
+                key={`${item.projectId}/${item.name}`}
+                href={resourceHref(item)}
+                className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs bg-slate-800/70 border border-slate-700/50 text-slate-300 hover:border-sky-500/40 hover:text-sky-300 hover:bg-sky-500/5 transition-all duration-150 max-w-[260px] group"
+              >
+                <ResourceIcon type={item.type} />
+                <span className="font-mono truncate">{item.name}</span>
+                {item.extra && (
+                  <span className="text-slate-600 shrink-0">{item.extra}</span>
+                )}
+                <ChevronRight className="w-3 h-3 shrink-0 opacity-0 group-hover:opacity-50 transition-opacity" />
+              </Link>
+            ))}
+            {hasMore && !showAllResources && (
+              <button
+                onClick={() => setShowAllResources(true)}
+                className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs bg-slate-800/40 border border-slate-700/30 text-slate-500 hover:text-slate-300 transition-colors"
+              >
+                +{resources.length - CHIP_LIMIT} more
+              </button>
+            )}
+            {showAllResources && hasMore && (
+              <button
+                onClick={() => setShowAllResources(false)}
+                className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-slate-500 hover:text-slate-300 transition-colors"
+              >
+                Show less
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Jump-to page links */}
       {links.length > 0 && (
         <div className="px-5 py-2.5 border-t border-slate-700/30 flex items-center gap-2 flex-wrap">
           <span className="text-xs text-slate-600 shrink-0">Jump to</span>

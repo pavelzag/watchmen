@@ -7,6 +7,13 @@ function getModel() {
   return genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 }
 
+export interface ResourceItem {
+  name: string;
+  projectId: string;
+  type: QueryIntent["resourceType"];
+  extra?: string; // e.g. direction for firewall, zone for VM, region for Cloud Run
+}
+
 export interface QueryIntent {
   queryType:
     | "user_access"
@@ -291,4 +298,37 @@ function buildContext(intent: QueryIntent, snapshot: GcpSnapshot): unknown {
   }
 
   return snapshot;
+}
+
+/**
+ * Extracts a flat list of named resource items from the snapshot for a given intent.
+ * Used to populate clickable resource chips in query result cards.
+ */
+export function extractResources(intent: QueryIntent, snapshot: GcpSnapshot): ResourceItem[] {
+  const { queryType, resourceType } = intent;
+
+  if (queryType === "list_resources") {
+    if (resourceType === "firewall")
+      return snapshot.firewallRules.map((r) => ({ name: r.name, projectId: r.projectId, type: "firewall" as const, extra: r.direction }));
+    if (resourceType === "bucket")
+      return snapshot.storageBuckets.map((b) => ({ name: b.name, projectId: b.projectId, type: "bucket" as const }));
+    if (resourceType === "gke_cluster")
+      return snapshot.gkeClusters.map((c) => ({ name: c.name, projectId: c.projectId, type: "gke_cluster" as const, extra: c.location }));
+    if (resourceType === "service_account")
+      return snapshot.serviceAccounts.map((sa) => ({ name: sa.email, projectId: sa.projectId, type: "service_account" as const }));
+    if (resourceType === "vm")
+      return snapshot.vms.map((v) => ({ name: v.name, projectId: v.projectId, type: "vm" as const, extra: v.zone }));
+    if (resourceType === "cloud_run")
+      return snapshot.cloudRunServices.map((s) => ({ name: s.name, projectId: s.projectId, type: "cloud_run" as const, extra: s.region }));
+    if (resourceType === "cloud_sql")
+      return snapshot.cloudSqlInstances.map((i) => ({ name: i.name, projectId: i.projectId, type: "cloud_sql" as const }));
+    if (resourceType === "bigquery")
+      return snapshot.bigqueryDatasets.map((d) => ({ name: d.datasetId, projectId: d.projectId, type: "bigquery" as const }));
+    if (resourceType === "pubsub")
+      return snapshot.pubsubTopics.map((t) => ({ name: t.name.split("/").pop()!, projectId: t.projectId, type: "pubsub" as const }));
+    if (resourceType === "secret")
+      return snapshot.secrets.map((s) => ({ name: s.name.split("/").pop()!, projectId: s.projectId, type: "secret" as const }));
+  }
+
+  return [];
 }

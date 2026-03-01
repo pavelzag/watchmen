@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { fetchGcpSnapshot } from "@/lib/gcp";
 import { useMockData } from "@/lib/gcp/client";
-import { extractIntent, generateAnswer } from "@/lib/claude/query-processor";
+import { extractIntent, generateAnswer, extractResources } from "@/lib/claude/query-processor";
 import { sql } from "@/lib/db";
 
 export async function POST(req: NextRequest) {
@@ -54,12 +54,16 @@ export async function POST(req: NextRequest) {
     }
 
     const intent = await extractIntent(query);
-    const answer = await generateAnswer(query, intent, snapshot);
+    const [answer, resources] = await Promise.all([
+      generateAnswer(query, intent, snapshot),
+      Promise.resolve(extractResources(intent, snapshot)),
+    ]);
 
     return NextResponse.json({
       query,
       intent,
       answer,
+      resources,
       fetchedAt: snapshot.fetchedAt,
     });
   } catch (err) {

@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { Search, Loader2, CornerDownLeft, History, X, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { saveQuery, getHistory, clearHistory, type QueryHistoryEntry } from "@/lib/query-history";
+import type { ResourceItem } from "@/lib/claude/query-processor";
 
 const SUGGESTED_QUERIES = [
   "Which buckets are publicly accessible?",
@@ -29,6 +30,7 @@ export interface QueryResult {
     projectId?: string;
     region?: string;
   };
+  resources?: ResourceItem[];
   fetchedAt: string;
 }
 

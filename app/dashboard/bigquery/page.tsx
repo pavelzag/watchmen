@@ -49,6 +49,11 @@ export default function BigQueryPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  useEffect(() => {
+    const s = new URLSearchParams(window.location.search).get("search");
+    if (s) setSearch(s);
+  }, []);
+
   const handleSort = useCallback((field: SortField) => {
     setSortDir((d) => field === sortField ? (d === "asc" ? "desc" : "asc") : "asc");
     setSortField(field);
