@@ -44,6 +44,7 @@ export default function CloudSqlPage() {
   const [sortField, setSortField] = useState<SortField>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [selected, setSelected] = useState<CloudSqlInstance | null>(null);
+  const [projectFilter, setProjectFilter] = useState("");
 
   useEffect(() => {
     fetch("/api/gcp/snapshot")
@@ -58,12 +59,15 @@ export default function CloudSqlPage() {
     setSortField(field);
   }, [sortField]);
 
+  const projectOptions = [...new Set(instances.map((i) => i.projectId))].sort();
+
   const filtered = instances
     .filter((i) =>
-      i.name.toLowerCase().includes(search.toLowerCase()) ||
+      (!projectFilter || i.projectId === projectFilter) &&
+      (i.name.toLowerCase().includes(search.toLowerCase()) ||
       i.projectId.toLowerCase().includes(search.toLowerCase()) ||
       i.region.toLowerCase().includes(search.toLowerCase()) ||
-      i.databaseVersion.toLowerCase().includes(search.toLowerCase())
+      i.databaseVersion.toLowerCase().includes(search.toLowerCase()))
     )
     .sort((a, b) => {
       let cmp = 0;
@@ -82,6 +86,9 @@ export default function CloudSqlPage() {
             count={loading ? null : filtered.length}
             search={search}
             onSearch={setSearch}
+            projects={projectOptions}
+            projectFilter={projectFilter}
+            onProjectFilter={setProjectFilter}
           />
           <ExportButton
             data={filtered.map((i) => ({ name: i.name, project: i.projectId, region: i.region, databaseVersion: i.databaseVersion, tier: i.tier, state: i.state, publicIp: i.publicIp ?? "" }))}

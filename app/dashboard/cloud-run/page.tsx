@@ -37,6 +37,7 @@ export default function CloudRunPage() {
   const [sortField, setSortField] = useState<SortField>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [selected, setSelected] = useState<CloudRunService | null>(null);
+  const [projectFilter, setProjectFilter] = useState("");
 
   useEffect(() => {
     fetch("/api/gcp/snapshot")
@@ -51,11 +52,14 @@ export default function CloudRunPage() {
     setSortField(field);
   }, [sortField]);
 
+  const projectOptions = [...new Set(services.map((s) => s.projectId))].sort();
+
   const filtered = services
     .filter((s) =>
-      s.name.toLowerCase().includes(search.toLowerCase()) ||
+      (!projectFilter || s.projectId === projectFilter) &&
+      (s.name.toLowerCase().includes(search.toLowerCase()) ||
       s.projectId.toLowerCase().includes(search.toLowerCase()) ||
-      s.region.toLowerCase().includes(search.toLowerCase())
+      s.region.toLowerCase().includes(search.toLowerCase()))
     )
     .sort((a, b) => {
       let cmp = 0;
@@ -79,6 +83,9 @@ export default function CloudRunPage() {
             count={loading ? null : filtered.length}
             search={search}
             onSearch={setSearch}
+            projects={projectOptions}
+            projectFilter={projectFilter}
+            onProjectFilter={setProjectFilter}
           />
           <ExportButton
             data={filtered.map((s) => ({ name: s.name, project: s.projectId, region: s.region, status: s.status, url: s.url ?? "", serviceAccount: s.serviceAccount ?? "" }))}

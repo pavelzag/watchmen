@@ -49,6 +49,7 @@ export default function VMsPage() {
   const [sortField, setSortField] = useState<SortField>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [selected, setSelected] = useState<VM | null>(null);
+  const [projectFilter, setProjectFilter] = useState("");
 
   useEffect(() => {
     fetch("/api/gcp/snapshot")
@@ -66,12 +67,15 @@ export default function VMsPage() {
     setSortField(field);
   }, [sortField]);
 
+  const projectOptions = [...new Set(vms.map((v) => v.projectId))].sort();
+
   const filtered = vms
     .filter((v) =>
-      v.name.toLowerCase().includes(search.toLowerCase()) ||
+      (!projectFilter || v.projectId === projectFilter) &&
+      (v.name.toLowerCase().includes(search.toLowerCase()) ||
       v.projectId.toLowerCase().includes(search.toLowerCase()) ||
       v.zone.toLowerCase().includes(search.toLowerCase()) ||
-      v.machineType.toLowerCase().includes(search.toLowerCase())
+      v.machineType.toLowerCase().includes(search.toLowerCase()))
     )
     .sort((a, b) => {
       let cmp = 0;
@@ -88,6 +92,9 @@ export default function VMsPage() {
           count={loading ? null : filtered.length}
           search={search}
           onSearch={setSearch}
+          projects={projectOptions}
+          projectFilter={projectFilter}
+          onProjectFilter={setProjectFilter}
         />
         {error && <p className="text-sm text-red-400 mb-4">{error}</p>}
 

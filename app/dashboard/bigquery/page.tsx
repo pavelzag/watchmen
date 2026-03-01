@@ -39,6 +39,7 @@ export default function BigQueryPage() {
   const [sortField, setSortField] = useState<SortField>("datasetId");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [selected, setSelected] = useState<BigQueryDataset | null>(null);
+  const [projectFilter, setProjectFilter] = useState("");
 
   useEffect(() => {
     fetch("/api/gcp/snapshot")
@@ -53,11 +54,14 @@ export default function BigQueryPage() {
     setSortField(field);
   }, [sortField]);
 
+  const projectOptions = [...new Set(datasets.map((d) => d.projectId))].sort();
+
   const filtered = datasets
     .filter((d) =>
-      d.datasetId.toLowerCase().includes(search.toLowerCase()) ||
+      (!projectFilter || d.projectId === projectFilter) &&
+      (d.datasetId.toLowerCase().includes(search.toLowerCase()) ||
       d.projectId.toLowerCase().includes(search.toLowerCase()) ||
-      d.location.toLowerCase().includes(search.toLowerCase())
+      d.location.toLowerCase().includes(search.toLowerCase()))
     )
     .sort((a, b) => {
       const cmp = sortField === "datasetId"
@@ -81,6 +85,9 @@ export default function BigQueryPage() {
             count={loading ? null : filtered.length}
             search={search}
             onSearch={setSearch}
+            projects={projectOptions}
+            projectFilter={projectFilter}
+            onProjectFilter={setProjectFilter}
           />
           <ExportButton
             data={filtered.map((d) => ({ datasetId: d.datasetId, project: d.projectId, location: d.location, members: memberCount(d) }))}

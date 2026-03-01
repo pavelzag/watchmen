@@ -27,6 +27,7 @@ export default function BucketsPage() {
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [selected, setSelected] = useState<StorageBucket | null>(null);
+  const [projectFilter, setProjectFilter] = useState("");
 
   useEffect(() => {
     fetch("/api/gcp/snapshot")
@@ -36,17 +37,20 @@ export default function BucketsPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  const projectOptions = [...new Set(buckets.map((b) => b.projectId))].sort();
+
   const filtered = buckets.filter(
     (b) =>
-      b.name.toLowerCase().includes(search.toLowerCase()) ||
+      (!projectFilter || b.projectId === projectFilter) &&
+      (b.name.toLowerCase().includes(search.toLowerCase()) ||
       b.projectId.toLowerCase().includes(search.toLowerCase()) ||
-      b.location.toLowerCase().includes(search.toLowerCase())
+      b.location.toLowerCase().includes(search.toLowerCase()))
   );
 
   return (
     <>
       <div>
-        <DetailPageHeader title="Storage Buckets" count={loading ? null : filtered.length} search={search} onSearch={setSearch} />
+        <DetailPageHeader title="Storage Buckets" count={loading ? null : filtered.length} search={search} onSearch={setSearch} projects={projectOptions} projectFilter={projectFilter} onProjectFilter={setProjectFilter} />
         {error && <p className="text-sm text-red-400 mb-4">{error}</p>}
 
         <div className="glass rounded-2xl overflow-hidden">

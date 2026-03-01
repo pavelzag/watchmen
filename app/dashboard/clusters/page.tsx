@@ -39,6 +39,7 @@ export default function ClustersPage() {
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [selected, setSelected] = useState<GkeCluster | null>(null);
+  const [projectFilter, setProjectFilter] = useState("");
 
   useEffect(() => {
     fetch("/api/gcp/snapshot")
@@ -50,11 +51,14 @@ export default function ClustersPage() {
 
   const toggleSort = useCallback(() => setSortDir((d) => d === "asc" ? "desc" : "asc"), []);
 
+  const projectOptions = [...new Set(clusters.map((c) => c.projectId))].sort();
+
   const filtered = clusters
     .filter((c) =>
-      c.name.toLowerCase().includes(search.toLowerCase()) ||
+      (!projectFilter || c.projectId === projectFilter) &&
+      (c.name.toLowerCase().includes(search.toLowerCase()) ||
       c.projectId.toLowerCase().includes(search.toLowerCase()) ||
-      c.location.toLowerCase().includes(search.toLowerCase())
+      c.location.toLowerCase().includes(search.toLowerCase()))
     )
     .sort((a, b) => {
       const cmp = a.name.localeCompare(b.name);
@@ -64,7 +68,7 @@ export default function ClustersPage() {
   return (
     <>
       <div>
-        <DetailPageHeader title="GKE Clusters" count={loading ? null : filtered.length} search={search} onSearch={setSearch} />
+        <DetailPageHeader title="GKE Clusters" count={loading ? null : filtered.length} search={search} onSearch={setSearch} projects={projectOptions} projectFilter={projectFilter} onProjectFilter={setProjectFilter} />
         {error && <p className="text-sm text-red-400 mb-4">{error}</p>}
 
         <div className="glass rounded-2xl overflow-hidden">

@@ -43,6 +43,7 @@ export default function PubSubPage() {
   const [sortField, setSortField] = useState<SortField>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [selected, setSelected] = useState<PubSubTopic | null>(null);
+  const [projectFilter, setProjectFilter] = useState("");
 
   useEffect(() => {
     fetch("/api/gcp/snapshot")
@@ -57,10 +58,13 @@ export default function PubSubPage() {
     setSortField(field);
   }, [sortField]);
 
+  const projectOptions = [...new Set(topics.map((t) => t.projectId))].sort();
+
   const filtered = topics
     .filter((t) =>
-      t.name.toLowerCase().includes(search.toLowerCase()) ||
-      t.projectId.toLowerCase().includes(search.toLowerCase())
+      (!projectFilter || t.projectId === projectFilter) &&
+      (t.name.toLowerCase().includes(search.toLowerCase()) ||
+      t.projectId.toLowerCase().includes(search.toLowerCase()))
     )
     .sort((a, b) => {
       const cmp = sortField === "name"
@@ -84,6 +88,9 @@ export default function PubSubPage() {
             count={loading ? null : filtered.length}
             search={search}
             onSearch={setSearch}
+            projects={projectOptions}
+            projectFilter={projectFilter}
+            onProjectFilter={setProjectFilter}
           />
           <ExportButton
             data={filtered.map((t) => ({ topic: topicShortName(t.name), fullName: t.name, project: t.projectId, members: memberCount(t) }))}

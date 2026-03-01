@@ -8,11 +8,16 @@ interface DetailPageHeaderProps {
   count: number | null;
   search: string;
   onSearch: (v: string) => void;
+  projects?: string[];
+  projectFilter?: string;
+  onProjectFilter?: (v: string) => void;
 }
 
-export default function DetailPageHeader({ title, count, search, onSearch }: DetailPageHeaderProps) {
+export default function DetailPageHeader({
+  title, count, search, onSearch, projects, projectFilter, onProjectFilter,
+}: DetailPageHeaderProps) {
   return (
-    <div className="flex items-center gap-4 mb-6 flex-wrap">
+    <div className="flex items-center gap-3 mb-6 flex-wrap">
       <Link
         href="/dashboard"
         className="flex items-center gap-1.5 text-sm text-slate-400 hover:text-slate-200 transition-colors shrink-0"
@@ -28,6 +33,18 @@ export default function DetailPageHeader({ title, count, search, onSearch }: Det
           </span>
         )}
       </div>
+      {projects && projects.length > 1 && onProjectFilter && (
+        <select
+          value={projectFilter ?? ""}
+          onChange={(e) => onProjectFilter(e.target.value)}
+          className="px-2.5 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-xs text-slate-200 outline-none focus:border-sky-500/50 shrink-0 max-w-[180px] truncate"
+        >
+          <option value="">All projects</option>
+          {projects.map((p) => (
+            <option key={p} value={p}>{p}</option>
+          ))}
+        </select>
+      )}
       <div className="relative shrink-0">
         <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
         <input

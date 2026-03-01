@@ -45,6 +45,7 @@ export default function FirewallPage() {
   const [sortField, setSortField] = useState<SortField>("priority");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [selected, setSelected] = useState<FirewallRule | null>(null);
+  const [projectFilter, setProjectFilter] = useState("");
 
   useEffect(() => {
     fetch("/api/gcp/snapshot")
@@ -59,11 +60,14 @@ export default function FirewallPage() {
     setSortField(field);
   }, [sortField]);
 
+  const projectOptions = [...new Set(rules.map((r) => r.projectId))].sort();
+
   const filtered = rules
     .filter((r) =>
-      r.name.toLowerCase().includes(search.toLowerCase()) ||
+      (!projectFilter || r.projectId === projectFilter) &&
+      (r.name.toLowerCase().includes(search.toLowerCase()) ||
       r.projectId.toLowerCase().includes(search.toLowerCase()) ||
-      r.network.toLowerCase().includes(search.toLowerCase())
+      r.network.toLowerCase().includes(search.toLowerCase()))
     )
     .sort((a, b) => {
       let cmp = 0;
@@ -82,6 +86,9 @@ export default function FirewallPage() {
             count={loading ? null : filtered.length}
             search={search}
             onSearch={setSearch}
+            projects={projectOptions}
+            projectFilter={projectFilter}
+            onProjectFilter={setProjectFilter}
           />
           <ExportButton
             data={filtered.map((r) => ({ name: r.name, project: r.projectId, network: r.network, direction: r.direction, priority: r.priority, sourceRanges: (r.sourceRanges ?? []).join("; "), disabled: r.disabled }))}

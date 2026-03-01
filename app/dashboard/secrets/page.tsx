@@ -48,6 +48,7 @@ export default function SecretsPage() {
   const [sortField, setSortField] = useState<SortField>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [selected, setSelected] = useState<Secret | null>(null);
+  const [projectFilter, setProjectFilter] = useState("");
 
   useEffect(() => {
     fetch("/api/gcp/snapshot")
@@ -62,10 +63,13 @@ export default function SecretsPage() {
     setSortField(field);
   }, [sortField]);
 
+  const projectOptions = [...new Set(secrets.map((s) => s.projectId))].sort();
+
   const filtered = secrets
     .filter((s) =>
-      s.name.toLowerCase().includes(search.toLowerCase()) ||
-      s.projectId.toLowerCase().includes(search.toLowerCase())
+      (!projectFilter || s.projectId === projectFilter) &&
+      (s.name.toLowerCase().includes(search.toLowerCase()) ||
+      s.projectId.toLowerCase().includes(search.toLowerCase()))
     )
     .sort((a, b) => {
       const cmp = sortField === "name"
@@ -89,6 +93,9 @@ export default function SecretsPage() {
             count={loading ? null : filtered.length}
             search={search}
             onSearch={setSearch}
+            projects={projectOptions}
+            projectFilter={projectFilter}
+            onProjectFilter={setProjectFilter}
           />
           <ExportButton
             data={filtered.map((s) => ({ secret: secretShortName(s.name), project: s.projectId, created: s.createTime ?? "", replication: s.replicationPolicy, members: memberCount(s) }))}

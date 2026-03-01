@@ -57,6 +57,7 @@ export default function ServiceAccountsPage() {
   const [sortField, setSortField] = useState<SortField>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [selected, setSelected] = useState<ServiceAccount | null>(null);
+  const [projectFilter, setProjectFilter] = useState("");
 
   useEffect(() => {
     fetch("/api/gcp/snapshot")
@@ -71,11 +72,14 @@ export default function ServiceAccountsPage() {
     setSortField(field);
   }, [sortField]);
 
+  const projectOptions = [...new Set(accounts.map((sa) => sa.projectId))].sort();
+
   const filtered = accounts
     .filter((sa) =>
-      sa.email.toLowerCase().includes(search.toLowerCase()) ||
+      (!projectFilter || sa.projectId === projectFilter) &&
+      (sa.email.toLowerCase().includes(search.toLowerCase()) ||
       sa.displayName.toLowerCase().includes(search.toLowerCase()) ||
-      sa.projectId.toLowerCase().includes(search.toLowerCase())
+      sa.projectId.toLowerCase().includes(search.toLowerCase()))
     )
     .sort((a, b) => {
       let cmp = 0;
@@ -92,6 +96,9 @@ export default function ServiceAccountsPage() {
           count={loading ? null : filtered.length}
           search={search}
           onSearch={setSearch}
+          projects={projectOptions}
+          projectFilter={projectFilter}
+          onProjectFilter={setProjectFilter}
         />
         {error && <p className="text-sm text-red-400 mb-4">{error}</p>}
 

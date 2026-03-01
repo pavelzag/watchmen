@@ -71,6 +71,7 @@ export default function UsersPage() {
   const [search, setSearch] = useState("");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [selected, setSelected] = useState<UserRow | null>(null);
+  const [projectFilter, setProjectFilter] = useState("");
 
   useEffect(() => {
     fetch("/api/gcp/snapshot")
@@ -104,10 +105,13 @@ export default function UsersPage() {
 
   const toggleSort = useCallback(() => setSortDir((d) => d === "asc" ? "desc" : "asc"), []);
 
+  const projectOptions = [...new Set(rows.flatMap((r) => r.projects))].sort();
+
   const filtered = rows
     .filter((r) =>
-      r.email.toLowerCase().includes(search.toLowerCase()) ||
-      r.projects.some((p) => p.includes(search.toLowerCase()))
+      (!projectFilter || r.projects.includes(projectFilter)) &&
+      (r.email.toLowerCase().includes(search.toLowerCase()) ||
+      r.projects.some((p) => p.includes(search.toLowerCase())))
     )
     .sort((a, b) => {
       const cmp = a.email.localeCompare(b.email);
@@ -117,7 +121,7 @@ export default function UsersPage() {
   return (
     <>
       <div>
-        <DetailPageHeader title="Human Users" count={loading ? null : filtered.length} search={search} onSearch={setSearch} />
+        <DetailPageHeader title="Human Users" count={loading ? null : filtered.length} search={search} onSearch={setSearch} projects={projectOptions} projectFilter={projectFilter} onProjectFilter={setProjectFilter} />
         {error && <p className="text-sm text-red-400 mb-4">{error}</p>}
 
         <div className="glass rounded-2xl overflow-hidden">
