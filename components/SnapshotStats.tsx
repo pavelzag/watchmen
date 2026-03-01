@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { computeFindings } from "@/lib/findings";
 import type { GcpSnapshot } from "@/lib/gcp/types";
+import ScanProgress from "@/components/ScanProgress";
 
 interface Stats {
   users: string[];
@@ -191,6 +192,8 @@ export default function SnapshotStats({ scanVersion, onSyncRequest, isSyncing }:
           {error}
         </p>
       )}
+
+      <ScanProgress isScanning={!!isSyncing} />
 
       {(loading || isSyncing) && !stats && (
         <div className="space-y-3">
