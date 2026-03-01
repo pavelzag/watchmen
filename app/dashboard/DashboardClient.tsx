@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import QueryBox, { type QueryResult } from "@/components/QueryBox";
 import ResultCard from "@/components/ResultCard";
 import SnapshotStats from "@/components/SnapshotStats";
@@ -10,18 +10,42 @@ import type { GcpSnapshot } from "@/lib/gcp/types";
 
 export default function DashboardClient() {
   const [results, setResults] = useState<QueryResult[]>([]);
+  const [scanVersion, setScanVersion] = useState(0);
+  const [scanning, setScanning] = useState(false);
 
-  // Auto-save snapshot to history on mount
+  const triggerScan = useCallback(async () => {
+    setScanning(true);
+    try {
+      await fetch("/api/scan", { method: "POST" });
+      setScanVersion((v) => v + 1);
+    } finally {
+      setScanning(false);
+    }
+  }, []);
+
+  // On mount: check if a snapshot exists; if not, trigger one immediately
   useEffect(() => {
-    fetch("/api/gcp/snapshot")
+    fetch("/api/scan")
       .then((r) => r.json())
-      .then((snap: GcpSnapshot) => {
-        if (snap.snapshotId) saveSnapshot(snap);
+      .then((data) => {
+        if (!data.snapshot) {
+          triggerScan();
+        }
+        // Auto-save to history if snapshot exists
+        if (data.snapshot?.snapshotId) {
+          saveSnapshot(data.snapshot as GcpSnapshot);
+        }
       })
       .catch(() => {
         // silently ignore — SnapshotStats will show the error
       });
-  }, []);
+  }, [triggerScan]);
+
+  // 10-minute auto-refresh
+  useEffect(() => {
+    const id = setInterval(triggerScan, 10 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [triggerScan]);
 
   function handleResult(result: QueryResult) {
     setResults((prev) => [result, ...prev]);
@@ -30,7 +54,11 @@ export default function DashboardClient() {
   return (
     <div className="space-y-8">
       {/* Stats bar */}
-      <SnapshotStats />
+      <SnapshotStats
+        scanVersion={scanVersion}
+        onSyncRequest={triggerScan}
+        isSyncing={scanning}
+      />
 
       <div className="border-t border-slate-800" />
 

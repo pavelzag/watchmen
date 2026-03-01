@@ -10,17 +10,18 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.21.0",
     "@auth/core": "^0.37.4",
+    "@google/generative-ai": "^0.21.0",
+    "@vercel/postgres": "^0.10.0",
+    "clsx": "^2.1.1",
     "googleapis": "^144.0.0",
+    "lucide-react": "^0.475.0",
     "next": "^15.1.6",
     "next-auth": "^5.0.0-beta.25",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "clsx": "^2.1.1",
-    "tailwind-merge": "^2.6.0",
-    "lucide-react": "^0.475.0",
-    "sonner": "^2.0.1"
+    "sonner": "^2.0.1",
+    "tailwind-merge": "^2.6.0"
   },
   "devDependencies": {
     "@types/node": "^22.13.5",

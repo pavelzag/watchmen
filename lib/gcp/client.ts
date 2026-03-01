@@ -1,6 +1,7 @@
 import { google } from "googleapis";
 
 let _initialized = false;
+let _userAuthInitialized = false;
 
 /**
  * Initializes googleapis with the service account credentials globally.
@@ -24,6 +25,43 @@ export function initGoogleAuth() {
 
   // Set auth globally — avoids TypeScript overload issues on individual clients
   google.options({ auth } as Parameters<typeof google.options>[0]);
+}
+
+/**
+ * Initializes googleapis with a user OAuth access token globally.
+ * Call this before any google.* API call when using per-user OAuth.
+ */
+export function initUserAuth(accessToken: string) {
+  _userAuthInitialized = true;
+  _initialized = false; // reset SA auth flag so SA isn't mixed in
+
+  const auth = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET
+  );
+  auth.setCredentials({ access_token: accessToken });
+  google.options({ auth } as Parameters<typeof google.options>[0]);
+}
+
+/**
+ * Discovers all GCP projects the user has access to via their OAuth token.
+ */
+export async function discoverUserProjectIds(accessToken: string): Promise<string[]> {
+  try {
+    initUserAuth(accessToken);
+    const crm = google.cloudresourcemanager("v1");
+    const res = await crm.projects.list({
+      filter: "lifecycleState:ACTIVE",
+    });
+    const ids = (res.data.projects ?? [])
+      .map((p) => p.projectId ?? "")
+      .filter(Boolean);
+    console.log(`[user-auth] Discovered ${ids.length} accessible project(s)`);
+    return ids;
+  } catch (err) {
+    console.warn("[user-auth] Failed to discover projects:", err);
+    return [];
+  }
 }
 
 export function useMockData(): boolean {

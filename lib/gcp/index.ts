@@ -1,4 +1,4 @@
-import { getProjectIds } from "./client";
+import { getProjectIds, getProjectIdsForOrg, initGoogleAuth, initUserAuth, discoverUserProjectIds, useMockData } from "./client";
 import { getProjectPolicies, getServiceAccounts } from "./iam";
 import { getStorageBuckets } from "./storage";
 import { getGkeClusters } from "./gke";
@@ -16,13 +16,25 @@ export * from "./types";
 /**
  * Fetches the full GCP snapshot across all configured projects.
  * Switch between real and mock via USE_MOCK_DATA=true env var.
+ * Pass options.accessToken to use per-user OAuth instead of the service account.
  */
-export async function fetchGcpSnapshot(): Promise<GcpSnapshot> {
-  const projectIds = getProjectIds();
+export async function fetchGcpSnapshot(options?: { accessToken?: string }): Promise<GcpSnapshot> {
+  const mock = useMockData();
 
-  if (projectIds.length === 0 && process.env.USE_MOCK_DATA !== "true") {
+  let projectIds: string[];
+
+  if (mock) {
+    projectIds = getProjectIds();
+  } else if (options?.accessToken) {
+    projectIds = await discoverUserProjectIds(options.accessToken);
+  } else {
+    initGoogleAuth();
+    projectIds = await getProjectIdsForOrg();
+  }
+
+  if (projectIds.length === 0 && !mock) {
     throw new Error(
-      "GCP_PROJECTS is not set. Add comma-separated project IDs or set USE_MOCK_DATA=true."
+      "No GCP projects found. Set GCP_PROJECTS, GCP_ORG_ID, or ensure your account has project access."
     );
   }
 

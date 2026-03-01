@@ -28,7 +28,13 @@ interface Stats {
   _snap?: GcpSnapshot;
 }
 
-export default function SnapshotStats() {
+interface SnapshotStatsProps {
+  scanVersion?: number;
+  onSyncRequest?: () => void;
+  isSyncing?: boolean;
+}
+
+export default function SnapshotStats({ scanVersion, onSyncRequest, isSyncing }: SnapshotStatsProps) {
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -39,6 +45,11 @@ export default function SnapshotStats() {
     setError(null);
     try {
       const res = await fetch("/api/gcp/snapshot");
+      if (res.status === 404) {
+        // No snapshot yet — scan is pending
+        setStats(null);
+        return;
+      }
       if (!res.ok) throw new Error("Failed to load GCP data");
       const data = await res.json();
       setStats({ ...data, _snap: data });
@@ -49,7 +60,8 @@ export default function SnapshotStats() {
     }
   }
 
-  useEffect(() => { fetchStats(); }, []);
+  // Re-fetch when scanVersion bumps (scan completed) or on mount
+  useEffect(() => { fetchStats(); }, [scanVersion]);
 
   // Live "updated X ago" counter
   useEffect(() => {
@@ -150,14 +162,28 @@ export default function SnapshotStats() {
         <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">
           GCP Snapshot
         </p>
-        <button
-          onClick={fetchStats}
-          disabled={loading}
-          className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-300 transition-colors"
-        >
-          <RefreshCw className={cn("w-3 h-3", loading && "animate-spin")} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-3">
+          {/* Internal refresh — re-reads DB without triggering a new scan */}
+          <button
+            onClick={fetchStats}
+            disabled={loading}
+            className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-300 transition-colors"
+          >
+            <RefreshCw className={cn("w-3 h-3", loading && "animate-spin")} />
+            Refresh
+          </button>
+          {/* Sync — triggers a new GCP scan */}
+          {onSyncRequest && (
+            <button
+              onClick={onSyncRequest}
+              disabled={isSyncing || loading}
+              className="flex items-center gap-1 text-xs text-slate-400 hover:text-sky-400 transition-colors"
+            >
+              <RefreshCw className={cn("w-3 h-3", isSyncing && "animate-spin")} />
+              {isSyncing ? "Syncing…" : "Sync GCP"}
+            </button>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -166,7 +192,7 @@ export default function SnapshotStats() {
         </p>
       )}
 
-      {loading && !stats && (
+      {(loading || isSyncing) && !stats && (
         <div className="space-y-3">
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
             {[...Array(5)].map((_, i) => (
@@ -177,6 +203,12 @@ export default function SnapshotStats() {
             ))}
           </div>
         </div>
+      )}
+
+      {!loading && !isSyncing && !stats && !error && (
+        <p className="text-xs text-slate-500 px-3 py-2 rounded-lg bg-slate-800/50 border border-slate-700">
+          Scan in progress — GCP data will appear shortly.
+        </p>
       )}
 
       {stats && (
