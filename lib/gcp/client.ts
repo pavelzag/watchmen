@@ -64,6 +64,26 @@ export async function discoverUserProjectIds(accessToken: string): Promise<strin
   }
 }
 
+/**
+ * Logs a per-project fetch failure.
+ * "API not enabled" errors are expected for projects that don't use a service — logged at info.
+ * Anything else (permissions, network, etc.) is logged at warn.
+ */
+export function logFetchWarning(fetcher: string, projectId: string, reason: unknown) {
+  const msg = (reason instanceof Error ? reason.message : String(reason)).split("\n")[0];
+  const isExpected =
+    msg.includes("has not been used") ||
+    msg.includes("is disabled") ||
+    msg.includes("not enabled") ||
+    msg.includes("has not enabled") ||
+    msg.includes("BigQuery is not enabled");
+  if (isExpected) {
+    console.info(`[${fetcher}] skipping ${projectId}: API not enabled`);
+  } else {
+    console.warn(`[${fetcher}] ${projectId} warning:`, reason);
+  }
+}
+
 export function useMockData(): boolean {
   return process.env.USE_MOCK_DATA === "true";
 }

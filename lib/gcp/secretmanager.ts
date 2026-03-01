@@ -1,5 +1,5 @@
 import { google } from "googleapis";
-import { initGoogleAuth, useMockData } from "./client";
+import { initGoogleAuth, useMockData, logFetchWarning } from "./client";
 import type { Secret } from "./types";
 
 async function getMockSecrets(): Promise<Secret[]> {
@@ -52,7 +52,7 @@ async function getRealSecrets(projectIds: string[]): Promise<Secret[]> {
 
   return results
     .filter((r, i): r is PromiseFulfilledResult<Secret[]> => {
-      if (r.status === "rejected") console.warn(`[secretmanager] ${projectIds[i]} failed:`, r.reason);
+      if (r.status === "rejected") logFetchWarning("secretmanager", projectIds[i], r.reason);
       return r.status === "fulfilled";
     })
     .flatMap((r) => r.value);

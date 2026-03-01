@@ -1,5 +1,5 @@
 import { google } from "googleapis";
-import { initGoogleAuth, useMockData } from "./client";
+import { initGoogleAuth, useMockData, logFetchWarning } from "./client";
 import type { CloudSqlInstance } from "./types";
 
 async function getMockCloudSqlInstances(): Promise<CloudSqlInstance[]> {
@@ -28,7 +28,7 @@ async function getRealCloudSqlInstances(projectIds: string[]): Promise<CloudSqlI
 
   return results
     .filter((r, i): r is PromiseFulfilledResult<CloudSqlInstance[]> => {
-      if (r.status === "rejected") console.warn(`[cloudsql] ${projectIds[i]} failed:`, r.reason);
+      if (r.status === "rejected") logFetchWarning("cloudsql", projectIds[i], r.reason);
       return r.status === "fulfilled";
     })
     .flatMap((r) => r.value);

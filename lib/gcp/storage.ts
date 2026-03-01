@@ -1,5 +1,5 @@
 import { google } from "googleapis";
-import { initGoogleAuth, useMockData } from "./client";
+import { initGoogleAuth, useMockData, logFetchWarning } from "./client";
 import type { StorageBucket } from "./types";
 
 async function getMockBuckets(): Promise<StorageBucket[]> {
@@ -48,7 +48,7 @@ async function getRealBuckets(projectIds: string[]): Promise<StorageBucket[]> {
 
   return results
     .filter((r, i): r is PromiseFulfilledResult<StorageBucket[]> => {
-      if (r.status === "rejected") console.warn(`[storage] ${projectIds[i]} failed:`, r.reason);
+      if (r.status === "rejected") logFetchWarning("storage", projectIds[i], r.reason);
       return r.status === "fulfilled";
     })
     .flatMap((r) => r.value);

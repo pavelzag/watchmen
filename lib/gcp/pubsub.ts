@@ -1,5 +1,5 @@
 import { google } from "googleapis";
-import { initGoogleAuth, useMockData } from "./client";
+import { initGoogleAuth, useMockData, logFetchWarning } from "./client";
 import type { PubSubTopic } from "./types";
 
 async function getMockPubSubTopics(): Promise<PubSubTopic[]> {
@@ -44,7 +44,7 @@ async function getRealPubSubTopics(projectIds: string[]): Promise<PubSubTopic[]>
 
   return results
     .filter((r, i): r is PromiseFulfilledResult<PubSubTopic[]> => {
-      if (r.status === "rejected") console.warn(`[pubsub] ${projectIds[i]} failed:`, r.reason);
+      if (r.status === "rejected") logFetchWarning("pubsub", projectIds[i], r.reason);
       return r.status === "fulfilled";
     })
     .flatMap((r) => r.value);

@@ -1,5 +1,5 @@
 import { google } from "googleapis";
-import { initGoogleAuth, useMockData } from "./client";
+import { initGoogleAuth, useMockData, logFetchWarning } from "./client";
 import type { ProjectIamPolicy, ServiceAccount } from "./types";
 
 async function getMockProjectPolicies(): Promise<ProjectIamPolicy[]> {
@@ -37,7 +37,7 @@ async function getRealProjectPolicies(
 
   return results
     .filter((r, i): r is PromiseFulfilledResult<ProjectIamPolicy> => {
-      if (r.status === "rejected") console.warn(`[iam/policies] ${projectIds[i]} failed:`, r.reason);
+      if (r.status === "rejected") logFetchWarning("iam/policies", projectIds[i], r.reason);
       return r.status === "fulfilled";
     })
     .map((r) => r.value);
@@ -65,7 +65,7 @@ async function getRealServiceAccounts(
           disabled: sa.disabled ?? false,
           roles: [],
           keys: [],
-          createdAt: (sa as Record<string, unknown>).createTime as string | undefined,
+          createdAt: undefined, // IAM list API does not return createTime for service accounts
         })
       );
     })
@@ -73,7 +73,7 @@ async function getRealServiceAccounts(
 
   return results
     .filter((r, i): r is PromiseFulfilledResult<ServiceAccount[]> => {
-      if (r.status === "rejected") console.warn(`[iam/service-accounts] ${projectIds[i]} failed:`, r.reason);
+      if (r.status === "rejected") logFetchWarning("iam/service-accounts", projectIds[i], r.reason);
       return r.status === "fulfilled";
     })
     .flatMap((r) => r.value);

@@ -1,5 +1,5 @@
 import { google } from "googleapis";
-import { initGoogleAuth, useMockData } from "./client";
+import { initGoogleAuth, useMockData, logFetchWarning } from "./client";
 import type { VM } from "./types";
 
 async function getMockVMs(): Promise<VM[]> {
@@ -42,7 +42,7 @@ async function getRealVMs(projectIds: string[]): Promise<VM[]> {
 
   return results
     .filter((r, i): r is PromiseFulfilledResult<VM[]> => {
-      if (r.status === "rejected") console.warn(`[vms] ${projectIds[i]} failed:`, r.reason);
+      if (r.status === "rejected") logFetchWarning("vms", projectIds[i], r.reason);
       return r.status === "fulfilled";
     })
     .flatMap((r) => r.value);

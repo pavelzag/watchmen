@@ -1,5 +1,5 @@
 import { google } from "googleapis";
-import { initGoogleAuth, useMockData } from "./client";
+import { initGoogleAuth, useMockData, logFetchWarning } from "./client";
 import type { FirewallRule } from "./types";
 
 async function getMockFirewallRules(): Promise<FirewallRule[]> {
@@ -33,7 +33,7 @@ async function getRealFirewallRules(projectIds: string[]): Promise<FirewallRule[
 
   return results
     .filter((r, i): r is PromiseFulfilledResult<FirewallRule[]> => {
-      if (r.status === "rejected") console.warn(`[firewall] ${projectIds[i]} failed:`, r.reason);
+      if (r.status === "rejected") logFetchWarning("firewall", projectIds[i], r.reason);
       return r.status === "fulfilled";
     })
     .flatMap((r) => r.value);

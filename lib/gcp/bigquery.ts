@@ -1,5 +1,5 @@
 import { google } from "googleapis";
-import { initGoogleAuth, useMockData } from "./client";
+import { initGoogleAuth, useMockData, logFetchWarning } from "./client";
 import type { BigQueryDataset } from "./types";
 
 async function getMockBigQueryDatasets(): Promise<BigQueryDataset[]> {
@@ -46,7 +46,7 @@ async function getRealBigQueryDatasets(projectIds: string[]): Promise<BigQueryDa
 
   return results
     .filter((r, i): r is PromiseFulfilledResult<BigQueryDataset[]> => {
-      if (r.status === "rejected") console.warn(`[bigquery] ${projectIds[i]} failed:`, r.reason);
+      if (r.status === "rejected") logFetchWarning("bigquery", projectIds[i], r.reason);
       return r.status === "fulfilled";
     })
     .flatMap((r) => r.value);

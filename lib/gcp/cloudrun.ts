@@ -1,5 +1,5 @@
 import { google } from "googleapis";
-import { initGoogleAuth, useMockData } from "./client";
+import { initGoogleAuth, useMockData, logFetchWarning } from "./client";
 import type { CloudRunService } from "./types";
 
 async function getMockCloudRunServices(): Promise<CloudRunService[]> {
@@ -36,7 +36,7 @@ async function getRealCloudRunServices(projectIds: string[]): Promise<CloudRunSe
 
   return results
     .filter((r, i): r is PromiseFulfilledResult<CloudRunService[]> => {
-      if (r.status === "rejected") console.warn(`[cloudrun] ${projectIds[i]} failed:`, r.reason);
+      if (r.status === "rejected") logFetchWarning("cloudrun", projectIds[i], r.reason);
       return r.status === "fulfilled";
     })
     .flatMap((r) => r.value);

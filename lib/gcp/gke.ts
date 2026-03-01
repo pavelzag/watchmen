@@ -1,5 +1,5 @@
 import { google } from "googleapis";
-import { initGoogleAuth, useMockData } from "./client";
+import { initGoogleAuth, useMockData, logFetchWarning } from "./client";
 import type { GkeCluster } from "./types";
 
 async function getMockClusters(): Promise<GkeCluster[]> {
@@ -47,7 +47,7 @@ async function getRealClusters(projectIds: string[]): Promise<GkeCluster[]> {
 
   return results
     .filter((r, i): r is PromiseFulfilledResult<GkeCluster[]> => {
-      if (r.status === "rejected") console.warn(`[gke] ${projectIds[i]} failed:`, r.reason);
+      if (r.status === "rejected") logFetchWarning("gke", projectIds[i], r.reason);
       return r.status === "fulfilled";
     })
     .flatMap((r) => r.value);
