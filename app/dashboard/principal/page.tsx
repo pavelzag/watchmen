@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback, Suspense } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { ArrowLeft, Search, Loader2, User, KeySquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { GcpSnapshot, IamBinding } from "@/lib/gcp/types";
@@ -131,16 +132,22 @@ function RolePills({ roles }: { roles: string[] }) {
 }
 
 export default function PrincipalPage() {
+  return (
+    <Suspense>
+      <PrincipalPageContent />
+    </Suspense>
+  );
+}
+
+function PrincipalPageContent() {
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<PrincipalAccess | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function handleSearch(e: React.FormEvent) {
-    e.preventDefault();
-    const trimmed = input.trim();
-    if (!trimmed) return;
+  const lookup = useCallback(async (trimmed: string) => {
     setLoading(true);
     setError(null);
     setResult(null);
@@ -155,6 +162,22 @@ export default function PrincipalPage() {
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  // Auto-lookup when ?email= param is present
+  useEffect(() => {
+    const emailParam = searchParams.get("email");
+    if (emailParam) {
+      setInput(emailParam);
+      lookup(emailParam);
+    }
+  }, [searchParams, lookup]);
+
+  async function handleSearch(e: React.FormEvent) {
+    e.preventDefault();
+    const trimmed = input.trim();
+    if (!trimmed) return;
+    await lookup(trimmed);
   }
 
   const hasAccess = result && (
