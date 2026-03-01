@@ -10,7 +10,8 @@
         { "role": "roles/storage.objectViewer", "members": ["user:alice@acme.com", "user:bob@acme.com", "user:carol@acme.com", "serviceAccount:reporting-sa@accounting_project.iam.gserviceaccount.com"] },
         { "role": "roles/storage.objectCreator", "members": ["serviceAccount:data-pipeline-sa@accounting_project.iam.gserviceaccount.com"] }
       ]
-    }
+    },
+    "versioningEnabled": true
   },
   {
     "name": "accounting_audit_logs",
@@ -22,7 +23,8 @@
         { "role": "roles/storage.admin", "members": ["user:zagalsky@gmail.com"] },
         { "role": "roles/storage.objectViewer", "members": ["user:dave@acme.com", "serviceAccount:reporting-sa@accounting_project.iam.gserviceaccount.com"] }
       ]
-    }
+    },
+    "versioningEnabled": false
   },
   {
     "name": "ml_training_data",
@@ -35,7 +37,8 @@
         { "role": "roles/storage.objectAdmin", "members": ["user:iris@acme.com", "serviceAccount:training-sa@ml_platform.iam.gserviceaccount.com"] },
         { "role": "roles/storage.objectViewer", "members": ["user:henry@acme.com", "user:carol@acme.com", "serviceAccount:inference-sa@ml_platform.iam.gserviceaccount.com"] }
       ]
-    }
+    },
+    "versioningEnabled": true
   },
   {
     "name": "ml_model_registry",
@@ -47,7 +50,8 @@
         { "role": "roles/storage.admin", "members": ["user:alice@acme.com", "user:iris@acme.com"] },
         { "role": "roles/storage.objectViewer", "members": ["user:henry@acme.com", "serviceAccount:inference-sa@ml_platform.iam.gserviceaccount.com", "serviceAccount:training-sa@ml_platform.iam.gserviceaccount.com"] }
       ]
-    }
+    },
+    "versioningEnabled": false
   },
   {
     "name": "logs_archive",
@@ -59,7 +63,8 @@
         { "role": "roles/storage.admin", "members": ["user:zagalsky@gmail.com"] },
         { "role": "roles/storage.objectViewer", "members": ["user:dave@acme.com", "user:frank@acme.com", "serviceAccount:reporting-sa@accounting_project.iam.gserviceaccount.com"] }
       ]
-    }
+    },
+    "versioningEnabled": true
   },
   {
     "name": "terraform_state",
@@ -72,7 +77,8 @@
         { "role": "roles/storage.objectAdmin", "members": ["serviceAccount:terraform-sa@infra_core.iam.gserviceaccount.com"] },
         { "role": "roles/storage.objectViewer", "members": ["user:frank@acme.com"] }
       ]
-    }
+    },
+    "versioningEnabled": false
   },
   {
     "name": "dw_raw_ingestion",
@@ -84,7 +90,8 @@
         { "role": "roles/storage.admin", "members": ["user:eve@acme.com", "serviceAccount:etl-sa@data_warehouse.iam.gserviceaccount.com"] },
         { "role": "roles/storage.objectViewer", "members": ["user:carol@acme.com", "serviceAccount:dbt-sa@data_warehouse.iam.gserviceaccount.com"] }
       ]
-    }
+    },
+    "versioningEnabled": false
   },
   {
     "name": "frontend_static_assets",
@@ -97,6 +104,7 @@
         { "role": "roles/storage.objectAdmin", "members": ["serviceAccount:cdn-sa@frontend_prod.iam.gserviceaccount.com", "user:bob@acme.com"] },
         { "role": "roles/storage.objectViewer", "members": ["serviceAccount:web-sa@frontend_prod.iam.gserviceaccount.com", "allUsers"] }
       ]
-    }
+    },
+    "versioningEnabled": true
   }
 ]

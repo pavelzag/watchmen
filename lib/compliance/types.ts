@@ -1,4 +1,4 @@
-export type ControlStatus = "pass" | "fail" | "warning";
+export type ControlStatus = "pass" | "fail" | "warning" | "suppressed";
 export type ControlImpact = "critical" | "high" | "medium" | "low";
 
 export interface ControlResult {
@@ -9,6 +9,7 @@ export interface ControlResult {
   impact: ControlImpact;
   evidence: { name: string; projectId: string }[];  // failing resources
   remediationHint: string;
+  justification?: string;  // set when suppressed
 }
 
 export interface ComplianceCategory {
@@ -25,6 +26,7 @@ export interface ComplianceReport {
   passingControls: number;
   failingControls: number;
   warningControls: number;
-  score: number;           // 0–100 (pass=1, warning=0.5, fail=0)
+  suppressedControls: number;
+  score: number;           // 0–100 (pass=1, suppressed=1, warning=0.5, fail=0)
   categories: ComplianceCategory[];
 }

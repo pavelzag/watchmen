@@ -35,6 +35,7 @@ export interface StorageBucket {
   location: string;
   storageClass: string;
   iamPolicy: { bindings: IamBinding[] };
+  versioningEnabled: boolean;
 }
 
 export interface GkeCluster {
@@ -46,6 +47,8 @@ export interface GkeCluster {
   currentMasterVersion: string;
   nodeCount: number;
   iamPolicy: { bindings: IamBinding[] };
+  workloadIdentityEnabled: boolean;
+  privateCluster: boolean;
 }
 
 export interface VM {
@@ -79,6 +82,8 @@ export interface CloudSqlInstance {
   tier: string;
   state: string;
   publicIp?: string;
+  backupEnabled: boolean;
+  requireSsl: boolean;
 }
 
 export interface BigQueryDataset {

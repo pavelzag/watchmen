@@ -7,6 +7,7 @@ interface ComplianceAiRequest {
   title: string;
   description: string;
   evidence: { name: string; projectId: string }[];
+  standard?: string; // "SOC 2 Type II" | "ISO 27001:2022"
 }
 
 export async function POST(req: NextRequest) {
@@ -35,14 +36,15 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const standard = body.standard ?? "SOC 2 Type II";
   const affectedList =
     body.evidence.length > 0
       ? body.evidence.map((e) => `- ${e.name} (project: ${e.projectId})`).join("\n")
       : "No specific resources identified (control passed or evidence not available).";
 
-  const prompt = `You are a senior GCP security and compliance engineer specializing in SOC 2 audits. A compliance scanner flagged the following SOC 2 Type II control violation. Provide a detailed, actionable remediation guide.
+  const prompt = `You are a senior GCP security and compliance engineer specializing in ${standard} audits. A compliance scanner flagged the following control violation. Provide a detailed, actionable remediation guide.
 
-**SOC 2 Control**
+**${standard} Control**
 - Control ID: ${body.controlId}
 - Title: ${body.title}
 - Description: ${body.description}
@@ -52,8 +54,8 @@ ${affectedList}
 
 Respond with exactly these four sections in markdown:
 
-### Why This Fails SOC 2
-Explain in 2–3 sentences why this specific control is required by SOC 2 Trust Service Criteria and what auditors look for.
+### Why This Fails ${standard}
+Explain in 2–3 sentences why this specific control is required by ${standard} and what auditors look for.
 
 ### Step-by-Step Remediation
 Provide numbered steps with concrete \`gcloud\` CLI commands or GCP Console navigation paths. Make commands copy-paste ready (use placeholder values like PROJECT_ID where appropriate).

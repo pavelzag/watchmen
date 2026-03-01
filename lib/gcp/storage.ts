@@ -33,6 +33,7 @@ async function getRealBuckets(projectIds: string[]): Promise<StorageBucket[]> {
                 members: b.members ?? [],
               })),
             },
+            versioningEnabled: bucket.versioning?.enabled ?? false,
           };
         })
       );

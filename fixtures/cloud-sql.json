@@ -6,7 +6,9 @@
     "databaseVersion": "POSTGRES_15",
     "tier": "db-n1-standard-2",
     "state": "RUNNABLE",
-    "publicIp": "34.123.45.67"
+    "publicIp": "34.123.45.67",
+    "backupEnabled": true,
+    "requireSsl": false
   },
   {
     "name": "ml-mysql",
@@ -15,7 +17,9 @@
     "databaseVersion": "MYSQL_8_0",
     "tier": "db-n1-highmem-4",
     "state": "RUNNABLE",
-    "publicIp": null
+    "publicIp": null,
+    "backupEnabled": true,
+    "requireSsl": true
   },
   {
     "name": "analytics-postgres",
@@ -24,7 +28,9 @@
     "databaseVersion": "POSTGRES_14",
     "tier": "db-n1-standard-4",
     "state": "RUNNABLE",
-    "publicIp": "35.234.56.78"
+    "publicIp": "35.234.56.78",
+    "backupEnabled": false,
+    "requireSsl": false
   },
   {
     "name": "infra-mysql",
@@ -33,7 +39,9 @@
     "databaseVersion": "MYSQL_5_7",
     "tier": "db-f1-micro",
     "state": "SUSPENDED",
-    "publicIp": null
+    "publicIp": null,
+    "backupEnabled": false,
+    "requireSsl": false
   },
   {
     "name": "backup-postgres",
@@ -42,6 +50,8 @@
     "databaseVersion": "POSTGRES_13",
     "tier": "db-n1-standard-1",
     "state": "RUNNABLE",
-    "publicIp": "34.89.12.34"
+    "publicIp": "34.89.12.34",
+    "backupEnabled": true,
+    "requireSsl": true
   }
 ]

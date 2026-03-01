@@ -22,6 +22,8 @@ async function getRealCloudSqlInstances(projectIds: string[]): Promise<CloudSqlI
         tier: inst.settings?.tier ?? "",
         state: inst.state ?? "UNKNOWN",
         publicIp: inst.ipAddresses?.find((ip) => ip.type === "PRIMARY")?.ipAddress ?? undefined,
+        backupEnabled: inst.settings?.backupConfiguration?.enabled ?? false,
+        requireSsl: inst.settings?.ipConfiguration?.requireSsl ?? false,
       }));
     })
   );
