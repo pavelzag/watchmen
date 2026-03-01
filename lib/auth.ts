@@ -57,7 +57,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
       authorization: {
         params: {
-          scope: "openid email profile https://www.googleapis.com/auth/cloud-platform.read-only",
+          scope: "openid email profile https://www.googleapis.com/auth/cloud-platform",
           access_type: "offline",
           prompt: "consent",
         },
