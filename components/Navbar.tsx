@@ -1,5 +1,5 @@
 import { auth, signOut } from "@/lib/auth";
-import { ShieldCheck, LogOut, ShieldAlert, Search, Clock, LayoutDashboard } from "lucide-react";
+import { ShieldCheck, LogOut, ShieldAlert, Search, Clock, LayoutDashboard, Settings } from "lucide-react";
 import Link from "next/link";
 
 export default async function Navbar() {
@@ -56,6 +56,7 @@ export default async function Navbar() {
         <NavLink href="/dashboard/findings" icon={<ShieldAlert className="w-3.5 h-3.5" />} label="Findings" highlight />
         <NavLink href="/dashboard/principal" icon={<Search className="w-3.5 h-3.5" />} label="Principal" />
         <NavLink href="/dashboard/history" icon={<Clock className="w-3.5 h-3.5" />} label="History" />
+        <NavLink href="/dashboard/settings" icon={<Settings className="w-3.5 h-3.5" />} label="Settings" />
       </div>
     </header>
   );

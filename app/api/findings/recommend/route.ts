@@ -1,13 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { resolveAI, callAI } from "@/lib/ai/client";
 import type { SecurityFinding } from "@/lib/gcp/types";
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
 export async function POST(req: NextRequest) {
   const session = await auth();
-  if (!session) {
+  if (!session?.user?.email) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -18,10 +16,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
 
+  let provider: string;
+  let apiKey: string;
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    const resolved = await resolveAI(session.user.email);
+    provider = resolved.provider;
+    apiKey = resolved.key;
+  } catch {
+    return NextResponse.json(
+      { error: "No AI key configured. Add one in Settings." },
+      { status: 422 }
+    );
+  }
 
-    const prompt = `You are a senior GCP security engineer. A security scanner found the following issue in a GCP environment. Provide a detailed, actionable remediation guide.
+  const prompt = `You are a senior GCP security engineer. A security scanner found the following issue in a GCP environment. Provide a detailed, actionable remediation guide.
 
 **Finding**
 - Title: ${finding.title}
@@ -47,9 +55,8 @@ Provide numbered steps with concrete \`gcloud\` CLI commands or GCP Console navi
 
 Keep the entire response concise and actionable. Do not include an introduction or conclusion.`;
 
-    const result = await model.generateContent(prompt);
-    const recommendation = result.response.text();
-
+  try {
+    const recommendation = await callAI(provider as Parameters<typeof callAI>[0], apiKey, prompt);
     return NextResponse.json({ recommendation });
   } catch (err) {
     console.error("[api/findings/recommend] error:", err);
