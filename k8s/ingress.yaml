@@ -1,0 +1,35 @@
+# Requires:
+#   - nginx ingress controller  (helm install ingress-nginx ingress-nginx/ingress-nginx)
+#   - cert-manager              (helm install cert-manager jetstack/cert-manager --set installCRDs=true)
+#   - A ClusterIssuer named "letsencrypt-prod" pointing at Let's Encrypt
+#
+# Replace watchmen.example.com with your actual domain before applying.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: watchmen
+  namespace: watchmen
+  labels:
+    app.kubernetes.io/name: watchmen
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - watchmen.example.com      # ← replace with your domain
+      secretName: watchmen-tls      # cert-manager stores the issued cert here
+  rules:
+    - host: watchmen.example.com    # ← replace with your domain
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: watchmen
+                port:
+                  name: http

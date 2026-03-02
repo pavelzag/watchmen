@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: watchmen
+  namespace: watchmen
+  labels:
+    app.kubernetes.io/name: watchmen
+    app.kubernetes.io/version: latest
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: watchmen
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0   # zero-downtime rolling updates
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: watchmen
+        app.kubernetes.io/name: watchmen
+    spec:
+      # ── Security ───────────────────────────────────────────────────────────
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+
+      # ── Graceful shutdown ──────────────────────────────────────────────────
+      terminationGracePeriodSeconds: 30
+
+      containers:
+        - name: watchmen
+          # Update this image tag after the GitHub Action pushes a new build.
+          # Use a pinned SHA in production instead of :main.
+          image: ghcr.io/YOUR_GITHUB_ORG/watchmen:main
+          imagePullPolicy: Always
+
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+
+          # ── Environment — pulled entirely from the Secret ────────────────
+          envFrom:
+            - secretRef:
+                name: watchmen-env
+
+          # ── Health checks ─────────────────────────────────────────────────
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 3
+
+          # ── Resources ────────────────────────────────────────────────────
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+          # ── Container security ────────────────────────────────────────────
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+
+          # Next.js standalone writes to /tmp at runtime (e.g. ISR cache pages)
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+
+      volumes:
+        - name: tmp
+          emptyDir: {}
+
+      # If the image is in a private GHCR package, add an imagePullSecret:
+      # imagePullSecrets:
+      #   - name: ghcr-pull-secret

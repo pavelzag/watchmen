@@ -1,0 +1,31 @@
+# Git
+.git
+.gitignore
+
+# CI / tooling
+.github
+.claude
+.vercel
+
+# Local build artifacts
+.next
+node_modules
+
+# Local environment — never bake secrets into the image
+.env
+.env.*
+!.env.local.example
+
+# Terraform state / secrets
+scripts/terraform/*.tfvars
+scripts/terraform/*.tfstate
+scripts/terraform/.terraform
+
+# Docs and misc
+docs
+README.md
+*.md
+
+# OS artifacts
+.DS_Store
+Thumbs.db
