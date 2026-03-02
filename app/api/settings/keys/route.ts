@@ -4,13 +4,9 @@ import { sql } from "@/lib/db";
 import { encrypt } from "@/lib/encryption";
 import { listUserKeys, ensureApiKeysTable, callAI, type AIProvider } from "@/lib/ai/client";
 
-const DEMO_MODE = process.env.DEMO_MODE === "true";
-
 export async function GET() {
   const session = await auth();
   if (!session?.user?.email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  if (DEMO_MODE) return NextResponse.json({ keys: [], demoMode: true, demoProvider: process.env.DEMO_AI_PROVIDER ?? "google" });
 
   try {
     const keys = await listUserKeys(session.user.email);
