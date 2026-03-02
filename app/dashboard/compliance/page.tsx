@@ -582,16 +582,18 @@ function CategorySection({
   category,
   standard,
   filter,
+  forceExpand,
   onSuppressed,
   onRevoked,
 }: {
   category: ComplianceCategory;
   standard: Standard;
   filter: StatusFilter;
+  forceExpand: boolean;
   onSuppressed: (id: string, justification: string) => void;
   onRevoked: (id: string) => void;
 }) {
-  const visibleControls = filter === "all"
+  const visibleControls = (forceExpand || filter === "all")
     ? category.controls
     : category.controls.filter((c) => c.status === filter);
 
@@ -599,6 +601,7 @@ function CategorySection({
   const passing = category.controls.filter((c) => c.status === "pass" || c.status === "suppressed").length;
   const score = total === 0 ? 100 : Math.round((passing / total) * 100);
   const [expanded, setExpanded] = useState(true);
+  const isExpanded = forceExpand || expanded;
 
   if (visibleControls.length === 0) return null;
 
@@ -631,11 +634,11 @@ function CategorySection({
             <span className="text-xs text-slate-400 font-mono w-8 text-right">{score}%</span>
           </div>
           <span className="text-xs text-slate-500">{passing}/{total}</span>
-          {expanded ? <ChevronUp className="w-3.5 h-3.5 text-slate-500" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-500" />}
+          {isExpanded ? <ChevronUp className="w-3.5 h-3.5 text-slate-500" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-500" />}
         </div>
       </button>
 
-      {expanded && (
+      {isExpanded && (
         <div className="space-y-2 pl-2">
           {visibleControls.map((control) => (
             <ControlCard
@@ -668,6 +671,7 @@ export default function CompliancePage() {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<StatusFilter>("all");
   const [history, setHistory] = useState<HistoryPoint[]>([]);
+  const [isPrinting, setIsPrinting] = useState(false);
 
   async function load(std: Standard = standard) {
     setLoading(true);
@@ -725,6 +729,17 @@ export default function CompliancePage() {
     load(standard);
   }, [standard]);
 
+  const handlePrint = useCallback(() => {
+    setIsPrinting(true);
+    const onAfterPrint = () => {
+      setIsPrinting(false);
+      window.removeEventListener("afterprint", onAfterPrint);
+    };
+    window.addEventListener("afterprint", onAfterPrint);
+    // Small delay to let React flush the expanded/filter state before the browser captures
+    setTimeout(() => window.print(), 50);
+  }, []);
+
   const allControls = report?.categories.flatMap((c) => c.controls) ?? [];
   const filterCounts: Record<StatusFilter, number> = {
     all: allControls.length,
@@ -765,7 +780,7 @@ export default function CompliancePage() {
                 Export CSV
               </button>
               <button
-                onClick={() => window.print()}
+                onClick={handlePrint}
                 className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors px-2.5 py-1.5 rounded-lg hover:bg-slate-800"
               >
                 <Printer className="w-3.5 h-3.5" />
@@ -920,6 +935,7 @@ export default function CompliancePage() {
               category={cat}
               standard={standard}
               filter={filter}
+              forceExpand={isPrinting}
               onSuppressed={handleSuppressed}
               onRevoked={handleRevoked}
             />
