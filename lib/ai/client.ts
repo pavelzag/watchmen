@@ -92,17 +92,11 @@ export async function callAI(provider: AIProvider, apiKey: string, prompt: strin
 }
 
 /**
- * Resolves the AI to use for a request:
- * 1. User's active key (if configured)
- * 2. Server's GEMINI_API_KEY env var (fallback)
- * Throws if neither is available.
+ * Resolves the AI key configured by this user in Settings → AI Keys.
+ * Throws "NO_AI_KEY" if the user has not added a key yet.
  */
 export async function resolveAI(userEmail: string): Promise<{ provider: AIProvider; key: string }> {
   const userKey = await getActiveKey(userEmail);
   if (userKey) return userKey;
-
-  const serverKey = process.env.GEMINI_API_KEY;
-  if (serverKey) return { provider: "google", key: serverKey };
-
   throw new Error("NO_AI_KEY");
 }

@@ -1,11 +1,6 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import type { GcpSnapshot } from "@/lib/gcp/types";
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-
-function getModel() {
-  return genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-}
+import type { AIProvider } from "@/lib/ai/client";
+import { callAI } from "@/lib/ai/client";
 
 export interface ResourceItem {
   name: string;
@@ -45,10 +40,12 @@ export interface QueryIntent {
 /**
  * Pass 1 — Extract structured intent from a natural language query.
  */
-export async function extractIntent(query: string): Promise<QueryIntent> {
-  const model = getModel();
-  const result = await model.generateContent(
-    `You are a GCP IAM query parser. Extract the intent from the following natural language query and return ONLY valid JSON (no markdown, no explanation).
+export async function extractIntent(
+  query: string,
+  provider: AIProvider,
+  apiKey: string
+): Promise<QueryIntent> {
+  const prompt = `You are a GCP IAM query parser. Extract the intent from the following natural language query and return ONLY valid JSON (no markdown, no explanation).
 
 Query: "${query}"
 
@@ -83,10 +80,9 @@ resourceType guide:
 - bigquery: BigQuery datasets
 - pubsub: Pub/Sub topics
 - secret: Secret Manager secrets
-- firewall: VPC firewall rules`
-  );
+- firewall: VPC firewall rules`;
 
-  const text = result.response.text();
+  const text = await callAI(provider, apiKey, prompt);
   const cleaned = text.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
 
   try {
@@ -102,13 +98,13 @@ resourceType guide:
 export async function generateAnswer(
   query: string,
   intent: QueryIntent,
-  snapshot: GcpSnapshot
+  snapshot: GcpSnapshot,
+  provider: AIProvider,
+  apiKey: string
 ): Promise<string> {
   const context = buildContext(intent, snapshot);
-  const model = getModel();
 
-  const result = await model.generateContent(
-    `You are a GCP IAM security analyst assistant. Answer the user's question using ONLY the provided GCP data below.
+  const prompt = `You are a GCP IAM security analyst assistant. Answer the user's question using ONLY the provided GCP data below.
 
 Be specific and factual. Format your answer clearly:
 - Use **bold** for roles, resource names, and emails
@@ -120,10 +116,9 @@ Be specific and factual. Format your answer clearly:
 GCP Data:
 ${JSON.stringify(context, null, 2)}
 
-User question: "${query}"`
-  );
+User question: "${query}"`;
 
-  return result.response.text();
+  return callAI(provider, apiKey, prompt);
 }
 
 /**
@@ -179,7 +174,6 @@ function buildContext(intent: QueryIntent, snapshot: GcpSnapshot): unknown {
   }
 
   if (queryType === "security_findings") {
-    // Build a security-focused context
     const publicBuckets = snapshot.storageBuckets.filter((b) =>
       b.iamPolicy.bindings.some((bind) =>
         bind.members.some((m) => m === "allUsers" || m === "allAuthenticatedUsers")
