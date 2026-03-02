@@ -10,7 +10,7 @@ export async function GET() {
   const session = await auth();
   if (!session?.user?.email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  if (DEMO_MODE) return NextResponse.json({ keys: [] });
+  if (DEMO_MODE) return NextResponse.json({ keys: [], demoMode: true, demoProvider: process.env.DEMO_AI_PROVIDER ?? "google" });
 
   try {
     const keys = await listUserKeys(session.user.email);
@@ -24,10 +24,6 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session?.user?.email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  if (DEMO_MODE) {
-    return NextResponse.json({ error: "AI keys cannot be saved in demo mode." }, { status: 403 });
-  }
 
   const { provider, apiKey } = await req.json() as { provider: AIProvider; apiKey: string };
 

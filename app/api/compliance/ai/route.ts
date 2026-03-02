@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { auth } from "@/lib/auth";
 import { resolveAI, callAI } from "@/lib/ai/client";
+
+const DEMO_MODE = process.env.DEMO_MODE === "true";
+const DEMO_AI_CAP = Number(process.env.DEMO_AI_CAP ?? "10");
 
 interface ComplianceAiRequest {
   controlId: string;
@@ -21,6 +25,19 @@ export async function POST(req: NextRequest) {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+  }
+
+  // Demo mode: enforce per-session query cap via HttpOnly cookie (shared with /api/query)
+  let demoCookieCount = 0;
+  if (DEMO_MODE) {
+    const cookieStore = await cookies();
+    demoCookieCount = parseInt(cookieStore.get("demo-ai-count")?.value ?? "0", 10);
+    if (demoCookieCount >= DEMO_AI_CAP) {
+      return NextResponse.json(
+        { error: `Demo AI limit reached (${DEMO_AI_CAP} queries per session).` },
+        { status: 429 }
+      );
+    }
   }
 
   let provider: string;
@@ -70,7 +87,19 @@ Keep the entire response concise and actionable. Do not include an introduction 
 
   try {
     const recommendation = await callAI(provider as Parameters<typeof callAI>[0], apiKey, prompt);
-    return NextResponse.json({ recommendation });
+    const response = NextResponse.json({ recommendation });
+
+    // Increment demo cap cookie after a successful call
+    if (DEMO_MODE) {
+      response.cookies.set("demo-ai-count", String(demoCookieCount + 1), {
+        httpOnly: true,
+        maxAge: 60 * 60 * 24,
+        sameSite: "lax",
+        path: "/",
+      });
+    }
+
+    return response;
   } catch (err) {
     console.error("[api/compliance/ai] error:", err);
     return NextResponse.json({ error: "Failed to generate recommendation." }, { status: 500 });

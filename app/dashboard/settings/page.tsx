@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Eye, EyeOff, Trash2, Check, Loader2, AlertCircle, CheckCircle2, Star, Plus, X } from "lucide-react";
+import { ArrowLeft, Eye, EyeOff, Trash2, Check, Loader2, AlertCircle, CheckCircle2, Star, Plus, X, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AIProvider, AIKeyRecord } from "@/lib/ai/client";
 
@@ -70,6 +70,8 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [inputs, setInputs] = useState<Record<AIProvider, string>>({ google: "", openai: "", anthropic: "" });
   const [showKey, setShowKey] = useState<Record<AIProvider, boolean>>({ google: false, openai: false, anthropic: false });
+  const [demoMode, setDemoMode] = useState(false);
+  const [demoProvider, setDemoProvider] = useState("google");
   const [saving, setSaving] = useState<Record<AIProvider, boolean>>({ google: false, openai: false, anthropic: false });
   const [deleting, setDeleting] = useState<Record<AIProvider, boolean>>({ google: false, openai: false, anthropic: false });
   const [activating, setActivating] = useState<AIProvider | null>(null);
@@ -78,7 +80,10 @@ export default function SettingsPage() {
   useEffect(() => {
     fetch("/api/settings/keys")
       .then((r) => r.json())
-      .then((d) => setKeys(d.keys ?? []))
+      .then((d) => {
+        setKeys(d.keys ?? []);
+        if (d.demoMode) { setDemoMode(true); setDemoProvider(d.demoProvider ?? "google"); }
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
@@ -160,8 +165,23 @@ export default function SettingsPage() {
         <h1 className="text-lg font-semibold text-white">Settings</h1>
       </div>
 
+      {/* Demo AI notice */}
+      {!loading && demoMode && (
+        <div className="flex items-start gap-3 p-4 rounded-xl border border-sky-500/30 bg-sky-500/8">
+          <Zap className="w-4 h-4 text-sky-400 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-medium text-sky-300">Demo AI pre-configured</p>
+            <p className="text-xs text-sky-400/80 mt-0.5">
+              This demo uses a shared {PROVIDERS.find((p) => p.id === demoProvider)?.name ?? demoProvider} key.
+              AI queries and compliance recommendations are available but capped per session.
+              In a real deployment, each user adds their own key below.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* No-key notice */}
-      {!loading && !hasAnyKey && (
+      {!loading && !hasAnyKey && !demoMode && (
         <div className="flex items-start gap-3 p-4 rounded-xl border border-amber-500/30 bg-amber-500/8">
           <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
           <div>

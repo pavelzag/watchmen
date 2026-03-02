@@ -92,10 +92,18 @@ export async function callAI(provider: AIProvider, apiKey: string, prompt: strin
 }
 
 /**
- * Resolves the AI key configured by this user in Settings → AI Keys.
- * Throws "NO_AI_KEY" if the user has not added a key yet.
+ * Resolves the AI key to use for a request.
+ * In demo mode, returns the pre-configured DEMO_AI_KEY env var.
+ * Otherwise, returns the active key the user added in Settings → AI Keys.
+ * Throws "NO_AI_KEY" if no key is available.
  */
 export async function resolveAI(userEmail: string): Promise<{ provider: AIProvider; key: string }> {
+  if (process.env.DEMO_MODE === "true") {
+    const demoKey = process.env.DEMO_AI_KEY?.trim();
+    if (!demoKey) throw new Error("NO_AI_KEY");
+    const demoProvider = (process.env.DEMO_AI_PROVIDER ?? "google") as AIProvider;
+    return { provider: demoProvider, key: demoKey };
+  }
   const userKey = await getActiveKey(userEmail);
   if (userKey) return userKey;
   throw new Error("NO_AI_KEY");
