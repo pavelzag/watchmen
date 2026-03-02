@@ -65,18 +65,17 @@ export default function DashboardClient() {
     <div className="space-y-8">
       {/* No AI key notice */}
       {hasAiKey === false && (
-        <div className="flex items-start gap-3 p-4 rounded-xl border border-amber-500/30 bg-amber-500/8">
-          <KeyRound className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+        <div className="flex items-start gap-3 p-4 rounded-xl border border-zinc-800 bg-zinc-900">
+          <KeyRound className="w-4 h-4 text-zinc-500 shrink-0 mt-0.5" />
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-amber-300">No AI key configured</p>
-            <p className="text-xs text-amber-400/80 mt-0.5">
-              AI-powered features (natural language queries, security recommendations) use the system default key.
-              Add your own key for dedicated quota and your preferred provider.
+            <p className="text-sm font-medium text-zinc-300">No AI key configured</p>
+            <p className="text-xs text-zinc-500 mt-0.5">
+              Add your own OpenAI, Anthropic, or Google key in Settings to enable natural language queries and security recommendations.
             </p>
           </div>
           <Link
             href="/dashboard/settings"
-            className="flex items-center gap-1.5 shrink-0 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-amber-500/15 border border-amber-500/30 text-amber-300 hover:bg-amber-500/25 transition-colors"
+            className="flex items-center gap-1.5 shrink-0 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-zinc-800 border border-zinc-700 text-zinc-300 hover:bg-zinc-700 hover:text-white transition-colors"
           >
             <Settings className="w-3.5 h-3.5" />
             Settings
@@ -91,11 +90,11 @@ export default function DashboardClient() {
         isSyncing={scanning}
       />
 
-      <div className="border-t border-slate-800" />
+      <div className="border-t border-zinc-800/60" />
 
       {/* Query section */}
       <div className="space-y-2">
-        <h2 className="text-xs text-slate-500 font-medium uppercase tracking-wider">
+        <h2 className="text-xs text-zinc-600 font-medium uppercase tracking-widest">
           Natural Language Query
         </h2>
         <QueryBox onResult={handleResult} />
@@ -105,12 +104,12 @@ export default function DashboardClient() {
       {results.length > 0 && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <h2 className="text-xs text-slate-500 font-medium uppercase tracking-wider">
+            <h2 className="text-xs text-zinc-600 font-medium uppercase tracking-widest">
               Results ({results.length})
             </h2>
             <button
               onClick={() => setResults([])}
-              className="flex items-center gap-1 text-xs text-slate-500 hover:text-red-400 transition-colors"
+              className="flex items-center gap-1 text-xs text-zinc-600 hover:text-red-400 transition-colors"
             >
               <Trash2 className="w-3 h-3" />
               Clear
@@ -125,8 +124,8 @@ export default function DashboardClient() {
       )}
 
       {results.length === 0 && (
-        <div className="text-center py-12 text-slate-600">
-          <p className="text-sm">Ask a question above to see results here.</p>
+        <div className="text-center py-12 text-zinc-700">
+          <p className="text-sm font-mono">Ask a question above to see results here.</p>
         </div>
       )}
     </div>

@@ -4,35 +4,51 @@
 
 @layer base {
   :root {
-    --background: 222 47% 5%;
-    --foreground: 210 40% 96%;
+    --background: 0 0% 4%;
+    --foreground: 0 0% 96%;
   }
 
   body {
-    @apply bg-slate-950 text-slate-100 antialiased;
+    @apply bg-zinc-950 text-zinc-100 antialiased;
   }
 
   /* Custom scrollbar */
   ::-webkit-scrollbar { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-track { @apply bg-slate-900; }
-  ::-webkit-scrollbar-thumb { @apply bg-slate-600 rounded-full; }
-  ::-webkit-scrollbar-thumb:hover { @apply bg-slate-500; }
+  ::-webkit-scrollbar-track { @apply bg-zinc-900; }
+  ::-webkit-scrollbar-thumb { @apply bg-zinc-700 rounded-full; }
+  ::-webkit-scrollbar-thumb:hover { @apply bg-zinc-600; }
 }
 
 @layer utilities {
   .prose-answer {
-    @apply leading-relaxed text-slate-200;
+    @apply leading-relaxed text-zinc-200;
   }
   .prose-answer strong {
-    @apply text-sky-400 font-semibold;
+    @apply text-zinc-100 font-semibold;
   }
   .prose-answer ul {
     @apply list-disc list-inside space-y-1 my-2;
   }
   .prose-answer li {
-    @apply text-slate-300;
+    @apply text-zinc-300;
   }
+
+  /* Translucent blur card — used for QueryBox */
   .glass {
-    @apply bg-slate-900/60 backdrop-blur-sm border border-slate-700/50;
+    @apply bg-zinc-900/80 backdrop-blur-sm border border-zinc-800;
+  }
+
+  /* Solid chrome card with top-shine highlight */
+  .chrome-card {
+    @apply bg-zinc-900 border border-zinc-800 relative overflow-hidden;
+  }
+  .chrome-card::before {
+    content: '';
+    position: absolute;
+    inset-inline: 0;
+    top: 0;
+    height: 1px;
+    background: linear-gradient(to right, transparent, rgba(255,255,255,0.08), transparent);
+    pointer-events: none;
   }
 }

@@ -84,33 +84,33 @@ export default function SnapshotStats({ scanVersion, onSyncRequest, isSyncing }:
   const row1Tiles = stats
     ? [
         {
-          icon: Users, label: "Human Users", value: stats.users.length,
-          sub: `across ${stats.projects.length} project(s)`,
-          color: "text-violet-400", bg: "bg-violet-500/10 border-violet-500/20",
+          icon: Users, label: "Users", value: stats.users.length,
+          sub: `${stats.projects.length} project(s)`,
+          color: "text-violet-400",
           href: "/dashboard/users",
         },
         {
-          icon: KeySquare, label: "Service Accounts", value: stats.serviceAccountEmails.length,
-          sub: `across ${stats.projects.length} project(s)`,
-          color: "text-amber-400", bg: "bg-amber-500/10 border-amber-500/20",
+          icon: KeySquare, label: "Svc Accounts", value: stats.serviceAccountEmails.length,
+          sub: `${stats.projects.length} project(s)`,
+          color: "text-amber-400",
           href: "/dashboard/service-accounts",
         },
         {
-          icon: HardDrive, label: "Storage Buckets", value: stats.storageBuckets.length,
-          sub: stats.storageBuckets.slice(0, 2).map((b) => b.name).join(", ") + (stats.storageBuckets.length > 2 ? "…" : ""),
-          color: "text-sky-400", bg: "bg-sky-500/10 border-sky-500/20",
+          icon: HardDrive, label: "Buckets", value: stats.storageBuckets.length,
+          sub: `${stats.storageBuckets.length} total`,
+          color: "text-sky-400",
           href: "/dashboard/buckets",
         },
         {
           icon: Server, label: "GKE Clusters", value: stats.gkeClusters.length,
-          sub: stats.gkeClusters.slice(0, 2).map((c) => c.name).join(", ") + (stats.gkeClusters.length > 2 ? "…" : ""),
-          color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20",
+          sub: `${stats.gkeClusters.length} total`,
+          color: "text-emerald-400",
           href: "/dashboard/clusters",
         },
         {
           icon: MonitorDot, label: "VMs", value: stats.vms.length,
           sub: `${stats.vms.filter((v) => v.status === "RUNNING").length} running`,
-          color: "text-orange-400", bg: "bg-orange-500/10 border-orange-500/20",
+          color: "text-orange-400",
           href: "/dashboard/vms",
         },
       ]
@@ -121,37 +121,37 @@ export default function SnapshotStats({ scanVersion, onSyncRequest, isSyncing }:
         {
           icon: Play, label: "Cloud Run", value: stats.cloudRunServices.length,
           sub: `${stats.cloudRunServices.filter((s) => s.status === "ACTIVE").length} active`,
-          color: "text-blue-400", bg: "bg-blue-500/10 border-blue-500/20",
+          color: "text-blue-400",
           href: "/dashboard/cloud-run",
         },
         {
           icon: Database, label: "Cloud SQL", value: stats.cloudSqlInstances.length,
-          sub: `${stats.cloudSqlInstances.filter((i) => i.publicIp).length} with public IP`,
-          color: "text-teal-400", bg: "bg-teal-500/10 border-teal-500/20",
+          sub: `${stats.cloudSqlInstances.filter((i) => i.publicIp).length} public IP`,
+          color: "text-teal-400",
           href: "/dashboard/cloud-sql",
         },
         {
           icon: BarChart3, label: "BigQuery", value: stats.bigqueryDatasets.length,
           sub: "datasets",
-          color: "text-indigo-400", bg: "bg-indigo-500/10 border-indigo-500/20",
+          color: "text-indigo-400",
           href: "/dashboard/bigquery",
         },
         {
           icon: Radio, label: "Pub/Sub", value: stats.pubsubTopics.length,
           sub: "topics",
-          color: "text-pink-400", bg: "bg-pink-500/10 border-pink-500/20",
+          color: "text-pink-400",
           href: "/dashboard/pubsub",
         },
         {
           icon: Lock, label: "Secrets", value: stats.secrets.length,
-          sub: "managed secrets",
-          color: "text-rose-400", bg: "bg-rose-500/10 border-rose-500/20",
+          sub: "managed",
+          color: "text-rose-400",
           href: "/dashboard/secrets",
         },
         {
-          icon: Flame, label: "Firewall Rules", value: stats.firewallRules.length,
+          icon: Flame, label: "Firewall", value: stats.firewallRules.length,
           sub: `${stats.firewallRules.filter((r) => !r.disabled).length} active`,
-          color: "text-yellow-400", bg: "bg-yellow-500/10 border-yellow-500/20",
+          color: "text-yellow-400",
           href: "/dashboard/firewall",
         },
       ]
@@ -160,14 +160,14 @@ export default function SnapshotStats({ scanVersion, onSyncRequest, isSyncing }:
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">
+        <p className="text-xs text-zinc-600 font-medium uppercase tracking-widest">
           GCP Snapshot
         </p>
         {onSyncRequest && (
           <button
             onClick={onSyncRequest}
             disabled={isSyncing || loading}
-            className="flex items-center gap-1 text-xs text-slate-400 hover:text-sky-400 transition-colors"
+            className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-200 transition-colors"
           >
             <RefreshCw className={cn("w-3 h-3", isSyncing && "animate-spin")} />
             {isSyncing ? "Syncing…" : "Sync GCP"}
@@ -187,9 +187,9 @@ export default function SnapshotStats({ scanVersion, onSyncRequest, isSyncing }:
         <div className="space-y-3">
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
             {[...Array(5)].map((_, i) => (
-              <div key={i} className="glass rounded-xl p-3 animate-pulse space-y-2">
-                <div className="h-3 w-16 bg-slate-700 rounded" />
-                <div className="h-6 w-8 bg-slate-700 rounded" />
+              <div key={i} className="chrome-card rounded-xl p-3 animate-pulse space-y-2">
+                <div className="h-3 w-16 bg-zinc-800 rounded" />
+                <div className="h-6 w-8 bg-zinc-800 rounded" />
               </div>
             ))}
           </div>
@@ -197,7 +197,7 @@ export default function SnapshotStats({ scanVersion, onSyncRequest, isSyncing }:
       )}
 
       {!loading && !isSyncing && !stats && !error && (
-        <p className="text-xs text-slate-500 px-3 py-2 rounded-lg bg-slate-800/50 border border-slate-700">
+        <p className="text-xs text-zinc-500 px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800">
           Scan in progress — GCP data will appear shortly.
         </p>
       )}
@@ -242,7 +242,7 @@ export default function SnapshotStats({ scanVersion, onSyncRequest, isSyncing }:
             ))}
           </div>
 
-          <p className="text-xs text-slate-600">
+          <p className="text-xs text-zinc-700 font-mono">
             Updated {age} · {new Date(stats.fetchedAt).toLocaleString()}
           </p>
         </>
@@ -252,34 +252,27 @@ export default function SnapshotStats({ scanVersion, onSyncRequest, isSyncing }:
 }
 
 function StatTile({
-  icon: Icon, label, value, sub, color, bg, href,
+  icon: Icon, label, value, sub, color, href,
 }: {
   icon: React.ElementType;
   label: string;
   value: number;
   sub: string;
   color: string;
-  bg: string;
   href: string;
 }) {
   return (
     <Link
       href={href}
-      className={cn(
-        "group rounded-xl p-3 border transition-all duration-150",
-        "hover:scale-[1.02] hover:shadow-lg cursor-pointer",
-        bg
-      )}
+      className="chrome-card group rounded-xl p-3 transition-all duration-150 hover:border-zinc-700 hover:bg-zinc-800 cursor-pointer"
     >
-      <div className="flex items-center justify-between mb-1.5">
-        <div className="flex items-center gap-1.5">
-          <Icon className={cn("w-3.5 h-3.5", color)} />
-          <span className="text-xs text-slate-400 truncate">{label}</span>
-        </div>
-        <ChevronRight className={cn("w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity shrink-0", color)} />
+      <div className="flex items-center justify-between mb-2">
+        <Icon className={cn("w-3.5 h-3.5", color)} />
+        <ChevronRight className="w-3 h-3 text-zinc-700 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
       </div>
-      <p className={cn("text-2xl font-bold tabular-nums", color)}>{value}</p>
-      <p className="text-xs text-slate-500 mt-0.5 truncate">{sub}</p>
+      <p className="text-2xl font-bold font-mono text-white tabular-nums leading-none">{value}</p>
+      <p className="text-xs text-zinc-500 mt-1.5 truncate uppercase tracking-wider">{label}</p>
+      {sub && <p className="text-xs text-zinc-700 mt-0.5 truncate font-mono">{sub}</p>}
     </Link>
   );
 }
