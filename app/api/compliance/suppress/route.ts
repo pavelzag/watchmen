@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { sql } from "@/lib/db";
+import { useMockData } from "@/lib/gcp/client";
 
 export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session?.user?.email) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  if (useMockData()) return NextResponse.json({ ok: true });
 
   const body = await req.json();
   const { controlId, justification } = body as { controlId: string; justification: string };
@@ -34,6 +37,8 @@ export async function DELETE(req: NextRequest) {
   if (!session?.user?.email) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  if (useMockData()) return NextResponse.json({ ok: true });
 
   const body = await req.json();
   const { controlId } = body as { controlId: string };

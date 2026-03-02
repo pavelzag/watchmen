@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { sql } from "@/lib/db";
+import { useMockData } from "@/lib/gcp/client";
 
 export async function GET(req: NextRequest) {
   const session = await auth();
   if (!session?.user?.email) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  if (useMockData()) return NextResponse.json([]);
 
   const standard = req.nextUrl.searchParams.get("standard") ?? "soc2";
 

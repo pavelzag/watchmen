@@ -4,9 +4,13 @@ import { sql } from "@/lib/db";
 import { encrypt } from "@/lib/encryption";
 import { listUserKeys, ensureApiKeysTable, callAI, type AIProvider } from "@/lib/ai/client";
 
+const DEMO_MODE = process.env.DEMO_MODE === "true";
+
 export async function GET() {
   const session = await auth();
   if (!session?.user?.email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  if (DEMO_MODE) return NextResponse.json({ keys: [] });
 
   try {
     const keys = await listUserKeys(session.user.email);
@@ -20,6 +24,10 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session?.user?.email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  if (DEMO_MODE) {
+    return NextResponse.json({ error: "AI keys cannot be saved in demo mode." }, { status: 403 });
+  }
 
   const { provider, apiKey } = await req.json() as { provider: AIProvider; apiKey: string };
 
