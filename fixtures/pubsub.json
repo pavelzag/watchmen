@@ -1,21 +1,31 @@
 [
   {
-    "name": "projects/infra_project/topics/deploy-events",
-    "projectId": "infra_project",
+    "name": "projects/infra_core/topics/deploy-events",
+    "projectId": "infra_core",
     "iamPolicy": {
       "bindings": [
-        { "role": "roles/pubsub.publisher", "members": ["serviceAccount:api-sa@infra_project.iam.gserviceaccount.com"] },
-        { "role": "roles/pubsub.subscriber", "members": ["user:devops@company.com"] }
+        { "role": "roles/pubsub.publisher", "members": ["serviceAccount:ci-runner-sa@devops_platform.iam.gserviceaccount.com", "serviceAccount:terraform-sa@infra_core.iam.gserviceaccount.com"] },
+        { "role": "roles/pubsub.subscriber", "members": ["user:frank@acme.com", "user:liam@acme.com"] }
       ]
     }
   },
   {
-    "name": "projects/infra_project/topics/alerts",
-    "projectId": "infra_project",
+    "name": "projects/infra_core/topics/alerts",
+    "projectId": "infra_core",
     "iamPolicy": {
       "bindings": [
-        { "role": "roles/pubsub.publisher", "members": ["serviceAccount:auth-sa@infra_project.iam.gserviceaccount.com"] },
+        { "role": "roles/pubsub.publisher", "members": ["serviceAccount:monitoring-sa@infra_core.iam.gserviceaccount.com"] },
         { "role": "roles/pubsub.subscriber", "members": ["allUsers"] }
+      ]
+    }
+  },
+  {
+    "name": "projects/infra_core/topics/system-health",
+    "projectId": "infra_core",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/pubsub.publisher", "members": ["serviceAccount:terraform-sa@infra_core.iam.gserviceaccount.com"] },
+        { "role": "roles/pubsub.subscriber", "members": ["user:zagalsky@gmail.com", "user:frank@acme.com", "user:mike@acme.com"] }
       ]
     }
   },
@@ -24,8 +34,8 @@
     "projectId": "ml_platform",
     "iamPolicy": {
       "bindings": [
-        { "role": "roles/pubsub.publisher", "members": ["serviceAccount:pipeline-sa@ml_platform.iam.gserviceaccount.com"] },
-        { "role": "roles/pubsub.subscriber", "members": ["serviceAccount:ml-runner@ml_platform.iam.gserviceaccount.com"] }
+        { "role": "roles/pubsub.publisher", "members": ["serviceAccount:training-sa@ml_platform.iam.gserviceaccount.com", "serviceAccount:feature-store-sa@ml_platform.iam.gserviceaccount.com"] },
+        { "role": "roles/pubsub.subscriber", "members": ["serviceAccount:inference-sa@ml_platform.iam.gserviceaccount.com"] }
       ]
     }
   },
@@ -34,7 +44,18 @@
     "projectId": "ml_platform",
     "iamPolicy": {
       "bindings": [
-        { "role": "roles/pubsub.editor", "members": ["serviceAccount:ml-runner@ml_platform.iam.gserviceaccount.com"] }
+        { "role": "roles/pubsub.editor", "members": ["serviceAccount:inference-sa@ml_platform.iam.gserviceaccount.com"] },
+        { "role": "roles/pubsub.subscriber", "members": ["serviceAccount:feature-store-sa@ml_platform.iam.gserviceaccount.com"] }
+      ]
+    }
+  },
+  {
+    "name": "projects/ml_platform/topics/feature-updates",
+    "projectId": "ml_platform",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/pubsub.publisher", "members": ["serviceAccount:feature-store-sa@ml_platform.iam.gserviceaccount.com"] },
+        { "role": "roles/pubsub.subscriber", "members": ["serviceAccount:training-sa@ml_platform.iam.gserviceaccount.com", "serviceAccount:inference-sa@ml_platform.iam.gserviceaccount.com"] }
       ]
     }
   },
@@ -44,7 +65,7 @@
     "iamPolicy": {
       "bindings": [
         { "role": "roles/pubsub.publisher", "members": ["serviceAccount:reporting-sa@accounting_project.iam.gserviceaccount.com"] },
-        { "role": "roles/pubsub.subscriber", "members": ["user:analyst@company.com", "user:zagalsky@gmail.com"] }
+        { "role": "roles/pubsub.subscriber", "members": ["user:carol@acme.com", "user:zagalsky@gmail.com", "user:nancy@acme.com"] }
       ]
     }
   },
@@ -53,17 +74,68 @@
     "projectId": "accounting_project",
     "iamPolicy": {
       "bindings": [
-        { "role": "roles/pubsub.viewer", "members": ["user:zagalsky@gmail.com"] }
+        { "role": "roles/pubsub.publisher", "members": ["serviceAccount:audit-sa@accounting_project.iam.gserviceaccount.com"] },
+        { "role": "roles/pubsub.subscriber", "members": ["user:zagalsky@gmail.com", "user:dave@acme.com", "user:kate@acme.com"] }
       ]
     }
   },
   {
-    "name": "projects/infra_project/topics/system-health",
-    "projectId": "infra_project",
+    "name": "projects/data_warehouse/topics/ingestion-events",
+    "projectId": "data_warehouse",
     "iamPolicy": {
       "bindings": [
-        { "role": "roles/pubsub.publisher", "members": ["serviceAccount:api-sa@infra_project.iam.gserviceaccount.com"] },
-        { "role": "roles/pubsub.subscriber", "members": ["user:zagalsky@gmail.com", "user:devops@company.com"] }
+        { "role": "roles/pubsub.publisher", "members": ["serviceAccount:etl-sa@data_warehouse.iam.gserviceaccount.com"] },
+        { "role": "roles/pubsub.subscriber", "members": ["serviceAccount:dbt-sa@data_warehouse.iam.gserviceaccount.com", "serviceAccount:lakehouse-sa@data_warehouse.iam.gserviceaccount.com"] }
+      ]
+    }
+  },
+  {
+    "name": "projects/frontend_prod/topics/user-events",
+    "projectId": "frontend_prod",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/pubsub.publisher", "members": ["serviceAccount:web-sa@frontend_prod.iam.gserviceaccount.com"] },
+        { "role": "roles/pubsub.subscriber", "members": ["serviceAccount:reporting-sa@accounting_project.iam.gserviceaccount.com", "serviceAccount:etl-sa@data_warehouse.iam.gserviceaccount.com"] }
+      ]
+    }
+  },
+  {
+    "name": "projects/security_ops/topics/security-findings",
+    "projectId": "security_ops",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/pubsub.publisher", "members": ["serviceAccount:scanner-sa@security_ops.iam.gserviceaccount.com"] },
+        { "role": "roles/pubsub.subscriber", "members": ["user:dave@acme.com", "user:kate@acme.com", "user:nancy@acme.com"] }
+      ]
+    }
+  },
+  {
+    "name": "projects/devops_platform/topics/build-events",
+    "projectId": "devops_platform",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/pubsub.publisher", "members": ["serviceAccount:ci-runner-sa@devops_platform.iam.gserviceaccount.com"] },
+        { "role": "roles/pubsub.subscriber", "members": ["user:frank@acme.com", "user:liam@acme.com", "user:alice@acme.com", "user:grace@acme.com"] }
+      ]
+    }
+  },
+  {
+    "name": "projects/devops_platform/topics/deployment-notifications",
+    "projectId": "devops_platform",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/pubsub.publisher", "members": ["serviceAccount:ci-runner-sa@devops_platform.iam.gserviceaccount.com"] },
+        { "role": "roles/pubsub.subscriber", "members": ["allAuthenticatedUsers"] }
+      ]
+    }
+  },
+  {
+    "name": "projects/infra_core/topics/cost-alerts",
+    "projectId": "infra_core",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/pubsub.publisher", "members": ["serviceAccount:terraform-sa@infra_core.iam.gserviceaccount.com"] },
+        { "role": "roles/pubsub.subscriber", "members": ["user:zagalsky@gmail.com", "user:mike@acme.com", "user:frank@acme.com"] }
       ]
     }
   }

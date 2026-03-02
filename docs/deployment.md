@@ -4,15 +4,16 @@
 
 1. [Prerequisites](#prerequisites)
 2. [Environment Variables](#environment-variables)
-3. [GCP Setup](#gcp-setup)
-4. [Google OAuth Setup](#google-oauth-setup)
-5. [Database Setup](#database-setup)
-6. [Access Control](#access-control)
-7. [Vercel](#vercel)
-8. [GCP Cloud Run](#gcp-cloud-run)
-9. [Kubernetes](#kubernetes)
-10. [GitHub Actions CI/CD](#github-actions-cicd)
-11. [Local development](#local-development)
+3. [Demo Deployment](#demo-deployment)
+4. [GCP Setup](#gcp-setup)
+5. [Google OAuth Setup](#google-oauth-setup)
+6. [Database Setup](#database-setup)
+7. [Access Control](#access-control)
+8. [Vercel](#vercel)
+9. [GCP Cloud Run](#gcp-cloud-run)
+10. [Kubernetes](#kubernetes)
+11. [GitHub Actions CI/CD](#github-actions-cicd)
+12. [Local development](#local-development)
 
 ---
 
@@ -34,8 +35,9 @@
 | Variable | Required | Description |
 |---|---|---|
 | `AUTH_SECRET` | ✅ | Random secret for NextAuth. Generate: `openssl rand -base64 32` |
-| `GOOGLE_CLIENT_ID` | ✅ | Google OAuth 2.0 client ID |
-| `GOOGLE_CLIENT_SECRET` | ✅ | Google OAuth 2.0 client secret |
+| `DEMO_MODE` | — | `true` enables one-click demo sign-in with fixture data. No GCP or OAuth needed. |
+| `GOOGLE_CLIENT_ID` | ✅*** | Google OAuth 2.0 client ID |
+| `GOOGLE_CLIENT_SECRET` | ✅*** | Google OAuth 2.0 client secret |
 | `ALLOWED_EMAILS` | ✅* | Comma-separated list of allowed email addresses |
 | `ALLOWED_DOMAIN` | ✅* | Domain restriction, e.g. `yourcompany.com` |
 | `USE_MOCK_DATA` | — | `true` uses fixture data, no GCP calls. Default: `false` |
@@ -44,10 +46,38 @@
 | `GCP_ORG_ID` | — | GCP org ID — when set, all projects in the org are enumerated automatically |
 | `POSTGRES_URL` | ✅ | Any PostgreSQL connection string |
 
-\* At least one of `ALLOWED_EMAILS` or `ALLOWED_DOMAIN` is required.
+\* At least one of `ALLOWED_EMAILS` or `ALLOWED_DOMAIN` is required (not needed when `DEMO_MODE=true`).
 \** Required when `USE_MOCK_DATA=false`.
+\*** Not required when `DEMO_MODE=true`.
 
 > **No AI API key is needed in the environment.** Each user adds their own key (Gemini, Claude, or OpenAI) through the in-app Settings page. Keys are encrypted at rest.
+
+---
+
+## Demo Deployment
+
+The demo deployment uses fixture data and auto-signs in visitors — no Google OAuth or GCP credentials are needed.
+
+### Minimum env vars for demo (Vercel)
+
+```
+AUTH_SECRET=<openssl rand -base64 32>
+DEMO_MODE=true
+USE_MOCK_DATA=true
+POSTGRES_URL=<neon or any postgres>
+```
+
+`POSTGRES_URL` is used to store compliance risk acceptances and score history so demo visitors get a full experience. Use a [Neon](https://neon.tech) free-tier database.
+
+### Vercel demo setup
+
+1. Create a **new Vercel project** from the same repo (separate from your production project).
+2. In **Settings → Environment Variables**, add only the four vars above.
+3. Provision a Postgres database via **Storage → Create Database** and connect it (auto-injects `POSTGRES_URL`).
+4. Run the migration once: `psql $POSTGRES_URL < scripts/migrate.sql`
+5. Deploy — visitors land on a login page with an **Enter Demo** button and are immediately signed in as `demo@watchmen.dev`.
+
+> The demo user is shared across all visitors. Risk acceptances and compliance suppressions made by one visitor are visible to others. This is intentional — it shows the feature in action. Reset the DB periodically if needed.
 
 ---
 

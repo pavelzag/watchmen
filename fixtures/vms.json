@@ -24,6 +24,18 @@
     "createdAt": "2024-04-10T08:05:00Z"
   },
   {
+    "name": "web-server-prod-3",
+    "projectId": "frontend_prod",
+    "zone": "us-central1-c",
+    "machineType": "e2-medium",
+    "status": "RUNNING",
+    "internalIp": "10.128.0.4",
+    "externalIp": "34.122.10.53",
+    "serviceAccount": "web-sa@frontend_prod.iam.gserviceaccount.com",
+    "tags": ["http-server", "https-server", "frontend"],
+    "createdAt": "2024-07-20T09:00:00Z"
+  },
+  {
     "name": "bastion-host",
     "projectId": "infra_core",
     "zone": "us-central1-a",
@@ -72,7 +84,19 @@
     "createdAt": "2024-09-15T07:35:00Z"
   },
   {
-    "name": "etl-batch-runner",
+    "name": "ml-feature-server",
+    "projectId": "ml_platform",
+    "zone": "us-east1-b",
+    "machineType": "n2-standard-4",
+    "status": "RUNNING",
+    "internalIp": "10.142.0.5",
+    "externalIp": "35.196.72.40",
+    "serviceAccount": "feature-store-sa@ml_platform.iam.gserviceaccount.com",
+    "tags": ["feature-store", "internal-api"],
+    "createdAt": "2025-01-10T10:00:00Z"
+  },
+  {
+    "name": "etl-batch-runner-1",
     "projectId": "data_warehouse",
     "zone": "us-central1-a",
     "machineType": "e2-standard-4",
@@ -82,6 +106,30 @@
     "serviceAccount": "etl-sa@data_warehouse.iam.gserviceaccount.com",
     "tags": ["batch", "etl"],
     "createdAt": "2024-06-20T10:00:00Z"
+  },
+  {
+    "name": "etl-batch-runner-2",
+    "projectId": "data_warehouse",
+    "zone": "us-central1-b",
+    "machineType": "e2-standard-4",
+    "status": "RUNNING",
+    "internalIp": "10.128.2.6",
+    "externalIp": null,
+    "serviceAccount": "etl-sa@data_warehouse.iam.gserviceaccount.com",
+    "tags": ["batch", "etl"],
+    "createdAt": "2024-10-05T10:00:00Z"
+  },
+  {
+    "name": "accounting-legacy-app",
+    "projectId": "accounting_project",
+    "zone": "us-central1-a",
+    "machineType": "e2-standard-2",
+    "status": "RUNNING",
+    "internalIp": "10.128.0.20",
+    "externalIp": "34.67.88.123",
+    "serviceAccount": "data-pipeline-sa@accounting_project.iam.gserviceaccount.com",
+    "tags": ["legacy", "http-server"],
+    "createdAt": "2023-06-01T08:00:00Z"
   },
   {
     "name": "dev-sandbox",
@@ -94,5 +142,41 @@
     "serviceAccount": null,
     "tags": ["dev", "sandbox"],
     "createdAt": "2025-01-08T15:00:00Z"
+  },
+  {
+    "name": "cicd-runner-1",
+    "projectId": "devops_platform",
+    "zone": "us-central1-a",
+    "machineType": "n2-standard-4",
+    "status": "RUNNING",
+    "internalIp": "10.130.0.2",
+    "externalIp": "34.72.155.88",
+    "serviceAccount": "ci-runner-sa@devops_platform.iam.gserviceaccount.com",
+    "tags": ["cicd", "builder"],
+    "createdAt": "2024-02-10T09:00:00Z"
+  },
+  {
+    "name": "cicd-runner-2",
+    "projectId": "devops_platform",
+    "zone": "us-central1-b",
+    "machineType": "n2-standard-4",
+    "status": "RUNNING",
+    "internalIp": "10.130.0.3",
+    "externalIp": null,
+    "serviceAccount": "ci-runner-sa@devops_platform.iam.gserviceaccount.com",
+    "tags": ["cicd", "builder"],
+    "createdAt": "2024-02-10T09:05:00Z"
+  },
+  {
+    "name": "security-scanner-vm",
+    "projectId": "security_ops",
+    "zone": "us-central1-a",
+    "machineType": "e2-standard-2",
+    "status": "RUNNING",
+    "internalIp": "10.135.0.2",
+    "externalIp": null,
+    "serviceAccount": "scanner-sa@security_ops.iam.gserviceaccount.com",
+    "tags": ["scanner", "security"],
+    "createdAt": "2024-11-01T08:00:00Z"
   }
 ]

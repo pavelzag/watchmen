@@ -1,6 +1,9 @@
 import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
+import Credentials from "next-auth/providers/credentials";
 import type { JWT } from "next-auth/jwt";
+
+const DEMO_MODE = process.env.DEMO_MODE === "true";
 
 // Comma-separated list of allowed emails, e.g. "alice@gmail.com,bob@company.com"
 // OR restrict by domain below. Leave ALLOWED_EMAILS empty to use domain restriction only.
@@ -51,21 +54,37 @@ async function refreshAccessToken(token: JWT): Promise<JWT> {
 }
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
-  providers: [
-    Google({
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-      authorization: {
-        params: {
-          scope: "openid email profile https://www.googleapis.com/auth/cloud-platform",
-          access_type: "offline",
-          prompt: "consent",
-        },
-      },
-    }),
-  ],
+  providers: DEMO_MODE
+    ? [
+        Credentials({
+          credentials: {},
+          authorize() {
+            return {
+              id: "demo-user",
+              name: "Demo User",
+              email: "demo@watchmen.dev",
+              image: null,
+            };
+          },
+        }),
+      ]
+    : [
+        Google({
+          clientId: process.env.GOOGLE_CLIENT_ID!,
+          clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+          authorization: {
+            params: {
+              scope: "openid email profile https://www.googleapis.com/auth/cloud-platform",
+              access_type: "offline",
+              prompt: "consent",
+            },
+          },
+        }),
+      ],
   callbacks: {
-    signIn({ profile }) {
+    signIn({ account, profile }) {
+      // Always allow demo credentials
+      if (account?.provider === "credentials") return true;
       const email = profile?.email ?? "";
       if (!isAllowed(email)) {
         console.warn(`[auth] blocked sign-in attempt from: ${email}`);
@@ -74,7 +93,12 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       return true;
     },
     async jwt({ token, account }) {
-      // Initial sign-in: store tokens from account
+      // Demo credentials: mark as demo, skip OAuth token handling
+      if (account?.provider === "credentials") {
+        return { ...token, isDemoUser: true };
+      }
+
+      // Initial Google sign-in: store tokens from account
       if (account) {
         return {
           ...token,
@@ -83,6 +107,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           expiresAt: account.expires_at,
         };
       }
+
+      // Demo user: no token refresh needed
+      if (token.isDemoUser) return token;
 
       // Token still valid
       if (token.expiresAt && Date.now() / 1000 < token.expiresAt - 60) {
@@ -98,6 +125,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       }
       session.accessToken = token.accessToken;
       session.error = token.error;
+      session.isDemoUser = token.isDemoUser;
       return session;
     },
   },

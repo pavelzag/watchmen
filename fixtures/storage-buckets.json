@@ -21,7 +21,20 @@
     "iamPolicy": {
       "bindings": [
         { "role": "roles/storage.admin", "members": ["user:zagalsky@gmail.com"] },
-        { "role": "roles/storage.objectViewer", "members": ["user:dave@acme.com", "serviceAccount:reporting-sa@accounting_project.iam.gserviceaccount.com"] }
+        { "role": "roles/storage.objectViewer", "members": ["user:dave@acme.com", "user:nancy@acme.com", "serviceAccount:reporting-sa@accounting_project.iam.gserviceaccount.com"] }
+      ]
+    },
+    "versioningEnabled": false
+  },
+  {
+    "name": "accounting_public_reports",
+    "projectId": "accounting_project",
+    "location": "US-CENTRAL1",
+    "storageClass": "STANDARD",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/storage.admin", "members": ["user:zagalsky@gmail.com"] },
+        { "role": "roles/storage.objectViewer", "members": ["allUsers"] }
       ]
     },
     "versioningEnabled": false
@@ -54,13 +67,27 @@
     "versioningEnabled": false
   },
   {
+    "name": "ml_experiment_results",
+    "projectId": "ml_platform",
+    "location": "US-EAST1",
+    "storageClass": "NEARLINE",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/storage.admin", "members": ["user:alice@acme.com"] },
+        { "role": "roles/storage.objectAdmin", "members": ["serviceAccount:training-sa@ml_platform.iam.gserviceaccount.com", "serviceAccount:feature-store-sa@ml_platform.iam.gserviceaccount.com"] },
+        { "role": "roles/storage.objectViewer", "members": ["user:henry@acme.com", "user:iris@acme.com"] }
+      ]
+    },
+    "versioningEnabled": false
+  },
+  {
     "name": "logs_archive",
     "projectId": "infra_core",
     "location": "US",
     "storageClass": "COLDLINE",
     "iamPolicy": {
       "bindings": [
-        { "role": "roles/storage.admin", "members": ["user:zagalsky@gmail.com"] },
+        { "role": "roles/storage.admin", "members": ["user:zagalsky@gmail.com", "user:mike@acme.com"] },
         { "role": "roles/storage.objectViewer", "members": ["user:dave@acme.com", "user:frank@acme.com", "serviceAccount:reporting-sa@accounting_project.iam.gserviceaccount.com"] }
       ]
     },
@@ -73,12 +100,26 @@
     "storageClass": "STANDARD",
     "iamPolicy": {
       "bindings": [
-        { "role": "roles/storage.admin", "members": ["user:zagalsky@gmail.com"] },
+        { "role": "roles/storage.admin", "members": ["user:zagalsky@gmail.com", "user:mike@acme.com"] },
         { "role": "roles/storage.objectAdmin", "members": ["serviceAccount:terraform-sa@infra_core.iam.gserviceaccount.com"] },
-        { "role": "roles/storage.objectViewer", "members": ["user:frank@acme.com"] }
+        { "role": "roles/storage.objectViewer", "members": ["user:frank@acme.com", "user:liam@acme.com"] }
       ]
     },
-    "versioningEnabled": false
+    "versioningEnabled": true
+  },
+  {
+    "name": "backup_archives",
+    "projectId": "infra_core",
+    "location": "US-EAST1",
+    "storageClass": "ARCHIVE",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/storage.admin", "members": ["user:zagalsky@gmail.com"] },
+        { "role": "roles/storage.objectCreator", "members": ["serviceAccount:backup-sa@infra_core.iam.gserviceaccount.com"] },
+        { "role": "roles/storage.objectViewer", "members": ["user:mike@acme.com"] }
+      ]
+    },
+    "versioningEnabled": true
   },
   {
     "name": "dw_raw_ingestion",
@@ -89,6 +130,19 @@
       "bindings": [
         { "role": "roles/storage.admin", "members": ["user:eve@acme.com", "serviceAccount:etl-sa@data_warehouse.iam.gserviceaccount.com"] },
         { "role": "roles/storage.objectViewer", "members": ["user:carol@acme.com", "serviceAccount:dbt-sa@data_warehouse.iam.gserviceaccount.com"] }
+      ]
+    },
+    "versioningEnabled": false
+  },
+  {
+    "name": "dw_public_datasets",
+    "projectId": "data_warehouse",
+    "location": "US-CENTRAL1",
+    "storageClass": "STANDARD",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/storage.admin", "members": ["user:eve@acme.com"] },
+        { "role": "roles/storage.objectViewer", "members": ["allUsers"] }
       ]
     },
     "versioningEnabled": false
@@ -106,5 +160,45 @@
       ]
     },
     "versioningEnabled": true
+  },
+  {
+    "name": "frontend_user_uploads",
+    "projectId": "frontend_prod",
+    "location": "US-CENTRAL1",
+    "storageClass": "STANDARD",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/storage.admin", "members": ["user:grace@acme.com"] },
+        { "role": "roles/storage.objectAdmin", "members": ["serviceAccount:web-sa@frontend_prod.iam.gserviceaccount.com"] }
+      ]
+    },
+    "versioningEnabled": false
+  },
+  {
+    "name": "security_reports",
+    "projectId": "security_ops",
+    "location": "US-CENTRAL1",
+    "storageClass": "STANDARD",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/storage.admin", "members": ["user:dave@acme.com", "user:kate@acme.com"] },
+        { "role": "roles/storage.objectViewer", "members": ["user:nancy@acme.com", "user:mike@acme.com", "user:zagalsky@gmail.com"] }
+      ]
+    },
+    "versioningEnabled": true
+  },
+  {
+    "name": "devops_build_artifacts",
+    "projectId": "devops_platform",
+    "location": "US-CENTRAL1",
+    "storageClass": "STANDARD",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/storage.admin", "members": ["user:frank@acme.com", "user:liam@acme.com"] },
+        { "role": "roles/storage.objectAdmin", "members": ["serviceAccount:ci-runner-sa@devops_platform.iam.gserviceaccount.com"] },
+        { "role": "roles/storage.objectViewer", "members": ["user:alice@acme.com", "user:bob@acme.com", "user:grace@acme.com"] }
+      ]
+    },
+    "versioningEnabled": false
   }
 ]

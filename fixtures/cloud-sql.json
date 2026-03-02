@@ -11,6 +11,17 @@
     "requireSsl": false
   },
   {
+    "name": "backup-postgres",
+    "projectId": "accounting_project",
+    "region": "us-east1",
+    "databaseVersion": "POSTGRES_13",
+    "tier": "db-n1-standard-1",
+    "state": "RUNNABLE",
+    "publicIp": "34.89.12.34",
+    "backupEnabled": true,
+    "requireSsl": true
+  },
+  {
     "name": "ml-mysql",
     "projectId": "ml_platform",
     "region": "us-east1",
@@ -34,7 +45,7 @@
   },
   {
     "name": "infra-mysql",
-    "projectId": "infra_project",
+    "projectId": "infra_core",
     "region": "us-central1",
     "databaseVersion": "MYSQL_5_7",
     "tier": "db-f1-micro",
@@ -44,13 +55,46 @@
     "requireSsl": false
   },
   {
-    "name": "backup-postgres",
-    "projectId": "accounting_project",
-    "region": "us-east1",
-    "databaseVersion": "POSTGRES_13",
-    "tier": "db-n1-standard-1",
+    "name": "dw-postgres",
+    "projectId": "data_warehouse",
+    "region": "us-central1",
+    "databaseVersion": "POSTGRES_15",
+    "tier": "db-n1-highmem-8",
     "state": "RUNNABLE",
-    "publicIp": "34.89.12.34",
+    "publicIp": "34.135.200.45",
+    "backupEnabled": false,
+    "requireSsl": false
+  },
+  {
+    "name": "frontend-cache-postgres",
+    "projectId": "frontend_prod",
+    "region": "us-central1",
+    "databaseVersion": "POSTGRES_15",
+    "tier": "db-n1-standard-2",
+    "state": "RUNNABLE",
+    "publicIp": "35.188.97.11",
+    "backupEnabled": false,
+    "requireSsl": false
+  },
+  {
+    "name": "devops-postgres",
+    "projectId": "devops_platform",
+    "region": "us-central1",
+    "databaseVersion": "POSTGRES_15",
+    "tier": "db-n1-standard-2",
+    "state": "RUNNABLE",
+    "publicIp": null,
+    "backupEnabled": true,
+    "requireSsl": true
+  },
+  {
+    "name": "security-audit-db",
+    "projectId": "security_ops",
+    "region": "us-central1",
+    "databaseVersion": "POSTGRES_15",
+    "tier": "db-n1-standard-2",
+    "state": "RUNNABLE",
+    "publicIp": null,
     "backupEnabled": true,
     "requireSsl": true
   }

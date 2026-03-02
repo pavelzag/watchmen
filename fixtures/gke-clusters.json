@@ -1,6 +1,6 @@
 [
   {
-    "name": "test-k8s-cluster",
+    "name": "accounting-k8s-cluster",
     "projectId": "accounting_project",
     "location": "us-central1",
     "locationType": "regional",
@@ -46,8 +46,8 @@
     "iamPolicy": {
       "bindings": [
         { "role": "roles/container.admin", "members": ["user:zagalsky@gmail.com", "user:alice@acme.com", "user:frank@acme.com"] },
-        { "role": "roles/container.developer", "members": ["user:bob@acme.com"] },
-        { "role": "roles/container.viewer", "members": ["user:carol@acme.com", "user:dave@acme.com"] }
+        { "role": "roles/container.developer", "members": ["user:bob@acme.com", "user:liam@acme.com"] },
+        { "role": "roles/container.viewer", "members": ["user:carol@acme.com", "user:dave@acme.com", "user:mike@acme.com"] }
       ]
     },
     "workloadIdentityEnabled": true,
@@ -82,11 +82,64 @@
     "iamPolicy": {
       "bindings": [
         { "role": "roles/container.admin", "members": ["user:grace@acme.com", "user:frank@acme.com"] },
-        { "role": "roles/container.developer", "members": ["user:bob@acme.com", "serviceAccount:web-sa@frontend_prod.iam.gserviceaccount.com"] },
+        { "role": "roles/container.developer", "members": ["user:bob@acme.com", "user:jack@acme.com", "serviceAccount:web-sa@frontend_prod.iam.gserviceaccount.com"] },
         { "role": "roles/container.viewer", "members": ["user:dave@acme.com"] }
       ]
     },
     "workloadIdentityEnabled": true,
+    "privateCluster": false
+  },
+  {
+    "name": "dw-processing-cluster",
+    "projectId": "data_warehouse",
+    "location": "us-central1",
+    "locationType": "regional",
+    "status": "RUNNING",
+    "currentMasterVersion": "1.29.9-gke.1000000",
+    "nodeCount": 4,
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/container.admin", "members": ["user:eve@acme.com"] },
+        { "role": "roles/container.developer", "members": ["user:carol@acme.com", "serviceAccount:etl-sa@data_warehouse.iam.gserviceaccount.com", "serviceAccount:lakehouse-sa@data_warehouse.iam.gserviceaccount.com"] },
+        { "role": "roles/container.viewer", "members": ["user:henry@acme.com", "user:dave@acme.com"] }
+      ]
+    },
+    "workloadIdentityEnabled": false,
+    "privateCluster": false
+  },
+  {
+    "name": "security-scanner-cluster",
+    "projectId": "security_ops",
+    "location": "us-central1-a",
+    "locationType": "zonal",
+    "status": "RUNNING",
+    "currentMasterVersion": "1.31.4-gke.1183000",
+    "nodeCount": 2,
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/container.admin", "members": ["user:dave@acme.com", "user:kate@acme.com"] },
+        { "role": "roles/container.developer", "members": ["serviceAccount:scanner-sa@security_ops.iam.gserviceaccount.com"] }
+      ]
+    },
+    "workloadIdentityEnabled": true,
+    "privateCluster": true
+  },
+  {
+    "name": "devops-builder-cluster",
+    "projectId": "devops_platform",
+    "location": "us-central1",
+    "locationType": "regional",
+    "status": "RUNNING",
+    "currentMasterVersion": "1.31.4-gke.1183000",
+    "nodeCount": 6,
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/container.admin", "members": ["user:frank@acme.com", "user:liam@acme.com"] },
+        { "role": "roles/container.developer", "members": ["serviceAccount:ci-runner-sa@devops_platform.iam.gserviceaccount.com", "user:mike@acme.com"] },
+        { "role": "roles/container.viewer", "members": ["user:alice@acme.com", "user:bob@acme.com", "user:grace@acme.com"] }
+      ]
+    },
+    "workloadIdentityEnabled": false,
     "privateCluster": false
   }
 ]

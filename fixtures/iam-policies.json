@@ -7,15 +7,16 @@
       { "role": "roles/editor", "members": ["user:alice@acme.com", "user:eve@acme.com", "serviceAccount:data-pipeline-sa@accounting_project.iam.gserviceaccount.com"] },
       { "role": "roles/viewer", "members": ["user:bob@acme.com", "user:carol@acme.com", "user:dave@acme.com", "serviceAccount:reporting-sa@accounting_project.iam.gserviceaccount.com"] },
       { "role": "roles/storage.admin", "members": ["user:zagalsky@gmail.com", "serviceAccount:data-pipeline-sa@accounting_project.iam.gserviceaccount.com"] },
-      { "role": "roles/storage.objectViewer", "members": ["user:carol@acme.com", "user:henry@acme.com"] },
+      { "role": "roles/storage.objectViewer", "members": ["user:carol@acme.com", "user:henry@acme.com", "user:nancy@acme.com"] },
       { "role": "roles/container.admin", "members": ["user:zagalsky@gmail.com", "user:alice@acme.com"] },
       { "role": "roles/container.developer", "members": ["user:bob@acme.com", "serviceAccount:data-pipeline-sa@accounting_project.iam.gserviceaccount.com"] },
       { "role": "roles/container.viewer", "members": ["user:carol@acme.com", "user:dave@acme.com"] },
-      { "role": "roles/bigquery.dataViewer", "members": ["user:carol@acme.com", "user:henry@acme.com"] },
-      { "role": "roles/bigquery.dataEditor", "members": ["user:eve@acme.com"] },
+      { "role": "roles/bigquery.dataViewer", "members": ["user:carol@acme.com", "user:henry@acme.com", "user:nancy@acme.com"] },
+      { "role": "roles/bigquery.dataEditor", "members": ["user:eve@acme.com", "serviceAccount:audit-sa@accounting_project.iam.gserviceaccount.com"] },
       { "role": "roles/compute.admin", "members": ["user:zagalsky@gmail.com", "user:frank@acme.com"] },
-      { "role": "roles/compute.viewer", "members": ["user:dave@acme.com"] },
-      { "role": "roles/iam.securityReviewer", "members": ["user:dave@acme.com"] }
+      { "role": "roles/compute.viewer", "members": ["user:dave@acme.com", "user:nancy@acme.com"] },
+      { "role": "roles/iam.securityReviewer", "members": ["user:dave@acme.com", "user:kate@acme.com"] },
+      { "role": "roles/secretmanager.secretAccessor", "members": ["serviceAccount:data-pipeline-sa@accounting_project.iam.gserviceaccount.com", "serviceAccount:audit-sa@accounting_project.iam.gserviceaccount.com"] }
     ]
   },
   "ml_platform": {
@@ -26,29 +27,32 @@
       { "role": "roles/editor", "members": ["user:iris@acme.com", "user:henry@acme.com", "serviceAccount:training-sa@ml_platform.iam.gserviceaccount.com"] },
       { "role": "roles/viewer", "members": ["user:zagalsky@gmail.com", "user:dave@acme.com"] },
       { "role": "roles/ml.developer", "members": ["user:iris@acme.com", "user:henry@acme.com", "serviceAccount:training-sa@ml_platform.iam.gserviceaccount.com"] },
-      { "role": "roles/storage.objectAdmin", "members": ["user:iris@acme.com", "serviceAccount:training-sa@ml_platform.iam.gserviceaccount.com"] },
+      { "role": "roles/storage.objectAdmin", "members": ["user:iris@acme.com", "serviceAccount:training-sa@ml_platform.iam.gserviceaccount.com", "serviceAccount:feature-store-sa@ml_platform.iam.gserviceaccount.com"] },
       { "role": "roles/storage.objectViewer", "members": ["user:henry@acme.com", "user:carol@acme.com"] },
       { "role": "roles/container.admin", "members": ["user:alice@acme.com", "user:iris@acme.com"] },
       { "role": "roles/container.developer", "members": ["user:henry@acme.com", "serviceAccount:inference-sa@ml_platform.iam.gserviceaccount.com"] },
       { "role": "roles/compute.admin", "members": ["user:alice@acme.com", "user:frank@acme.com"] },
-      { "role": "roles/logging.viewer", "members": ["user:dave@acme.com"] }
+      { "role": "roles/logging.viewer", "members": ["user:dave@acme.com", "user:nancy@acme.com"] },
+      { "role": "roles/bigquery.dataEditor", "members": ["serviceAccount:feature-store-sa@ml_platform.iam.gserviceaccount.com"] },
+      { "role": "roles/bigquery.dataViewer", "members": ["user:henry@acme.com", "user:carol@acme.com", "user:iris@acme.com"] }
     ]
   },
   "infra_core": {
     "projectId": "infra_core",
     "projectName": "Infrastructure Core",
     "bindings": [
-      { "role": "roles/owner", "members": ["user:zagalsky@gmail.com"] },
-      { "role": "roles/compute.admin", "members": ["user:frank@acme.com", "serviceAccount:terraform-sa@infra_core.iam.gserviceaccount.com"] },
+      { "role": "roles/owner", "members": ["user:zagalsky@gmail.com", "user:mike@acme.com"] },
+      { "role": "roles/compute.admin", "members": ["user:frank@acme.com", "user:liam@acme.com", "serviceAccount:terraform-sa@infra_core.iam.gserviceaccount.com"] },
       { "role": "roles/compute.viewer", "members": ["user:dave@acme.com", "user:bob@acme.com"] },
       { "role": "roles/container.admin", "members": ["user:alice@acme.com", "user:bob@acme.com", "user:frank@acme.com"] },
       { "role": "roles/container.viewer", "members": ["user:carol@acme.com", "user:dave@acme.com"] },
-      { "role": "roles/storage.admin", "members": ["user:zagalsky@gmail.com", "serviceAccount:terraform-sa@infra_core.iam.gserviceaccount.com"] },
+      { "role": "roles/storage.admin", "members": ["user:zagalsky@gmail.com", "serviceAccount:terraform-sa@infra_core.iam.gserviceaccount.com", "serviceAccount:backup-sa@infra_core.iam.gserviceaccount.com"] },
       { "role": "roles/monitoring.viewer", "members": ["user:carol@acme.com", "user:dave@acme.com"] },
-      { "role": "roles/monitoring.editor", "members": ["user:frank@acme.com"] },
-      { "role": "roles/logging.admin", "members": ["user:zagalsky@gmail.com"] },
-      { "role": "roles/iam.securityReviewer", "members": ["user:dave@acme.com"] },
-      { "role": "roles/iam.serviceAccountAdmin", "members": ["user:zagalsky@gmail.com", "serviceAccount:terraform-sa@infra_core.iam.gserviceaccount.com"] }
+      { "role": "roles/monitoring.editor", "members": ["user:frank@acme.com", "serviceAccount:monitoring-sa@infra_core.iam.gserviceaccount.com"] },
+      { "role": "roles/logging.admin", "members": ["user:zagalsky@gmail.com", "user:mike@acme.com"] },
+      { "role": "roles/iam.securityReviewer", "members": ["user:dave@acme.com", "user:kate@acme.com", "user:nancy@acme.com"] },
+      { "role": "roles/iam.serviceAccountAdmin", "members": ["user:zagalsky@gmail.com", "serviceAccount:terraform-sa@infra_core.iam.gserviceaccount.com"] },
+      { "role": "roles/secretmanager.admin", "members": ["user:zagalsky@gmail.com", "user:mike@acme.com"] }
     ]
   },
   "data_warehouse": {
@@ -57,14 +61,14 @@
     "bindings": [
       { "role": "roles/owner", "members": ["user:eve@acme.com"] },
       { "role": "roles/editor", "members": ["user:carol@acme.com", "serviceAccount:etl-sa@data_warehouse.iam.gserviceaccount.com", "serviceAccount:dbt-sa@data_warehouse.iam.gserviceaccount.com"] },
-      { "role": "roles/viewer", "members": ["user:zagalsky@gmail.com", "user:henry@acme.com", "user:alice@acme.com"] },
+      { "role": "roles/viewer", "members": ["user:zagalsky@gmail.com", "user:henry@acme.com", "user:alice@acme.com", "user:nancy@acme.com"] },
       { "role": "roles/bigquery.admin", "members": ["user:eve@acme.com", "serviceAccount:etl-sa@data_warehouse.iam.gserviceaccount.com"] },
-      { "role": "roles/bigquery.dataEditor", "members": ["user:carol@acme.com", "serviceAccount:dbt-sa@data_warehouse.iam.gserviceaccount.com"] },
-      { "role": "roles/bigquery.dataViewer", "members": ["user:henry@acme.com", "user:alice@acme.com", "user:zagalsky@gmail.com"] },
+      { "role": "roles/bigquery.dataEditor", "members": ["user:carol@acme.com", "serviceAccount:dbt-sa@data_warehouse.iam.gserviceaccount.com", "serviceAccount:lakehouse-sa@data_warehouse.iam.gserviceaccount.com"] },
+      { "role": "roles/bigquery.dataViewer", "members": ["user:henry@acme.com", "user:alice@acme.com", "user:zagalsky@gmail.com", "user:jack@acme.com"] },
       { "role": "roles/bigquery.jobUser", "members": ["user:henry@acme.com", "user:carol@acme.com", "serviceAccount:reporting-sa@accounting_project.iam.gserviceaccount.com"] },
-      { "role": "roles/storage.admin", "members": ["user:eve@acme.com", "serviceAccount:etl-sa@data_warehouse.iam.gserviceaccount.com"] },
+      { "role": "roles/storage.admin", "members": ["user:eve@acme.com", "serviceAccount:etl-sa@data_warehouse.iam.gserviceaccount.com", "serviceAccount:lakehouse-sa@data_warehouse.iam.gserviceaccount.com"] },
       { "role": "roles/storage.objectViewer", "members": ["user:carol@acme.com", "user:henry@acme.com"] },
-      { "role": "roles/iam.securityReviewer", "members": ["user:dave@acme.com"] }
+      { "role": "roles/iam.securityReviewer", "members": ["user:dave@acme.com", "user:nancy@acme.com"] }
     ]
   },
   "frontend_prod": {
@@ -72,16 +76,46 @@
     "projectName": "Frontend Production",
     "bindings": [
       { "role": "roles/owner", "members": ["user:grace@acme.com"] },
-      { "role": "roles/editor", "members": ["user:bob@acme.com", "serviceAccount:web-sa@frontend_prod.iam.gserviceaccount.com", "serviceAccount:cdn-sa@frontend_prod.iam.gserviceaccount.com"] },
+      { "role": "roles/editor", "members": ["user:bob@acme.com", "user:jack@acme.com", "serviceAccount:web-sa@frontend_prod.iam.gserviceaccount.com", "serviceAccount:cdn-sa@frontend_prod.iam.gserviceaccount.com"] },
       { "role": "roles/viewer", "members": ["user:zagalsky@gmail.com", "user:dave@acme.com", "user:carol@acme.com"] },
       { "role": "roles/compute.admin", "members": ["user:grace@acme.com", "user:frank@acme.com"] },
-      { "role": "roles/compute.instanceAdmin.v1", "members": ["user:bob@acme.com", "serviceAccount:web-sa@frontend_prod.iam.gserviceaccount.com"] },
+      { "role": "roles/compute.instanceAdmin.v1", "members": ["user:bob@acme.com", "user:jack@acme.com", "serviceAccount:web-sa@frontend_prod.iam.gserviceaccount.com"] },
       { "role": "roles/storage.objectAdmin", "members": ["user:grace@acme.com", "serviceAccount:cdn-sa@frontend_prod.iam.gserviceaccount.com"] },
       { "role": "roles/storage.objectViewer", "members": ["serviceAccount:web-sa@frontend_prod.iam.gserviceaccount.com"] },
       { "role": "roles/run.admin", "members": ["user:grace@acme.com", "user:bob@acme.com"] },
-      { "role": "roles/run.developer", "members": ["serviceAccount:web-sa@frontend_prod.iam.gserviceaccount.com"] },
-      { "role": "roles/monitoring.viewer", "members": ["user:dave@acme.com"] },
-      { "role": "roles/iam.securityReviewer", "members": ["user:dave@acme.com"] }
+      { "role": "roles/run.developer", "members": ["serviceAccount:web-sa@frontend_prod.iam.gserviceaccount.com", "user:jack@acme.com"] },
+      { "role": "roles/monitoring.viewer", "members": ["user:dave@acme.com", "user:nancy@acme.com"] },
+      { "role": "roles/iam.securityReviewer", "members": ["user:dave@acme.com", "user:kate@acme.com"] }
+    ]
+  },
+  "security_ops": {
+    "projectId": "security_ops",
+    "projectName": "Security Operations",
+    "bindings": [
+      { "role": "roles/owner", "members": ["user:dave@acme.com", "user:kate@acme.com"] },
+      { "role": "roles/editor", "members": ["user:nancy@acme.com", "serviceAccount:scanner-sa@security_ops.iam.gserviceaccount.com"] },
+      { "role": "roles/viewer", "members": ["user:zagalsky@gmail.com", "user:alice@acme.com", "user:mike@acme.com"] },
+      { "role": "roles/iam.securityReviewer", "members": ["user:dave@acme.com", "user:kate@acme.com", "user:nancy@acme.com", "serviceAccount:scanner-sa@security_ops.iam.gserviceaccount.com"] },
+      { "role": "roles/logging.admin", "members": ["user:dave@acme.com", "user:kate@acme.com"] },
+      { "role": "roles/monitoring.editor", "members": ["user:nancy@acme.com", "serviceAccount:scanner-sa@security_ops.iam.gserviceaccount.com"] },
+      { "role": "roles/securitycenter.admin", "members": ["user:dave@acme.com"] },
+      { "role": "roles/bigquery.dataViewer", "members": ["user:nancy@acme.com", "user:kate@acme.com"] }
+    ]
+  },
+  "devops_platform": {
+    "projectId": "devops_platform",
+    "projectName": "DevOps Platform",
+    "bindings": [
+      { "role": "roles/owner", "members": ["user:frank@acme.com", "user:liam@acme.com"] },
+      { "role": "roles/editor", "members": ["user:mike@acme.com", "serviceAccount:ci-runner-sa@devops_platform.iam.gserviceaccount.com"] },
+      { "role": "roles/viewer", "members": ["user:zagalsky@gmail.com", "user:alice@acme.com", "user:bob@acme.com", "user:grace@acme.com"] },
+      { "role": "roles/container.admin", "members": ["user:frank@acme.com", "user:liam@acme.com", "serviceAccount:ci-runner-sa@devops_platform.iam.gserviceaccount.com"] },
+      { "role": "roles/compute.admin", "members": ["user:frank@acme.com", "user:mike@acme.com"] },
+      { "role": "roles/storage.admin", "members": ["user:liam@acme.com", "serviceAccount:ci-runner-sa@devops_platform.iam.gserviceaccount.com"] },
+      { "role": "roles/run.admin", "members": ["user:frank@acme.com", "user:liam@acme.com"] },
+      { "role": "roles/iam.serviceAccountAdmin", "members": ["user:frank@acme.com", "user:mike@acme.com"] },
+      { "role": "roles/secretmanager.secretAccessor", "members": ["serviceAccount:ci-runner-sa@devops_platform.iam.gserviceaccount.com"] },
+      { "role": "roles/logging.viewer", "members": ["user:dave@acme.com", "user:nancy@acme.com"] }
     ]
   }
 }

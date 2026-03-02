@@ -1,15 +1,42 @@
 [
   {
     "name": "api-gateway",
-    "projectId": "infra_project",
+    "projectId": "infra_core",
     "region": "us-central1",
     "url": "https://api-gateway-abc123-uc.a.run.app",
     "status": "ACTIVE",
-    "serviceAccount": "api-sa@infra_project.iam.gserviceaccount.com",
+    "serviceAccount": "terraform-sa@infra_core.iam.gserviceaccount.com",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/run.invoker", "members": ["allUsers"] },
+        { "role": "roles/run.admin", "members": ["user:zagalsky@gmail.com", "user:mike@acme.com"] }
+      ]
+    }
+  },
+  {
+    "name": "auth-service",
+    "projectId": "infra_core",
+    "region": "us-central1",
+    "url": "https://auth-service-jkl345-uc.a.run.app",
+    "status": "ACTIVE",
+    "serviceAccount": "terraform-sa@infra_core.iam.gserviceaccount.com",
     "iamPolicy": {
       "bindings": [
         { "role": "roles/run.invoker", "members": ["allUsers"] },
         { "role": "roles/run.admin", "members": ["user:zagalsky@gmail.com"] }
+      ]
+    }
+  },
+  {
+    "name": "webhook-receiver",
+    "projectId": "infra_core",
+    "region": "us-east1",
+    "url": "https://webhook-receiver-mno678-ue.a.run.app",
+    "status": "ACTIVE",
+    "serviceAccount": "terraform-sa@infra_core.iam.gserviceaccount.com",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/run.invoker", "members": ["allUsers"] }
       ]
     }
   },
@@ -19,10 +46,38 @@
     "region": "us-east1",
     "url": "https://ml-inference-xyz789-ue.a.run.app",
     "status": "ACTIVE",
-    "serviceAccount": "ml-runner@ml_platform.iam.gserviceaccount.com",
+    "serviceAccount": "inference-sa@ml_platform.iam.gserviceaccount.com",
     "iamPolicy": {
       "bindings": [
-        { "role": "roles/run.invoker", "members": ["serviceAccount:ml-runner@ml_platform.iam.gserviceaccount.com"] }
+        { "role": "roles/run.invoker", "members": ["serviceAccount:inference-sa@ml_platform.iam.gserviceaccount.com"] },
+        { "role": "roles/run.admin", "members": ["user:alice@acme.com"] }
+      ]
+    }
+  },
+  {
+    "name": "model-server",
+    "projectId": "ml_platform",
+    "region": "us-central1",
+    "url": "https://model-server-pqr890-uc.a.run.app",
+    "status": "ACTIVE",
+    "serviceAccount": "inference-sa@ml_platform.iam.gserviceaccount.com",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/run.invoker", "members": ["serviceAccount:feature-store-sa@ml_platform.iam.gserviceaccount.com", "serviceAccount:inference-sa@ml_platform.iam.gserviceaccount.com"] }
+      ]
+    }
+  },
+  {
+    "name": "data-pipeline",
+    "projectId": "ml_platform",
+    "region": "us-central1",
+    "url": "https://data-pipeline-ghi012-uc.a.run.app",
+    "status": "ACTIVE",
+    "serviceAccount": "training-sa@ml_platform.iam.gserviceaccount.com",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/run.invoker", "members": ["serviceAccount:training-sa@ml_platform.iam.gserviceaccount.com"] },
+        { "role": "roles/run.admin", "members": ["user:alice@acme.com", "user:frank@acme.com"] }
       ]
     }
   },
@@ -35,34 +90,7 @@
     "serviceAccount": "reporting-sa@accounting_project.iam.gserviceaccount.com",
     "iamPolicy": {
       "bindings": [
-        { "role": "roles/run.invoker", "members": ["user:analyst@company.com", "serviceAccount:reporting-sa@accounting_project.iam.gserviceaccount.com"] }
-      ]
-    }
-  },
-  {
-    "name": "data-pipeline",
-    "projectId": "ml_platform",
-    "region": "us-central1",
-    "url": "https://data-pipeline-ghi012-uc.a.run.app",
-    "status": "ACTIVE",
-    "serviceAccount": "pipeline-sa@ml_platform.iam.gserviceaccount.com",
-    "iamPolicy": {
-      "bindings": [
-        { "role": "roles/run.invoker", "members": ["serviceAccount:pipeline-sa@ml_platform.iam.gserviceaccount.com"] },
-        { "role": "roles/run.admin", "members": ["user:devops@company.com"] }
-      ]
-    }
-  },
-  {
-    "name": "auth-service",
-    "projectId": "infra_project",
-    "region": "us-central1",
-    "url": "https://auth-service-jkl345-uc.a.run.app",
-    "status": "ACTIVE",
-    "serviceAccount": "auth-sa@infra_project.iam.gserviceaccount.com",
-    "iamPolicy": {
-      "bindings": [
-        { "role": "roles/run.invoker", "members": ["allUsers"] }
+        { "role": "roles/run.invoker", "members": ["user:carol@acme.com", "user:nancy@acme.com", "serviceAccount:reporting-sa@accounting_project.iam.gserviceaccount.com"] }
       ]
     }
   },
@@ -76,6 +104,62 @@
     "iamPolicy": {
       "bindings": [
         { "role": "roles/run.admin", "members": ["user:zagalsky@gmail.com"] }
+      ]
+    }
+  },
+  {
+    "name": "analytics-api",
+    "projectId": "data_warehouse",
+    "region": "us-central1",
+    "url": "https://analytics-api-stu123-uc.a.run.app",
+    "status": "ACTIVE",
+    "serviceAccount": "dbt-sa@data_warehouse.iam.gserviceaccount.com",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/run.invoker", "members": ["serviceAccount:reporting-sa@accounting_project.iam.gserviceaccount.com", "serviceAccount:dbt-sa@data_warehouse.iam.gserviceaccount.com"] },
+        { "role": "roles/run.admin", "members": ["user:eve@acme.com"] }
+      ]
+    }
+  },
+  {
+    "name": "user-api",
+    "projectId": "frontend_prod",
+    "region": "us-central1",
+    "url": "https://user-api-vwx456-uc.a.run.app",
+    "status": "ACTIVE",
+    "serviceAccount": "web-sa@frontend_prod.iam.gserviceaccount.com",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/run.invoker", "members": ["serviceAccount:web-sa@frontend_prod.iam.gserviceaccount.com"] },
+        { "role": "roles/run.admin", "members": ["user:grace@acme.com", "user:bob@acme.com"] }
+      ]
+    }
+  },
+  {
+    "name": "notification-service",
+    "projectId": "devops_platform",
+    "region": "us-central1",
+    "url": "https://notification-service-yza789-uc.a.run.app",
+    "status": "ACTIVE",
+    "serviceAccount": "ci-runner-sa@devops_platform.iam.gserviceaccount.com",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/run.invoker", "members": ["allUsers"] },
+        { "role": "roles/run.admin", "members": ["user:frank@acme.com"] }
+      ]
+    }
+  },
+  {
+    "name": "compliance-reporter",
+    "projectId": "security_ops",
+    "region": "us-central1",
+    "url": "https://compliance-reporter-bcd012-uc.a.run.app",
+    "status": "ACTIVE",
+    "serviceAccount": "scanner-sa@security_ops.iam.gserviceaccount.com",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/run.invoker", "members": ["user:dave@acme.com", "user:kate@acme.com", "user:nancy@acme.com"] },
+        { "role": "roles/run.admin", "members": ["user:dave@acme.com"] }
       ]
     }
   }

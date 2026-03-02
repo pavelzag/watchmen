@@ -1,7 +1,7 @@
 [
   {
     "name": "default-allow-ssh",
-    "projectId": "infra_project",
+    "projectId": "infra_core",
     "network": "global/networks/default",
     "direction": "INGRESS",
     "priority": 65534,
@@ -12,7 +12,7 @@
   },
   {
     "name": "default-allow-rdp",
-    "projectId": "infra_project",
+    "projectId": "infra_core",
     "network": "global/networks/default",
     "direction": "INGRESS",
     "priority": 65534,
@@ -23,7 +23,7 @@
   },
   {
     "name": "default-allow-https",
-    "projectId": "infra_project",
+    "projectId": "infra_core",
     "network": "global/networks/default",
     "direction": "INGRESS",
     "priority": 1000,
@@ -34,7 +34,7 @@
   },
   {
     "name": "allow-internal",
-    "projectId": "infra_project",
+    "projectId": "infra_core",
     "network": "global/networks/default",
     "direction": "INGRESS",
     "priority": 65534,
@@ -48,15 +48,15 @@
     "disabled": false
   },
   {
-    "name": "block-all-egress",
-    "projectId": "infra_project",
+    "name": "deny-metadata-access",
+    "projectId": "infra_core",
     "network": "global/networks/default",
     "direction": "EGRESS",
     "priority": 100,
     "sourceRanges": [],
     "targetTags": ["restricted"],
     "allowed": [],
-    "disabled": true
+    "disabled": false
   },
   {
     "name": "allow-ssh-internal",
@@ -106,6 +106,17 @@
     "disabled": false
   },
   {
+    "name": "allow-rdp-legacy",
+    "projectId": "accounting_project",
+    "network": "global/networks/default",
+    "direction": "INGRESS",
+    "priority": 65534,
+    "sourceRanges": ["0.0.0.0/0"],
+    "targetTags": ["legacy"],
+    "allowed": [{ "IPProtocol": "tcp", "ports": ["3389"] }],
+    "disabled": false
+  },
+  {
     "name": "allow-db-access",
     "projectId": "accounting_project",
     "network": "global/networks/default",
@@ -114,6 +125,64 @@
     "sourceRanges": ["192.168.1.0/24"],
     "targetTags": ["db-server"],
     "allowed": [{ "IPProtocol": "tcp", "ports": ["5432", "3306"] }],
+    "disabled": false
+  },
+  {
+    "name": "frontend-allow-http",
+    "projectId": "frontend_prod",
+    "network": "global/networks/default",
+    "direction": "INGRESS",
+    "priority": 1000,
+    "sourceRanges": ["0.0.0.0/0"],
+    "targetTags": ["http-server"],
+    "allowed": [{ "IPProtocol": "tcp", "ports": ["80"] }],
+    "disabled": false
+  },
+  {
+    "name": "frontend-allow-https",
+    "projectId": "frontend_prod",
+    "network": "global/networks/default",
+    "direction": "INGRESS",
+    "priority": 1000,
+    "sourceRanges": ["0.0.0.0/0"],
+    "targetTags": ["https-server"],
+    "allowed": [{ "IPProtocol": "tcp", "ports": ["443"] }],
+    "disabled": false
+  },
+  {
+    "name": "allow-ssh-devops",
+    "projectId": "devops_platform",
+    "network": "global/networks/default",
+    "direction": "INGRESS",
+    "priority": 65534,
+    "sourceRanges": ["0.0.0.0/0"],
+    "targetTags": [],
+    "allowed": [{ "IPProtocol": "tcp", "ports": ["22"] }],
+    "disabled": false
+  },
+  {
+    "name": "devops-allow-internal",
+    "projectId": "devops_platform",
+    "network": "global/networks/default",
+    "direction": "INGRESS",
+    "priority": 1000,
+    "sourceRanges": ["10.130.0.0/16"],
+    "targetTags": ["builder"],
+    "allowed": [
+      { "IPProtocol": "tcp" },
+      { "IPProtocol": "udp" }
+    ],
+    "disabled": false
+  },
+  {
+    "name": "security-deny-all-ingress",
+    "projectId": "security_ops",
+    "network": "global/networks/security-vpc",
+    "direction": "INGRESS",
+    "priority": 65534,
+    "sourceRanges": [],
+    "targetTags": [],
+    "allowed": [],
     "disabled": false
   }
 ]

@@ -5,30 +5,19 @@
     "location": "US",
     "iamPolicy": {
       "bindings": [
-        { "role": "roles/bigquery.dataEditor", "members": ["user:analyst@company.com", "serviceAccount:reporting-sa@accounting_project.iam.gserviceaccount.com"] },
-        { "role": "roles/bigquery.dataViewer", "members": ["user:zagalsky@gmail.com", "allAuthenticatedUsers"] }
+        { "role": "roles/bigquery.dataEditor", "members": ["user:carol@acme.com", "serviceAccount:reporting-sa@accounting_project.iam.gserviceaccount.com"] },
+        { "role": "roles/bigquery.dataViewer", "members": ["user:zagalsky@gmail.com", "user:nancy@acme.com"] }
       ]
     }
   },
   {
-    "datasetId": "ml_training_data",
-    "projectId": "ml_platform",
+    "datasetId": "payroll_data",
+    "projectId": "accounting_project",
     "location": "US",
     "iamPolicy": {
       "bindings": [
-        { "role": "roles/bigquery.dataEditor", "members": ["serviceAccount:ml-runner@ml_platform.iam.gserviceaccount.com"] },
-        { "role": "roles/bigquery.dataViewer", "members": ["user:devops@company.com"] }
-      ]
-    }
-  },
-  {
-    "datasetId": "infra_metrics",
-    "projectId": "infra_project",
-    "location": "US",
-    "iamPolicy": {
-      "bindings": [
-        { "role": "roles/bigquery.admin", "members": ["user:zagalsky@gmail.com"] },
-        { "role": "roles/bigquery.dataViewer", "members": ["serviceAccount:api-sa@infra_project.iam.gserviceaccount.com"] }
+        { "role": "roles/bigquery.dataEditor", "members": ["serviceAccount:audit-sa@accounting_project.iam.gserviceaccount.com"] },
+        { "role": "roles/bigquery.dataViewer", "members": ["user:zagalsky@gmail.com", "user:nancy@acme.com"] }
       ]
     }
   },
@@ -38,7 +27,18 @@
     "location": "EU",
     "iamPolicy": {
       "bindings": [
-        { "role": "roles/bigquery.dataViewer", "members": ["user:analyst@company.com"] }
+        { "role": "roles/bigquery.dataViewer", "members": ["user:carol@acme.com", "user:nancy@acme.com", "allAuthenticatedUsers"] }
+      ]
+    }
+  },
+  {
+    "datasetId": "ml_training_data",
+    "projectId": "ml_platform",
+    "location": "US",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/bigquery.dataEditor", "members": ["serviceAccount:training-sa@ml_platform.iam.gserviceaccount.com", "serviceAccount:feature-store-sa@ml_platform.iam.gserviceaccount.com"] },
+        { "role": "roles/bigquery.dataViewer", "members": ["user:henry@acme.com", "user:iris@acme.com"] }
       ]
     }
   },
@@ -48,18 +48,85 @@
     "location": "US",
     "iamPolicy": {
       "bindings": [
-        { "role": "roles/bigquery.dataEditor", "members": ["serviceAccount:pipeline-sa@ml_platform.iam.gserviceaccount.com"] },
-        { "role": "roles/bigquery.dataViewer", "members": ["user:zagalsky@gmail.com"] }
+        { "role": "roles/bigquery.dataEditor", "members": ["serviceAccount:feature-store-sa@ml_platform.iam.gserviceaccount.com"] },
+        { "role": "roles/bigquery.dataViewer", "members": ["user:zagalsky@gmail.com", "user:carol@acme.com", "user:henry@acme.com"] }
+      ]
+    }
+  },
+  {
+    "datasetId": "feature_store",
+    "projectId": "ml_platform",
+    "location": "US",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/bigquery.dataEditor", "members": ["serviceAccount:feature-store-sa@ml_platform.iam.gserviceaccount.com", "serviceAccount:training-sa@ml_platform.iam.gserviceaccount.com"] },
+        { "role": "roles/bigquery.dataViewer", "members": ["serviceAccount:inference-sa@ml_platform.iam.gserviceaccount.com", "user:iris@acme.com"] }
+      ]
+    }
+  },
+  {
+    "datasetId": "infra_metrics",
+    "projectId": "infra_core",
+    "location": "US",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/bigquery.admin", "members": ["user:zagalsky@gmail.com", "user:mike@acme.com"] },
+        { "role": "roles/bigquery.dataViewer", "members": ["serviceAccount:terraform-sa@infra_core.iam.gserviceaccount.com", "user:frank@acme.com"] }
       ]
     }
   },
   {
     "datasetId": "audit_logs",
-    "projectId": "infra_project",
+    "projectId": "infra_core",
     "location": "US",
     "iamPolicy": {
       "bindings": [
-        { "role": "roles/bigquery.dataViewer", "members": ["user:zagalsky@gmail.com", "user:devops@company.com"] }
+        { "role": "roles/bigquery.dataViewer", "members": ["user:zagalsky@gmail.com", "user:dave@acme.com", "user:nancy@acme.com"] }
+      ]
+    }
+  },
+  {
+    "datasetId": "warehouse_analytics",
+    "projectId": "data_warehouse",
+    "location": "US",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/bigquery.admin", "members": ["user:eve@acme.com"] },
+        { "role": "roles/bigquery.dataEditor", "members": ["serviceAccount:dbt-sa@data_warehouse.iam.gserviceaccount.com", "serviceAccount:lakehouse-sa@data_warehouse.iam.gserviceaccount.com"] },
+        { "role": "roles/bigquery.dataViewer", "members": ["allAuthenticatedUsers"] }
+      ]
+    }
+  },
+  {
+    "datasetId": "deployment_metrics",
+    "projectId": "devops_platform",
+    "location": "US",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/bigquery.dataEditor", "members": ["serviceAccount:ci-runner-sa@devops_platform.iam.gserviceaccount.com"] },
+        { "role": "roles/bigquery.dataViewer", "members": ["user:frank@acme.com", "user:liam@acme.com", "user:mike@acme.com"] }
+      ]
+    }
+  },
+  {
+    "datasetId": "security_events",
+    "projectId": "security_ops",
+    "location": "US",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/bigquery.admin", "members": ["user:dave@acme.com", "user:kate@acme.com"] },
+        { "role": "roles/bigquery.dataViewer", "members": ["user:nancy@acme.com", "serviceAccount:scanner-sa@security_ops.iam.gserviceaccount.com"] }
+      ]
+    }
+  },
+  {
+    "datasetId": "compliance_reports",
+    "projectId": "security_ops",
+    "location": "US",
+    "iamPolicy": {
+      "bindings": [
+        { "role": "roles/bigquery.dataEditor", "members": ["serviceAccount:scanner-sa@security_ops.iam.gserviceaccount.com"] },
+        { "role": "roles/bigquery.dataViewer", "members": ["user:dave@acme.com", "user:kate@acme.com", "user:nancy@acme.com", "user:mike@acme.com", "user:zagalsky@gmail.com"] }
       ]
     }
   }
