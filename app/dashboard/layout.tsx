@@ -13,13 +13,14 @@ export default async function DashboardLayout({
   return (
     <div className="min-h-screen">
       {session.isDemoUser && (
-        <div className="bg-zinc-900 border-b border-zinc-800 px-4 py-2 text-center">
-          <p className="text-xs text-zinc-500 font-mono">
-            <span className="text-zinc-300 font-semibold">DEMO</span>
-            {" · "}exploring mock GCP data · AI queries require your own key in{" "}
-            <a href="/dashboard/settings" className="text-zinc-300 underline hover:text-white">
+        <div className="bg-sky-500/10 border-b border-sky-500/20 px-4 py-2 text-center">
+          <p className="text-xs text-sky-400">
+            <span className="font-semibold">Demo Mode</span> — exploring mock GCP data for a fictional company.
+            Natural language queries require your own AI key in{" "}
+            <a href="/dashboard/settings" className="underline hover:text-sky-300">
               Settings
             </a>
+            .
           </p>
         </div>
       )}
