@@ -88,7 +88,7 @@ function linkifyResources(text: string, resources: ResourceItem[]): string {
     const esc = escapeRegex(item.name);
     // Match name only when not surrounded by chars that extend resource names or HTML attributes
     out = out.replace(
-      new RegExp(`(^|[^\\w@./:-])${esc}(?=[^\\w@./:-"'>]|$)`, "gm"),
+      new RegExp(`(^|[^\\w@./:-])${esc}(?=[^\\w@./:"'>-]|$)`, "gm"),
       (_, pre) =>
         `${pre}<a href="${href}" style="color:#00ff41;text-decoration:underline;text-decoration-color:#005c16;font-family:inherit">${item.name}</a>`
     );

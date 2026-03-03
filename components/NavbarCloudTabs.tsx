@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 
 export default function NavbarCloudTabs() {
   const pathname = usePathname();
-  const isAws = pathname.startsWith("/dashboard/aws");
+  const isAws = pathname?.startsWith("/dashboard/aws") ?? false;
 
   return (
     <div className="flex items-center" style={{ borderRight: "1px solid #003010", marginRight: "4px", paddingRight: "4px" }}>

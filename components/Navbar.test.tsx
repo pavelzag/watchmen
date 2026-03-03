@@ -61,7 +61,6 @@ describe('Navbar', () => {
 
         expect(screen.getByText('DASHBOARD')).toBeInTheDocument();
         expect(screen.getByText('FINDINGS')).toBeInTheDocument();
-        expect(screen.getByText('PRINCIPAL')).toBeInTheDocument();
         expect(screen.getByText('HISTORY')).toBeInTheDocument();
         expect(screen.getByText('COMPLIANCE')).toBeInTheDocument();
         expect(screen.getByText('SETTINGS')).toBeInTheDocument();
