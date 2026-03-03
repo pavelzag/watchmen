@@ -1,0 +1,36 @@
+[
+  {
+    "clusterIdentifier": "prod-analytics",
+    "accountId": "111111111111",
+    "region": "us-east-1",
+    "nodeType": "ra3.xlplus",
+    "numberOfNodes": 3,
+    "clusterStatus": "available",
+    "masterUsername": "admin",
+    "dbName": "analytics",
+    "endpoint": { "address": "prod-analytics.cxyz.us-east-1.redshift.amazonaws.com", "port": 5439 },
+    "publiclyAccessible": false,
+    "encrypted": true,
+    "vpcId": "vpc-aabbccdd11",
+    "tags": { "env": "prod", "team": "data" },
+    "createdAt": "2022-04-01T00:00:00Z",
+    "enhancedVpcRouting": true
+  },
+  {
+    "clusterIdentifier": "staging-datawarehouse",
+    "accountId": "222222222222",
+    "region": "eu-west-1",
+    "nodeType": "dc2.large",
+    "numberOfNodes": 2,
+    "clusterStatus": "available",
+    "masterUsername": "dwadmin",
+    "dbName": "warehouse",
+    "endpoint": { "address": "staging-datawarehouse.abcd.eu-west-1.redshift.amazonaws.com", "port": 5439 },
+    "publiclyAccessible": true,
+    "encrypted": false,
+    "vpcId": "vpc-eeff112233",
+    "tags": { "env": "staging", "team": "data" },
+    "createdAt": "2023-08-15T00:00:00Z",
+    "enhancedVpcRouting": false
+  }
+]

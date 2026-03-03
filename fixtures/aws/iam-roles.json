@@ -1,0 +1,145 @@
+[
+  {
+    "roleName": "WatchmenAdminRole",
+    "roleId": "AROAAAAAAAAAAAAAAA01",
+    "arn": "arn:aws:iam::111111111111:role/WatchmenAdminRole",
+    "accountId": "111111111111",
+    "createDate": "2021-01-10T00:00:00Z",
+    "assumeRolePolicyStatements": [
+      {
+        "effect": "Allow",
+        "principals": ["arn:aws:iam::111111111111:root"],
+        "actions": ["sts:AssumeRole"],
+        "resources": ["*"]
+      }
+    ],
+    "attachedPolicies": ["arn:aws:iam::aws:policy/AdministratorAccess"],
+    "inlinePolicies": [],
+    "maxSessionDuration": 3600,
+    "tags": { "env": "prod", "team": "ops" },
+    "lastUsedDate": "2026-03-01T10:00:00Z",
+    "lastUsedRegion": "us-east-1"
+  },
+  {
+    "roleName": "LambdaExecutionRole",
+    "roleId": "AROAAAAAAAAAAAAAAA02",
+    "arn": "arn:aws:iam::111111111111:role/LambdaExecutionRole",
+    "accountId": "111111111111",
+    "createDate": "2022-05-20T00:00:00Z",
+    "assumeRolePolicyStatements": [
+      {
+        "effect": "Allow",
+        "principals": ["lambda.amazonaws.com"],
+        "actions": ["sts:AssumeRole"],
+        "resources": ["*"]
+      }
+    ],
+    "attachedPolicies": [
+      "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+      "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"
+    ],
+    "inlinePolicies": [],
+    "maxSessionDuration": 3600,
+    "tags": { "env": "prod", "service": "lambda" },
+    "lastUsedDate": "2026-02-28T22:00:00Z",
+    "lastUsedRegion": "us-east-1"
+  },
+  {
+    "roleName": "EKSNodeRole",
+    "roleId": "AROAAAAAAAAAAAAAAA03",
+    "arn": "arn:aws:iam::111111111111:role/EKSNodeRole",
+    "accountId": "111111111111",
+    "createDate": "2022-09-01T00:00:00Z",
+    "assumeRolePolicyStatements": [
+      {
+        "effect": "Allow",
+        "principals": ["ec2.amazonaws.com"],
+        "actions": ["sts:AssumeRole"],
+        "resources": ["*"]
+      }
+    ],
+    "attachedPolicies": [
+      "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy",
+      "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly",
+      "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+    ],
+    "inlinePolicies": [],
+    "maxSessionDuration": 3600,
+    "tags": { "env": "prod", "service": "eks" },
+    "lastUsedDate": "2026-03-01T08:00:00Z",
+    "lastUsedRegion": "us-east-1"
+  },
+  {
+    "roleName": "EC2InstanceRole",
+    "roleId": "AROAAAAAAAAAAAAAAA04",
+    "arn": "arn:aws:iam::111111111111:role/EC2InstanceRole",
+    "accountId": "111111111111",
+    "createDate": "2021-11-15T00:00:00Z",
+    "assumeRolePolicyStatements": [
+      {
+        "effect": "Allow",
+        "principals": ["ec2.amazonaws.com"],
+        "actions": ["sts:AssumeRole"],
+        "resources": ["*"]
+      }
+    ],
+    "attachedPolicies": [
+      "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
+      "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+    ],
+    "inlinePolicies": [],
+    "maxSessionDuration": 3600,
+    "tags": { "env": "prod", "service": "ec2" },
+    "lastUsedDate": "2026-03-01T12:00:00Z",
+    "lastUsedRegion": "us-east-1"
+  },
+  {
+    "roleName": "StagingDeployRole",
+    "roleId": "AROAAAAAAAAAAAAAAA05",
+    "arn": "arn:aws:iam::222222222222:role/StagingDeployRole",
+    "accountId": "222222222222",
+    "createDate": "2023-02-10T00:00:00Z",
+    "assumeRolePolicyStatements": [
+      {
+        "effect": "Allow",
+        "principals": ["arn:aws:iam::111111111111:role/CICD"],
+        "actions": ["sts:AssumeRole"],
+        "resources": ["*"]
+      }
+    ],
+    "attachedPolicies": [
+      "arn:aws:iam::aws:policy/AmazonECS_FullAccess",
+      "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+    ],
+    "inlinePolicies": [],
+    "maxSessionDuration": 7200,
+    "tags": { "env": "staging", "team": "devops" },
+    "lastUsedDate": "2026-02-27T15:30:00Z",
+    "lastUsedRegion": "eu-west-1"
+  },
+  {
+    "roleName": "DataPipelineRole",
+    "roleId": "AROAAAAAAAAAAAAAAA06",
+    "arn": "arn:aws:iam::222222222222:role/DataPipelineRole",
+    "accountId": "222222222222",
+    "createDate": "2023-07-22T00:00:00Z",
+    "assumeRolePolicyStatements": [
+      {
+        "effect": "Allow",
+        "principals": ["glue.amazonaws.com"],
+        "actions": ["sts:AssumeRole"],
+        "resources": ["*"]
+      }
+    ],
+    "attachedPolicies": [
+      "arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole",
+      "arn:aws:iam::aws:policy/AmazonS3FullAccess",
+      "arn:aws:iam::aws:policy/AmazonRedshiftFullAccess"
+    ],
+    "inlinePolicies": ["AllowSecretsManagerRead"],
+    "maxSessionDuration": 3600,
+    "tags": { "env": "staging", "team": "data" },
+    "lastUsedDate": "2026-02-28T03:00:00Z",
+    "lastUsedRegion": "eu-west-1"
+  }
+]

@@ -131,6 +131,8 @@ export default function SecretsPage() {
                 return (
                   <tr
                     key={secret.name}
+                    data-nav
+                    tabIndex={0}
                     onClick={() => setSelected(secret)}
                     className={cn(
                       "border-t border-slate-700/30 cursor-pointer transition-colors hover:bg-sky-500/5",

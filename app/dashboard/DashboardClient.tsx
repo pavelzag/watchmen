@@ -5,7 +5,7 @@ import Link from "next/link";
 import QueryBox, { type QueryResult } from "@/components/QueryBox";
 import ResultCard from "@/components/ResultCard";
 import SnapshotStats from "@/components/SnapshotStats";
-import { Trash2, KeyRound, Settings } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { saveSnapshot } from "@/lib/snapshot-history";
 import type { GcpSnapshot } from "@/lib/gcp/types";
 
@@ -25,7 +25,6 @@ export default function DashboardClient() {
     }
   }, []);
 
-  // Check if user has any AI key configured
   useEffect(() => {
     fetch("/api/settings/keys")
       .then((r) => r.json())
@@ -33,25 +32,16 @@ export default function DashboardClient() {
       .catch(() => setHasAiKey(null));
   }, []);
 
-  // On mount: check if a snapshot exists; if not, trigger one immediately
   useEffect(() => {
     fetch("/api/scan")
       .then((r) => r.json())
       .then((data) => {
-        if (!data.snapshot) {
-          triggerScan();
-        }
-        // Auto-save to history if snapshot exists
-        if (data.snapshot?.snapshotId) {
-          saveSnapshot(data.snapshot as GcpSnapshot);
-        }
+        if (!data.snapshot) triggerScan();
+        if (data.snapshot?.snapshotId) saveSnapshot(data.snapshot as GcpSnapshot);
       })
-      .catch(() => {
-        // silently ignore — SnapshotStats will show the error
-      });
+      .catch(() => { });
   }, [triggerScan]);
 
-  // 10-minute auto-refresh
   useEffect(() => {
     const id = setInterval(triggerScan, 10 * 60 * 1000);
     return () => clearInterval(id);
@@ -62,73 +52,85 @@ export default function DashboardClient() {
   }
 
   return (
-    <div className="space-y-8">
-      {/* No AI key notice */}
-      {hasAiKey === false && (
-        <div className="flex items-start gap-3 p-4 rounded-xl border border-amber-500/30 bg-amber-500/8">
-          <KeyRound className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-amber-300">No AI key configured</p>
-            <p className="text-xs text-amber-400/80 mt-0.5">
-              AI-powered features (natural language queries, security recommendations) use the system default key.
-              Add your own key for dedicated quota and your preferred provider.
-            </p>
-          </div>
-          <Link
-            href="/dashboard/settings"
-            className="flex items-center gap-1.5 shrink-0 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-amber-500/15 border border-amber-500/30 text-amber-300 hover:bg-amber-500/25 transition-colors"
-          >
-            <Settings className="w-3.5 h-3.5" />
-            Settings
-          </Link>
-        </div>
-      )}
+    <div className="min-h-screen p-4 flex flex-col" style={{ background: "#090909" }}>
+      <div className="max-w-4xl mx-auto w-full space-y-4 flex-1">
+        <p className="text-xs uppercase tracking-widest" style={{ color: "#005c16" }}>
+          // CLOUD BRAIN QUERY
+        </p>
 
-      {/* Stats bar */}
-      <SnapshotStats
-        scanVersion={scanVersion}
-        onSyncRequest={triggerScan}
-        isSyncing={scanning}
-      />
-
-      <div className="border-t border-slate-800" />
-
-      {/* Query section */}
-      <div className="space-y-2">
-        <h2 className="text-xs text-slate-500 font-medium uppercase tracking-wider">
-          Natural Language Query
-        </h2>
         <QueryBox onResult={handleResult} />
+
+        {results.length > 0 && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs uppercase tracking-widest" style={{ color: "#00aa2b" }}>
+                // QUERY LOG ({results.length} entries)
+              </span>
+              <button
+                onClick={() => setResults([])}
+                className="flex items-center gap-1 text-xs uppercase tracking-widest transition-colors px-2 py-1"
+                style={{ color: "#ff3333", border: "1px solid #440000" }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.borderColor = "#ff3333";
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.borderColor = "#440000";
+                }}
+              >
+                <Trash2 className="w-3 h-3" />
+                [CLEAR LOG]
+              </button>
+            </div>
+            <div className="space-y-3">
+              {results.map((r, i) => (
+                <ResultCard key={`${r.fetchedAt}-${i}`} result={r} index={i} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {results.length === 0 && (
+          <div className="py-8 text-center" style={{ color: "#005c16" }}>
+            <p className="text-xs">// No queries executed. Type a command above.</p>
+          </div>
+        )}
+
+        <SnapshotStats
+          scanVersion={scanVersion}
+          onSyncRequest={triggerScan}
+          isSyncing={scanning}
+        />
       </div>
 
-      {/* Results */}
-      {results.length > 0 && (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xs text-slate-500 font-medium uppercase tracking-wider">
-              Results ({results.length})
-            </h2>
-            <button
-              onClick={() => setResults([])}
-              className="flex items-center gap-1 text-xs text-slate-500 hover:text-red-400 transition-colors"
-            >
-              <Trash2 className="w-3 h-3" />
-              Clear
-            </button>
-          </div>
-          <div className="space-y-4">
-            {results.map((r, i) => (
-              <ResultCard key={`${r.fetchedAt}-${i}`} result={r} index={i} />
-            ))}
-          </div>
+      {/* Status bar */}
+      <div
+        className="flex items-center justify-between mt-8 px-3 py-1.5 text-xs"
+        style={{ border: "1px solid #005c16", background: "#0a0a0a" }}
+      >
+        <div className="flex items-center gap-4">
+          {hasAiKey === false && (
+            <span style={{ color: "#ffaa00" }}>
+              // WARN: No AI key configured —{" "}
+              <Link href="/dashboard/settings" style={{ color: "#ffaa00", textDecoration: "underline" }}>
+                [CONFIGURE]
+              </Link>
+            </span>
+          )}
         </div>
-      )}
+        <div className="flex items-center gap-3 text-xs" style={{ color: "#005c16" }}>
+          <span style={{ color: scanning ? "#ffaa00" : "#005c16" }}>
+            {scanning ? "// SYNCING GCP..." : "// SYSTEM ONLINE"}
+          </span>
+          <span className={scanning ? "blink" : ""} style={{ color: scanning ? "#ffaa00" : "#00ff41" }}>
+            ■
+          </span>
+        </div>
+      </div>
 
-      {results.length === 0 && (
-        <div className="text-center py-12 text-slate-600">
-          <p className="text-sm">Ask a question above to see results here.</p>
-        </div>
-      )}
+      {/* Footer */}
+      <footer className="text-center py-3 text-xs" style={{ color: "#003010" }}>
+        Conceived with love by Pavel Zagalsky 2026
+      </footer>
     </div>
   );
 }

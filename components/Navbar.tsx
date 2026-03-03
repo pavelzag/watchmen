@@ -1,84 +1,104 @@
 import { auth, signOut } from "@/lib/auth";
-import { ShieldCheck, LogOut, ShieldAlert, Search, Clock, LayoutDashboard, Settings, ClipboardCheck } from "lucide-react";
+import {
+  LayoutDashboard, ShieldAlert, Search, Clock,
+  ClipboardCheck, Settings, LogOut, Terminal,
+} from "lucide-react";
 import Link from "next/link";
+import NavbarAskButton from "./NavbarAskButton";
+import NavbarCloudTabs from "./NavbarCloudTabs";
 
 export default async function Navbar() {
   const session = await auth();
 
   return (
-    <header className="border-b border-slate-800 bg-slate-950/80 backdrop-blur-sm sticky top-0 z-50">
-      {/* Main bar */}
-      <div className="max-w-5xl mx-auto px-6 h-14 flex items-center justify-between">
-        <div className="flex items-center gap-2.5">
-          <div className="p-1.5 rounded-lg bg-sky-500/10 border border-sky-500/20">
-            <ShieldCheck className="w-5 h-5 text-sky-400" />
-          </div>
-          <span className="font-bold text-white tracking-tight">Watchmen</span>
-          <span className="text-xs text-slate-500 font-mono hidden sm:block">
-            GCP IAM Explorer
+    <header
+      style={{
+        borderBottom: "1px solid #005c16",
+        background: "#090909",
+        position: "sticky",
+        top: 0,
+        zIndex: 50,
+      }}
+    >
+      {/* Top bar */}
+      <div className="max-w-7xl mx-auto px-6 h-12 flex items-center justify-between">
+        {/* Logo */}
+        <div className="flex items-center gap-3">
+          <Terminal className="w-4 h-4" style={{ color: "#00ff41" }} />
+          <span
+            className="text-sm font-bold tracking-widest uppercase"
+            style={{ color: "#00ff41", textShadow: "0 0 8px #00ff41" }}
+          >
+            WATCHMEN
           </span>
+          <span style={{ color: "#005c16" }}>&gt;</span>
+          <span className="text-xs tracking-widest uppercase" style={{ color: "#00aa2b" }}>
+            GCP IAM EXPLORER
+          </span>
+          <span className="blink text-xs" style={{ color: "#00ff41" }}>_</span>
         </div>
 
-        {session?.user && (
-          <div className="flex items-center gap-3">
-            <div className="hidden sm:flex items-center gap-2">
-              {session.user.image && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={session.user.image}
-                  alt={session.user.name ?? ""}
-                  className="w-7 h-7 rounded-full ring-1 ring-slate-700"
-                />
-              )}
-              <span className="text-sm text-slate-400">{session.user.email}</span>
-            </div>
-            <form
-              action={async () => {
-                "use server";
-                await signOut({ redirectTo: "/login" });
-              }}
-            >
-              <button
-                type="submit"
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-all duration-150"
+        {/* Right: ask button + user + logout */}
+        <div className="flex items-center gap-3">
+          {/* Global ask button — always visible */}
+          <NavbarAskButton />
+
+          {session?.user && (
+            <>
+              <span className="text-xs hidden md:block" style={{ color: "#005c16" }}>
+                <span style={{ color: "#00aa2b" }}>// logged-in:</span>{" "}
+                <span style={{ color: "#00ff41" }}>{session.user.email}</span>
+              </span>
+              <form
+                action={async () => {
+                  "use server";
+                  await signOut({ redirectTo: "/login" });
+                }}
               >
-                <LogOut className="w-3.5 h-3.5" />
-                Sign out
-              </button>
-            </form>
-          </div>
-        )}
+                <button
+                  type="submit"
+                  className="terminal-btn-danger flex items-center gap-1.5 px-3 py-1 text-xs uppercase tracking-widest"
+                >
+                  <LogOut className="w-3 h-3" />
+                  [LOGOUT]
+                </button>
+              </form>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Sub-nav */}
-      <div className="max-w-5xl mx-auto px-6 h-9 flex items-center gap-1 border-t border-slate-800/60">
-        <NavLink href="/dashboard" icon={<LayoutDashboard className="w-3.5 h-3.5" />} label="Dashboard" />
-        <NavLink href="/dashboard/findings" icon={<ShieldAlert className="w-3.5 h-3.5" />} label="Findings" highlight />
-        <NavLink href="/dashboard/principal" icon={<Search className="w-3.5 h-3.5" />} label="Principal" />
-        <NavLink href="/dashboard/history" icon={<Clock className="w-3.5 h-3.5" />} label="History" />
-        <NavLink href="/dashboard/compliance" icon={<ClipboardCheck className="w-3.5 h-3.5" />} label="Compliance" />
-        <NavLink href="/dashboard/settings" icon={<Settings className="w-3.5 h-3.5" />} label="Settings" />
+      <div
+        className="max-w-7xl mx-auto px-6 h-8 flex items-center gap-0"
+        style={{ borderTop: "1px solid #0a1a0a" }}
+      >
+        <NavbarCloudTabs />
+        <NavLink href="/dashboard" icon={<LayoutDashboard className="w-3 h-3" />} label="DASHBOARD" />
+        <NavLink href="/dashboard/findings" icon={<ShieldAlert className="w-3 h-3" />} label="FINDINGS" danger />
+        <NavLink href="/dashboard/principal" icon={<Search className="w-3 h-3" />} label="PRINCIPAL" />
+        <NavLink href="/dashboard/history" icon={<Clock className="w-3 h-3" />} label="HISTORY" />
+        <NavLink href="/dashboard/compliance" icon={<ClipboardCheck className="w-3 h-3" />} label="COMPLIANCE" />
+        <NavLink href="/dashboard/settings" icon={<Settings className="w-3 h-3" />} label="SETTINGS" />
       </div>
     </header>
   );
 }
 
 function NavLink({
-  href, icon, label, highlight,
+  href, icon, label, danger,
 }: {
   href: string;
   icon: React.ReactNode;
   label: string;
-  highlight?: boolean;
+  danger?: boolean;
 }) {
   return (
     <Link
       href={href}
-      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs transition-colors ${
-        highlight
-          ? "text-red-400 hover:text-red-300 hover:bg-red-500/10"
-          : "text-slate-500 hover:text-slate-200 hover:bg-slate-800"
-      }`}
+      className={`flex items-center gap-1.5 px-3 h-full text-xs uppercase tracking-widest ${danger ? "terminal-nav-link-danger" : "terminal-nav-link"
+        }`}
+      style={{ borderRight: "1px solid #0a1a0a" }}
     >
       {icon}
       {label}

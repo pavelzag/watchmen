@@ -103,7 +103,7 @@ function FindingCard({ finding, cfg }: { finding: SecurityFinding; cfg: typeof S
   }
 
   return (
-    <div className={cn("rounded-xl border glass space-y-2", cfg.border)}>
+    <div data-nav tabIndex={0} className={cn("rounded-xl border glass space-y-2", cfg.border)}>
       {/* Main content */}
       <div className="p-4 space-y-2">
         <div className="flex items-start justify-between gap-4 flex-wrap">

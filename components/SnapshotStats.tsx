@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback, forwardRef } from "react";
 import {
   Users, HardDrive, Server, KeySquare, MonitorDot, ChevronRight,
   Play, Database, BarChart3, Radio, Lock, Flame, ShieldAlert, RefreshCw,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { computeFindings } from "@/lib/findings";
 import type { GcpSnapshot } from "@/lib/gcp/types";
 import ScanProgress from "@/components/ScanProgress";
@@ -25,7 +25,6 @@ interface Stats {
   secrets: { name: string; projectId: string }[];
   firewallRules: { name: string; projectId: string; disabled: boolean }[];
   fetchedAt: string;
-  // full snapshot for findings
   _snap?: GcpSnapshot;
 }
 
@@ -40,17 +39,16 @@ export default function SnapshotStats({ scanVersion, onSyncRequest, isSyncing }:
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [age, setAge] = useState<string>("");
+  const [focusedIdx, setFocusedIdx] = useState<number>(-1);
+  const tileRefs = useRef<(HTMLAnchorElement | null)[]>([]);
+  const router = useRouter();
 
   async function fetchStats() {
     setLoading(true);
     setError(null);
     try {
       const res = await fetch("/api/gcp/snapshot");
-      if (res.status === 404) {
-        // No snapshot yet — scan is pending
-        setStats(null);
-        return;
-      }
+      if (res.status === 404) { setStats(null); return; }
       if (!res.ok) throw new Error("Failed to load GCP data");
       const data = await res.json();
       setStats({ ...data, _snap: data });
@@ -61,10 +59,8 @@ export default function SnapshotStats({ scanVersion, onSyncRequest, isSyncing }:
     }
   }
 
-  // Re-fetch when scanVersion bumps (scan completed) or on mount
   useEffect(() => { fetchStats(); }, [scanVersion]);
 
-  // Live "updated X ago" counter
   useEffect(() => {
     if (!stats) return;
     function updateAge() {
@@ -77,173 +73,166 @@ export default function SnapshotStats({ scanVersion, onSyncRequest, isSyncing }:
     return () => clearInterval(id);
   }, [stats]);
 
+  const buildTiles = useCallback((s: Stats) => [
+    { icon: Users, label: "USERS", value: s.users.length, href: "/dashboard/users" },
+    { icon: KeySquare, label: "SVC ACCTS", value: s.serviceAccountEmails.length, href: "/dashboard/service-accounts" },
+    { icon: HardDrive, label: "BUCKETS", value: s.storageBuckets.length, href: "/dashboard/buckets" },
+    { icon: Server, label: "GKE", value: s.gkeClusters.length, href: "/dashboard/clusters" },
+    { icon: MonitorDot, label: "VMs", value: s.vms.length, href: "/dashboard/vms" },
+    { icon: Play, label: "CLOUD RUN", value: s.cloudRunServices.length, href: "/dashboard/cloud-run" },
+    { icon: Database, label: "CLOUD SQL", value: s.cloudSqlInstances.length, href: "/dashboard/cloud-sql" },
+    { icon: BarChart3, label: "BIGQUERY", value: s.bigqueryDatasets.length, href: "/dashboard/bigquery" },
+    { icon: Radio, label: "PUB/SUB", value: s.pubsubTopics.length, href: "/dashboard/pubsub" },
+    { icon: Lock, label: "SECRETS", value: s.secrets.length, href: "/dashboard/secrets" },
+    { icon: Flame, label: "FIREWALL", value: s.firewallRules.length, href: "/dashboard/firewall" },
+  ], []);
+
+  const allTiles = stats ? buildTiles(stats) : [];
+
   const findings = stats?._snap ? computeFindings(stats._snap) : [];
   const criticalCount = findings.filter((f) => f.severity === "critical").length;
   const highCount = findings.filter((f) => f.severity === "high").length;
 
-  const row1Tiles = stats
-    ? [
-        {
-          icon: Users, label: "Human Users", value: stats.users.length,
-          sub: `across ${stats.projects.length} project(s)`,
-          color: "text-violet-400", bg: "bg-violet-500/10 border-violet-500/20",
-          href: "/dashboard/users",
-        },
-        {
-          icon: KeySquare, label: "Service Accounts", value: stats.serviceAccountEmails.length,
-          sub: `across ${stats.projects.length} project(s)`,
-          color: "text-amber-400", bg: "bg-amber-500/10 border-amber-500/20",
-          href: "/dashboard/service-accounts",
-        },
-        {
-          icon: HardDrive, label: "Storage Buckets", value: stats.storageBuckets.length,
-          sub: stats.storageBuckets.slice(0, 2).map((b) => b.name).join(", ") + (stats.storageBuckets.length > 2 ? "…" : ""),
-          color: "text-sky-400", bg: "bg-sky-500/10 border-sky-500/20",
-          href: "/dashboard/buckets",
-        },
-        {
-          icon: Server, label: "GKE Clusters", value: stats.gkeClusters.length,
-          sub: stats.gkeClusters.slice(0, 2).map((c) => c.name).join(", ") + (stats.gkeClusters.length > 2 ? "…" : ""),
-          color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20",
-          href: "/dashboard/clusters",
-        },
-        {
-          icon: MonitorDot, label: "VMs", value: stats.vms.length,
-          sub: `${stats.vms.filter((v) => v.status === "RUNNING").length} running`,
-          color: "text-orange-400", bg: "bg-orange-500/10 border-orange-500/20",
-          href: "/dashboard/vms",
-        },
-      ]
-    : [];
-
-  const row2Tiles = stats
-    ? [
-        {
-          icon: Play, label: "Cloud Run", value: stats.cloudRunServices.length,
-          sub: `${stats.cloudRunServices.filter((s) => s.status === "ACTIVE").length} active`,
-          color: "text-blue-400", bg: "bg-blue-500/10 border-blue-500/20",
-          href: "/dashboard/cloud-run",
-        },
-        {
-          icon: Database, label: "Cloud SQL", value: stats.cloudSqlInstances.length,
-          sub: `${stats.cloudSqlInstances.filter((i) => i.publicIp).length} with public IP`,
-          color: "text-teal-400", bg: "bg-teal-500/10 border-teal-500/20",
-          href: "/dashboard/cloud-sql",
-        },
-        {
-          icon: BarChart3, label: "BigQuery", value: stats.bigqueryDatasets.length,
-          sub: "datasets",
-          color: "text-indigo-400", bg: "bg-indigo-500/10 border-indigo-500/20",
-          href: "/dashboard/bigquery",
-        },
-        {
-          icon: Radio, label: "Pub/Sub", value: stats.pubsubTopics.length,
-          sub: "topics",
-          color: "text-pink-400", bg: "bg-pink-500/10 border-pink-500/20",
-          href: "/dashboard/pubsub",
-        },
-        {
-          icon: Lock, label: "Secrets", value: stats.secrets.length,
-          sub: "managed secrets",
-          color: "text-rose-400", bg: "bg-rose-500/10 border-rose-500/20",
-          href: "/dashboard/secrets",
-        },
-        {
-          icon: Flame, label: "Firewall Rules", value: stats.firewallRules.length,
-          sub: `${stats.firewallRules.filter((r) => !r.disabled).length} active`,
-          color: "text-yellow-400", bg: "bg-yellow-500/10 border-yellow-500/20",
-          href: "/dashboard/firewall",
-        },
-      ]
-    : [];
+  function handleGridKey(e: React.KeyboardEvent) {
+    if (allTiles.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      const next = focusedIdx < allTiles.length - 1 ? focusedIdx + 1 : 0;
+      setFocusedIdx(next);
+      tileRefs.current[next]?.focus();
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      const next = focusedIdx > 0 ? focusedIdx - 1 : allTiles.length - 1;
+      setFocusedIdx(next);
+      tileRefs.current[next]?.focus();
+    } else if (e.key === "Enter" && focusedIdx >= 0) {
+      router.push(allTiles[focusedIdx].href);
+    } else if (e.key === "Escape") {
+      setFocusedIdx(-1);
+    }
+  }
 
   return (
     <div className="space-y-3">
+      {/* Header */}
       <div className="flex items-center justify-between">
-        <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">
-          GCP Snapshot
-        </p>
+        <span className="text-xs uppercase tracking-widest" style={{ color: "#005c16" }}>
+          // GCP SNAPSHOT
+        </span>
         {onSyncRequest && (
           <button
             onClick={onSyncRequest}
             disabled={isSyncing || loading}
-            className="flex items-center gap-1 text-xs text-slate-400 hover:text-sky-400 transition-colors"
+            className="flex items-center gap-1 text-xs uppercase tracking-widest transition-colors px-2 py-1"
+            style={{
+              border: "1px solid #005c16",
+              color: isSyncing ? "#ffaa00" : "#00aa2b",
+              background: "transparent",
+            }}
           >
-            <RefreshCw className={cn("w-3 h-3", isSyncing && "animate-spin")} />
-            {isSyncing ? "Syncing…" : "Sync GCP"}
+            <RefreshCw className={`w-3 h-3 ${isSyncing ? "animate-spin" : ""}`} />
+            {isSyncing ? "[SYNCING...]" : "[SYNC GCP]"}
           </button>
         )}
       </div>
 
       {error && (
-        <p className="text-xs text-red-400 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20">
-          {error}
-        </p>
+        <div
+          className="px-3 py-2 text-xs"
+          style={{ border: "1px solid #ff3333", background: "#1a0000", color: "#ff3333" }}
+        >
+          !! ERROR: {error}
+        </div>
       )}
 
       <ScanProgress isScanning={!!isSyncing} />
 
+      {/* Loading skeleton */}
       {(loading || isSyncing) && !stats && (
-        <div className="space-y-3">
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-            {[...Array(5)].map((_, i) => (
-              <div key={i} className="glass rounded-xl p-3 animate-pulse space-y-2">
-                <div className="h-3 w-16 bg-slate-700 rounded" />
-                <div className="h-6 w-8 bg-slate-700 rounded" />
-              </div>
-            ))}
-          </div>
+        <div className="grid grid-cols-5 gap-2">
+          {[...Array(5)].map((_, i) => (
+            <div
+              key={i}
+              className="p-3 animate-pulse space-y-2"
+              style={{ border: "1px solid #003010", background: "#0a0a0a" }}
+            >
+              <div className="h-2 w-12" style={{ background: "#003010" }} />
+              <div className="h-5 w-8" style={{ background: "#003010" }} />
+            </div>
+          ))}
         </div>
       )}
 
       {!loading && !isSyncing && !stats && !error && (
-        <p className="text-xs text-slate-500 px-3 py-2 rounded-lg bg-slate-800/50 border border-slate-700">
-          Scan in progress — GCP data will appear shortly.
-        </p>
+        <div className="px-3 py-2 text-xs" style={{ border: "1px solid #003010", color: "#005c16" }}>
+          // Scan pending — GCP data will appear shortly
+        </div>
       )}
 
       {stats && (
         <>
-          {/* Findings summary tile */}
+          {/* Findings alert */}
           {findings.length > 0 && (
             <Link
               href="/dashboard/findings"
-              className="flex items-center justify-between px-4 py-2.5 rounded-xl border border-red-500/30 bg-red-500/5 hover:bg-red-500/10 transition-all duration-150 group"
+              className="flex items-center justify-between px-3 py-2 text-xs uppercase tracking-widest transition-all"
+              style={{ border: "1px solid #440000", background: "#0a0000" }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLAnchorElement).style.borderColor = "#ff3333";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLAnchorElement).style.borderColor = "#440000";
+              }}
             >
               <div className="flex items-center gap-2">
-                <ShieldAlert className="w-4 h-4 text-red-400" />
-                <span className="text-sm font-medium text-red-300">Security Findings</span>
+                <ShieldAlert className="w-3.5 h-3.5" style={{ color: "#ff3333" }} />
+                <span style={{ color: "#ff3333" }}>!! SECURITY FINDINGS</span>
                 {criticalCount > 0 && (
-                  <span className="px-1.5 py-0.5 rounded-full text-xs font-bold bg-red-500 text-white">
-                    {criticalCount} critical
+                  <span
+                    className="px-1.5 py-0.5 text-xs font-bold"
+                    style={{ background: "#ff3333", color: "#090909" }}
+                  >
+                    {criticalCount} CRITICAL
                   </span>
                 )}
                 {highCount > 0 && (
-                  <span className="px-1.5 py-0.5 rounded-full text-xs font-semibold bg-orange-500/20 border border-orange-500/30 text-orange-400">
-                    {highCount} high
+                  <span
+                    className="px-1.5 py-0.5 text-xs"
+                    style={{ border: "1px solid #ff3333", color: "#ff3333" }}
+                  >
+                    {highCount} HIGH
                   </span>
                 )}
               </div>
-              <ChevronRight className="w-4 h-4 text-red-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+              <ChevronRight className="w-3 h-3" style={{ color: "#ff3333" }} />
             </Link>
           )}
 
-          {/* Row 1 — core resources */}
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-            {row1Tiles.map((tile) => (
-              <StatTile key={tile.label} {...tile} />
-            ))}
+          {/* Keyboard nav hint */}
+          <p className="text-xs" style={{ color: "#003010" }}>
+            // ↑↓ navigate tiles · Enter to open · updated {age}
+          </p>
+
+          {/* Tile grid with keyboard nav */}
+          <div
+            onKeyDown={handleGridKey}
+          // Allow the container to receive focus events from children
+          >
+            <div className="grid grid-cols-5 gap-2">
+              {allTiles.map((tile, i) => (
+                <StatTile
+                  key={tile.label}
+                  {...tile}
+                  isFocused={focusedIdx === i}
+                  ref={(el) => { tileRefs.current[i] = el; }}
+                  onFocus={() => setFocusedIdx(i)}
+                />
+              ))}
+            </div>
           </div>
 
-          {/* Row 2 — new resource types */}
-          <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
-            {row2Tiles.map((tile) => (
-              <StatTile key={tile.label} {...tile} />
-            ))}
-          </div>
-
-          <p className="text-xs text-slate-600">
-            Updated {age} · {new Date(stats.fetchedAt).toLocaleString()}
+          <p className="text-xs" style={{ color: "#003010" }}>
+            // fetched {new Date(stats.fetchedAt).toLocaleString()}
           </p>
         </>
       )}
@@ -251,35 +240,39 @@ export default function SnapshotStats({ scanVersion, onSyncRequest, isSyncing }:
   );
 }
 
-function StatTile({
-  icon: Icon, label, value, sub, color, bg, href,
-}: {
-  icon: React.ElementType;
-  label: string;
-  value: number;
-  sub: string;
-  color: string;
-  bg: string;
-  href: string;
-}) {
+
+const StatTile = forwardRef<
+  HTMLAnchorElement,
+  { icon: React.ElementType; label: string; value: number; href: string; isFocused?: boolean; onFocus?: () => void }
+>(function StatTile({ icon: Icon, label, value, href, isFocused, onFocus }, ref) {
   return (
     <Link
       href={href}
-      className={cn(
-        "group rounded-xl p-3 border transition-all duration-150",
-        "hover:scale-[1.02] hover:shadow-lg cursor-pointer",
-        bg
-      )}
+      ref={ref}
+      onFocus={onFocus}
+      data-nav
+      tabIndex={0}
+      className="terminal-card-link group p-3 block outline-none"
+      style={isFocused ? { borderColor: "#00ff41", boxShadow: "0 0 10px #00ff4155" } : undefined}
     >
-      <div className="flex items-center justify-between mb-1.5">
+      <div className="flex items-center justify-between mb-1">
         <div className="flex items-center gap-1.5">
-          <Icon className={cn("w-3.5 h-3.5", color)} />
-          <span className="text-xs text-slate-400 truncate">{label}</span>
+          <Icon className="w-3 h-3" style={{ color: "#00aa2b" }} />
+          <span className="text-xs uppercase tracking-widest" style={{ color: "#005c16" }}>
+            {label}
+          </span>
         </div>
-        <ChevronRight className={cn("w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity shrink-0", color)} />
+        <ChevronRight
+          className="w-3 h-3 opacity-0 group-hover:opacity-100 group-focus:opacity-100 transition-opacity"
+          style={{ color: "#00ff41" }}
+        />
       </div>
-      <p className={cn("text-2xl font-bold tabular-nums", color)}>{value}</p>
-      <p className="text-xs text-slate-500 mt-0.5 truncate">{sub}</p>
+      <p
+        className="text-2xl font-bold tabular-nums"
+        style={{ color: "#00ff41", textShadow: isFocused ? "0 0 12px #00ff41" : "0 0 8px #00ff4133" }}
+      >
+        {value}
+      </p>
     </Link>
   );
-}
+});

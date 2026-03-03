@@ -84,6 +84,8 @@ export default function BucketsPage() {
                 return (
                   <Fragment key={bucket.name}>
                     <tr
+                      data-nav
+                      tabIndex={0}
                       onClick={() => setSelected(bucket)}
                       className={cn(
                         "border-t border-slate-700/30 cursor-pointer transition-colors hover:bg-sky-500/5",

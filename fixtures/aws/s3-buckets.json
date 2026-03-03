@@ -1,0 +1,101 @@
+[
+  {
+    "bucketName": "prod-app-assets",
+    "accountId": "111111111111",
+    "region": "us-east-1",
+    "creationDate": "2021-03-10T00:00:00Z",
+    "publicAccessBlock": {
+      "blockPublicAcls": true,
+      "ignorePublicAcls": true,
+      "blockPublicPolicy": true,
+      "restrictPublicBuckets": true
+    },
+    "bucketPolicy": [],
+    "versioning": "Enabled",
+    "encryption": "SSE-S3",
+    "acl": "private",
+    "tags": { "env": "prod", "team": "ops" }
+  },
+  {
+    "bucketName": "prod-data-lake",
+    "accountId": "111111111111",
+    "region": "us-east-1",
+    "creationDate": "2022-07-01T00:00:00Z",
+    "publicAccessBlock": {
+      "blockPublicAcls": true,
+      "ignorePublicAcls": true,
+      "blockPublicPolicy": true,
+      "restrictPublicBuckets": true
+    },
+    "bucketPolicy": [],
+    "versioning": "Enabled",
+    "encryption": "SSE-KMS",
+    "acl": "private",
+    "tags": { "env": "prod", "team": "data" }
+  },
+  {
+    "bucketName": "prod-static-website",
+    "accountId": "111111111111",
+    "region": "us-east-1",
+    "creationDate": "2020-11-05T00:00:00Z",
+    "publicAccessBlock": {
+      "blockPublicAcls": false,
+      "ignorePublicAcls": false,
+      "blockPublicPolicy": false,
+      "restrictPublicBuckets": false
+    },
+    "bucketPolicy": [
+      {
+        "effect": "Allow",
+        "principals": ["*"],
+        "actions": ["s3:GetObject"],
+        "resources": ["arn:aws:s3:::prod-static-website/*"]
+      }
+    ],
+    "versioning": "Suspended",
+    "encryption": "SSE-S3",
+    "acl": "public-read",
+    "tags": { "env": "prod", "purpose": "website" }
+  },
+  {
+    "bucketName": "staging-backups",
+    "accountId": "222222222222",
+    "region": "eu-west-1",
+    "creationDate": "2023-01-20T00:00:00Z",
+    "publicAccessBlock": {
+      "blockPublicAcls": true,
+      "ignorePublicAcls": true,
+      "blockPublicPolicy": true,
+      "restrictPublicBuckets": true
+    },
+    "bucketPolicy": [],
+    "versioning": "Disabled",
+    "encryption": "None",
+    "acl": "private",
+    "tags": { "env": "staging", "team": "devops" }
+  },
+  {
+    "bucketName": "staging-ml-datasets",
+    "accountId": "222222222222",
+    "region": "eu-west-1",
+    "creationDate": "2024-02-14T00:00:00Z",
+    "publicAccessBlock": {
+      "blockPublicAcls": false,
+      "ignorePublicAcls": false,
+      "blockPublicPolicy": false,
+      "restrictPublicBuckets": false
+    },
+    "bucketPolicy": [
+      {
+        "effect": "Allow",
+        "principals": ["*"],
+        "actions": ["s3:GetObject", "s3:ListBucket"],
+        "resources": ["arn:aws:s3:::staging-ml-datasets", "arn:aws:s3:::staging-ml-datasets/*"]
+      }
+    ],
+    "versioning": "Disabled",
+    "encryption": "None",
+    "acl": "public-read",
+    "tags": { "env": "staging", "team": "ml" }
+  }
+]

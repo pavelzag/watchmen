@@ -126,6 +126,8 @@ export default function CloudSqlPage() {
                 return (
                   <tr
                     key={`${inst.projectId}/${inst.name}`}
+                    data-nav
+                    tabIndex={0}
                     onClick={() => setSelected(inst)}
                     className={cn(
                       "border-t border-slate-700/30 cursor-pointer transition-colors hover:bg-sky-500/5",

@@ -1,6 +1,8 @@
 import type { GcpSnapshot } from "@/lib/gcp/types";
 import type { AIProvider } from "@/lib/ai/client";
 import { callAI } from "@/lib/ai/client";
+import { runSoc2 } from "@/lib/compliance/soc2";
+import { runIso27001 } from "@/lib/compliance/iso27001";
 
 export interface ResourceItem {
   name: string;
@@ -11,27 +13,28 @@ export interface ResourceItem {
 
 export interface QueryIntent {
   queryType:
-    | "user_access"
-    | "resource_owners"
-    | "specific_resource_access"
-    | "list_users"
-    | "list_resources"
-    | "security_findings"
-    | "principal_overview"
-    | "unknown";
+  | "user_access"
+  | "resource_owners"
+  | "specific_resource_access"
+  | "list_users"
+  | "list_resources"
+  | "security_findings"
+  | "principal_overview"
+  | "compliance"
+  | "unknown";
   user?: string;
   resourceType?:
-    | "bucket"
-    | "gke_cluster"
-    | "project"
-    | "service_account"
-    | "vm"
-    | "cloud_run"
-    | "cloud_sql"
-    | "bigquery"
-    | "pubsub"
-    | "secret"
-    | "firewall";
+  | "bucket"
+  | "gke_cluster"
+  | "project"
+  | "service_account"
+  | "vm"
+  | "cloud_run"
+  | "cloud_sql"
+  | "bigquery"
+  | "pubsub"
+  | "secret"
+  | "firewall";
   resourceName?: string;
   projectId?: string;
   region?: string;
@@ -51,7 +54,7 @@ Query: "${query}"
 
 Return JSON matching this exact schema:
 {
-  "queryType": "user_access" | "resource_owners" | "specific_resource_access" | "list_users" | "list_resources" | "security_findings" | "principal_overview" | "unknown",
+  "queryType": "user_access" | "resource_owners" | "specific_resource_access" | "list_users" | "list_resources" | "security_findings" | "principal_overview" | "compliance" | "unknown",
   "user": "<email or null>",
   "resourceType": "bucket" | "gke_cluster" | "project" | "service_account" | "vm" | "cloud_run" | "cloud_sql" | "bigquery" | "pubsub" | "secret" | "firewall" | null,
   "resourceName": "<name or null>",
@@ -67,6 +70,7 @@ queryType guide:
 - list_resources: asking to list all resources of a type (buckets, VMs, secrets, firewall rules, etc.)
 - security_findings: asking about security issues, risks, public access, expired keys, vulnerabilities
 - principal_overview: asking for a complete overview of what a principal can access across all resource types
+- compliance: asking about SOC2, ISO27001, compliance posture, passing/failing controls, or compliance scores
 - unknown: cannot determine
 
 resourceType guide:
@@ -203,6 +207,14 @@ function buildContext(intent: QueryIntent, snapshot: GcpSnapshot): unknown {
     return { publicBuckets, openFirewalls, sqlWithPublicIp, expiredKeys, publicRunServices, publicSecrets };
   }
 
+  if (queryType === "compliance") {
+    // Generate full compliance reports dynamically and pass to LLM
+    return {
+      soc2: runSoc2(snapshot),
+      iso27001: runIso27001(snapshot),
+    };
+  }
+
   if (queryType === "resource_owners" && resourceName) {
     if (resourceType === "bucket" || !resourceType) {
       const bucket = snapshot.storageBuckets.find((b) =>
@@ -296,10 +308,11 @@ function buildContext(intent: QueryIntent, snapshot: GcpSnapshot): unknown {
 
 /**
  * Extracts a flat list of named resource items from the snapshot for a given intent.
- * Used to populate clickable resource chips in query result cards.
+ * Used to populate clickable resource chips in query result cards and to
+ * linkify resource names that appear inline in the LLM answer text.
  */
 export function extractResources(intent: QueryIntent, snapshot: GcpSnapshot): ResourceItem[] {
-  const { queryType, resourceType } = intent;
+  const { queryType, resourceType, user, resourceName } = intent;
 
   if (queryType === "list_resources") {
     if (resourceType === "firewall")
@@ -322,6 +335,54 @@ export function extractResources(intent: QueryIntent, snapshot: GcpSnapshot): Re
       return snapshot.pubsubTopics.map((t) => ({ name: t.name.split("/").pop()!, projectId: t.projectId, type: "pubsub" as const }));
     if (resourceType === "secret")
       return snapshot.secrets.map((s) => ({ name: s.name.split("/").pop()!, projectId: s.projectId, type: "secret" as const }));
+  }
+
+  if (queryType === "security_findings") {
+    const items: ResourceItem[] = [];
+    snapshot.storageBuckets
+      .filter((b) => b.iamPolicy.bindings.some((bind) => bind.members.some((m) => m === "allUsers" || m === "allAuthenticatedUsers")))
+      .forEach((b) => items.push({ name: b.name, projectId: b.projectId, type: "bucket" }));
+    snapshot.firewallRules
+      .filter((r) => !r.disabled && r.direction === "INGRESS" && (r.sourceRanges ?? []).some((x) => x === "0.0.0.0/0" || x === "::/0"))
+      .forEach((r) => items.push({ name: r.name, projectId: r.projectId, type: "firewall" }));
+    snapshot.cloudSqlInstances
+      .filter((i) => !!i.publicIp)
+      .forEach((i) => items.push({ name: i.name, projectId: i.projectId, type: "cloud_sql" }));
+    snapshot.serviceAccounts
+      .filter((sa) => sa.keys.some((k) => k.validBeforeTime && new Date(k.validBeforeTime) < new Date()))
+      .forEach((sa) => items.push({ name: sa.email, projectId: sa.projectId, type: "service_account" }));
+    snapshot.cloudRunServices
+      .filter((s) => s.iamPolicy.bindings.some((b) => b.members.some((m) => m === "allUsers")))
+      .forEach((s) => items.push({ name: s.name, projectId: s.projectId, type: "cloud_run" }));
+    snapshot.secrets
+      .filter((s) => s.iamPolicy.bindings.some((b) => b.members.some((m) => m === "allUsers" || m === "allAuthenticatedUsers")))
+      .forEach((s) => items.push({ name: s.name.split("/").pop()!, projectId: s.projectId, type: "secret" }));
+    return items;
+  }
+
+  if ((queryType === "user_access" || queryType === "principal_overview") && user) {
+    const tags = [`user:${user}`, `serviceAccount:${user}`];
+    const has = (bindings: { role: string; members: string[] }[]) =>
+      bindings.some((b) => b.members.some((m) => tags.includes(m)));
+    const items: ResourceItem[] = [];
+    snapshot.storageBuckets.filter((b) => has(b.iamPolicy.bindings)).forEach((b) => items.push({ name: b.name, projectId: b.projectId, type: "bucket" }));
+    snapshot.gkeClusters.filter((c) => has(c.iamPolicy.bindings)).forEach((c) => items.push({ name: c.name, projectId: c.projectId, type: "gke_cluster" }));
+    snapshot.cloudRunServices.filter((s) => has(s.iamPolicy.bindings)).forEach((s) => items.push({ name: s.name, projectId: s.projectId, type: "cloud_run" }));
+    snapshot.bigqueryDatasets.filter((d) => has(d.iamPolicy.bindings)).forEach((d) => items.push({ name: d.datasetId, projectId: d.projectId, type: "bigquery" }));
+    snapshot.secrets.filter((s) => has(s.iamPolicy.bindings)).forEach((s) => items.push({ name: s.name.split("/").pop()!, projectId: s.projectId, type: "secret" }));
+    return items;
+  }
+
+  if (queryType === "resource_owners" && resourceName) {
+    const lower = resourceName.toLowerCase();
+    const bucket = snapshot.storageBuckets.find((b) => b.name.toLowerCase().includes(lower));
+    if (bucket) return [{ name: bucket.name, projectId: bucket.projectId, type: "bucket" }];
+    const cluster = snapshot.gkeClusters.find((c) => c.name.toLowerCase().includes(lower));
+    if (cluster) return [{ name: cluster.name, projectId: cluster.projectId, type: "gke_cluster" }];
+    const svc = snapshot.cloudRunServices.find((s) => s.name.toLowerCase().includes(lower));
+    if (svc) return [{ name: svc.name, projectId: svc.projectId, type: "cloud_run" }];
+    const secret = snapshot.secrets.find((s) => s.name.toLowerCase().includes(lower));
+    if (secret) return [{ name: secret.name.split("/").pop()!, projectId: secret.projectId, type: "secret" }];
   }
 
   return [];

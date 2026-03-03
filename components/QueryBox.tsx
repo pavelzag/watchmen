@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Search, Loader2, CornerDownLeft, History, X, ChevronDown } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Loader2, History, X, ChevronDown } from "lucide-react";
 import { saveQuery, getHistory, clearHistory, type QueryHistoryEntry } from "@/lib/query-history";
 import type { ResourceItem } from "@/lib/claude/query-processor";
 
@@ -66,6 +65,7 @@ export default function QueryBox({ onResult }: QueryBoxProps) {
       onResult(result);
       saveQuery(result.query, result.answer);
       setHistory(getHistory());
+      setQuery("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
@@ -92,72 +92,114 @@ export default function QueryBox({ onResult }: QueryBoxProps) {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <form onSubmit={handleSubmit}>
+        {/* Terminal input box */}
         <div
-          className={cn(
-            "glass rounded-2xl p-1 transition-all duration-200",
-            "focus-within:border-sky-500/50 focus-within:shadow-[0_0_0_1px_rgba(14,165,233,0.3)]"
-          )}
+          style={{
+            border: "1px solid #005c16",
+            background: "#0a0a0a",
+            transition: "border-color 0.15s, box-shadow 0.15s",
+          }}
+          onFocus={(e) => {
+            (e.currentTarget as HTMLDivElement).style.borderColor = "#00ff41";
+            (e.currentTarget as HTMLDivElement).style.boxShadow = "0 0 10px #00ff4133";
+          }}
+          onBlur={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget)) {
+              (e.currentTarget as HTMLDivElement).style.borderColor = "#005c16";
+              (e.currentTarget as HTMLDivElement).style.boxShadow = "none";
+            }
+          }}
         >
-          <div className="flex items-start gap-3 px-4 pt-3">
-            <Search className="w-5 h-5 text-slate-400 mt-0.5 shrink-0" />
+          {/* Prompt line */}
+          <div className="flex items-start gap-2 p-3">
+            <span
+              className="text-sm shrink-0 select-none pt-0.5"
+              style={{ color: "#00ff41", textShadow: "0 0 8px #00ff41" }}
+            >
+              $&nbsp;query:
+            </span>
             <textarea
               ref={textareaRef}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Ask anything about your GCP IAM permissions..."
+              placeholder="ask anything about your GCP IAM..."
               rows={2}
-              className="flex-1 bg-transparent text-slate-100 placeholder:text-slate-500 resize-none outline-none text-sm leading-relaxed"
               disabled={loading}
+              className="flex-1 resize-none outline-none text-sm leading-relaxed"
+              style={{
+                background: "transparent",
+                color: "#00ff41",
+                fontFamily: "JetBrains Mono, monospace",
+              }}
             />
+            {!query && (
+              <span className="blink text-sm select-none pt-0.5" style={{ color: "#00ff41" }}>
+                ▌
+              </span>
+            )}
           </div>
-          <div className="flex items-center justify-between px-4 pb-2 pt-1">
-            <span className="text-xs text-slate-600">
-              Shift+Enter for new line
-            </span>
+
+          {/* Toolbar */}
+          <div
+            className="flex items-center justify-between px-3 py-2 text-xs"
+            style={{ borderTop: "1px solid #0a1a0a" }}
+          >
+            <span style={{ color: "#005c16" }}>// Enter to execute · Shift+Enter for newline</span>
             <button
               type="submit"
               disabled={!query.trim() || loading}
-              className={cn(
-                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-150",
+              className="flex items-center gap-1.5 px-4 py-1 text-xs uppercase tracking-widest transition-all"
+              style={
                 query.trim() && !loading
-                  ? "bg-sky-500 text-white hover:bg-sky-400"
-                  : "bg-slate-700/50 text-slate-500 cursor-not-allowed"
-              )}
+                  ? { background: "#00ff41", color: "#090909", fontWeight: 700 }
+                  : { border: "1px solid #005c16", color: "#005c16", background: "transparent", cursor: "not-allowed" }
+              }
             >
               {loading ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <CornerDownLeft className="w-3.5 h-3.5" />
-              )}
-              {loading ? "Thinking..." : "Ask"}
+                <Loader2 className="w-3 h-3 animate-spin" />
+              ) : null}
+              {loading ? "EXECUTING..." : "[EXECUTE]"}
             </button>
           </div>
         </div>
       </form>
 
+      {/* Error */}
       {error && (
-        <div className="px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/20 text-sm text-red-400">
-          {error}
+        <div
+          className="px-3 py-2 text-sm"
+          style={{ border: "1px solid #ff3333", background: "#1a0000", color: "#ff3333" }}
+        >
+          !! ERROR: {error}
         </div>
       )}
 
-      {/* Suggested queries — shown when input is empty */}
+      {/* Suggested queries */}
       {!query && (
         <div className="space-y-2">
-          <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">
-            Suggested queries
+          <p className="text-xs uppercase tracking-widest" style={{ color: "#005c16" }}>
+            // suggested commands
           </p>
           <div className="flex flex-wrap gap-2">
             {SUGGESTED_QUERIES.map((q) => (
               <button
                 key={q}
                 onClick={() => useQuery(q)}
-                className="px-3 py-1.5 rounded-lg text-xs text-slate-400 bg-slate-800/60 border border-slate-700/50 hover:border-sky-500/30 hover:text-sky-400 transition-all duration-150 text-left"
+                className="px-3 py-1 text-xs text-left transition-all"
+                style={{ border: "1px solid #003010", color: "#00aa2b", background: "transparent" }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.borderColor = "#00ff41";
+                  (e.currentTarget as HTMLButtonElement).style.color = "#00ff41";
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.borderColor = "#003010";
+                  (e.currentTarget as HTMLButtonElement).style.color = "#00aa2b";
+                }}
               >
-                {q}
+                &gt; {q}
               </button>
             ))}
           </div>
@@ -170,19 +212,24 @@ export default function QueryBox({ onResult }: QueryBoxProps) {
           <div className="flex items-center justify-between">
             <button
               onClick={() => setShowHistory((s) => !s)}
-              className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300 transition-colors"
+              className="flex items-center gap-1.5 text-xs transition-colors"
+              style={{ color: "#005c16" }}
             >
-              <History className="w-3.5 h-3.5" />
-              Recent queries ({history.length})
-              <ChevronDown className={cn("w-3 h-3 transition-transform", showHistory && "rotate-180")} />
+              <History className="w-3 h-3" />
+              // history ({history.length})
+              <ChevronDown
+                className="w-3 h-3 transition-transform"
+                style={{ transform: showHistory ? "rotate(180deg)" : "rotate(0deg)" }}
+              />
             </button>
             {showHistory && (
               <button
                 onClick={handleClearHistory}
-                className="flex items-center gap-1 text-xs text-slate-500 hover:text-red-400 transition-colors"
+                className="flex items-center gap-1 text-xs"
+                style={{ color: "#ff3333" }}
               >
                 <X className="w-3 h-3" />
-                Clear
+                [CLEAR]
               </button>
             )}
           </div>
@@ -193,9 +240,18 @@ export default function QueryBox({ onResult }: QueryBoxProps) {
                   key={entry.savedAt}
                   onClick={() => useQuery(entry.query)}
                   title={entry.query}
-                  className="px-3 py-1.5 rounded-lg text-xs text-slate-400 bg-slate-800/60 border border-slate-700/50 hover:border-violet-500/30 hover:text-violet-400 transition-all duration-150 text-left max-w-[240px] truncate"
+                  className="px-3 py-1 text-xs text-left max-w-[260px] truncate transition-all"
+                  style={{ border: "1px solid #003010", color: "#00aa2b" }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLButtonElement).style.borderColor = "#00ff41";
+                    (e.currentTarget as HTMLButtonElement).style.color = "#00ff41";
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLButtonElement).style.borderColor = "#003010";
+                    (e.currentTarget as HTMLButtonElement).style.color = "#00aa2b";
+                  }}
                 >
-                  {entry.query}
+                  ↑ {entry.query}
                 </button>
               ))}
             </div>

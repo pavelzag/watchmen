@@ -122,6 +122,8 @@ export default function CloudRunPage() {
                 return (
                   <tr
                     key={`${svc.projectId}/${svc.name}`}
+                    data-nav
+                    tabIndex={0}
                     onClick={() => setSelected(svc)}
                     className={cn(
                       "border-t border-slate-700/30 cursor-pointer transition-colors hover:bg-sky-500/5",

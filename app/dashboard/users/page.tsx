@@ -148,6 +148,8 @@ export default function UsersPage() {
                 return (
                   <tr
                     key={row.email}
+                    data-nav
+                    tabIndex={0}
                     onClick={() => setSelected(row)}
                     className={cn(
                       "border-t border-slate-700/30 cursor-pointer transition-colors hover:bg-sky-500/5",

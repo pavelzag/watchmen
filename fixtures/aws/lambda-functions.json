@@ -1,0 +1,97 @@
+[
+  {
+    "functionName": "prod-api-authorizer",
+    "functionArn": "arn:aws:lambda:us-east-1:111111111111:function:prod-api-authorizer",
+    "accountId": "111111111111",
+    "region": "us-east-1",
+    "runtime": "nodejs20.x",
+    "role": "arn:aws:iam::111111111111:role/LambdaExecutionRole",
+    "lastModified": "2026-02-10T12:00:00Z",
+    "codeSize": 512000,
+    "timeout": 10,
+    "memorySize": 256,
+    "state": "Active",
+    "resourcePolicy": [],
+    "vpcConfig": {
+      "vpcId": "vpc-aabbccdd11",
+      "subnetIds": ["subnet-prod-private-01"],
+      "securityGroupIds": ["sg-prod-lambda-01"]
+    },
+    "tags": { "env": "prod", "team": "backend" }
+  },
+  {
+    "functionName": "prod-image-processor",
+    "functionArn": "arn:aws:lambda:us-east-1:111111111111:function:prod-image-processor",
+    "accountId": "111111111111",
+    "region": "us-east-1",
+    "runtime": "python3.12",
+    "role": "arn:aws:iam::111111111111:role/LambdaExecutionRole",
+    "lastModified": "2026-01-25T09:30:00Z",
+    "codeSize": 1024000,
+    "timeout": 60,
+    "memorySize": 1024,
+    "state": "Active",
+    "resourcePolicy": [],
+    "vpcConfig": null,
+    "tags": { "env": "prod", "team": "media" }
+  },
+  {
+    "functionName": "prod-event-bridge-handler",
+    "functionArn": "arn:aws:lambda:us-east-1:111111111111:function:prod-event-bridge-handler",
+    "accountId": "111111111111",
+    "region": "us-east-1",
+    "runtime": "nodejs20.x",
+    "role": "arn:aws:iam::111111111111:role/LambdaExecutionRole",
+    "lastModified": "2025-12-01T14:00:00Z",
+    "codeSize": 204800,
+    "timeout": 30,
+    "memorySize": 128,
+    "state": "Active",
+    "resourcePolicy": [
+      {
+        "effect": "Allow",
+        "principals": ["*"],
+        "actions": ["lambda:InvokeFunction"],
+        "resources": ["arn:aws:lambda:us-east-1:111111111111:function:prod-event-bridge-handler"]
+      }
+    ],
+    "vpcConfig": null,
+    "tags": { "env": "prod", "team": "platform" }
+  },
+  {
+    "functionName": "staging-data-sync",
+    "functionArn": "arn:aws:lambda:eu-west-1:222222222222:function:staging-data-sync",
+    "accountId": "222222222222",
+    "region": "eu-west-1",
+    "runtime": "python3.11",
+    "role": "arn:aws:iam::222222222222:role/DataPipelineRole",
+    "lastModified": "2026-02-15T16:45:00Z",
+    "codeSize": 768000,
+    "timeout": 300,
+    "memorySize": 512,
+    "state": "Active",
+    "resourcePolicy": [],
+    "vpcConfig": {
+      "vpcId": "vpc-eeff112233",
+      "subnetIds": ["subnet-staging-private-01"],
+      "securityGroupIds": ["sg-staging-default-01"]
+    },
+    "tags": { "env": "staging", "team": "data" }
+  },
+  {
+    "functionName": "staging-notification-sender",
+    "functionArn": "arn:aws:lambda:eu-west-1:222222222222:function:staging-notification-sender",
+    "accountId": "222222222222",
+    "region": "eu-west-1",
+    "runtime": "nodejs18.x",
+    "role": "arn:aws:iam::222222222222:role/LambdaExecutionRole",
+    "lastModified": "2025-10-20T11:00:00Z",
+    "codeSize": 102400,
+    "timeout": 15,
+    "memorySize": 128,
+    "state": "Active",
+    "resourcePolicy": [],
+    "vpcConfig": null,
+    "tags": { "env": "staging", "team": "backend" }
+  }
+]

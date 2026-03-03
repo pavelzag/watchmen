@@ -1,0 +1,75 @@
+import { NextResponse } from "next/server";
+import { auth } from "@/lib/auth";
+import { fetchAwsSnapshot } from "@/lib/aws";
+import { sql } from "@/lib/db";
+import { useMockAwsData } from "@/lib/aws/client";
+
+export async function POST() {
+  const session = await auth();
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const email = session.user?.email;
+  if (!email) {
+    return NextResponse.json({ error: "No user email in session." }, { status: 400 });
+  }
+
+  try {
+    const snapshot = await fetchAwsSnapshot();
+
+    if (!useMockAwsData()) {
+      await sql`
+        INSERT INTO aws_snapshots (user_email, snapshot, fetched_at)
+        VALUES (${email}, ${JSON.stringify(snapshot)}, NOW())
+        ON CONFLICT (user_email) DO UPDATE
+          SET snapshot = EXCLUDED.snapshot,
+              fetched_at = EXCLUDED.fetched_at
+      `;
+    }
+
+    return NextResponse.json({ ok: true, fetchedAt: snapshot.fetchedAt });
+  } catch (err) {
+    console.error("[api/aws/scan] POST error:", err);
+    return NextResponse.json({ error: "AWS scan failed. Check server logs." }, { status: 500 });
+  }
+}
+
+export async function GET() {
+  const session = await auth();
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const email = session.user?.email;
+  if (!email) {
+    return NextResponse.json({ error: "No user email in session." }, { status: 400 });
+  }
+
+  // Mock mode: skip DB, return live data
+  if (useMockAwsData()) {
+    try {
+      const snapshot = await fetchAwsSnapshot();
+      return NextResponse.json({ snapshot, fetchedAt: snapshot.fetchedAt });
+    } catch (err) {
+      console.error("[api/aws/scan] GET mock error:", err);
+      return NextResponse.json({ error: "Failed to load mock AWS data." }, { status: 500 });
+    }
+  }
+
+  try {
+    const result = await sql`
+      SELECT snapshot, fetched_at FROM aws_snapshots WHERE user_email = ${email}
+    `;
+
+    if (result.rows.length === 0) {
+      return NextResponse.json({ snapshot: null, fetchedAt: null });
+    }
+
+    const row = result.rows[0];
+    return NextResponse.json({ snapshot: row.snapshot, fetchedAt: row.fetched_at });
+  } catch (err) {
+    console.error("[api/aws/scan] GET error:", err);
+    return NextResponse.json({ error: "Failed to load AWS snapshot." }, { status: 500 });
+  }
+}

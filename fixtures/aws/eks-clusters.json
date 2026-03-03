@@ -1,0 +1,50 @@
+[
+  {
+    "clusterName": "prod-main",
+    "accountId": "111111111111",
+    "region": "us-east-1",
+    "arn": "arn:aws:eks:us-east-1:111111111111:cluster/prod-main",
+    "status": "ACTIVE",
+    "kubernetesVersion": "1.29",
+    "roleArn": "arn:aws:iam::111111111111:role/EKSNodeRole",
+    "endpointPublicAccess": true,
+    "endpointPrivateAccess": true,
+    "publicAccessCidrs": ["10.0.0.0/8"],
+    "vpcId": "vpc-aabbccdd11",
+    "loggingEnabled": true,
+    "tags": { "env": "prod", "team": "platform" },
+    "createdAt": "2022-09-01T00:00:00Z"
+  },
+  {
+    "clusterName": "prod-batch",
+    "accountId": "111111111111",
+    "region": "us-east-1",
+    "arn": "arn:aws:eks:us-east-1:111111111111:cluster/prod-batch",
+    "status": "ACTIVE",
+    "kubernetesVersion": "1.28",
+    "roleArn": "arn:aws:iam::111111111111:role/EKSNodeRole",
+    "endpointPublicAccess": true,
+    "endpointPrivateAccess": false,
+    "publicAccessCidrs": ["0.0.0.0/0"],
+    "vpcId": "vpc-aabbccdd11",
+    "loggingEnabled": false,
+    "tags": { "env": "prod", "team": "data" },
+    "createdAt": "2023-03-15T00:00:00Z"
+  },
+  {
+    "clusterName": "staging-dev",
+    "accountId": "222222222222",
+    "region": "eu-west-1",
+    "arn": "arn:aws:eks:eu-west-1:222222222222:cluster/staging-dev",
+    "status": "ACTIVE",
+    "kubernetesVersion": "1.29",
+    "roleArn": "arn:aws:iam::222222222222:role/EKSNodeRole",
+    "endpointPublicAccess": true,
+    "endpointPrivateAccess": true,
+    "publicAccessCidrs": ["0.0.0.0/0"],
+    "vpcId": "vpc-eeff112233",
+    "loggingEnabled": true,
+    "tags": { "env": "staging", "team": "platform" },
+    "createdAt": "2024-01-10T00:00:00Z"
+  }
+]

@@ -127,6 +127,8 @@ export default function VMsPage() {
                 return (
                   <tr
                     key={`${vm.projectId}/${vm.name}`}
+                    data-nav
+                    tabIndex={0}
                     onClick={() => setSelected(vm)}
                     className={cn(
                       "border-t border-slate-700/30 cursor-pointer transition-colors hover:bg-sky-500/5",

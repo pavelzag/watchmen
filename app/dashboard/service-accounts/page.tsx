@@ -132,6 +132,8 @@ export default function ServiceAccountsPage() {
                 return (
                   <tr
                     key={sa.email}
+                    data-nav
+                    tabIndex={0}
                     onClick={() => setSelected(sa)}
                     className={cn(
                       "border-t border-slate-700/30 cursor-pointer transition-colors",

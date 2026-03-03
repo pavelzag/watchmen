@@ -22,20 +22,20 @@ describe('QueryBox', () => {
         render(<QueryBox onResult={mockOnResult} />);
 
         // Check main elements
-        expect(screen.getByPlaceholderText(/Ask anything/)).toBeInTheDocument();
-        expect(screen.getByRole('button', { name: /Ask/i })).toBeInTheDocument();
+        expect(screen.getByPlaceholderText(/ask anything about your GCP/i)).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /EXECUTE/i })).toBeInTheDocument();
 
-        // Check suggested queries are visible when input is empty
-        expect(screen.getByText('Which buckets are publicly accessible?')).toBeInTheDocument();
+        // Check suggested queries are visible when input is empty (now have '> ' prefix)
+        expect(screen.getByText(/Which buckets are publicly accessible/)).toBeInTheDocument();
     });
 
     it('handles input and disables button when empty', () => {
         render(<QueryBox onResult={mockOnResult} />);
 
-        const button = screen.getByRole('button', { name: /Ask/i });
+        const button = screen.getByRole('button', { name: /EXECUTE/i });
         expect(button).toBeDisabled();
 
-        const textarea = screen.getByPlaceholderText(/Ask anything/);
+        const textarea = screen.getByPlaceholderText(/ask anything about your GCP/i);
         fireEvent.change(textarea, { target: { value: 'test query' } });
 
         expect(button).not.toBeDisabled();
@@ -57,14 +57,14 @@ describe('QueryBox', () => {
 
         render(<QueryBox onResult={mockOnResult} />);
 
-        const textarea = screen.getByPlaceholderText(/Ask anything/);
+        const textarea = screen.getByPlaceholderText(/ask anything about your GCP/i);
         fireEvent.change(textarea, { target: { value: 'test query' } });
 
-        const button = screen.getByRole('button', { name: /Ask/i });
+        const button = screen.getByRole('button', { name: /EXECUTE/i });
         fireEvent.click(button);
 
         // Loading state
-        expect(screen.getByText('Thinking...')).toBeInTheDocument();
+        expect(screen.getByText('EXECUTING...')).toBeInTheDocument();
 
         await waitFor(() => {
             expect(mockOnResult).toHaveBeenCalledWith(mockResult);
@@ -81,12 +81,12 @@ describe('QueryBox', () => {
 
         render(<QueryBox onResult={mockOnResult} />);
 
-        const textarea = screen.getByPlaceholderText(/Ask anything/);
+        const textarea = screen.getByPlaceholderText(/ask anything about your GCP/i);
         fireEvent.change(textarea, { target: { value: 'bad query' } });
-        fireEvent.click(screen.getByRole('button', { name: /Ask/i }));
+        fireEvent.click(screen.getByRole('button', { name: /EXECUTE/i }));
 
         await waitFor(() => {
-            expect(screen.getByText('Test error message')).toBeInTheDocument();
+            expect(screen.getByText(/!! ERROR: Test error message/)).toBeInTheDocument();
         });
     });
 
@@ -99,16 +99,16 @@ describe('QueryBox', () => {
         render(<QueryBox onResult={mockOnResult} />);
 
         // History button should be visible
-        expect(screen.getByText(/Recent queries/)).toBeInTheDocument();
+        expect(screen.getByText(/\/\/ history/)).toBeInTheDocument();
 
         // Click to expand
-        fireEvent.click(screen.getByText(/Recent queries/));
+        fireEvent.click(screen.getByText(/\/\/ history/));
 
-        expect(screen.getByText('history item 1')).toBeInTheDocument();
-        expect(screen.getByText('history item 2')).toBeInTheDocument();
+        expect(screen.getByText(/↑ history item 1/)).toBeInTheDocument();
+        expect(screen.getByText(/↑ history item 2/)).toBeInTheDocument();
 
         // Click a history item should populate the input
-        fireEvent.click(screen.getByText('history item 1'));
-        expect(screen.getByPlaceholderText(/Ask anything/)).toHaveValue('history item 1');
+        fireEvent.click(screen.getByText(/↑ history item 1/));
+        expect(screen.getByPlaceholderText(/ask anything about your GCP/i)).toHaveValue('history item 1');
     });
 });

@@ -1,0 +1,70 @@
+[
+  {
+    "topicArn": "arn:aws:sns:us-east-1:111111111111:prod-alerts",
+    "topicName": "prod-alerts",
+    "accountId": "111111111111",
+    "region": "us-east-1",
+    "policy": [
+      {
+        "effect": "Allow",
+        "principals": ["arn:aws:iam::111111111111:root"],
+        "actions": ["sns:Publish", "sns:Subscribe"],
+        "resources": ["arn:aws:sns:us-east-1:111111111111:prod-alerts"]
+      }
+    ],
+    "subscriptionCount": 5,
+    "kmsMasterKeyId": "arn:aws:kms:us-east-1:111111111111:key/mrk-prod-sns-key",
+    "tags": { "env": "prod", "team": "ops" }
+  },
+  {
+    "topicArn": "arn:aws:sns:us-east-1:111111111111:prod-order-events",
+    "topicName": "prod-order-events",
+    "accountId": "111111111111",
+    "region": "us-east-1",
+    "policy": [
+      {
+        "effect": "Allow",
+        "principals": ["arn:aws:iam::111111111111:root"],
+        "actions": ["sns:Publish"],
+        "resources": ["arn:aws:sns:us-east-1:111111111111:prod-order-events"]
+      }
+    ],
+    "subscriptionCount": 3,
+    "kmsMasterKeyId": null,
+    "tags": { "env": "prod", "team": "commerce" }
+  },
+  {
+    "topicArn": "arn:aws:sns:us-east-1:111111111111:prod-public-notifications",
+    "topicName": "prod-public-notifications",
+    "accountId": "111111111111",
+    "region": "us-east-1",
+    "policy": [
+      {
+        "effect": "Allow",
+        "principals": ["*"],
+        "actions": ["sns:Publish", "sns:Subscribe"],
+        "resources": ["arn:aws:sns:us-east-1:111111111111:prod-public-notifications"]
+      }
+    ],
+    "subscriptionCount": 12,
+    "kmsMasterKeyId": null,
+    "tags": { "env": "prod", "team": "platform" }
+  },
+  {
+    "topicArn": "arn:aws:sns:eu-west-1:222222222222:staging-pipeline-events",
+    "topicName": "staging-pipeline-events",
+    "accountId": "222222222222",
+    "region": "eu-west-1",
+    "policy": [
+      {
+        "effect": "Allow",
+        "principals": ["arn:aws:iam::222222222222:root"],
+        "actions": ["sns:Publish", "sns:Subscribe"],
+        "resources": ["arn:aws:sns:eu-west-1:222222222222:staging-pipeline-events"]
+      }
+    ],
+    "subscriptionCount": 2,
+    "kmsMasterKeyId": null,
+    "tags": { "env": "staging", "team": "data" }
+  }
+]

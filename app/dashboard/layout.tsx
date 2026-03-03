@@ -11,21 +11,28 @@ export default async function DashboardLayout({
   if (!session) redirect("/login");
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen" style={{ background: "#090909" }}>
       {session.isDemoUser && (
-        <div className="bg-sky-500/10 border-b border-sky-500/20 px-4 py-2 text-center">
-          <p className="text-xs text-sky-400">
-            <span className="font-semibold">Demo Mode</span> — exploring mock GCP data for a fictional company.
-            Natural language queries require your own AI key in{" "}
-            <a href="/dashboard/settings" className="underline hover:text-sky-300">
-              Settings
-            </a>
-            .
-          </p>
+        <div
+          className="px-4 py-2 text-center text-xs"
+          style={{ background: "#050d05", borderBottom: "1px solid #005c16" }}
+        >
+          <span style={{ color: "#00aa2b" }}>// DEMO MODE</span>
+          <span style={{ color: "#005c16" }}>
+            {" "}— exploring mock GCP data.{" "}
+            Natural language queries require an AI key in{" "}
+          </span>
+          <a
+            href="/dashboard/settings"
+            className="underline"
+            style={{ color: "#00ff41" }}
+          >
+            [SETTINGS]
+          </a>
         </div>
       )}
       <Navbar />
-      <main className="max-w-5xl mx-auto px-6 py-8">{children}</main>
+      <main className="max-w-7xl mx-auto px-6 py-6">{children}</main>
     </div>
   );
 }

@@ -1,38 +1,292 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* ── Terminal palette ─────────────────────────────────── */
+:root {
+  --green: #00ff41;
+  --green-dim: #00aa2b;
+  --green-glow: #00ff4133;
+  --red: #ff3333;
+  --red-dim: #aa0000;
+  --amber: #ffaa00;
+  --bg: #090909;
+  --bg-card: #0d0d0d;
+  --bg-card2: #111411;
+  --border: #00ff41;
+  --border-dim: #005c16;
+}
+
 @layer base {
-  :root {
-    --background: 222 47% 5%;
-    --foreground: 210 40% 96%;
+  * {
+    border-radius: 0 !important;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  }
+
+  html,
+  body {
+    background-color: var(--bg);
+    color: var(--green);
   }
 
   body {
-    @apply bg-slate-950 text-slate-100 antialiased;
+    @apply antialiased min-h-screen;
+    /* Scanline overlay */
+    position: relative;
   }
 
-  /* Custom scrollbar */
-  ::-webkit-scrollbar { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-track { @apply bg-slate-900; }
-  ::-webkit-scrollbar-thumb { @apply bg-slate-600 rounded-full; }
-  ::-webkit-scrollbar-thumb:hover { @apply bg-slate-500; }
+  /* Scanlines texture */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(0deg,
+        transparent,
+        transparent 2px,
+        rgba(0, 0, 0, 0.15) 2px,
+        rgba(0, 0, 0, 0.15) 4px);
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: var(--bg);
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-dim);
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--green);
+  }
+
+  /* Selection */
+  ::selection {
+    background: var(--green);
+    color: var(--bg);
+  }
 }
 
 @layer utilities {
+
+  /* Green glow border effect */
+  .terminal-border {
+    border: 1px solid var(--green);
+    box-shadow: 0 0 6px var(--green-glow), inset 0 0 6px var(--green-glow);
+  }
+
+  .terminal-border-dim {
+    border: 1px solid var(--border-dim);
+  }
+
+  .terminal-border-red {
+    border: 1px solid var(--red);
+    box-shadow: 0 0 6px rgba(255, 51, 51, 0.2), inset 0 0 4px rgba(255, 51, 51, 0.1);
+  }
+
+  .glow-text {
+    text-shadow: 0 0 8px var(--green);
+  }
+
+  .glow-text-red {
+    text-shadow: 0 0 8px var(--red);
+  }
+
+  /* ASCII-box card */
+  .ascii-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-dim);
+    padding: 0.75rem;
+    position: relative;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+
+  .ascii-card:hover {
+    border-color: var(--green);
+    box-shadow: 0 0 8px var(--green-glow);
+  }
+
+  /* Terminal input glow on focus */
+  .terminal-input:focus {
+    outline: none;
+    border-color: var(--green) !important;
+    box-shadow: 0 0 10px var(--green-glow);
+  }
+
+  /* Prose in terminal style */
   .prose-answer {
-    @apply leading-relaxed text-slate-200;
+    line-height: 1.7;
+    color: var(--green);
   }
+
   .prose-answer strong {
-    @apply text-sky-400 font-semibold;
+    font-weight: 700;
+    color: #fff;
   }
+
   .prose-answer ul {
-    @apply list-disc list-inside space-y-1 my-2;
+    list-style: none;
+    margin: 0.5rem 0;
   }
+
+  .prose-answer li::before {
+    content: '> ';
+    color: var(--green-dim);
+  }
+
   .prose-answer li {
-    @apply text-slate-300;
+    color: var(--green);
   }
-  .glass {
-    @apply bg-slate-900/60 backdrop-blur-sm border border-slate-700/50;
+
+  /* Terminal button hover styles (CSS-only — works in Server Components) */
+  .terminal-btn {
+    border: 1px solid #005c16;
+    color: #00aa2b;
+    background: transparent;
+    transition: border-color 0.15s, color 0.15s;
+  }
+
+  .terminal-btn:hover {
+    border-color: #00ff41;
+    color: #00ff41;
+  }
+
+  .terminal-btn-danger {
+    border: 1px solid #005c16;
+    color: #00aa2b;
+    background: transparent;
+    transition: border-color 0.15s, color 0.15s;
+  }
+
+  .terminal-btn-danger:hover {
+    border-color: #ff3333;
+    color: #ff3333;
+  }
+
+  .terminal-nav-link {
+    color: #00aa2b;
+    transition: color 0.15s, background 0.15s;
+  }
+
+  .terminal-nav-link:hover {
+    color: #00ff41;
+    background: #0a1a0a;
+  }
+
+  .terminal-nav-link-danger {
+    color: #ff3333;
+    transition: color 0.15s, background 0.15s;
+  }
+
+  .terminal-nav-link-danger:hover {
+    color: #ff6666;
+    background: #1a0000;
+  }
+
+  .terminal-chip {
+    border: 1px solid #003010;
+    color: #00aa2b;
+    background: transparent;
+    transition: border-color 0.15s, color 0.15s, box-shadow 0.15s;
+  }
+
+  .terminal-chip:hover {
+    border-color: #00ff41;
+    color: #00ff41;
+    box-shadow: 0 0 6px #00ff4133;
+  }
+
+  .terminal-card-link {
+    border: 1px solid #003010;
+    background: #0a0a0a;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+
+  .terminal-card-link:hover {
+    border-color: #00ff41;
+    box-shadow: 0 0 8px #00ff4133;
+  }
+
+  .terminal-findings-link {
+    border: 1px solid #440000;
+    background: #0a0000;
+    transition: border-color 0.15s;
+  }
+
+  .terminal-findings-link:hover {
+    border-color: #ff3333;
+  }
+
+  /* Active/inverted button */
+  .terminal-btn-active {
+    background: var(--green);
+    color: var(--bg);
+    font-weight: 700;
+  }
+
+  /* ── Global keyboard navigation selection indicator ─────── */
+  [data-nav]:focus,
+  [data-nav].nav-selected {
+    outline: none;
+    border-color: #00ff41 !important;
+    box-shadow: 0 0 0 1px #00ff41, 0 0 18px #00ff4166 !important;
+  }
+
+  /* box-shadow doesn't render on <tr> — use outline instead */
+  tr[data-nav]:focus,
+  tr[data-nav].nav-selected {
+    outline: 1px solid #00ff41;
+    outline-offset: -1px;
+    background-color: rgba(0, 255, 65, 0.07) !important;
+  }
+}
+
+/* Blinking cursor animation */
+@keyframes blink {
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0;
+  }
+}
+
+.blink {
+  animation: blink 1s step-end infinite;
+}
+
+/* Flicker animation for boot effect */
+@keyframes flicker {
+
+  0%,
+  19.999%,
+  22%,
+  62.999%,
+  64%,
+  64.999%,
+  70%,
+  100% {
+    opacity: 1;
+  }
+
+  20%,
+  21.999%,
+  63%,
+  63.999%,
+  65%,
+  69.999% {
+    opacity: 0.7;
   }
 }

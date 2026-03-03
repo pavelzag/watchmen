@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
 import { Toaster } from "sonner";
 import "./globals.css";
+import CommandPalette from "@/components/CommandPalette";
+import GlobalKeyNav from "@/components/GlobalKeyNav";
 
 export const metadata: Metadata = {
-  title: "Watchmen — GCP IAM Explorer",
+  title: "WATCHMEN // GCP IAM EXPLORER",
   description: "Query your GCP IAM permissions using natural language",
   icons: { icon: "/favicon.svg" },
 };
@@ -14,10 +16,26 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="dark">
-      <body className="min-h-screen bg-slate-950">
+    <html lang="en">
+      <body className="min-h-screen" style={{ backgroundColor: "#090909" }}>
         {children}
-        <Toaster theme="dark" position="bottom-right" />
+        {/* Global command palette — available on every page via '/' key */}
+        <CommandPalette />
+        {/* Global Up/Down/Enter keyboard navigation */}
+        <GlobalKeyNav />
+        <Toaster
+          toastOptions={{
+            style: {
+              background: "#0d0d0d",
+              color: "#00ff41",
+              border: "1px solid #005c16",
+              borderRadius: "0",
+              fontFamily: "JetBrains Mono, monospace",
+              fontSize: "12px",
+            },
+          }}
+          position="bottom-right"
+        />
       </body>
     </html>
   );

@@ -1,0 +1,119 @@
+[
+  {
+    "userName": "alice.chen",
+    "userId": "AIDAAAAAAAAAAAAAAA01",
+    "arn": "arn:aws:iam::111111111111:user/alice.chen",
+    "accountId": "111111111111",
+    "createDate": "2022-03-15T10:00:00Z",
+    "passwordLastUsed": "2026-02-28T09:15:00Z",
+    "mfaEnabled": true,
+    "accessKeys": [
+      {
+        "accessKeyId": "AKIAIOSFODNN7EXAMPLE",
+        "status": "Active",
+        "createDate": "2025-11-01T00:00:00Z",
+        "lastUsedDate": "2026-02-28T09:00:00Z",
+        "lastUsedService": "s3",
+        "lastUsedRegion": "us-east-1"
+      }
+    ],
+    "attachedPolicies": ["arn:aws:iam::aws:policy/ReadOnlyAccess"],
+    "groups": ["developers"],
+    "inlinePolicies": [],
+    "tags": { "team": "engineering", "env": "prod" }
+  },
+  {
+    "userName": "bob.kim",
+    "userId": "AIDAAAAAAAAAAAAAAA02",
+    "arn": "arn:aws:iam::111111111111:user/bob.kim",
+    "accountId": "111111111111",
+    "createDate": "2021-08-20T10:00:00Z",
+    "passwordLastUsed": "2026-03-01T14:30:00Z",
+    "mfaEnabled": false,
+    "accessKeys": [
+      {
+        "accessKeyId": "AKIAI44QH8DHBEXAMPLE",
+        "status": "Active",
+        "createDate": "2025-04-10T00:00:00Z",
+        "lastUsedDate": "2026-03-01T14:00:00Z",
+        "lastUsedService": "ec2",
+        "lastUsedRegion": "us-east-1"
+      }
+    ],
+    "attachedPolicies": [
+      "arn:aws:iam::aws:policy/AmazonEC2FullAccess",
+      "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+    ],
+    "groups": ["developers", "ops"],
+    "inlinePolicies": [],
+    "tags": { "team": "ops", "env": "prod" }
+  },
+  {
+    "userName": "carol.patel",
+    "userId": "AIDAAAAAAAAAAAAAAA03",
+    "arn": "arn:aws:iam::111111111111:user/carol.patel",
+    "accountId": "111111111111",
+    "createDate": "2020-01-05T10:00:00Z",
+    "passwordLastUsed": "2026-02-15T11:00:00Z",
+    "mfaEnabled": false,
+    "accessKeys": [
+      {
+        "accessKeyId": "AKIAJ2IUMWFLEXAMPLE1",
+        "status": "Active",
+        "createDate": "2024-10-01T00:00:00Z",
+        "lastUsedDate": "2024-11-30T08:00:00Z",
+        "lastUsedService": "iam",
+        "lastUsedRegion": "us-east-1"
+      },
+      {
+        "accessKeyId": "AKIAJ2IUMWFLEXAMPLE2",
+        "status": "Active",
+        "createDate": "2024-12-15T00:00:00Z",
+        "lastUsedDate": null,
+        "lastUsedService": null,
+        "lastUsedRegion": null
+      }
+    ],
+    "attachedPolicies": ["arn:aws:iam::aws:policy/AdministratorAccess"],
+    "groups": ["admins"],
+    "inlinePolicies": [],
+    "tags": { "team": "security", "env": "prod" }
+  },
+  {
+    "userName": "dave.wu",
+    "userId": "AIDAAAAAAAAAAAAAAA04",
+    "arn": "arn:aws:iam::222222222222:user/dave.wu",
+    "accountId": "222222222222",
+    "createDate": "2023-06-01T10:00:00Z",
+    "passwordLastUsed": "2026-02-20T16:45:00Z",
+    "mfaEnabled": true,
+    "accessKeys": [],
+    "attachedPolicies": ["arn:aws:iam::aws:policy/AmazonRDSReadOnlyAccess"],
+    "groups": ["data-team"],
+    "inlinePolicies": [],
+    "tags": { "team": "data", "env": "staging" }
+  },
+  {
+    "userName": "eve.santos",
+    "userId": "AIDAAAAAAAAAAAAAAA05",
+    "arn": "arn:aws:iam::222222222222:user/eve.santos",
+    "accountId": "222222222222",
+    "createDate": "2019-11-12T10:00:00Z",
+    "passwordLastUsed": "2025-08-01T10:00:00Z",
+    "mfaEnabled": false,
+    "accessKeys": [
+      {
+        "accessKeyId": "AKIAIOSFODNN7EXAMPL5",
+        "status": "Inactive",
+        "createDate": "2023-01-01T00:00:00Z",
+        "lastUsedDate": "2025-07-15T10:00:00Z",
+        "lastUsedService": "s3",
+        "lastUsedRegion": "eu-west-1"
+      }
+    ],
+    "attachedPolicies": [],
+    "groups": ["developers"],
+    "inlinePolicies": ["AllowStagingS3"],
+    "tags": { "team": "frontend", "env": "staging" }
+  }
+]

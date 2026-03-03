@@ -1,0 +1,204 @@
+[
+  {
+    "groupId": "sg-prod-app-01",
+    "groupName": "prod-app-sg",
+    "accountId": "111111111111",
+    "region": "us-east-1",
+    "vpcId": "vpc-aabbccdd11",
+    "description": "Production application servers security group",
+    "inboundRules": [
+      {
+        "protocol": "tcp",
+        "fromPort": 443,
+        "toPort": 443,
+        "cidrRanges": ["10.0.0.0/8"],
+        "ipv6CidrRanges": [],
+        "description": "HTTPS from internal"
+      }
+    ],
+    "outboundRules": [
+      {
+        "protocol": "-1",
+        "cidrRanges": ["0.0.0.0/0"],
+        "ipv6CidrRanges": ["::/0"],
+        "description": "All outbound"
+      }
+    ],
+    "tags": { "env": "prod", "team": "backend" }
+  },
+  {
+    "groupId": "sg-prod-bastion-01",
+    "groupName": "prod-bastion-sg",
+    "accountId": "111111111111",
+    "region": "us-east-1",
+    "vpcId": "vpc-aabbccdd11",
+    "description": "Production bastion host security group",
+    "inboundRules": [
+      {
+        "protocol": "tcp",
+        "fromPort": 22,
+        "toPort": 22,
+        "cidrRanges": ["0.0.0.0/0"],
+        "ipv6CidrRanges": ["::/0"],
+        "description": "SSH from anywhere"
+      }
+    ],
+    "outboundRules": [
+      {
+        "protocol": "-1",
+        "cidrRanges": ["0.0.0.0/0"],
+        "ipv6CidrRanges": [],
+        "description": "All outbound"
+      }
+    ],
+    "tags": { "env": "prod", "team": "ops" }
+  },
+  {
+    "groupId": "sg-prod-rds-01",
+    "groupName": "prod-rds-sg",
+    "accountId": "111111111111",
+    "region": "us-east-1",
+    "vpcId": "vpc-aabbccdd11",
+    "description": "Production RDS security group",
+    "inboundRules": [
+      {
+        "protocol": "tcp",
+        "fromPort": 5432,
+        "toPort": 5432,
+        "cidrRanges": ["10.0.0.0/8"],
+        "ipv6CidrRanges": [],
+        "description": "PostgreSQL from internal"
+      }
+    ],
+    "outboundRules": [],
+    "tags": { "env": "prod", "team": "backend" }
+  },
+  {
+    "groupId": "sg-prod-rds-legacy-01",
+    "groupName": "prod-rds-legacy-sg",
+    "accountId": "111111111111",
+    "region": "us-east-1",
+    "vpcId": "vpc-aabbccdd11",
+    "description": "Legacy RDS MySQL security group",
+    "inboundRules": [
+      {
+        "protocol": "tcp",
+        "fromPort": 3306,
+        "toPort": 3306,
+        "cidrRanges": ["0.0.0.0/0"],
+        "ipv6CidrRanges": [],
+        "description": "MySQL open to world"
+      }
+    ],
+    "outboundRules": [],
+    "tags": { "env": "prod", "team": "legacy" }
+  },
+  {
+    "groupId": "sg-prod-lambda-01",
+    "groupName": "prod-lambda-sg",
+    "accountId": "111111111111",
+    "region": "us-east-1",
+    "vpcId": "vpc-aabbccdd11",
+    "description": "Lambda functions security group",
+    "inboundRules": [],
+    "outboundRules": [
+      {
+        "protocol": "-1",
+        "cidrRanges": ["0.0.0.0/0"],
+        "ipv6CidrRanges": [],
+        "description": "All outbound"
+      }
+    ],
+    "tags": { "env": "prod", "team": "backend" }
+  },
+  {
+    "groupId": "sg-staging-open-01",
+    "groupName": "staging-open-sg",
+    "accountId": "222222222222",
+    "region": "eu-west-1",
+    "vpcId": "vpc-eeff112233",
+    "description": "Staging open security group for testing",
+    "inboundRules": [
+      {
+        "protocol": "tcp",
+        "fromPort": 22,
+        "toPort": 22,
+        "cidrRanges": ["0.0.0.0/0"],
+        "ipv6CidrRanges": ["::/0"],
+        "description": "SSH from anywhere"
+      },
+      {
+        "protocol": "tcp",
+        "fromPort": 3389,
+        "toPort": 3389,
+        "cidrRanges": ["0.0.0.0/0"],
+        "ipv6CidrRanges": [],
+        "description": "RDP from anywhere"
+      },
+      {
+        "protocol": "tcp",
+        "fromPort": 80,
+        "toPort": 80,
+        "cidrRanges": ["0.0.0.0/0"],
+        "ipv6CidrRanges": [],
+        "description": "HTTP"
+      }
+    ],
+    "outboundRules": [
+      {
+        "protocol": "-1",
+        "cidrRanges": ["0.0.0.0/0"],
+        "ipv6CidrRanges": [],
+        "description": "All outbound"
+      }
+    ],
+    "tags": { "env": "staging", "team": "qa" }
+  },
+  {
+    "groupId": "sg-staging-default-01",
+    "groupName": "staging-default-sg",
+    "accountId": "222222222222",
+    "region": "eu-west-1",
+    "vpcId": "vpc-eeff112233",
+    "description": "Default staging security group",
+    "inboundRules": [
+      {
+        "protocol": "tcp",
+        "fromPort": 443,
+        "toPort": 443,
+        "cidrRanges": ["0.0.0.0/0"],
+        "ipv6CidrRanges": [],
+        "description": "HTTPS"
+      }
+    ],
+    "outboundRules": [
+      {
+        "protocol": "-1",
+        "cidrRanges": ["0.0.0.0/0"],
+        "ipv6CidrRanges": [],
+        "description": "All outbound"
+      }
+    ],
+    "tags": { "env": "staging", "team": "devops" }
+  },
+  {
+    "groupId": "sg-staging-rds-01",
+    "groupName": "staging-rds-sg",
+    "accountId": "222222222222",
+    "region": "eu-west-1",
+    "vpcId": "vpc-eeff112233",
+    "description": "Staging RDS security group",
+    "inboundRules": [
+      {
+        "protocol": "tcp",
+        "fromPort": 5432,
+        "toPort": 5432,
+        "cidrRanges": ["10.1.0.0/16"],
+        "ipv6CidrRanges": [],
+        "description": "PostgreSQL from staging VPC"
+      }
+    ],
+    "outboundRules": [],
+    "tags": { "env": "staging", "team": "dev" }
+  }
+]

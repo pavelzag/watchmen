@@ -125,6 +125,8 @@ export default function PubSubPage() {
                 return (
                   <tr
                     key={topic.name}
+                    data-nav
+                    tabIndex={0}
                     onClick={() => setSelected(topic)}
                     className={cn(
                       "border-t border-slate-700/30 cursor-pointer transition-colors hover:bg-sky-500/5",

@@ -141,7 +141,7 @@ export default function HistoryPage() {
             const isExpanded = expanded === idx;
             return (
               <div
-                key={snap.snapshotId}
+                key={`${snap.snapshotId}-${idx}`}
                 className={cn(
                   "glass rounded-xl border transition-all duration-150",
                   isSelected ? "border-sky-500/40" : "border-slate-700/30"

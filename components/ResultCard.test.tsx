@@ -21,8 +21,8 @@ describe('ResultCard', () => {
     it('renders basic query information', () => {
         render(<ResultCard result={mockResult} index={0} />);
 
-        expect(screen.getByText('#1')).toBeInTheDocument();
-        expect(screen.getByText('Show me bucket public access')).toBeInTheDocument();
+        expect(screen.getByText('#01')).toBeInTheDocument();
+        expect(screen.getByText(/Show me bucket public access/)).toBeInTheDocument();
 
         // Verify tag is formatted (underscores to spaces)
         expect(screen.getByText('specific resource access')).toBeInTheDocument();
@@ -41,7 +41,7 @@ describe('ResultCard', () => {
     it('renders resource chips correctly', () => {
         render(<ResultCard result={mockResult} index={0} />);
 
-        expect(screen.getByText('2 resources')).toBeInTheDocument();
+        expect(screen.getByText(/\/\/ 2 resource/)).toBeInTheDocument();
         expect(screen.getByText('my-public-bucket')).toBeInTheDocument();
         expect(screen.getByText('my-private-bucket')).toBeInTheDocument();
         expect(screen.getByText('secure')).toBeInTheDocument(); // The extra prop
@@ -50,11 +50,11 @@ describe('ResultCard', () => {
     it('renders jump-to links based on intent', () => {
         render(<ResultCard result={mockResult} index={0} />);
 
-        expect(screen.getByText('Jump to')).toBeInTheDocument();
-        // based on user: test-user@example.com
-        expect(screen.getByText('test-user@example.com')).toBeInTheDocument();
-        // based on resourceType: bucket
-        expect(screen.getByText('Buckets')).toBeInTheDocument();
+        expect(screen.getByText(/\/\/ navigate:/)).toBeInTheDocument();
+        // based on user: test-user@example.com — inside a Link
+        expect(screen.getByText(/test-user@example.com/)).toBeInTheDocument();
+        // based on resourceType: bucket — now displayed as [Buckets]
+        expect(screen.getByText(/\[Buckets\]/)).toBeInTheDocument();
     });
 
     it('toggles intent debug information', () => {
@@ -65,12 +65,10 @@ describe('ResultCard', () => {
         // The raw JSON shouldn't be visible yet (or rather, the pre shouldn't be visible)
         // Finding the exact JSON string might be tricky, but we can look for the specific queryType key
 
-        const toggleBtn = screen.getByText('Show intent');
+        const toggleBtn = screen.getByText(/\/\/ debug intent/);
         fireEvent.click(toggleBtn);
 
-        // Now the Hide button should be visible
-        expect(screen.getByText('Hide intent')).toBeInTheDocument();
-
+        // After click, still shows the same button text but now the pre is visible
         // And the pre formatting should contain the json
         expect(screen.getByText(/specific_resource_access/)).toBeInTheDocument();
     });
@@ -100,8 +98,8 @@ describe('ResultCard', () => {
         // Now it should show the 13th
         expect(screen.getByText('bucket-12')).toBeInTheDocument();
 
-        // And have a "Show less" button
-        const showLessBtn = screen.getByText('Show less');
+        // And have a "// collapse" button
+        const showLessBtn = screen.getByText('// collapse');
         fireEvent.click(showLessBtn);
 
         // Back to not showing

@@ -33,8 +33,8 @@ describe('Navbar', () => {
         const NavbarComponent = await Navbar();
         render(NavbarComponent);
 
-        expect(screen.getByText('Watchmen')).toBeInTheDocument();
-        expect(screen.getByText('GCP IAM Explorer')).toBeInTheDocument();
+        expect(screen.getByText('WATCHMEN')).toBeInTheDocument();
+        expect(screen.getByText('GCP IAM EXPLORER')).toBeInTheDocument();
     });
 
     it('renders sign out button and user info when authenticated', async () => {
@@ -50,7 +50,7 @@ describe('Navbar', () => {
         render(NavbarComponent);
 
         expect(screen.getByText('test@example.com')).toBeInTheDocument();
-        expect(screen.getByText('Sign out')).toBeInTheDocument();
+        expect(screen.getByText('[LOGOUT]')).toBeInTheDocument();
     });
 
     it('renders all navigation links', async () => {
@@ -59,11 +59,11 @@ describe('Navbar', () => {
         const NavbarComponent = await Navbar();
         render(NavbarComponent);
 
-        expect(screen.getByText('Dashboard')).toBeInTheDocument();
-        expect(screen.getByText('Findings')).toBeInTheDocument();
-        expect(screen.getByText('Principal')).toBeInTheDocument();
-        expect(screen.getByText('History')).toBeInTheDocument();
-        expect(screen.getByText('Compliance')).toBeInTheDocument();
-        expect(screen.getByText('Settings')).toBeInTheDocument();
+        expect(screen.getByText('DASHBOARD')).toBeInTheDocument();
+        expect(screen.getByText('FINDINGS')).toBeInTheDocument();
+        expect(screen.getByText('PRINCIPAL')).toBeInTheDocument();
+        expect(screen.getByText('HISTORY')).toBeInTheDocument();
+        expect(screen.getByText('COMPLIANCE')).toBeInTheDocument();
+        expect(screen.getByText('SETTINGS')).toBeInTheDocument();
     });
 });

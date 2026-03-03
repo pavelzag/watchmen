@@ -31,6 +31,12 @@ CREATE TABLE IF NOT EXISTS compliance_history (
 CREATE INDEX IF NOT EXISTS idx_compliance_history_lookup
   ON compliance_history (user_email, standard, recorded_at DESC);
 
+CREATE TABLE IF NOT EXISTS aws_snapshots (
+  user_email  TEXT PRIMARY KEY,
+  snapshot    JSONB NOT NULL,
+  fetched_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS compliance_suppressions (
   user_email    TEXT NOT NULL,
   control_id    TEXT NOT NULL,
