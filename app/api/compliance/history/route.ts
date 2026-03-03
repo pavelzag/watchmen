@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { sql } from "@/lib/db";
+import { sql, ensureComplianceTables } from "@/lib/db";
 import { useMockData } from "@/lib/gcp/client";
 
 export async function GET(req: NextRequest) {
@@ -14,6 +14,7 @@ export async function GET(req: NextRequest) {
   const standard = req.nextUrl.searchParams.get("standard") ?? "soc2";
 
   try {
+    await ensureComplianceTables();
     const result = await sql`
       SELECT score, recorded_at
       FROM compliance_history

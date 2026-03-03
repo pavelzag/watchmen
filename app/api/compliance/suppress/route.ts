@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { sql } from "@/lib/db";
+import { sql, ensureComplianceTables } from "@/lib/db";
 import { useMockData } from "@/lib/gcp/client";
 
 export async function POST(req: NextRequest) {
@@ -18,6 +18,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    await ensureComplianceTables();
     await sql`
       INSERT INTO compliance_suppressions (user_email, control_id, justification)
       VALUES (${session.user.email}, ${controlId}, ${justification ?? ""})
@@ -47,6 +48,7 @@ export async function DELETE(req: NextRequest) {
   }
 
   try {
+    await ensureComplianceTables();
     await sql`
       DELETE FROM compliance_suppressions
       WHERE user_email = ${session.user.email} AND control_id = ${controlId}

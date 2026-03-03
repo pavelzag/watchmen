@@ -4,7 +4,7 @@ import { fetchGcpSnapshot } from "@/lib/gcp";
 import { useMockData } from "@/lib/gcp/client";
 import { extractIntent, generateAnswer, extractResources } from "@/lib/claude/query-processor";
 import { resolveAI } from "@/lib/ai/client";
-import { sql } from "@/lib/db";
+import { sql, ensureGcpSnapshotTable } from "@/lib/db";
 
 export async function POST(req: NextRequest) {
   const session = await auth();
@@ -42,6 +42,7 @@ export async function POST(req: NextRequest) {
     if (useMockData()) {
       snapshot = await fetchGcpSnapshot();
     } else {
+      await ensureGcpSnapshotTable();
       const result = await sql`
         SELECT snapshot FROM user_snapshots WHERE user_email = ${session.user.email}
       `;

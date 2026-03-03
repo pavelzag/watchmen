@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { fetchAwsSnapshot } from "@/lib/aws";
-import { sql } from "@/lib/db";
+import { sql, ensureAwsSnapshotTable } from "@/lib/db";
 import { useMockAwsData } from "@/lib/aws/client";
 import { getUserCloudCredentials } from "@/lib/credentials";
 
@@ -45,6 +45,7 @@ export async function POST() {
       region: awsCreds.region,
     });
 
+    await ensureAwsSnapshotTable();
     await sql`
       INSERT INTO aws_snapshots (user_email, snapshot, fetched_at)
       VALUES (${email}, ${JSON.stringify(snapshot)}, NOW())
@@ -83,6 +84,7 @@ export async function GET() {
   }
 
   try {
+    await ensureAwsSnapshotTable();
     const result = await sql`
       SELECT snapshot, fetched_at FROM aws_snapshots WHERE user_email = ${email}
     `;

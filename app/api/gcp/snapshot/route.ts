@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { fetchGcpSnapshot, extractUsers, extractServiceAccountEmails } from "@/lib/gcp";
 import { useMockData } from "@/lib/gcp/client";
-import { sql } from "@/lib/db";
+import { sql, ensureGcpSnapshotTable } from "@/lib/db";
 
 export async function GET() {
   const session = await auth();
@@ -31,6 +31,7 @@ export async function GET() {
   }
 
   try {
+    await ensureGcpSnapshotTable();
     const result = await sql`
       SELECT snapshot, fetched_at FROM user_snapshots WHERE user_email = ${email}
     `;

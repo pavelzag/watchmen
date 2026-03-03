@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { fetchGcpSnapshot, extractUsers, extractServiceAccountEmails } from "@/lib/gcp";
-import { sql } from "@/lib/db";
+import { sql, ensureGcpSnapshotTable } from "@/lib/db";
 import { useMockData } from "@/lib/gcp/client";
 import { getUserCloudCredentials } from "@/lib/credentials";
 
@@ -44,6 +44,7 @@ export async function POST() {
   try {
     const snapshot = await fetchGcpSnapshot({ serviceAccountKey: gcpCreds.serviceAccountKey });
 
+    await ensureGcpSnapshotTable();
     await sql`
       INSERT INTO user_snapshots (user_email, snapshot, fetched_at)
       VALUES (${email}, ${JSON.stringify(snapshot)}, NOW())
@@ -92,6 +93,7 @@ export async function GET() {
   }
 
   try {
+    await ensureGcpSnapshotTable();
     const result = await sql`
       SELECT snapshot, fetched_at FROM user_snapshots WHERE user_email = ${email}
     `;

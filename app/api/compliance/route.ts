@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { fetchGcpSnapshot } from "@/lib/gcp";
 import { useMockData } from "@/lib/gcp/client";
-import { sql } from "@/lib/db";
+import { sql, ensureGcpSnapshotTable, ensureComplianceTables } from "@/lib/db";
 import { runSoc2 } from "@/lib/compliance/soc2";
 import { runIso27001 } from "@/lib/compliance/iso27001";
 import type { ComplianceReport } from "@/lib/compliance/types";
@@ -23,6 +23,8 @@ export async function GET(req: NextRequest) {
     if (isMock) {
       snapshot = await fetchGcpSnapshot();
     } else {
+      await ensureGcpSnapshotTable();
+      await ensureComplianceTables();
       const result = await sql`
         SELECT snapshot FROM user_snapshots WHERE user_email = ${userEmail}
       `;

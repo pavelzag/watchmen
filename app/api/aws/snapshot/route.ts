@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { fetchAwsSnapshot } from "@/lib/aws";
 import { useMockAwsData } from "@/lib/aws/client";
-import { sql } from "@/lib/db";
+import { sql, ensureAwsSnapshotTable } from "@/lib/db";
 
 export async function GET() {
   const session = await auth();
@@ -27,6 +27,7 @@ export async function GET() {
   }
 
   try {
+    await ensureAwsSnapshotTable();
     const result = await sql`
       SELECT snapshot, fetched_at FROM aws_snapshots WHERE user_email = ${email}
     `;

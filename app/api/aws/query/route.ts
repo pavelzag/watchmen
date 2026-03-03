@@ -6,7 +6,7 @@ import { computeAwsFindings } from "@/lib/aws-findings";
 import { runAwsSoc2 } from "@/lib/compliance/aws-soc2";
 import { runAwsIso27001 } from "@/lib/compliance/aws-iso27001";
 import { callAI, resolveAI } from "@/lib/ai/client";
-import { sql } from "@/lib/db";
+import { sql, ensureAwsSnapshotTable } from "@/lib/db";
 import type { AwsSnapshot } from "@/lib/aws/types";
 
 interface AwsQueryIntent {
@@ -218,6 +218,7 @@ export async function POST(req: NextRequest) {
     if (useMockAwsData()) {
       snapshot = await fetchAwsSnapshot();
     } else {
+      await ensureAwsSnapshotTable();
       const result = await sql`
         SELECT snapshot FROM aws_snapshots WHERE user_email = ${session.user.email}
       `;
