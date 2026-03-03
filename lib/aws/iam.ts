@@ -1,5 +1,5 @@
 import { IAMClient, ListUsersCommand, ListRolesCommand, ListAttachedUserPoliciesCommand, ListUserPoliciesCommand, ListGroupsForUserCommand, ListAccessKeysCommand, GetAccessKeyLastUsedCommand, GetLoginProfileCommand, ListMFADevicesCommand, ListAttachedRolePoliciesCommand, ListRolePoliciesCommand, GetRolePolicyCommand } from "@aws-sdk/client-iam";
-import { useMockAwsData, logAwsWarning } from "./client";
+import { useMockAwsData, logAwsWarning, getAwsClientOptions, type AwsCredentials } from "./client";
 import type { AwsIamUser, AwsIamRole, AwsAccessKey } from "./types";
 
 async function getMockIamUsers(): Promise<AwsIamUser[]> {
@@ -12,8 +12,8 @@ async function getMockIamRoles(): Promise<AwsIamRole[]> {
   return data.default as unknown as AwsIamRole[];
 }
 
-async function getRealIamUsers(): Promise<AwsIamUser[]> {
-  const client = new IAMClient({});
+async function getRealIamUsers(creds?: AwsCredentials): Promise<AwsIamUser[]> {
+  const client = new IAMClient(getAwsClientOptions("us-east-1", creds));
   const users: AwsIamUser[] = [];
 
   try {
@@ -105,8 +105,8 @@ async function getRealIamUsers(): Promise<AwsIamUser[]> {
   return users;
 }
 
-async function getRealIamRoles(): Promise<AwsIamRole[]> {
-  const client = new IAMClient({});
+async function getRealIamRoles(creds?: AwsCredentials): Promise<AwsIamRole[]> {
+  const client = new IAMClient(getAwsClientOptions("us-east-1", creds));
   const roles: AwsIamRole[] = [];
 
   try {
@@ -173,12 +173,12 @@ async function getRealIamRoles(): Promise<AwsIamRole[]> {
   return roles;
 }
 
-export async function getIamUsers(): Promise<AwsIamUser[]> {
+export async function getIamUsers(creds?: AwsCredentials): Promise<AwsIamUser[]> {
   if (useMockAwsData()) return getMockIamUsers();
-  return getRealIamUsers();
+  return getRealIamUsers(creds);
 }
 
-export async function getIamRoles(): Promise<AwsIamRole[]> {
+export async function getIamRoles(creds?: AwsCredentials): Promise<AwsIamRole[]> {
   if (useMockAwsData()) return getMockIamRoles();
-  return getRealIamRoles();
+  return getRealIamRoles(creds);
 }

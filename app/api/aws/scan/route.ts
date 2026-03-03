@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { fetchAwsSnapshot } from "@/lib/aws";
 import { sql } from "@/lib/db";
 import { useMockAwsData } from "@/lib/aws/client";
+import { getUserCloudCredentials } from "@/lib/credentials";
 
 export async function POST() {
   const session = await auth();
@@ -15,18 +16,42 @@ export async function POST() {
     return NextResponse.json({ error: "No user email in session." }, { status: 400 });
   }
 
-  try {
-    const snapshot = await fetchAwsSnapshot();
-
-    if (!useMockAwsData()) {
-      await sql`
-        INSERT INTO aws_snapshots (user_email, snapshot, fetched_at)
-        VALUES (${email}, ${JSON.stringify(snapshot)}, NOW())
-        ON CONFLICT (user_email) DO UPDATE
-          SET snapshot = EXCLUDED.snapshot,
-              fetched_at = EXCLUDED.fetched_at
-      `;
+  // Mock mode: return fixture data without making any AWS or DB calls
+  if (useMockAwsData()) {
+    try {
+      const snapshot = await fetchAwsSnapshot();
+      return NextResponse.json({ ok: true, fetchedAt: snapshot.fetchedAt });
+    } catch (err) {
+      console.error("[api/aws/scan] POST mock error:", err);
+      return NextResponse.json({ error: "Failed to load mock AWS data." }, { status: 500 });
     }
+  }
+
+  const awsCreds = await getUserCloudCredentials(email, "aws");
+  if (!awsCreds) {
+    return NextResponse.json(
+      {
+        error: "No AWS credentials configured. Go to Settings → Cloud Credentials.",
+        credentialsRequired: true,
+      },
+      { status: 422 }
+    );
+  }
+
+  try {
+    const snapshot = await fetchAwsSnapshot({
+      accessKeyId: awsCreds.accessKeyId,
+      secretAccessKey: awsCreds.secretAccessKey,
+      region: awsCreds.region,
+    });
+
+    await sql`
+      INSERT INTO aws_snapshots (user_email, snapshot, fetched_at)
+      VALUES (${email}, ${JSON.stringify(snapshot)}, NOW())
+      ON CONFLICT (user_email) DO UPDATE
+        SET snapshot = EXCLUDED.snapshot,
+            fetched_at = EXCLUDED.fetched_at
+    `;
 
     return NextResponse.json({ ok: true, fetchedAt: snapshot.fetchedAt });
   } catch (err) {

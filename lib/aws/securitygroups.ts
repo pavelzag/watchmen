@@ -1,5 +1,5 @@
 import { EC2Client, DescribeSecurityGroupsCommand } from "@aws-sdk/client-ec2";
-import { useMockAwsData, getAwsRegions, logAwsWarning } from "./client";
+import { useMockAwsData, getAwsRegions, logAwsWarning, getAwsClientOptions, type AwsCredentials } from "./client";
 import type { AwsSecurityGroup, AwsSgRule } from "./types";
 
 async function getMockSecurityGroups(): Promise<AwsSecurityGroup[]> {
@@ -24,11 +24,11 @@ function mapRules(permissions: Array<{
   }));
 }
 
-async function getRealSecurityGroups(): Promise<AwsSecurityGroup[]> {
+async function getRealSecurityGroups(creds?: AwsCredentials): Promise<AwsSecurityGroup[]> {
   const regions = getAwsRegions();
   const results = await Promise.allSettled(
     regions.map(async (region) => {
-      const client = new EC2Client({ region });
+      const client = new EC2Client(getAwsClientOptions(region, creds));
       const sgs: AwsSecurityGroup[] = [];
       let nextToken: string | undefined;
 
@@ -66,7 +66,7 @@ async function getRealSecurityGroups(): Promise<AwsSecurityGroup[]> {
     .flatMap((r) => r.value);
 }
 
-export async function getSecurityGroups(): Promise<AwsSecurityGroup[]> {
+export async function getSecurityGroups(creds?: AwsCredentials): Promise<AwsSecurityGroup[]> {
   if (useMockAwsData()) return getMockSecurityGroups();
-  return getRealSecurityGroups();
+  return getRealSecurityGroups(creds);
 }

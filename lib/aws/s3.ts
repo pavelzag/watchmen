@@ -1,5 +1,5 @@
 import { S3Client, ListBucketsCommand, GetBucketLocationCommand, GetBucketPolicyCommand, GetBucketVersioningCommand, GetBucketEncryptionCommand, GetPublicAccessBlockCommand, GetBucketAclCommand, GetBucketTaggingCommand } from "@aws-sdk/client-s3";
-import { useMockAwsData, logAwsWarning } from "./client";
+import { useMockAwsData, logAwsWarning, getAwsClientOptions, type AwsCredentials } from "./client";
 import type { AwsS3Bucket, AwsIamStatement } from "./types";
 
 async function getMockBuckets(): Promise<AwsS3Bucket[]> {
@@ -7,8 +7,8 @@ async function getMockBuckets(): Promise<AwsS3Bucket[]> {
   return data.default as unknown as AwsS3Bucket[];
 }
 
-async function getRealBuckets(): Promise<AwsS3Bucket[]> {
-  const client = new S3Client({ region: "us-east-1" });
+async function getRealBuckets(creds?: AwsCredentials): Promise<AwsS3Bucket[]> {
+  const client = new S3Client(getAwsClientOptions("us-east-1", creds));
   const buckets: AwsS3Bucket[] = [];
 
   try {
@@ -26,7 +26,7 @@ async function getRealBuckets(): Promise<AwsS3Bucket[]> {
           region = locRes.LocationConstraint ?? "us-east-1";
         } catch {}
 
-        const regionalClient = new S3Client({ region });
+        const regionalClient = new S3Client(getAwsClientOptions(region, creds));
 
         const [policyRes, versioningRes, encRes, pabRes, aclRes, tagsRes] =
           await Promise.allSettled([
@@ -117,7 +117,7 @@ async function getRealBuckets(): Promise<AwsS3Bucket[]> {
   return buckets;
 }
 
-export async function getS3Buckets(): Promise<AwsS3Bucket[]> {
+export async function getS3Buckets(creds?: AwsCredentials): Promise<AwsS3Bucket[]> {
   if (useMockAwsData()) return getMockBuckets();
-  return getRealBuckets();
+  return getRealBuckets(creds);
 }

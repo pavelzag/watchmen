@@ -1,5 +1,5 @@
 import { RedshiftClient, DescribeClustersCommand } from "@aws-sdk/client-redshift";
-import { useMockAwsData, getAwsRegions, logAwsWarning } from "./client";
+import { useMockAwsData, getAwsRegions, logAwsWarning, getAwsClientOptions, type AwsCredentials } from "./client";
 import type { AwsRedshiftCluster } from "./types";
 
 async function getMockRedshiftClusters(): Promise<AwsRedshiftCluster[]> {
@@ -7,11 +7,11 @@ async function getMockRedshiftClusters(): Promise<AwsRedshiftCluster[]> {
   return data.default as AwsRedshiftCluster[];
 }
 
-async function getRealRedshiftClusters(): Promise<AwsRedshiftCluster[]> {
+async function getRealRedshiftClusters(creds?: AwsCredentials): Promise<AwsRedshiftCluster[]> {
   const regions = getAwsRegions();
   const results = await Promise.allSettled(
     regions.map(async (region) => {
-      const client = new RedshiftClient({ region });
+      const client = new RedshiftClient(getAwsClientOptions(region, creds));
       const clusters: AwsRedshiftCluster[] = [];
       let marker: string | undefined;
 
@@ -59,7 +59,7 @@ async function getRealRedshiftClusters(): Promise<AwsRedshiftCluster[]> {
     .flatMap((r) => r.value);
 }
 
-export async function getRedshiftClusters(): Promise<AwsRedshiftCluster[]> {
+export async function getRedshiftClusters(creds?: AwsCredentials): Promise<AwsRedshiftCluster[]> {
   if (useMockAwsData()) return getMockRedshiftClusters();
-  return getRealRedshiftClusters();
+  return getRealRedshiftClusters(creds);
 }

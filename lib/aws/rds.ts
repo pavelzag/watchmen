@@ -1,5 +1,5 @@
 import { RDSClient, DescribeDBInstancesCommand } from "@aws-sdk/client-rds";
-import { useMockAwsData, getAwsRegions, logAwsWarning } from "./client";
+import { useMockAwsData, getAwsRegions, logAwsWarning, getAwsClientOptions, type AwsCredentials } from "./client";
 import type { AwsRdsInstance } from "./types";
 
 async function getMockRdsInstances(): Promise<AwsRdsInstance[]> {
@@ -7,11 +7,11 @@ async function getMockRdsInstances(): Promise<AwsRdsInstance[]> {
   return data.default as AwsRdsInstance[];
 }
 
-async function getRealRdsInstances(): Promise<AwsRdsInstance[]> {
+async function getRealRdsInstances(creds?: AwsCredentials): Promise<AwsRdsInstance[]> {
   const regions = getAwsRegions();
   const results = await Promise.allSettled(
     regions.map(async (region) => {
-      const client = new RDSClient({ region });
+      const client = new RDSClient(getAwsClientOptions(region, creds));
       const instances: AwsRdsInstance[] = [];
       let marker: string | undefined;
 
@@ -60,7 +60,7 @@ async function getRealRdsInstances(): Promise<AwsRdsInstance[]> {
     .flatMap((r) => r.value);
 }
 
-export async function getRdsInstances(): Promise<AwsRdsInstance[]> {
+export async function getRdsInstances(creds?: AwsCredentials): Promise<AwsRdsInstance[]> {
   if (useMockAwsData()) return getMockRdsInstances();
-  return getRealRdsInstances();
+  return getRealRdsInstances(creds);
 }

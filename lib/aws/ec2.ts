@@ -1,5 +1,5 @@
 import { EC2Client, DescribeInstancesCommand } from "@aws-sdk/client-ec2";
-import { useMockAwsData, getAwsRegions, logAwsWarning } from "./client";
+import { useMockAwsData, getAwsRegions, logAwsWarning, getAwsClientOptions, type AwsCredentials } from "./client";
 import type { AwsEc2Instance } from "./types";
 
 async function getMockEc2Instances(): Promise<AwsEc2Instance[]> {
@@ -7,11 +7,11 @@ async function getMockEc2Instances(): Promise<AwsEc2Instance[]> {
   return data.default as AwsEc2Instance[];
 }
 
-async function getRealEc2Instances(): Promise<AwsEc2Instance[]> {
+async function getRealEc2Instances(creds?: AwsCredentials): Promise<AwsEc2Instance[]> {
   const regions = getAwsRegions();
   const results = await Promise.allSettled(
     regions.map(async (region) => {
-      const client = new EC2Client({ region });
+      const client = new EC2Client(getAwsClientOptions(region, creds));
       const instances: AwsEc2Instance[] = [];
       let nextToken: string | undefined;
 
@@ -57,7 +57,7 @@ async function getRealEc2Instances(): Promise<AwsEc2Instance[]> {
     .flatMap((r) => r.value);
 }
 
-export async function getEc2Instances(): Promise<AwsEc2Instance[]> {
+export async function getEc2Instances(creds?: AwsCredentials): Promise<AwsEc2Instance[]> {
   if (useMockAwsData()) return getMockEc2Instances();
-  return getRealEc2Instances();
+  return getRealEc2Instances(creds);
 }

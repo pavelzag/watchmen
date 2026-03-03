@@ -6,6 +6,12 @@ import { ArrowLeft, Eye, EyeOff, Trash2, Check, Loader2, AlertCircle, CheckCircl
 import { cn } from "@/lib/utils";
 import type { AIProvider, AIKeyRecord } from "@/lib/ai/client";
 
+interface CloudCredRecord {
+  provider: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface ProviderConfig {
   id: AIProvider;
   name: string;
@@ -75,6 +81,16 @@ export default function SettingsPage() {
   const [activating, setActivating] = useState<AIProvider | null>(null);
   const [errorLog, setErrorLog] = useState<ErrorEntry[]>([]);
 
+  // Cloud credentials state
+  const [cloudCreds, setCloudCreds] = useState<CloudCredRecord[]>([]);
+  const [cloudLoading, setCloudLoading] = useState(true);
+  const [gcpKeyInput, setGcpKeyInput] = useState("");
+  const [awsInputs, setAwsInputs] = useState({ accessKeyId: "", secretAccessKey: "", region: "us-east-1" });
+  const [showAwsSecret, setShowAwsSecret] = useState(false);
+  const [cloudSaving, setCloudSaving] = useState<Record<string, boolean>>({ gcp: false, aws: false });
+  const [cloudDeleting, setCloudDeleting] = useState<Record<string, boolean>>({ gcp: false, aws: false });
+  const [cloudErrors, setCloudErrors] = useState<Record<string, string>>({ gcp: "", aws: "" });
+
   useEffect(() => {
     fetch("/api/settings/keys")
       .then((r) => r.json())
@@ -83,6 +99,14 @@ export default function SettingsPage() {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/settings/credentials")
+      .then((r) => r.json())
+      .then((d) => setCloudCreds(d.credentials ?? []))
+      .catch(() => {})
+      .finally(() => setCloudLoading(false));
   }, []);
 
   function addError(provider: string, message: string) {
@@ -145,6 +169,55 @@ export default function SettingsPage() {
       addError(provider, e instanceof Error ? e.message : "Network error");
     } finally {
       setActivating(null);
+    }
+  }
+
+  async function saveCloudCred(provider: "gcp" | "aws") {
+    setCloudSaving((s) => ({ ...s, [provider]: true }));
+    setCloudErrors((e) => ({ ...e, [provider]: "" }));
+    try {
+      const credentials =
+        provider === "gcp"
+          ? { serviceAccountKey: gcpKeyInput.trim() }
+          : {
+              accessKeyId: awsInputs.accessKeyId.trim(),
+              secretAccessKey: awsInputs.secretAccessKey.trim(),
+              region: awsInputs.region.trim() || "us-east-1",
+            };
+      const res = await fetch("/api/settings/credentials", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider, credentials }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setCloudErrors((e) => ({ ...e, [provider]: data.error ?? "Unknown error" }));
+        return;
+      }
+      setCloudCreds(data.credentials);
+      if (provider === "gcp") setGcpKeyInput("");
+      else setAwsInputs({ accessKeyId: "", secretAccessKey: "", region: "us-east-1" });
+    } catch (e) {
+      setCloudErrors((err) => ({ ...err, [provider]: e instanceof Error ? e.message : "Network error" }));
+    } finally {
+      setCloudSaving((s) => ({ ...s, [provider]: false }));
+    }
+  }
+
+  async function deleteCloudCred(provider: "gcp" | "aws") {
+    setCloudDeleting((d) => ({ ...d, [provider]: true }));
+    try {
+      const res = await fetch(`/api/settings/credentials/${provider}`, { method: "DELETE" });
+      const data = await res.json();
+      if (!res.ok) {
+        setCloudErrors((e) => ({ ...e, [provider]: data.error ?? "Delete failed" }));
+        return;
+      }
+      setCloudCreds(data.credentials);
+    } catch (e) {
+      setCloudErrors((err) => ({ ...err, [provider]: e instanceof Error ? e.message : "Network error" }));
+    } finally {
+      setCloudDeleting((d) => ({ ...d, [provider]: false }));
     }
   }
 
@@ -302,6 +375,169 @@ export default function SettingsPage() {
                 </div>
               );
             })}
+          </div>
+        )}
+      </div>
+
+      {/* Cloud Credentials */}
+      <div className="space-y-4">
+        <h2 className="text-xs text-slate-500 font-medium uppercase tracking-wider">Cloud Credentials</h2>
+        {cloudLoading ? (
+          <div className="space-y-3">
+            {[...Array(2)].map((_, i) => (
+              <div key={i} className="glass rounded-xl p-5 animate-pulse h-40" />
+            ))}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {/* GCP Card */}
+            {(() => {
+              const record = cloudCreds.find((c) => c.provider === "gcp");
+              const isSaving = cloudSaving.gcp;
+              const isDeleting = cloudDeleting.gcp;
+              const error = cloudErrors.gcp;
+              return (
+                <div className="rounded-xl border p-5 space-y-4 transition-all duration-150 bg-blue-500/8 border-blue-500/25">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-lg flex items-center justify-center text-sm font-bold text-white shrink-0 bg-blue-500">G</div>
+                      <div>
+                        <span className="text-sm font-semibold text-blue-400">Google Cloud Platform</span>
+                        <p className="text-xs text-slate-500 mt-0.5">Service account key for GCP scanning</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {record ? (
+                        <>
+                          <span className="flex items-center gap-1 text-xs text-emerald-400">
+                            <Check className="w-3 h-3" /> Connected
+                          </span>
+                          <button
+                            onClick={() => deleteCloudCred("gcp")}
+                            disabled={isDeleting}
+                            className="text-slate-600 hover:text-red-400 transition-colors"
+                            title="Remove credentials"
+                          >
+                            {isDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                          </button>
+                        </>
+                      ) : (
+                        <span className="text-xs text-slate-600">Not configured</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <textarea
+                      value={gcpKeyInput}
+                      onChange={(e) => setGcpKeyInput(e.target.value)}
+                      placeholder={record ? "Paste new service account JSON to update" : "Paste service account JSON key"}
+                      rows={4}
+                      className="w-full px-3 py-2 rounded-lg bg-slate-900/60 border border-slate-700 text-xs text-slate-200 placeholder:text-slate-600 outline-none focus:border-sky-500/50 font-mono resize-none"
+                    />
+                    {error && <p className="text-xs text-red-400 font-mono">{error}</p>}
+                    <button
+                      onClick={() => saveCloudCred("gcp")}
+                      disabled={!gcpKeyInput.trim() || isSaving}
+                      className={cn(
+                        "flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-all duration-150",
+                        gcpKeyInput.trim() && !isSaving
+                          ? "bg-blue-500 text-white hover:opacity-90"
+                          : "bg-slate-700/50 text-slate-500 cursor-not-allowed"
+                      )}
+                    >
+                      {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                      {isSaving ? "Testing…" : record ? "Update & Test" : "Connect & Test"}
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* AWS Card */}
+            {(() => {
+              const record = cloudCreds.find((c) => c.provider === "aws");
+              const isSaving = cloudSaving.aws;
+              const isDeleting = cloudDeleting.aws;
+              const error = cloudErrors.aws;
+              return (
+                <div className="rounded-xl border p-5 space-y-4 transition-all duration-150 bg-orange-500/8 border-orange-500/25">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-lg flex items-center justify-center text-sm font-bold text-white shrink-0 bg-orange-500">A</div>
+                      <div>
+                        <span className="text-sm font-semibold text-orange-400">Amazon Web Services</span>
+                        <p className="text-xs text-slate-500 mt-0.5">IAM access keys for AWS scanning</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {record ? (
+                        <>
+                          <span className="flex items-center gap-1 text-xs text-emerald-400">
+                            <Check className="w-3 h-3" /> Connected
+                          </span>
+                          <button
+                            onClick={() => deleteCloudCred("aws")}
+                            disabled={isDeleting}
+                            className="text-slate-600 hover:text-red-400 transition-colors"
+                            title="Remove credentials"
+                          >
+                            {isDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                          </button>
+                        </>
+                      ) : (
+                        <span className="text-xs text-slate-600">Not configured</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <input
+                      type="text"
+                      value={awsInputs.accessKeyId}
+                      onChange={(e) => setAwsInputs((i) => ({ ...i, accessKeyId: e.target.value }))}
+                      placeholder={record ? "New Access Key ID (leave blank to keep existing)" : "Access Key ID (AKIA...)"}
+                      className="w-full px-3 py-2 rounded-lg bg-slate-900/60 border border-slate-700 text-xs text-slate-200 placeholder:text-slate-600 outline-none focus:border-sky-500/50 font-mono"
+                    />
+                    <div className="relative">
+                      <input
+                        type={showAwsSecret ? "text" : "password"}
+                        value={awsInputs.secretAccessKey}
+                        onChange={(e) => setAwsInputs((i) => ({ ...i, secretAccessKey: e.target.value }))}
+                        placeholder="Secret Access Key"
+                        className="w-full pl-3 pr-9 py-2 rounded-lg bg-slate-900/60 border border-slate-700 text-xs text-slate-200 placeholder:text-slate-600 outline-none focus:border-sky-500/50 font-mono"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowAwsSecret((s) => !s)}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                      >
+                        {showAwsSecret ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                    <input
+                      type="text"
+                      value={awsInputs.region}
+                      onChange={(e) => setAwsInputs((i) => ({ ...i, region: e.target.value }))}
+                      placeholder="Region (default: us-east-1)"
+                      className="w-full px-3 py-2 rounded-lg bg-slate-900/60 border border-slate-700 text-xs text-slate-200 placeholder:text-slate-600 outline-none focus:border-sky-500/50 font-mono"
+                    />
+                    {error && <p className="text-xs text-red-400 font-mono">{error}</p>}
+                    <button
+                      onClick={() => saveCloudCred("aws")}
+                      disabled={(!awsInputs.accessKeyId.trim() || !awsInputs.secretAccessKey.trim()) || isSaving}
+                      className={cn(
+                        "flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-all duration-150",
+                        (awsInputs.accessKeyId.trim() && awsInputs.secretAccessKey.trim()) && !isSaving
+                          ? "bg-orange-500 text-white hover:opacity-90"
+                          : "bg-slate-700/50 text-slate-500 cursor-not-allowed"
+                      )}
+                    >
+                      {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                      {isSaving ? "Testing…" : record ? "Update & Test" : "Connect & Test"}
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
       </div>

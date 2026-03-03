@@ -1,5 +1,5 @@
 import { SecretsManagerClient, ListSecretsCommand, GetResourcePolicyCommand, DescribeSecretCommand } from "@aws-sdk/client-secrets-manager";
-import { useMockAwsData, getAwsRegions, logAwsWarning } from "./client";
+import { useMockAwsData, getAwsRegions, logAwsWarning, getAwsClientOptions, type AwsCredentials } from "./client";
 import type { AwsSecret, AwsIamStatement } from "./types";
 
 async function getMockSecrets(): Promise<AwsSecret[]> {
@@ -7,11 +7,11 @@ async function getMockSecrets(): Promise<AwsSecret[]> {
   return data.default as AwsSecret[];
 }
 
-async function getRealSecrets(): Promise<AwsSecret[]> {
+async function getRealSecrets(creds?: AwsCredentials): Promise<AwsSecret[]> {
   const regions = getAwsRegions();
   const results = await Promise.allSettled(
     regions.map(async (region) => {
-      const client = new SecretsManagerClient({ region });
+      const client = new SecretsManagerClient(getAwsClientOptions(region, creds));
       const secrets: AwsSecret[] = [];
       let nextToken: string | undefined;
 
@@ -84,7 +84,7 @@ async function getRealSecrets(): Promise<AwsSecret[]> {
     .flatMap((r) => r.value);
 }
 
-export async function getSecrets(): Promise<AwsSecret[]> {
+export async function getSecrets(creds?: AwsCredentials): Promise<AwsSecret[]> {
   if (useMockAwsData()) return getMockSecrets();
-  return getRealSecrets();
+  return getRealSecrets(creds);
 }

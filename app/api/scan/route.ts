@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { fetchGcpSnapshot, extractUsers, extractServiceAccountEmails } from "@/lib/gcp";
 import { sql } from "@/lib/db";
 import { useMockData } from "@/lib/gcp/client";
+import { getUserCloudCredentials } from "@/lib/credentials";
 
 export async function POST() {
   const session = await auth();
@@ -18,20 +19,38 @@ export async function POST() {
     return NextResponse.json({ error: "No user email in session." }, { status: 400 });
   }
 
-  try {
-    const snapshot = await fetchGcpSnapshot(
-      session.accessToken ? { accessToken: session.accessToken } : undefined
-    );
-
-    if (!useMockData()) {
-      await sql`
-        INSERT INTO user_snapshots (user_email, snapshot, fetched_at)
-        VALUES (${email}, ${JSON.stringify(snapshot)}, NOW())
-        ON CONFLICT (user_email) DO UPDATE
-          SET snapshot = EXCLUDED.snapshot,
-              fetched_at = EXCLUDED.fetched_at
-      `;
+  // Mock mode: return fixture data without making any GCP or DB calls
+  if (useMockData()) {
+    try {
+      const snapshot = await fetchGcpSnapshot();
+      return NextResponse.json({ ok: true, fetchedAt: snapshot.fetchedAt });
+    } catch (err) {
+      console.error("[api/scan] POST mock error:", err);
+      return NextResponse.json({ error: "Failed to load mock data." }, { status: 500 });
     }
+  }
+
+  const gcpCreds = await getUserCloudCredentials(email, "gcp");
+  if (!gcpCreds) {
+    return NextResponse.json(
+      {
+        error: "No GCP credentials configured. Go to Settings → Cloud Credentials.",
+        credentialsRequired: true,
+      },
+      { status: 422 }
+    );
+  }
+
+  try {
+    const snapshot = await fetchGcpSnapshot({ serviceAccountKey: gcpCreds.serviceAccountKey });
+
+    await sql`
+      INSERT INTO user_snapshots (user_email, snapshot, fetched_at)
+      VALUES (${email}, ${JSON.stringify(snapshot)}, NOW())
+      ON CONFLICT (user_email) DO UPDATE
+        SET snapshot = EXCLUDED.snapshot,
+            fetched_at = EXCLUDED.fetched_at
+    `;
 
     return NextResponse.json({ ok: true, fetchedAt: snapshot.fetchedAt });
   } catch (err) {

@@ -1,5 +1,5 @@
 import { EKSClient, ListClustersCommand, DescribeClusterCommand } from "@aws-sdk/client-eks";
-import { useMockAwsData, getAwsRegions, logAwsWarning } from "./client";
+import { useMockAwsData, getAwsRegions, logAwsWarning, getAwsClientOptions, type AwsCredentials } from "./client";
 import type { AwsEksCluster } from "./types";
 
 async function getMockEksClusters(): Promise<AwsEksCluster[]> {
@@ -7,11 +7,11 @@ async function getMockEksClusters(): Promise<AwsEksCluster[]> {
   return data.default as AwsEksCluster[];
 }
 
-async function getRealEksClusters(): Promise<AwsEksCluster[]> {
+async function getRealEksClusters(creds?: AwsCredentials): Promise<AwsEksCluster[]> {
   const regions = getAwsRegions();
   const results = await Promise.allSettled(
     regions.map(async (region) => {
-      const client = new EKSClient({ region });
+      const client = new EKSClient(getAwsClientOptions(region, creds));
       const listRes = await client.send(new ListClustersCommand({}));
       const names = listRes.clusters ?? [];
 
@@ -56,7 +56,7 @@ async function getRealEksClusters(): Promise<AwsEksCluster[]> {
     .flatMap((r) => r.value);
 }
 
-export async function getEksClusters(): Promise<AwsEksCluster[]> {
+export async function getEksClusters(creds?: AwsCredentials): Promise<AwsEksCluster[]> {
   if (useMockAwsData()) return getMockEksClusters();
-  return getRealEksClusters();
+  return getRealEksClusters(creds);
 }

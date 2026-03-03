@@ -44,3 +44,12 @@ CREATE TABLE IF NOT EXISTS compliance_suppressions (
   suppressed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (user_email, control_id)
 );
+
+CREATE TABLE IF NOT EXISTS user_cloud_credentials (
+  user_email   TEXT NOT NULL,
+  provider     TEXT NOT NULL,        -- 'gcp' | 'aws'
+  credentials  TEXT NOT NULL,        -- AES-256-GCM encrypted JSON (iv:authTag:ciphertext)
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_email, provider)
+);

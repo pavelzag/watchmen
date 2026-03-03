@@ -1,4 +1,4 @@
-import { useMockAwsData } from "./client";
+import { useMockAwsData, type AwsCredentials } from "./client";
 import { getIamUsers, getIamRoles } from "./iam";
 import { getS3Buckets } from "./s3";
 import { getEksClusters } from "./eks";
@@ -16,8 +16,10 @@ export * from "./types";
 /**
  * Fetches the full AWS snapshot across all configured regions.
  * Switch between real and mock via USE_MOCK_AWS_DATA=true env var.
+ * Pass options to use explicit credentials instead of the default credential chain.
  */
-export async function fetchAwsSnapshot(): Promise<AwsSnapshot> {
+export async function fetchAwsSnapshot(options?: AwsCredentials): Promise<AwsSnapshot> {
+  const creds = options;
   const [
     iamUsers,
     iamRoles,
@@ -31,17 +33,17 @@ export async function fetchAwsSnapshot(): Promise<AwsSnapshot> {
     secrets,
     securityGroups,
   ] = await Promise.all([
-    getIamUsers(),
-    getIamRoles(),
-    getS3Buckets(),
-    getEksClusters(),
-    getEc2Instances(),
-    getLambdaFunctions(),
-    getRdsInstances(),
-    getRedshiftClusters(),
-    getSnsTopics(),
-    getSecrets(),
-    getSecurityGroups(),
+    getIamUsers(creds),
+    getIamRoles(creds),
+    getS3Buckets(creds),
+    getEksClusters(creds),
+    getEc2Instances(creds),
+    getLambdaFunctions(creds),
+    getRdsInstances(creds),
+    getRedshiftClusters(creds),
+    getSnsTopics(creds),
+    getSecrets(creds),
+    getSecurityGroups(creds),
   ]);
 
   const accounts = [...new Set([

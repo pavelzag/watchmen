@@ -1,5 +1,5 @@
 import { LambdaClient, ListFunctionsCommand, GetPolicyCommand } from "@aws-sdk/client-lambda";
-import { useMockAwsData, getAwsRegions, logAwsWarning } from "./client";
+import { useMockAwsData, getAwsRegions, logAwsWarning, getAwsClientOptions, type AwsCredentials } from "./client";
 import type { AwsLambdaFunction, AwsIamStatement } from "./types";
 
 async function getMockLambdaFunctions(): Promise<AwsLambdaFunction[]> {
@@ -7,11 +7,11 @@ async function getMockLambdaFunctions(): Promise<AwsLambdaFunction[]> {
   return data.default as AwsLambdaFunction[];
 }
 
-async function getRealLambdaFunctions(): Promise<AwsLambdaFunction[]> {
+async function getRealLambdaFunctions(creds?: AwsCredentials): Promise<AwsLambdaFunction[]> {
   const regions = getAwsRegions();
   const results = await Promise.allSettled(
     regions.map(async (region) => {
-      const client = new LambdaClient({ region });
+      const client = new LambdaClient(getAwsClientOptions(region, creds));
       const functions: AwsLambdaFunction[] = [];
       let marker: string | undefined;
 
@@ -87,7 +87,7 @@ async function getRealLambdaFunctions(): Promise<AwsLambdaFunction[]> {
     .flatMap((r) => r.value);
 }
 
-export async function getLambdaFunctions(): Promise<AwsLambdaFunction[]> {
+export async function getLambdaFunctions(creds?: AwsCredentials): Promise<AwsLambdaFunction[]> {
   if (useMockAwsData()) return getMockLambdaFunctions();
-  return getRealLambdaFunctions();
+  return getRealLambdaFunctions(creds);
 }

@@ -1,5 +1,5 @@
 import { SNSClient, ListTopicsCommand, GetTopicAttributesCommand, ListTagsForResourceCommand } from "@aws-sdk/client-sns";
-import { useMockAwsData, getAwsRegions, logAwsWarning } from "./client";
+import { useMockAwsData, getAwsRegions, logAwsWarning, getAwsClientOptions, type AwsCredentials } from "./client";
 import type { AwsSnsTopic, AwsIamStatement } from "./types";
 
 async function getMockSnsTopics(): Promise<AwsSnsTopic[]> {
@@ -7,11 +7,11 @@ async function getMockSnsTopics(): Promise<AwsSnsTopic[]> {
   return data.default as AwsSnsTopic[];
 }
 
-async function getRealSnsTopics(): Promise<AwsSnsTopic[]> {
+async function getRealSnsTopics(creds?: AwsCredentials): Promise<AwsSnsTopic[]> {
   const regions = getAwsRegions();
   const results = await Promise.allSettled(
     regions.map(async (region) => {
-      const client = new SNSClient({ region });
+      const client = new SNSClient(getAwsClientOptions(region, creds));
       const listRes = await client.send(new ListTopicsCommand({}));
       const topics = listRes.Topics ?? [];
 
@@ -86,7 +86,7 @@ async function getRealSnsTopics(): Promise<AwsSnsTopic[]> {
     .flatMap((r) => r.value);
 }
 
-export async function getSnsTopics(): Promise<AwsSnsTopic[]> {
+export async function getSnsTopics(creds?: AwsCredentials): Promise<AwsSnsTopic[]> {
   if (useMockAwsData()) return getMockSnsTopics();
-  return getRealSnsTopics();
+  return getRealSnsTopics(creds);
 }

@@ -28,6 +28,23 @@ export function initGoogleAuth() {
 }
 
 /**
+ * Initializes googleapis with a service account key JSON string directly.
+ * Use this for per-user SA credentials stored in DB.
+ */
+export function initGoogleAuthFromKey(saKeyJson: string) {
+  _initialized = true;
+  _userAuthInitialized = false;
+
+  const credentials = JSON.parse(saKeyJson);
+  const auth = new google.auth.GoogleAuth({
+    credentials,
+    scopes: ["https://www.googleapis.com/auth/cloud-platform.read-only"],
+  });
+
+  google.options({ auth } as Parameters<typeof google.options>[0]);
+}
+
+/**
  * Initializes googleapis with a user OAuth access token globally.
  * Call this before any google.* API call when using per-user OAuth.
  */

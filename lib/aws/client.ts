@@ -1,3 +1,26 @@
+export type AwsCredentials = {
+  accessKeyId: string;
+  secretAccessKey: string;
+  region?: string;
+};
+
+/**
+ * Returns AWS SDK client options, merging explicit credentials when provided.
+ * Without creds, falls back to the default AWS credential chain (env vars, instance profile, etc.).
+ */
+export function getAwsClientOptions(region: string, creds?: AwsCredentials) {
+  if (creds) {
+    return {
+      region,
+      credentials: {
+        accessKeyId: creds.accessKeyId,
+        secretAccessKey: creds.secretAccessKey,
+      },
+    };
+  }
+  return { region };
+}
+
 export function useMockAwsData(): boolean {
   return process.env.USE_MOCK_AWS_DATA === "true";
 }

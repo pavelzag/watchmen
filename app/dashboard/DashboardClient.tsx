@@ -14,11 +14,20 @@ export default function DashboardClient() {
   const [scanVersion, setScanVersion] = useState(0);
   const [scanning, setScanning] = useState(false);
   const [hasAiKey, setHasAiKey] = useState<boolean | null>(null);
+  const [gcpCredsRequired, setGcpCredsRequired] = useState(false);
 
   const triggerScan = useCallback(async () => {
     setScanning(true);
     try {
-      await fetch("/api/scan", { method: "POST" });
+      const res = await fetch("/api/scan", { method: "POST" });
+      if (res.status === 422) {
+        const data = await res.json();
+        if (data.credentialsRequired) {
+          setGcpCredsRequired(true);
+          return;
+        }
+      }
+      setGcpCredsRequired(false);
       setScanVersion((v) => v + 1);
     } finally {
       setScanning(false);
@@ -113,6 +122,14 @@ export default function DashboardClient() {
               // WARN: No AI key configured —{" "}
               <Link href="/dashboard/settings" style={{ color: "#ffaa00", textDecoration: "underline" }}>
                 [CONFIGURE]
+              </Link>
+            </span>
+          )}
+          {gcpCredsRequired && (
+            <span style={{ color: "#ffaa00" }}>
+              // WARN: No GCP credentials —{" "}
+              <Link href="/dashboard/settings" style={{ color: "#ffaa00", textDecoration: "underline" }}>
+                [GO TO SETTINGS]
               </Link>
             </span>
           )}

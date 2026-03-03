@@ -1,4 +1,4 @@
-import { getProjectIds, getProjectIdsForOrg, initGoogleAuth, initUserAuth, discoverUserProjectIds, useMockData } from "./client";
+import { getProjectIds, getProjectIdsForOrg, initGoogleAuth, initGoogleAuthFromKey, initUserAuth, discoverUserProjectIds, useMockData } from "./client";
 import { getProjectPolicies, getServiceAccounts } from "./iam";
 import { getStorageBuckets } from "./storage";
 import { getGkeClusters } from "./gke";
@@ -18,13 +18,16 @@ export * from "./types";
  * Switch between real and mock via USE_MOCK_DATA=true env var.
  * Pass options.accessToken to use per-user OAuth instead of the service account.
  */
-export async function fetchGcpSnapshot(options?: { accessToken?: string }): Promise<GcpSnapshot> {
+export async function fetchGcpSnapshot(options?: { accessToken?: string; serviceAccountKey?: string }): Promise<GcpSnapshot> {
   const mock = useMockData();
 
   let projectIds: string[];
 
   if (mock) {
     projectIds = getProjectIds();
+  } else if (options?.serviceAccountKey) {
+    initGoogleAuthFromKey(options.serviceAccountKey);
+    projectIds = await getProjectIdsForOrg();
   } else if (options?.accessToken) {
     projectIds = await discoverUserProjectIds(options.accessToken);
   } else {
