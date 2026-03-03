@@ -36,13 +36,13 @@ async function getRealSecrets(creds?: AwsCredentials): Promise<AwsSecret[]> {
                   principals: Array.isArray(st.Principal)
                     ? st.Principal
                     : typeof st.Principal === "object" && st.Principal !== null
-                    ? Object.values(st.Principal as Record<string, string[]>).flat()
-                    : [String(st.Principal ?? "*")],
+                      ? Object.values(st.Principal as Record<string, string[]>).flat()
+                      : [String(st.Principal ?? "*")],
                   actions: Array.isArray(st.Action) ? st.Action : [String(st.Action ?? "*")],
                   resources: Array.isArray(st.Resource) ? st.Resource : [String(st.Resource ?? "*")],
                 }));
               }
-            } catch {}
+            } catch { }
 
             return {
               name: s.Name!,
@@ -84,7 +84,7 @@ async function getRealSecrets(creds?: AwsCredentials): Promise<AwsSecret[]> {
     .flatMap((r) => r.value);
 }
 
-export async function getSecrets(creds?: AwsCredentials): Promise<AwsSecret[]> {
-  if (useMockAwsData()) return getMockSecrets();
+export async function getSecrets(creds?: AwsCredentials, forceMock?: boolean): Promise<AwsSecret[]> {
+  if (useMockAwsData(forceMock)) return getMockSecrets();
   return getRealSecrets(creds);
 }

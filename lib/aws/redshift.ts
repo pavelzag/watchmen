@@ -59,7 +59,7 @@ async function getRealRedshiftClusters(creds?: AwsCredentials): Promise<AwsRedsh
     .flatMap((r) => r.value);
 }
 
-export async function getRedshiftClusters(creds?: AwsCredentials): Promise<AwsRedshiftCluster[]> {
-  if (useMockAwsData()) return getMockRedshiftClusters();
+export async function getRedshiftClusters(creds?: AwsCredentials, forceMock?: boolean): Promise<AwsRedshiftCluster[]> {
+  if (useMockAwsData(forceMock)) return getMockRedshiftClusters();
   return getRealRedshiftClusters(creds);
 }

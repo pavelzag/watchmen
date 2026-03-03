@@ -80,15 +80,17 @@ async function getRealServiceAccounts(
 }
 
 export async function getProjectPolicies(
-  projectIds: string[]
+  projectIds: string[],
+  forceMock?: boolean
 ): Promise<ProjectIamPolicy[]> {
-  if (useMockData()) return getMockProjectPolicies();
+  if (useMockData(forceMock)) return getMockProjectPolicies();
   return getRealProjectPolicies(projectIds);
 }
 
 export async function getServiceAccounts(
-  projectIds: string[]
+  projectIds: string[],
+  forceMock?: boolean
 ): Promise<ServiceAccount[]> {
-  if (useMockData()) return getMockServiceAccounts();
+  if (useMockData(forceMock)) return getMockServiceAccounts();
   return getRealServiceAccounts(projectIds);
 }

@@ -66,7 +66,7 @@ async function getRealSecurityGroups(creds?: AwsCredentials): Promise<AwsSecurit
     .flatMap((r) => r.value);
 }
 
-export async function getSecurityGroups(creds?: AwsCredentials): Promise<AwsSecurityGroup[]> {
-  if (useMockAwsData()) return getMockSecurityGroups();
+export async function getSecurityGroups(creds?: AwsCredentials, forceMock?: boolean): Promise<AwsSecurityGroup[]> {
+  if (useMockAwsData(forceMock)) return getMockSecurityGroups();
   return getRealSecurityGroups(creds);
 }

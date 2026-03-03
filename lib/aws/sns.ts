@@ -41,8 +41,8 @@ async function getRealSnsTopics(creds?: AwsCredentials): Promise<AwsSnsTopic[]> 
                 principals: Array.isArray(s.Principal)
                   ? s.Principal
                   : typeof s.Principal === "object" && s.Principal !== null
-                  ? Object.values(s.Principal as Record<string, string[]>).flat()
-                  : [String(s.Principal ?? "*")],
+                    ? Object.values(s.Principal as Record<string, string[]>).flat()
+                    : [String(s.Principal ?? "*")],
                 actions: Array.isArray(s.Action) ? s.Action : [String(s.Action ?? "*")],
                 resources: Array.isArray(s.Resource) ? s.Resource : [String(s.Resource ?? "*")],
               }));
@@ -52,8 +52,8 @@ async function getRealSnsTopics(creds?: AwsCredentials): Promise<AwsSnsTopic[]> 
           const tags =
             tagsRes.status === "fulfilled"
               ? Object.fromEntries(
-                  (tagsRes.value.Tags ?? []).map((tag) => [tag.Key!, tag.Value!])
-                )
+                (tagsRes.value.Tags ?? []).map((tag) => [tag.Key!, tag.Value!])
+              )
               : {};
 
           return {
@@ -86,7 +86,7 @@ async function getRealSnsTopics(creds?: AwsCredentials): Promise<AwsSnsTopic[]> 
     .flatMap((r) => r.value);
 }
 
-export async function getSnsTopics(creds?: AwsCredentials): Promise<AwsSnsTopic[]> {
-  if (useMockAwsData()) return getMockSnsTopics();
+export async function getSnsTopics(creds?: AwsCredentials, forceMock?: boolean): Promise<AwsSnsTopic[]> {
+  if (useMockAwsData(forceMock)) return getMockSnsTopics();
   return getRealSnsTopics(creds);
 }

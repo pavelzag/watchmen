@@ -56,8 +56,9 @@ async function getRealBuckets(projectIds: string[]): Promise<StorageBucket[]> {
 }
 
 export async function getStorageBuckets(
-  projectIds: string[]
+  projectIds: string[],
+  forceMock?: boolean
 ): Promise<StorageBucket[]> {
-  if (useMockData()) return getMockBuckets();
+  if (useMockData(forceMock)) return getMockBuckets();
   return getRealBuckets(projectIds);
 }

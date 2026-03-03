@@ -39,8 +39,8 @@ export async function POST(req: NextRequest) {
   try {
     let snapshot;
 
-    if (useMockData()) {
-      snapshot = await fetchGcpSnapshot();
+    if (useMockData() || session.isDemoUser) {
+      snapshot = await fetchGcpSnapshot({ forceMock: true });
     } else {
       await ensureGcpSnapshotTable();
       const result = await sql`

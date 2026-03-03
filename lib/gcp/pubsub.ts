@@ -50,7 +50,10 @@ async function getRealPubSubTopics(projectIds: string[]): Promise<PubSubTopic[]>
     .flatMap((r) => r.value);
 }
 
-export async function getPubSubTopics(projectIds: string[]): Promise<PubSubTopic[]> {
-  if (useMockData()) return getMockPubSubTopics();
+export async function getPubSubTopics(
+  projectIds: string[],
+  forceMock?: boolean
+): Promise<PubSubTopic[]> {
+  if (useMockData(forceMock)) return getMockPubSubTopics();
   return getRealPubSubTopics(projectIds);
 }

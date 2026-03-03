@@ -34,13 +34,13 @@ async function getRealLambdaFunctions(creds?: AwsCredentials): Promise<AwsLambda
                   principals: Array.isArray(s.Principal)
                     ? s.Principal
                     : typeof s.Principal === "object" && s.Principal !== null
-                    ? Object.values(s.Principal as Record<string, string[]>).flat()
-                    : [String(s.Principal ?? "*")],
+                      ? Object.values(s.Principal as Record<string, string[]>).flat()
+                      : [String(s.Principal ?? "*")],
                   actions: Array.isArray(s.Action) ? s.Action : [String(s.Action ?? "*")],
                   resources: Array.isArray(s.Resource) ? s.Resource : [String(s.Resource ?? "*")],
                 }));
               }
-            } catch {}
+            } catch { }
 
             return {
               functionName,
@@ -57,10 +57,10 @@ async function getRealLambdaFunctions(creds?: AwsCredentials): Promise<AwsLambda
               resourcePolicy,
               vpcConfig: fn.VpcConfig?.VpcId
                 ? {
-                    vpcId: fn.VpcConfig.VpcId,
-                    subnetIds: fn.VpcConfig.SubnetIds ?? [],
-                    securityGroupIds: fn.VpcConfig.SecurityGroupIds ?? [],
-                  }
+                  vpcId: fn.VpcConfig.VpcId,
+                  subnetIds: fn.VpcConfig.SubnetIds ?? [],
+                  securityGroupIds: fn.VpcConfig.SecurityGroupIds ?? [],
+                }
                 : undefined,
               tags: {},
             };
@@ -87,7 +87,7 @@ async function getRealLambdaFunctions(creds?: AwsCredentials): Promise<AwsLambda
     .flatMap((r) => r.value);
 }
 
-export async function getLambdaFunctions(creds?: AwsCredentials): Promise<AwsLambdaFunction[]> {
-  if (useMockAwsData()) return getMockLambdaFunctions();
+export async function getLambdaFunctions(creds?: AwsCredentials, forceMock?: boolean): Promise<AwsLambdaFunction[]> {
+  if (useMockAwsData(forceMock)) return getMockLambdaFunctions();
   return getRealLambdaFunctions(creds);
 }

@@ -48,7 +48,10 @@ async function getRealVMs(projectIds: string[]): Promise<VM[]> {
     .flatMap((r) => r.value);
 }
 
-export async function getVMs(projectIds: string[]): Promise<VM[]> {
-  if (useMockData()) return getMockVMs();
+export async function getVMs(
+  projectIds: string[],
+  forceMock?: boolean
+): Promise<VM[]> {
+  if (useMockData(forceMock)) return getMockVMs();
   return getRealVMs(projectIds);
 }

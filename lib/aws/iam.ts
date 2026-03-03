@@ -58,7 +58,7 @@ async function getRealIamUsers(creds?: AwsCredentials): Promise<AwsIamUser[]> {
               lastUsedDate = lu.AccessKeyLastUsed?.LastUsedDate?.toISOString();
               lastUsedService = lu.AccessKeyLastUsed?.ServiceName ?? undefined;
               lastUsedRegion = lu.AccessKeyLastUsed?.Region ?? undefined;
-            } catch {}
+            } catch { }
             return {
               accessKeyId: k.AccessKeyId!,
               status: k.Status as "Active" | "Inactive",
@@ -75,7 +75,7 @@ async function getRealIamUsers(creds?: AwsCredentials): Promise<AwsIamUser[]> {
           const lp = await client.send(new GetLoginProfileCommand({ UserName: userName }));
           passwordLastUsed = u.PasswordLastUsed?.toISOString();
           void lp;
-        } catch {}
+        } catch { }
 
         return {
           userName,
@@ -147,8 +147,8 @@ async function getRealIamRoles(creds?: AwsCredentials): Promise<AwsIamRole[]> {
             principals: Array.isArray(s.Principal)
               ? s.Principal
               : typeof s.Principal === "object" && s.Principal !== null
-              ? Object.values(s.Principal as Record<string, string[]>).flat()
-              : [String(s.Principal ?? "*")],
+                ? Object.values(s.Principal as Record<string, string[]>).flat()
+                : [String(s.Principal ?? "*")],
             actions: Array.isArray(s.Action) ? s.Action : [String(s.Action ?? "*")],
             resources: Array.isArray(s.Resource) ? s.Resource : [String(s.Resource ?? "*")],
           })),
@@ -173,12 +173,12 @@ async function getRealIamRoles(creds?: AwsCredentials): Promise<AwsIamRole[]> {
   return roles;
 }
 
-export async function getIamUsers(creds?: AwsCredentials): Promise<AwsIamUser[]> {
-  if (useMockAwsData()) return getMockIamUsers();
+export async function getIamUsers(creds?: AwsCredentials, forceMock?: boolean): Promise<AwsIamUser[]> {
+  if (useMockAwsData(forceMock)) return getMockIamUsers();
   return getRealIamUsers(creds);
 }
 
-export async function getIamRoles(creds?: AwsCredentials): Promise<AwsIamRole[]> {
-  if (useMockAwsData()) return getMockIamRoles();
+export async function getIamRoles(creds?: AwsCredentials, forceMock?: boolean): Promise<AwsIamRole[]> {
+  if (useMockAwsData(forceMock)) return getMockIamRoles();
   return getRealIamRoles(creds);
 }

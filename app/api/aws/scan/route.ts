@@ -16,10 +16,10 @@ export async function POST() {
     return NextResponse.json({ error: "No user email in session." }, { status: 400 });
   }
 
-  // Mock mode: return fixture data without making any AWS or DB calls
-  if (useMockAwsData()) {
+  // Mock mode: return fixture data
+  if (useMockAwsData() || session.isDemoUser) {
     try {
-      const snapshot = await fetchAwsSnapshot();
+      const snapshot = await fetchAwsSnapshot({ forceMock: true });
       return NextResponse.json({ ok: true, fetchedAt: snapshot.fetchedAt });
     } catch (err) {
       console.error("[api/aws/scan] POST mock error:", err);
@@ -73,9 +73,9 @@ export async function GET() {
   }
 
   // Mock mode: skip DB, return live data
-  if (useMockAwsData()) {
+  if (useMockAwsData() || session.isDemoUser) {
     try {
-      const snapshot = await fetchAwsSnapshot();
+      const snapshot = await fetchAwsSnapshot({ forceMock: true });
       return NextResponse.json({ snapshot, fetchedAt: snapshot.fetchedAt });
     } catch (err) {
       console.error("[api/aws/scan] GET mock error:", err);

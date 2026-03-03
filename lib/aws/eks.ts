@@ -56,7 +56,7 @@ async function getRealEksClusters(creds?: AwsCredentials): Promise<AwsEksCluster
     .flatMap((r) => r.value);
 }
 
-export async function getEksClusters(creds?: AwsCredentials): Promise<AwsEksCluster[]> {
-  if (useMockAwsData()) return getMockEksClusters();
+export async function getEksClusters(creds?: AwsCredentials, forceMock?: boolean): Promise<AwsEksCluster[]> {
+  if (useMockAwsData(forceMock)) return getMockEksClusters();
   return getRealEksClusters(creds);
 }

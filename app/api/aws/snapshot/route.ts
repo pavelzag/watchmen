@@ -10,10 +10,10 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Mock mode: return live fixture data
-  if (useMockAwsData()) {
+  // Mock mode: return live mock data
+  if (useMockAwsData() || session.isDemoUser) {
     try {
-      const snapshot = await fetchAwsSnapshot();
+      const snapshot = await fetchAwsSnapshot({ forceMock: true });
       return NextResponse.json(snapshot);
     } catch (err) {
       console.error("[api/aws/snapshot] mock error:", err);

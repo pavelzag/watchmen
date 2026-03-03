@@ -11,21 +11,21 @@ import type { AwsSnapshot } from "@/lib/aws/types";
 
 interface AwsQueryIntent {
   queryType:
-    | "list_iam_users"
-    | "list_iam_roles"
-    | "list_s3_buckets"
-    | "list_eks_clusters"
-    | "list_ec2_instances"
-    | "list_lambda_functions"
-    | "list_rds_instances"
-    | "list_redshift_clusters"
-    | "list_sns_topics"
-    | "list_secrets"
-    | "list_security_groups"
-    | "security_findings"
-    | "compliance"
-    | "user_access"
-    | "unknown";
+  | "list_iam_users"
+  | "list_iam_roles"
+  | "list_s3_buckets"
+  | "list_eks_clusters"
+  | "list_ec2_instances"
+  | "list_lambda_functions"
+  | "list_rds_instances"
+  | "list_redshift_clusters"
+  | "list_sns_topics"
+  | "list_secrets"
+  | "list_security_groups"
+  | "security_findings"
+  | "compliance"
+  | "user_access"
+  | "unknown";
   resourceName?: string;
   accountId?: string;
   region?: string;
@@ -215,8 +215,8 @@ export async function POST(req: NextRequest) {
   try {
     let snapshot: AwsSnapshot;
 
-    if (useMockAwsData()) {
-      snapshot = await fetchAwsSnapshot();
+    if (useMockAwsData() || session.isDemoUser) {
+      snapshot = await fetchAwsSnapshot({ forceMock: true });
     } else {
       await ensureAwsSnapshotTable();
       const result = await sql`

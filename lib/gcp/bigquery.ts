@@ -26,8 +26,8 @@ async function getRealBigQueryDatasets(projectIds: string[]): Promise<BigQueryDa
             members: entry.userByEmail
               ? [`user:${entry.userByEmail}`]
               : entry.specialGroup
-              ? [entry.specialGroup]
-              : [],
+                ? [entry.specialGroup]
+                : [],
           }));
         } catch {
           // ignore IAM fetch errors
@@ -52,7 +52,10 @@ async function getRealBigQueryDatasets(projectIds: string[]): Promise<BigQueryDa
     .flatMap((r) => r.value);
 }
 
-export async function getBigQueryDatasets(projectIds: string[]): Promise<BigQueryDataset[]> {
-  if (useMockData()) return getMockBigQueryDatasets();
+export async function getBigQueryDatasets(
+  projectIds: string[],
+  forceMock?: boolean
+): Promise<BigQueryDataset[]> {
+  if (useMockData(forceMock)) return getMockBigQueryDatasets();
   return getRealBigQueryDatasets(projectIds);
 }

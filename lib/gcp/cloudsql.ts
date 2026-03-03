@@ -36,7 +36,10 @@ async function getRealCloudSqlInstances(projectIds: string[]): Promise<CloudSqlI
     .flatMap((r) => r.value);
 }
 
-export async function getCloudSqlInstances(projectIds: string[]): Promise<CloudSqlInstance[]> {
-  if (useMockData()) return getMockCloudSqlInstances();
+export async function getCloudSqlInstances(
+  projectIds: string[],
+  forceMock?: boolean
+): Promise<CloudSqlInstance[]> {
+  if (useMockData(forceMock)) return getMockCloudSqlInstances();
   return getRealCloudSqlInstances(projectIds);
 }

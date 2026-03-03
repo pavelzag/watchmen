@@ -24,7 +24,7 @@ async function getRealBuckets(creds?: AwsCredentials): Promise<AwsS3Bucket[]> {
         try {
           const locRes = await client.send(new GetBucketLocationCommand({ Bucket: bucketName }));
           region = locRes.LocationConstraint ?? "us-east-1";
-        } catch {}
+        } catch { }
 
         const regionalClient = new S3Client(getAwsClientOptions(region, creds));
 
@@ -46,8 +46,8 @@ async function getRealBuckets(creds?: AwsCredentials): Promise<AwsS3Bucket[]> {
             principals: Array.isArray(s.Principal)
               ? s.Principal
               : typeof s.Principal === "object" && s.Principal !== null
-              ? Object.values(s.Principal as Record<string, string[]>).flat()
-              : [String(s.Principal ?? "*")],
+                ? Object.values(s.Principal as Record<string, string[]>).flat()
+                : [String(s.Principal ?? "*")],
             actions: Array.isArray(s.Action) ? s.Action : [String(s.Action ?? "*")],
             resources: Array.isArray(s.Resource) ? s.Resource : [String(s.Resource ?? "*")],
           }));
@@ -87,8 +87,8 @@ async function getRealBuckets(creds?: AwsCredentials): Promise<AwsS3Bucket[]> {
         const tags =
           tagsRes.status === "fulfilled"
             ? Object.fromEntries(
-                (tagsRes.value.TagSet ?? []).map((t) => [t.Key!, t.Value!])
-              )
+              (tagsRes.value.TagSet ?? []).map((t) => [t.Key!, t.Value!])
+            )
             : {};
 
         return {
@@ -117,7 +117,7 @@ async function getRealBuckets(creds?: AwsCredentials): Promise<AwsS3Bucket[]> {
   return buckets;
 }
 
-export async function getS3Buckets(creds?: AwsCredentials): Promise<AwsS3Bucket[]> {
-  if (useMockAwsData()) return getMockBuckets();
+export async function getS3Buckets(creds?: AwsCredentials, forceMock?: boolean): Promise<AwsS3Bucket[]> {
+  if (useMockAwsData(forceMock)) return getMockBuckets();
   return getRealBuckets(creds);
 }

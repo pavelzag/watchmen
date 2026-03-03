@@ -19,10 +19,10 @@ export async function POST() {
     return NextResponse.json({ error: "No user email in session." }, { status: 400 });
   }
 
-  // Mock mode: return fixture data without making any GCP or DB calls
-  if (useMockData()) {
+  // Mock mode: skip DB, return fixture data
+  if (useMockData() || session.isDemoUser) {
     try {
-      const snapshot = await fetchGcpSnapshot();
+      const snapshot = await fetchGcpSnapshot({ forceMock: true });
       return NextResponse.json({ ok: true, fetchedAt: snapshot.fetchedAt });
     } catch (err) {
       console.error("[api/scan] POST mock error:", err);
@@ -75,9 +75,9 @@ export async function GET() {
   }
 
   // Mock mode: skip DB, return live data
-  if (useMockData()) {
+  if (useMockData() || session.isDemoUser) {
     try {
-      const snapshot = await fetchGcpSnapshot();
+      const snapshot = await fetchGcpSnapshot({ forceMock: true });
       return NextResponse.json({
         snapshot: {
           ...snapshot,

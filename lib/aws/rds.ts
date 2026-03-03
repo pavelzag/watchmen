@@ -60,7 +60,7 @@ async function getRealRdsInstances(creds?: AwsCredentials): Promise<AwsRdsInstan
     .flatMap((r) => r.value);
 }
 
-export async function getRdsInstances(creds?: AwsCredentials): Promise<AwsRdsInstance[]> {
-  if (useMockAwsData()) return getMockRdsInstances();
+export async function getRdsInstances(creds?: AwsCredentials, forceMock?: boolean): Promise<AwsRdsInstance[]> {
+  if (useMockAwsData(forceMock)) return getMockRdsInstances();
   return getRealRdsInstances(creds);
 }

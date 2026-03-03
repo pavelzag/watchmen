@@ -101,7 +101,8 @@ export function logFetchWarning(fetcher: string, projectId: string, reason: unkn
   }
 }
 
-export function useMockData(): boolean {
+export function useMockData(forced?: boolean): boolean {
+  if (forced !== undefined) return forced;
   return process.env.USE_MOCK_DATA === "true";
 }
 

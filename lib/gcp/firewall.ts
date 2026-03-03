@@ -39,7 +39,10 @@ async function getRealFirewallRules(projectIds: string[]): Promise<FirewallRule[
     .flatMap((r) => r.value);
 }
 
-export async function getFirewallRules(projectIds: string[]): Promise<FirewallRule[]> {
-  if (useMockData()) return getMockFirewallRules();
+export async function getFirewallRules(
+  projectIds: string[],
+  forceMock?: boolean
+): Promise<FirewallRule[]> {
+  if (useMockData(forceMock)) return getMockFirewallRules();
   return getRealFirewallRules(projectIds);
 }

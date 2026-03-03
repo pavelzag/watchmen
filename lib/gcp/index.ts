@@ -18,8 +18,8 @@ export * from "./types";
  * Switch between real and mock via USE_MOCK_DATA=true env var.
  * Pass options.accessToken to use per-user OAuth instead of the service account.
  */
-export async function fetchGcpSnapshot(options?: { accessToken?: string; serviceAccountKey?: string }): Promise<GcpSnapshot> {
-  const mock = useMockData();
+export async function fetchGcpSnapshot(options?: { accessToken?: string; serviceAccountKey?: string; forceMock?: boolean }): Promise<GcpSnapshot> {
+  const mock = useMockData(options?.forceMock);
 
   let projectIds: string[];
 
@@ -54,17 +54,17 @@ export async function fetchGcpSnapshot(options?: { accessToken?: string; service
     secrets,
     firewallRules,
   ] = await Promise.all([
-    getProjectPolicies(projectIds),
-    getServiceAccounts(projectIds),
-    getStorageBuckets(projectIds),
-    getGkeClusters(projectIds),
-    getVMs(projectIds),
-    getCloudRunServices(projectIds),
-    getCloudSqlInstances(projectIds),
-    getBigQueryDatasets(projectIds),
-    getPubSubTopics(projectIds),
-    getSecrets(projectIds),
-    getFirewallRules(projectIds),
+    getProjectPolicies(projectIds, mock),
+    getServiceAccounts(projectIds, mock),
+    getStorageBuckets(projectIds, mock),
+    getGkeClusters(projectIds, mock),
+    getVMs(projectIds, mock),
+    getCloudRunServices(projectIds, mock),
+    getCloudSqlInstances(projectIds, mock),
+    getBigQueryDatasets(projectIds, mock),
+    getPubSubTopics(projectIds, mock),
+    getSecrets(projectIds, mock),
+    getFirewallRules(projectIds, mock),
   ]);
 
   return {

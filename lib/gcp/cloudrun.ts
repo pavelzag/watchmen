@@ -42,7 +42,10 @@ async function getRealCloudRunServices(projectIds: string[]): Promise<CloudRunSe
     .flatMap((r) => r.value);
 }
 
-export async function getCloudRunServices(projectIds: string[]): Promise<CloudRunService[]> {
-  if (useMockData()) return getMockCloudRunServices();
+export async function getCloudRunServices(
+  projectIds: string[],
+  forceMock?: boolean
+): Promise<CloudRunService[]> {
+  if (useMockData(forceMock)) return getMockCloudRunServices();
   return getRealCloudRunServices(projectIds);
 }

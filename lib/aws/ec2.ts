@@ -57,7 +57,7 @@ async function getRealEc2Instances(creds?: AwsCredentials): Promise<AwsEc2Instan
     .flatMap((r) => r.value);
 }
 
-export async function getEc2Instances(creds?: AwsCredentials): Promise<AwsEc2Instance[]> {
-  if (useMockAwsData()) return getMockEc2Instances();
+export async function getEc2Instances(creds?: AwsCredentials, forceMock?: boolean): Promise<AwsEc2Instance[]> {
+  if (useMockAwsData(forceMock)) return getMockEc2Instances();
   return getRealEc2Instances(creds);
 }

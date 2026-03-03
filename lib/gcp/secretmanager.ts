@@ -35,8 +35,8 @@ async function getRealSecrets(projectIds: string[]): Promise<Secret[]> {
         const replication = secret.replication?.automatic
           ? "AUTOMATIC"
           : secret.replication?.userManaged
-          ? "USER_MANAGED"
-          : "AUTOMATIC";
+            ? "USER_MANAGED"
+            : "AUTOMATIC";
 
         secrets.push({
           name: secret.name ?? "",
@@ -58,7 +58,10 @@ async function getRealSecrets(projectIds: string[]): Promise<Secret[]> {
     .flatMap((r) => r.value);
 }
 
-export async function getSecrets(projectIds: string[]): Promise<Secret[]> {
-  if (useMockData()) return getMockSecrets();
+export async function getSecrets(
+  projectIds: string[],
+  forceMock?: boolean
+): Promise<Secret[]> {
+  if (useMockData(forceMock)) return getMockSecrets();
   return getRealSecrets(projectIds);
 }

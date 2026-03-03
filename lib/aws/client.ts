@@ -1,6 +1,6 @@
 export type AwsCredentials = {
-  accessKeyId: string;
-  secretAccessKey: string;
+  accessKeyId?: string;
+  secretAccessKey?: string;
   region?: string;
 };
 
@@ -9,7 +9,7 @@ export type AwsCredentials = {
  * Without creds, falls back to the default AWS credential chain (env vars, instance profile, etc.).
  */
 export function getAwsClientOptions(region: string, creds?: AwsCredentials) {
-  if (creds) {
+  if (creds?.accessKeyId && creds?.secretAccessKey) {
     return {
       region,
       credentials: {
@@ -21,7 +21,8 @@ export function getAwsClientOptions(region: string, creds?: AwsCredentials) {
   return { region };
 }
 
-export function useMockAwsData(): boolean {
+export function useMockAwsData(forced?: boolean): boolean {
+  if (forced !== undefined) return forced;
   return process.env.USE_MOCK_AWS_DATA === "true";
 }
 

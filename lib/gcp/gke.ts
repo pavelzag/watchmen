@@ -56,8 +56,9 @@ async function getRealClusters(projectIds: string[]): Promise<GkeCluster[]> {
 }
 
 export async function getGkeClusters(
-  projectIds: string[]
+  projectIds: string[],
+  forceMock?: boolean
 ): Promise<GkeCluster[]> {
-  if (useMockData()) return getMockClusters();
+  if (useMockData(forceMock)) return getMockClusters();
   return getRealClusters(projectIds);
 }

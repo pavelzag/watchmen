@@ -10,10 +10,10 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Mock mode: keep existing live behavior
-  if (useMockData()) {
+  // Mock mode: Return live mock data
+  if (useMockData() || session.isDemoUser) {
     try {
-      const snapshot = await fetchGcpSnapshot();
+      const snapshot = await fetchGcpSnapshot({ forceMock: true });
       return NextResponse.json({
         ...snapshot,
         users: extractUsers(snapshot),
