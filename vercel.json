@@ -4,6 +4,5 @@
     "app/api/**": {
       "maxDuration": 30
     }
-  },
-  "ignoreCommand": "./scripts/vercel-build-check.sh"
+  }
 }
