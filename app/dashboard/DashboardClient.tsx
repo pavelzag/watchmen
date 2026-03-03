@@ -63,47 +63,6 @@ export default function DashboardClient() {
   return (
     <div className="min-h-screen p-4 flex flex-col" style={{ background: "#090909" }}>
       <div className="max-w-4xl mx-auto w-full space-y-4 flex-1">
-        <p className="text-xs uppercase tracking-widest" style={{ color: "#005c16" }}>
-          // CLOUD BRAIN QUERY
-        </p>
-
-        <QueryBox onResult={handleResult} />
-
-        {results.length > 0 && (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs uppercase tracking-widest" style={{ color: "#00aa2b" }}>
-                // QUERY LOG ({results.length} entries)
-              </span>
-              <button
-                onClick={() => setResults([])}
-                className="flex items-center gap-1 text-xs uppercase tracking-widest transition-colors px-2 py-1"
-                style={{ color: "#ff3333", border: "1px solid #440000" }}
-                onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.borderColor = "#ff3333";
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.borderColor = "#440000";
-                }}
-              >
-                <Trash2 className="w-3 h-3" />
-                [CLEAR LOG]
-              </button>
-            </div>
-            <div className="space-y-3">
-              {results.map((r, i) => (
-                <ResultCard key={`${r.fetchedAt}-${i}`} result={r} index={i} />
-              ))}
-            </div>
-          </div>
-        )}
-
-        {results.length === 0 && (
-          <div className="py-8 text-center" style={{ color: "#005c16" }}>
-            <p className="text-xs">// No queries executed. Type a command above.</p>
-          </div>
-        )}
-
         <SnapshotStats
           scanVersion={scanVersion}
           onSyncRequest={triggerScan}
@@ -117,14 +76,6 @@ export default function DashboardClient() {
         style={{ border: "1px solid #005c16", background: "#0a0a0a" }}
       >
         <div className="flex items-center gap-4">
-          {hasAiKey === false && (
-            <span style={{ color: "#ffaa00" }}>
-              // WARN: No AI key configured —{" "}
-              <Link href="/dashboard/settings" style={{ color: "#ffaa00", textDecoration: "underline" }}>
-                [CONFIGURE]
-              </Link>
-            </span>
-          )}
           {gcpCredsRequired && (
             <span style={{ color: "#ffaa00" }}>
               // WARN: No GCP credentials —{" "}

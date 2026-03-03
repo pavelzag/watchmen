@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Loader2, X, Terminal } from "lucide-react";
+import { usePathname } from "next/navigation";
 import { saveQuery, getHistory } from "@/lib/query-history";
 
 // Simple cross-component event bus — no context provider needed
@@ -17,6 +18,8 @@ interface ResultPeek {
 }
 
 export default function CommandPalette() {
+    const pathname = usePathname();
+    const isAws = pathname?.startsWith("/dashboard/aws") ?? false;
     const [open, setOpen] = useState(false);
     const [query, setQuery] = useState("");
     const [loading, setLoading] = useState(false);
@@ -40,8 +43,12 @@ export default function CommandPalette() {
 
     // Listen for global open event + "/" key
     useEffect(() => {
-        function handleOpen() { setOpen(true); }
+        function handleOpen() {
+            if (isAws) setOpen(true);
+        }
         function handleKey(e: KeyboardEvent) {
+            if (!isAws) return;
+
             // "/" opens palette when not already in an input
             const tag = (e.target as HTMLElement).tagName;
             if (
@@ -63,7 +70,7 @@ export default function CommandPalette() {
             window.removeEventListener("cmd-palette:open", handleOpen);
             window.removeEventListener("keydown", handleKey);
         };
-    }, []);
+    }, [isAws]);
 
     const submit = useCallback(async () => {
         if (!query.trim() || loading) return;

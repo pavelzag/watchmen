@@ -20,7 +20,6 @@ export default async function DashboardLayout({
           <span style={{ color: "#00aa2b" }}>// DEMO MODE</span>
           <span style={{ color: "#005c16" }}>
             {" "}— exploring mock GCP data.{" "}
-            Natural language queries require an AI key in{" "}
           </span>
           <a
             href="/dashboard/settings"
