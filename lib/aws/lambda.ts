@@ -62,7 +62,7 @@ async function getRealLambdaFunctions(): Promise<AwsLambdaFunction[]> {
                     securityGroupIds: fn.VpcConfig.SecurityGroupIds ?? [],
                   }
                 : undefined,
-              tags: (fn.Tags as Record<string, string>) ?? {},
+              tags: {},
             };
           })
         );

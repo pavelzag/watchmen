@@ -9,7 +9,7 @@ async function getMockIamUsers(): Promise<AwsIamUser[]> {
 
 async function getMockIamRoles(): Promise<AwsIamRole[]> {
   const data = await import("@/fixtures/aws/iam-roles.json");
-  return data.default as AwsIamRole[];
+  return data.default as unknown as AwsIamRole[];
 }
 
 async function getRealIamUsers(): Promise<AwsIamUser[]> {

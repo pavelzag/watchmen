@@ -4,7 +4,7 @@ import type { AwsS3Bucket, AwsIamStatement } from "./types";
 
 async function getMockBuckets(): Promise<AwsS3Bucket[]> {
   const data = await import("@/fixtures/aws/s3-buckets.json");
-  return data.default as AwsS3Bucket[];
+  return data.default as unknown as AwsS3Bucket[];
 }
 
 async function getRealBuckets(): Promise<AwsS3Bucket[]> {
