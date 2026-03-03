@@ -3,6 +3,8 @@ import { auth } from "@/lib/auth";
 import { fetchAwsSnapshot } from "@/lib/aws";
 import { useMockAwsData } from "@/lib/aws/client";
 import { computeAwsFindings } from "@/lib/aws-findings";
+import { runAwsSoc2 } from "@/lib/compliance/aws-soc2";
+import { runAwsIso27001 } from "@/lib/compliance/aws-iso27001";
 import { callAI, resolveAI } from "@/lib/ai/client";
 import { sql } from "@/lib/db";
 import type { AwsSnapshot } from "@/lib/aws/types";
@@ -21,6 +23,7 @@ interface AwsQueryIntent {
     | "list_secrets"
     | "list_security_groups"
     | "security_findings"
+    | "compliance"
     | "user_access"
     | "unknown";
   resourceName?: string;
@@ -60,6 +63,7 @@ queryType guide:
 - list_secrets: asking to list Secrets Manager secrets
 - list_security_groups: asking to list security groups
 - security_findings: asking about security issues, risks, public access, open ports, vulnerabilities, findings
+- compliance: asking about compliance status, SOC2, ISO 27001, compliance score, failing controls, audit readiness
 - user_access: asking what a specific IAM user can access or about their permissions
 - unknown: cannot determine`;
 
@@ -82,6 +86,13 @@ function buildAwsContext(intent: AwsQueryIntent, snapshot: AwsSnapshot): unknown
 
   if (queryType === "security_findings") {
     return computeAwsFindings(snapshot);
+  }
+
+  if (queryType === "compliance") {
+    return {
+      soc2: runAwsSoc2(snapshot),
+      iso27001: runAwsIso27001(snapshot),
+    };
   }
 
   if (queryType === "user_access" && user) {
@@ -228,6 +239,7 @@ Be specific and factual. Format your answer clearly:
 - Use **bold** for resource names, account IDs, and usernames
 - Use bullet points for lists
 - For security findings questions, highlight critical and high severity issues first
+- For compliance questions, summarize the overall score, then list failing controls by category with their remediation hints
 - Mention the AWS account and region for each resource
 
 AWS Data:

@@ -20,8 +20,8 @@ async function getRealEc2Instances(): Promise<AwsEc2Instance[]> {
           new DescribeInstancesCommand({ MaxResults: 1000, NextToken: nextToken })
         );
         for (const reservation of res.Reservations ?? []) {
+          const accountId = reservation.OwnerId ?? "unknown";
           for (const inst of reservation.Instances ?? []) {
-            const accountId = inst.OwnerId ?? "unknown";
             instances.push({
               instanceId: inst.InstanceId!,
               accountId,
