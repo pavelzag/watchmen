@@ -59,7 +59,6 @@ describe('Navbar', () => {
         const NavbarComponent = await Navbar();
         render(NavbarComponent);
 
-        expect(screen.getByText('DASHBOARD')).toBeInTheDocument();
         expect(screen.getByText('FINDINGS')).toBeInTheDocument();
         expect(screen.getByText('HISTORY')).toBeInTheDocument();
         expect(screen.getByText('COMPLIANCE')).toBeInTheDocument();

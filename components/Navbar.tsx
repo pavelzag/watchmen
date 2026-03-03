@@ -1,15 +1,11 @@
 import { auth, signOut } from "@/lib/auth";
-import {
-  LayoutDashboard, ShieldAlert, Clock,
-  ClipboardCheck, Settings, LogOut, Terminal,
-} from "lucide-react";
+import { LayoutDashboard, ShieldAlert, Clock, ClipboardCheck, Settings, LogOut, Terminal } from "lucide-react";
 import Link from "next/link";
 import NavbarAskButton from "./NavbarAskButton";
 import NavbarCloudTabs from "./NavbarCloudTabs";
 
 export default async function Navbar() {
   const session = await auth();
-
   return (
     <header
       style={{
@@ -40,9 +36,7 @@ export default async function Navbar() {
 
         {/* Right: ask button + user + logout */}
         <div className="flex items-center gap-3">
-          {/* Global ask button — always visible */}
           <NavbarAskButton />
-
           {session?.user && (
             <>
               <span className="text-xs hidden md:block" style={{ color: "#005c16" }}>
@@ -74,7 +68,6 @@ export default async function Navbar() {
         style={{ borderTop: "1px solid #0a1a0a" }}
       >
         <NavbarCloudTabs />
-        <NavLink href="/dashboard" icon={<LayoutDashboard className="w-3 h-3" />} label="DASHBOARD" />
         <NavLink href="/dashboard/findings" icon={<ShieldAlert className="w-3 h-3" />} label="FINDINGS" danger />
         <NavLink href="/dashboard/history" icon={<Clock className="w-3 h-3" />} label="HISTORY" />
         <NavLink href="/dashboard/compliance" icon={<ClipboardCheck className="w-3 h-3" />} label="COMPLIANCE" />
@@ -104,3 +97,4 @@ function NavLink({
     </Link>
   );
 }
+
