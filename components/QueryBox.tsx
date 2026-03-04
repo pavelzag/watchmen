@@ -125,7 +125,7 @@ export default function QueryBox({ onResult }: QueryBoxProps) {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="ask anything about your GCP IAM..."
+              placeholder="ask anything about your cloud..."
               rows={2}
               disabled={loading}
               className="flex-1 resize-none outline-none text-sm leading-relaxed"

@@ -22,7 +22,7 @@ describe('QueryBox', () => {
         render(<QueryBox onResult={mockOnResult} />);
 
         // Check main elements
-        expect(screen.getByPlaceholderText(/ask anything about your GCP/i)).toBeInTheDocument();
+        expect(screen.getByPlaceholderText(/ask anything about your cloud/i)).toBeInTheDocument();
         expect(screen.getByRole('button', { name: /EXECUTE/i })).toBeInTheDocument();
 
         // Check suggested queries are visible when input is empty (now have '> ' prefix)
@@ -35,7 +35,7 @@ describe('QueryBox', () => {
         const button = screen.getByRole('button', { name: /EXECUTE/i });
         expect(button).toBeDisabled();
 
-        const textarea = screen.getByPlaceholderText(/ask anything about your GCP/i);
+        const textarea = screen.getByPlaceholderText(/ask anything about your cloud/i);
         fireEvent.change(textarea, { target: { value: 'test query' } });
 
         expect(button).not.toBeDisabled();
@@ -57,7 +57,7 @@ describe('QueryBox', () => {
 
         render(<QueryBox onResult={mockOnResult} />);
 
-        const textarea = screen.getByPlaceholderText(/ask anything about your GCP/i);
+        const textarea = screen.getByPlaceholderText(/ask anything about your cloud/i);
         fireEvent.change(textarea, { target: { value: 'test query' } });
 
         const button = screen.getByRole('button', { name: /EXECUTE/i });
@@ -81,7 +81,7 @@ describe('QueryBox', () => {
 
         render(<QueryBox onResult={mockOnResult} />);
 
-        const textarea = screen.getByPlaceholderText(/ask anything about your GCP/i);
+        const textarea = screen.getByPlaceholderText(/ask anything about your cloud/i);
         fireEvent.change(textarea, { target: { value: 'bad query' } });
         fireEvent.click(screen.getByRole('button', { name: /EXECUTE/i }));
 
@@ -109,6 +109,6 @@ describe('QueryBox', () => {
 
         // Click a history item should populate the input
         fireEvent.click(screen.getByText(/↑ history item 1/));
-        expect(screen.getByPlaceholderText(/ask anything about your GCP/i)).toHaveValue('history item 1');
+        expect(screen.getByPlaceholderText(/ask anything about your cloud/i)).toHaveValue('history item 1');
     });
 });

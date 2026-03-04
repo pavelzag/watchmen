@@ -131,8 +131,8 @@ export default function CommandPalette() {
             />
 
             <div
-                className="relative w-full max-w-2xl"
-                style={{ border: "1px solid #00ff41", background: "#090909", boxShadow: "0 0 40px #00ff4140" }}
+                className="relative w-full max-w-2xl flex flex-col overflow-hidden"
+                style={{ border: "1px solid #00ff41", background: "#090909", boxShadow: "0 0 40px #00ff4140", maxHeight: "calc(100vh - 8rem)" }}
             >
                 {/* Title bar */}
                 <div
@@ -167,7 +167,7 @@ export default function CommandPalette() {
                         value={query}
                         onChange={(e) => { setQuery(e.target.value); setHistIdx(-1); }}
                         onKeyDown={handleKeyDown}
-                        placeholder={isAws ? "ask anything about your AWS resources..." : "ask anything about your GCP permissions..."}
+                        placeholder="ask anything about your cloud..."
                         rows={2}
                         disabled={loading}
                         className="flex-1 resize-none outline-none text-sm leading-relaxed"
@@ -197,6 +197,9 @@ export default function CommandPalette() {
                         {loading ? "EXECUTING..." : "[EXECUTE]"}
                     </button>
                 </div>
+
+                {/* Scrollable output area */}
+                {(error || result) && <div className="overflow-y-auto flex-1">
 
                 {/* Error */}
                 {error && (
@@ -230,6 +233,8 @@ export default function CommandPalette() {
                         </div>
                     </div>
                 )}
+
+                </div>}
             </div>
         </div>
     );
