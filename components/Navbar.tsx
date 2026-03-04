@@ -1,5 +1,5 @@
 import { auth, signOut } from "@/lib/auth";
-import { LayoutDashboard, ShieldAlert, Clock, ClipboardCheck, Settings, LogOut, Terminal } from "lucide-react";
+import { LayoutDashboard, ShieldAlert, Clock, ClipboardCheck, Settings, LogOut, Terminal, Shield } from "lucide-react";
 import Link from "next/link";
 import NavbarAskButton from "./NavbarAskButton";
 import NavbarCloudTabs from "./NavbarCloudTabs";
@@ -18,27 +18,26 @@ export default async function Navbar() {
     >
       {/* Top bar */}
       <div className="max-w-7xl mx-auto px-6 h-12 flex items-center justify-between">
-        {/* Logo */}
-        <div className="flex items-center gap-3">
-          <Terminal className="w-4 h-4" style={{ color: "#00ff41" }} />
-          <span
-            className="text-sm font-bold tracking-widest uppercase"
-            style={{ color: "#00ff41", textShadow: "0 0 8px #00ff41" }}
-          >
-            WATCHMEN
-          </span>
-          <span style={{ color: "#005c16" }}>&gt;</span>
-          <span className="text-xs tracking-widest uppercase" style={{ color: "#00aa2b" }}>
-            CLOUD SECURITY EXPLORER
-          </span>
-          <span className="blink text-xs" style={{ color: "#00ff41" }}>_</span>
-          <span className="text-[10px] ml-4 font-mono select-none" style={{ color: "#003010" }}>
-            // press <span style={{ color: "#005c16" }}>/</span> for brain
+        {/* Logo and hint */}
+        <div className="flex items-baseline gap-3 shrink-0">
+          <Link href="/dashboard" className="flex items-center gap-2">
+            <Shield className="w-5 h-5" style={{ color: "#00ff41" }} />
+            <span className="font-bold tracking-tighter text-lg" style={{ color: "#00ff41" }}>
+              WATCHMEN
+            </span>
+          </Link>
+          <span className="hidden md:inline text-[10px] uppercase tracking-widest opacity-40" style={{ color: "#00ff41" }}>
+            // press / for brain
           </span>
         </div>
 
+        {/* Cloud tabs - scrollable on mobile */}
+        <div className="flex-1 flex justify-center overflow-x-auto no-scrollbar px-4">
+          <NavbarCloudTabs />
+        </div>
+
         {/* Right: ask button + user + logout */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 shrink-0">
           <NavbarAskButton />
           {session?.user && (
             <>

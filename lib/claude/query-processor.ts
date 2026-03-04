@@ -135,78 +135,174 @@ function buildContext(intent: QueryIntent, snapshot: CombinedSnapshot): unknown 
 }
 
 function buildGcpContext(intent: QueryIntent, snapshot: GcpSnapshot): any {
-  const { queryType, user, resourceName, projectId } = intent;
-  if (queryType === "security_findings") {
+  const { queryType, resourceType } = intent;
+
+  const publicBuckets = snapshot.storageBuckets.filter(b =>
+    b.iamPolicy.bindings.some(bind => bind.members.some(m => m === "allUsers" || m === "allAuthenticatedUsers"))
+  );
+
+  const openFirewalls = snapshot.firewallRules.filter(r =>
+    !r.disabled && r.direction === "INGRESS" && (r.sourceRanges ?? []).includes("0.0.0.0/0")
+  );
+
+  if (queryType === "security_findings" || (queryType === "list_resources" && (resourceType === "bucket" || !resourceType))) {
     return {
-      publicBuckets: snapshot.storageBuckets.filter(b => b.iamPolicy.bindings.some(bind => bind.members.some(m => m === "allUsers"))).map(b => b.name),
-      openFirewalls: snapshot.firewallRules.filter(r => !r.disabled && r.direction === "INGRESS" && (r.sourceRanges ?? []).includes("0.0.0.0/0")).map(r => r.name)
+      buckets: {
+        total: snapshot.storageBuckets.length,
+        publicCount: publicBuckets.length,
+        publicBucketNames: publicBuckets.map(b => b.name),
+        privateCount: snapshot.storageBuckets.length - publicBuckets.length,
+      },
+      firewalls: {
+        total: snapshot.firewallRules.length,
+        openToInternetCount: openFirewalls.length,
+        openFirewallNames: openFirewalls.map(r => r.name),
+      }
     };
   }
+
   if (queryType === "list_resources") {
     return {
       bucketCount: snapshot.storageBuckets.length,
       vmCount: snapshot.vms.length,
-      // ... truncate for brevity in the prompt if needed, or include summary
+      projectCount: snapshot.projects.length,
+      gkeClusterCount: snapshot.gkeClusters.length,
     };
   }
+
   if (queryType === "compliance") {
     return { soc2: runSoc2(snapshot) };
   }
-  // Fallback to a slice of the snapshot for other types
-  return { projectCount: snapshot.projects.length };
+
+  return {
+    projectCount: snapshot.projects.length,
+    bucketCount: snapshot.storageBuckets.length,
+    vmCount: snapshot.vms.length
+  };
 }
 
 function buildAwsContext(intent: QueryIntent, snapshot: AwsSnapshot): any {
-  const { queryType } = intent;
-  if (queryType === "security_findings") {
+  const { queryType, resourceType } = intent;
+
+  const publicS3 = snapshot.s3Buckets.filter(b =>
+    !b.publicAccessBlock.blockPublicPolicy || !b.publicAccessBlock.blockPublicAcls
+  );
+
+  const openSecurityGroups = snapshot.securityGroups.filter(sg =>
+    sg.inboundRules.some(r => r.cidrRanges.includes("0.0.0.0/0"))
+  );
+
+  if (queryType === "security_findings" || (queryType === "list_resources" && (resourceType === "s3_bucket" || resourceType === "bucket" || !resourceType))) {
     return {
-      publicS3: snapshot.s3Buckets.filter(b => b.publicAccessBlock.blockPublicPolicy === false).map(b => b.bucketName),
-      openSecurityGroups: snapshot.securityGroups.filter(sg => sg.inboundRules.some(r => r.cidrRanges.includes("0.0.0.0/0"))).map(sg => sg.groupName)
+      s3Buckets: {
+        total: snapshot.s3Buckets.length,
+        publicCount: publicS3.length,
+        publicBucketNames: publicS3.map(b => b.bucketName),
+        privateCount: snapshot.s3Buckets.length - publicS3.length,
+      },
+      securityGroups: {
+        total: snapshot.securityGroups.length,
+        openToInternetCount: openSecurityGroups.length,
+        openGroupNames: openSecurityGroups.map(sg => sg.groupName),
+      }
     };
   }
+
   if (queryType === "compliance") {
     return { soc2: runAwsSoc2(snapshot) };
   }
-  return { accountCount: snapshot.accounts.length };
+
+  return {
+    accountCount: snapshot.accounts.length,
+    s3BucketCount: snapshot.s3Buckets.length,
+    ec2InstanceCount: snapshot.ec2Instances.length
+  };
 }
 
 /**
- * Extracts a flat list of named resource items.
+ * Extracts a flat list of named resource items from snapshots based on the intent.
  */
 export function extractResources(intent: QueryIntent, snapshot: CombinedSnapshot): ResourceItem[] {
   const items: ResourceItem[] = [];
 
   if (snapshot.gcp) {
-    const gcpItems = extractGcpResources(intent, snapshot.gcp);
-    items.push(...gcpItems.map(i => ({ ...i, cloud: "gcp" as const })));
+    items.push(...extractGcpResources(intent, snapshot.gcp));
   }
-
   if (snapshot.aws) {
-    const awsItems = extractAwsResources(intent, snapshot.aws);
-    items.push(...awsItems.map(i => ({ ...i, cloud: "aws" as const })));
+    items.push(...extractAwsResources(intent, snapshot.aws));
   }
 
-  return items;
+  // Deduplicate and filter out items without names
+  const seen = new Set<string>();
+  return items.filter(item => {
+    if (!item.name) return false;
+    const key = `${item.cloud}:${item.type}:${item.name}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
-// Internal helpers to extract resources per cloud
 function extractGcpResources(intent: QueryIntent, snapshot: GcpSnapshot): ResourceItem[] {
-  // Existing logic from extractResources, moved here
-  const { queryType, resourceType } = intent;
-  if (queryType === "list_resources" && resourceType === "bucket") {
-    return snapshot.storageBuckets.map(b => ({ name: b.name, projectId: b.projectId, type: "bucket" }));
+  const resources: ResourceItem[] = [];
+  const { resourceType, resourceName } = intent;
+
+  // If intent has a specific name, try to find that exactly
+  if (resourceName) {
+    const findByName = (list: { name: string, projectId: string }[], type: ResourceItem["type"]) => {
+      const match = list.find(r => r.name === resourceName || r.name.includes(resourceName));
+      if (match) resources.push({ name: match.name, projectId: match.projectId, type, cloud: "gcp" });
+    };
+
+    findByName(snapshot.storageBuckets, "bucket");
+    findByName(snapshot.vms, "vm");
+    findByName(snapshot.gkeClusters, "gke_cluster");
+    findByName(snapshot.cloudRunServices, "cloud_run");
+    findByName(snapshot.cloudSqlInstances, "cloud_sql");
+    findByName(snapshot.bigqueryDatasets.map(d => ({ name: d.datasetId, projectId: d.projectId })), "bigquery");
+    findByName(snapshot.pubsubTopics.map(t => ({ name: t.name, projectId: t.projectId })), "pubsub");
+    findByName(snapshot.secrets.map(s => ({ name: s.name, projectId: s.projectId })), "secret");
+    findByName(snapshot.firewallRules, "firewall");
   }
-  // ... other GCP resource types ...
-  return [];
+
+  // Also include all of a type if specified in list_resources
+  if (intent.queryType === "list_resources" || intent.queryType === "security_findings") {
+    if (!resourceType || resourceType === "bucket") {
+      resources.push(...snapshot.storageBuckets.map(b => ({ name: b.name, projectId: b.projectId, type: "bucket" as const, cloud: "gcp" as const })));
+    }
+    if (!resourceType || resourceType === "vm") {
+      resources.push(...snapshot.vms.map(v => ({ name: v.name, projectId: v.projectId, type: "vm" as const, cloud: "gcp" as const })));
+    }
+    // ... add more as needed, but keep it manageable
+  }
+
+  return resources;
 }
 
 function extractAwsResources(intent: QueryIntent, snapshot: AwsSnapshot): ResourceItem[] {
-  const { queryType, resourceType } = intent;
-  if (queryType === "list_resources" && (resourceType === "s3_bucket" || resourceType === "bucket")) {
-    return snapshot.s3Buckets.map(b => ({ name: b.bucketName, projectId: b.accountId, type: "s3_bucket" }));
+  const resources: ResourceItem[] = [];
+  const { resourceType, resourceName } = intent;
+
+  const add = (name: string, accountId: string, type: ResourceItem["type"]) => {
+    resources.push({ name, projectId: accountId, type, cloud: "aws" });
+  };
+
+  if (resourceName) {
+    const s3 = snapshot.s3Buckets.find(b => b.bucketName.includes(resourceName));
+    if (s3) add(s3.bucketName, s3.accountId, "s3_bucket");
+
+    const ec2 = snapshot.ec2Instances.find(i => i.instanceId.includes(resourceName) || i.tags.Name?.includes(resourceName));
+    if (ec2) add(ec2.instanceId, ec2.accountId, "ec2_instance");
   }
-  if (queryType === "list_resources" && (resourceType === "ec2_instance" || resourceType === "vm")) {
-    return snapshot.ec2Instances.map(i => ({ name: i.instanceId, projectId: i.accountId, type: "ec2_instance" }));
+
+  if (intent.queryType === "list_resources" || intent.queryType === "security_findings") {
+    if (!resourceType || resourceType === "bucket" || resourceType === "s3_bucket") {
+      snapshot.s3Buckets.forEach(b => add(b.bucketName, b.accountId, "s3_bucket"));
+    }
+    if (!resourceType || resourceType === "vm" || resourceType === "ec2_instance") {
+      snapshot.ec2Instances.forEach(i => add(i.instanceId, i.accountId, "ec2_instance"));
+    }
   }
-  return [];
+
+  return resources;
 }

@@ -114,28 +114,28 @@ export default function ResultCard({ result, index }: ResultCardProps) {
     >
       {/* Header */}
       <div
-        className="px-4 py-2 flex items-center justify-between text-xs"
+        className="px-3 md:px-4 py-2 flex flex-col sm:flex-row sm:items-center justify-between text-[10px] md:text-xs gap-2"
         style={{ borderBottom: "1px solid #0a1a0a" }}
       >
         <div className="flex items-center gap-2">
           <span style={{ color: "#005c16" }}>#{String(index + 1).padStart(2, "0")}</span>
-          <span style={{ color: "#00ff41" }}>$ {result.query}</span>
+          <span className="truncate max-w-[200px] md:max-w-none" style={{ color: "#00ff41" }}>$ {result.query}</span>
         </div>
         <div className="flex items-center gap-3">
-          <span style={{ color: "#005c16" }}>
+          <span className="hidden sm:inline" style={{ color: "#005c16" }}>
             {result.intent.queryType.replace(/_/g, " ")}
           </span>
           <span style={{ color: "#005c16" }}>
             <Clock className="w-3 h-3 inline mr-1" />
-            {new Date(result.fetchedAt).toLocaleTimeString()}
+            {new Date(result.fetchedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </span>
         </div>
       </div>
 
       {/* Answer */}
-      <div className="px-4 py-3">
+      <div className="px-3 md:px-4 py-3">
         <div
-          className="prose-answer text-sm leading-relaxed"
+          className="prose-answer text-xs md:text-sm leading-relaxed break-words"
           dangerouslySetInnerHTML={{ __html: renderMarkdown(linkifyResources(result.answer, resources)) }}
         />
       </div>

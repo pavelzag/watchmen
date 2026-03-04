@@ -37,6 +37,12 @@ export async function POST(req: NextRequest) {
           { status: 429 }
         );
       }
+      if (err.message === "GLOBAL_LIMIT_REACHED") {
+        return NextResponse.json(
+          { error: "Global daily demo AI limit reached. Please try again tomorrow or provide your own API key in Settings." },
+          { status: 429 }
+        );
+      }
       const demoMsg = session.isDemoUser
         ? " (or provide your own API key in Settings)"
         : " in Settings";

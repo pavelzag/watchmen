@@ -40,7 +40,7 @@ export default function QueryBox({ onResult }: QueryBoxProps) {
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<QueryHistoryEntry[]>([]);
   const [showHistory, setShowHistory] = useState(false);
-  const [demoUsage, setDemoUsage] = useState<{ count: number; limit: number } | null>(null);
+  const [demoUsage, setDemoUsage] = useState<{ count: number; limit: number; globalCount: number; globalLimit: number } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -115,67 +115,43 @@ export default function QueryBox({ onResult }: QueryBoxProps) {
 
   return (
     <div className="space-y-3">
-      <form onSubmit={handleSubmit}>
-        {/* Terminal input box */}
-        <div
-          style={{
-            border: "1px solid #005c16",
-            background: "#0a0a0a",
-            transition: "border-color 0.15s, box-shadow 0.15s",
-          }}
-          onFocus={(e) => {
-            (e.currentTarget as HTMLDivElement).style.borderColor = "#00ff41";
-            (e.currentTarget as HTMLDivElement).style.boxShadow = "0 0 10px #00ff4133";
-          }}
-          onBlur={(e) => {
-            if (!e.currentTarget.contains(e.relatedTarget)) {
-              (e.currentTarget as HTMLDivElement).style.borderColor = "#005c16";
-              (e.currentTarget as HTMLDivElement).style.boxShadow = "none";
-            }
-          }}
-        >
-          {/* Prompt line */}
-          <div className="flex items-start gap-2 p-3">
-            <span
-              className="text-sm shrink-0 select-none pt-0.5"
-              style={{ color: "#00ff41", textShadow: "0 0 8px #00ff41" }}
-            >
-              $&nbsp;query:
-            </span>
-            <textarea
-              ref={textareaRef}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="ask anything about your cloud..."
-              rows={2}
-              disabled={loading}
-              className="flex-1 resize-none outline-none text-sm leading-relaxed"
-              style={{
-                background: "transparent",
-                color: "#00ff41",
-                fontFamily: "JetBrains Mono, monospace",
-              }}
-            />
-            {!query && (
-              <span className="blink text-sm select-none pt-0.5" style={{ color: "#00ff41" }}>
-                ▌
-              </span>
-            )}
-          </div>
+      <div
+        className="relative overflow-hidden group"
+        style={{
+          border: "1px solid #005c16",
+          background: "#0a0a0a",
+          boxShadow: "0 0 20px rgba(0, 255, 65, 0.05)",
+        }}
+      >
+        <form onSubmit={handleSubmit} className="flex flex-col text-sm md:text-base">
+          <textarea
+            ref={textareaRef}
+            rows={1}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Ask anything about your cloud infrastructure..."
+            className="w-full bg-transparent p-4 md:p-6 focus:outline-none resize-none no-scrollbar placeholder:opacity-30"
+            style={{ color: "#00ff41", minHeight: "80px", fontFamily: "JetBrains Mono, monospace" }}
+          />
 
           {/* Toolbar */}
           <div
-            className="flex items-center justify-between px-3 py-2 text-xs"
-            style={{ borderTop: "1px solid #0a1a0a" }}
+            className="flex flex-col sm:flex-row items-start sm:items-center justify-between px-3 md:px-6 py-3 gap-3"
+            style={{ borderTop: "1px solid #0a1a0a", background: "#050505" }}
           >
-            <div className="flex items-center gap-4">
+            <div className="flex flex-wrap items-center gap-3 md:gap-4 text-[10px] md:text-xs">
               {demoUsage && (
-                <span style={{ color: demoUsage.count >= demoUsage.limit ? "#ff3333" : "#00aa2b" }}>
-                  // demo credits: {demoUsage.limit - demoUsage.count} / {demoUsage.limit}
-                </span>
+                <div className="flex gap-3">
+                  <span style={{ color: demoUsage.count >= demoUsage.limit ? "#ff3333" : "#00aa2b" }}>
+                    // user: {demoUsage.limit - demoUsage.count} left
+                  </span>
+                  <span style={{ color: demoUsage.globalCount >= demoUsage.globalLimit ? "#ff3333" : "#005c16" }}>
+                    // global: {demoUsage.globalLimit - demoUsage.globalCount} / {demoUsage.globalLimit}
+                  </span>
+                </div>
               )}
-              <span style={{ color: "#005c16" }}>// Enter to execute · Shift+Enter for newline</span>
+              <span className="hidden sm:inline" style={{ color: "#005c16" }}>// Enter to execute</span>
             </div>
             <button
               type="submit"
@@ -184,7 +160,7 @@ export default function QueryBox({ onResult }: QueryBoxProps) {
               style={
                 query.trim() && !loading
                   ? { background: "#00ff41", color: "#090909", fontWeight: 700 }
-                  : { border: "1px solid #005c16", color: "#005c16", background: "transparent", cursor: "not-allowed" }
+                  : { border: "1px solid #003010", color: "#004411", background: "transparent", cursor: "not-allowed" }
               }
             >
               {loading ? (
@@ -193,84 +169,35 @@ export default function QueryBox({ onResult }: QueryBoxProps) {
               {loading ? "EXECUTING..." : "[EXECUTE]"}
             </button>
           </div>
-        </div>
-      </form>
+        </form>
+      </div>
 
       {/* Error */}
-      {error && (
-        <div
-          className="px-3 py-2 text-sm"
-          style={{ border: "1px solid #ff3333", background: "#1a0000", color: "#ff3333" }}
-        >
-          !! ERROR: {error}
-        </div>
-      )}
+      {
+        error && (
+          <div
+            className="px-3 py-2 text-sm"
+            style={{ border: "1px solid #ff3333", background: "#1a0000", color: "#ff3333" }}
+          >
+            !! ERROR: {error}
+          </div>
+        )
+      }
 
       {/* Suggested queries */}
-      {!query && (
-        <div className="space-y-2">
-          <p className="text-xs uppercase tracking-widest" style={{ color: "#005c16" }}>
+      {
+        !query && (
+          <div className="space-y-2">
+            <p className="text-xs uppercase tracking-widest" style={{ color: "#005c16" }}>
             // suggested commands
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {SUGGESTED_QUERIES.map((q) => (
-              <button
-                key={q}
-                onClick={() => useQuery(q)}
-                className="px-3 py-1 text-xs text-left transition-all"
-                style={{ border: "1px solid #003010", color: "#00aa2b", background: "transparent" }}
-                onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.borderColor = "#00ff41";
-                  (e.currentTarget as HTMLButtonElement).style.color = "#00ff41";
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.borderColor = "#003010";
-                  (e.currentTarget as HTMLButtonElement).style.color = "#00aa2b";
-                }}
-              >
-                &gt; {q}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Query history */}
-      {history.length > 0 && (
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <button
-              onClick={() => setShowHistory((s) => !s)}
-              className="flex items-center gap-1.5 text-xs transition-colors"
-              style={{ color: "#005c16" }}
-            >
-              <History className="w-3 h-3" />
-              // history ({history.length})
-              <ChevronDown
-                className="w-3 h-3 transition-transform"
-                style={{ transform: showHistory ? "rotate(180deg)" : "rotate(0deg)" }}
-              />
-            </button>
-            {showHistory && (
-              <button
-                onClick={handleClearHistory}
-                className="flex items-center gap-1 text-xs"
-                style={{ color: "#ff3333" }}
-              >
-                <X className="w-3 h-3" />
-                [CLEAR]
-              </button>
-            )}
-          </div>
-          {showHistory && (
+            </p>
             <div className="flex flex-wrap gap-2">
-              {history.slice(0, 10).map((entry) => (
+              {SUGGESTED_QUERIES.map((q) => (
                 <button
-                  key={entry.savedAt}
-                  onClick={() => useQuery(entry.query)}
-                  title={entry.query}
-                  className="px-3 py-1 text-xs text-left max-w-[260px] truncate transition-all"
-                  style={{ border: "1px solid #003010", color: "#00aa2b" }}
+                  key={q}
+                  onClick={() => useQuery(q)}
+                  className="px-3 py-1 text-xs text-left transition-all"
+                  style={{ border: "1px solid #003010", color: "#00aa2b", background: "transparent" }}
                   onMouseEnter={(e) => {
                     (e.currentTarget as HTMLButtonElement).style.borderColor = "#00ff41";
                     (e.currentTarget as HTMLButtonElement).style.color = "#00ff41";
@@ -280,13 +207,68 @@ export default function QueryBox({ onResult }: QueryBoxProps) {
                     (e.currentTarget as HTMLButtonElement).style.color = "#00aa2b";
                   }}
                 >
-                  ↑ {entry.query}
+                  &gt; {q}
                 </button>
               ))}
             </div>
-          )}
-        </div>
-      )}
-    </div>
+          </div>
+        )
+      }
+
+      {/* Query history */}
+      {
+        history.length > 0 && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <button
+                onClick={() => setShowHistory((s) => !s)}
+                className="flex items-center gap-1.5 text-xs transition-colors"
+                style={{ color: "#005c16" }}
+              >
+                <History className="w-3 h-3" />
+              // history ({history.length})
+                <ChevronDown
+                  className="w-3 h-3 transition-transform"
+                  style={{ transform: showHistory ? "rotate(180deg)" : "rotate(0deg)" }}
+                />
+              </button>
+              {showHistory && (
+                <button
+                  onClick={handleClearHistory}
+                  className="flex items-center gap-1 text-xs"
+                  style={{ color: "#ff3333" }}
+                >
+                  <X className="w-3 h-3" />
+                  [CLEAR]
+                </button>
+              )}
+            </div>
+            {showHistory && (
+              <div className="flex flex-wrap gap-2">
+                {history.slice(0, 10).map((entry) => (
+                  <button
+                    key={entry.savedAt}
+                    onClick={() => useQuery(entry.query)}
+                    title={entry.query}
+                    className="px-3 py-1 text-xs text-left max-w-[260px] truncate transition-all"
+                    style={{ border: "1px solid #003010", color: "#00aa2b" }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.borderColor = "#00ff41";
+                      (e.currentTarget as HTMLButtonElement).style.color = "#00ff41";
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.borderColor = "#003010";
+                      (e.currentTarget as HTMLButtonElement).style.color = "#00aa2b";
+                    }}
+                  >
+                    ↑ {entry.query}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )
+      }
+    </div >
   );
 }

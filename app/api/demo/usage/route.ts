@@ -5,7 +5,8 @@ import { getDemoUsage } from "@/lib/ai/client";
 export async function GET() {
     const session = await auth();
     if (!session?.user?.email || !session.isDemoUser) {
-        return NextResponse.json({ count: 0, limit: 0 });
+        // If not a demo user or no email, return default empty usage
+        return NextResponse.json({ userUsage: { count: 0, limit: 0 }, globalUsage: { count: 0, limit: 0 } });
     }
 
     try {

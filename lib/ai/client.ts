@@ -115,17 +115,35 @@ export async function resolveAI(userEmail: string, isDemoUser?: boolean): Promis
 const MAX_DAILY_DEMO_QUERIES = 20;
 
 /**
- * Checks if a demo user is under their daily limit and increments the count.
- * Throws "DEMO_LIMIT_REACHED" if over limit.
+ * Checks if a demo user is under their daily limit AND if the global limit is reached.
+ * Throws "DEMO_LIMIT_REACHED" if per-user limit hit.
+ * Throws "GLOBAL_LIMIT_REACHED" if system-wide limit hit.
  */
 async function checkAndIncrementDemoUsage(userEmail: string): Promise<void> {
-  const { ensureDemoUsageTable } = await import("@/lib/db");
+  const { ensureDemoUsageTable, ensureGlobalUsageTable } = await import("@/lib/db");
   await ensureDemoUsageTable();
+  await ensureGlobalUsageTable();
 
-  const today = new Date().toISOString().slice(0, 10);
+  // 1. Check/Increment Global Limit
+  const globalResult = await sql`
+    INSERT INTO global_usage (id, daily_count, max_limit, last_reset)
+    VALUES (1, 1, 5000, CURRENT_DATE)
+    ON CONFLICT (id) DO UPDATE
+    SET 
+      daily_count = CASE 
+        WHEN global_usage.last_reset = EXCLUDED.last_reset THEN global_usage.daily_count + 1
+        ELSE 1
+      END,
+      last_reset = EXCLUDED.last_reset
+    RETURNING daily_count, max_limit
+  `;
 
-  // Handled by SQL: Upsert with reset if date changed
-  const result = await sql`
+  if (globalResult.rows[0].daily_count > globalResult.rows[0].max_limit) {
+    throw new Error("GLOBAL_LIMIT_REACHED");
+  }
+
+  // 2. Check/Increment Per-User Limit
+  const userResult = await sql`
     INSERT INTO demo_usage (user_email, daily_count, last_reset)
     VALUES (${userEmail}, 1, CURRENT_DATE)
     ON CONFLICT (user_email) DO UPDATE
@@ -138,19 +156,26 @@ async function checkAndIncrementDemoUsage(userEmail: string): Promise<void> {
     RETURNING daily_count
   `;
 
-  if (result.rows[0].daily_count > MAX_DAILY_DEMO_QUERIES) {
+  if (userResult.rows[0].daily_count > MAX_DAILY_DEMO_QUERIES) {
     throw new Error("DEMO_LIMIT_REACHED");
   }
 }
 
-/** Returns the current usage for a demo user. */
-export async function getDemoUsage(userEmail: string): Promise<{ count: number; limit: number }> {
-  const result = await sql`
+/** Returns the current usage for a demo user and global system. */
+export async function getDemoUsage(userEmail: string): Promise<{ count: number; limit: number; globalCount: number; globalLimit: number }> {
+  const userRes = await sql`
     SELECT daily_count FROM demo_usage 
     WHERE user_email = ${userEmail} AND last_reset = CURRENT_DATE
   `;
+  const globalRes = await sql`
+    SELECT daily_count, max_limit FROM global_usage 
+    WHERE id = 1 AND last_reset = CURRENT_DATE
+  `;
+
   return {
-    count: result.rows[0]?.daily_count ?? 0,
-    limit: MAX_DAILY_DEMO_QUERIES
+    count: userRes.rows[0]?.daily_count ?? 0,
+    limit: MAX_DAILY_DEMO_QUERIES,
+    globalCount: globalRes.rows[0]?.daily_count ?? 0,
+    globalLimit: globalRes.rows[0]?.max_limit ?? 5000
   };
 }

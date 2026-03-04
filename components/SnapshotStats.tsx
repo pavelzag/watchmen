@@ -68,7 +68,7 @@ export default function SnapshotStats({ scanVersion, onSyncRequest, isSyncing, o
       return;
     }
     fetchStats();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scanVersion, overrideSnapshot]);
 
   useEffect(() => {
@@ -159,7 +159,7 @@ export default function SnapshotStats({ scanVersion, onSyncRequest, isSyncing, o
 
       {/* Loading skeleton */}
       {(loading || isSyncing) && !stats && (
-        <div className="grid grid-cols-5 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
           {[...Array(5)].map((_, i) => (
             <div
               key={i}

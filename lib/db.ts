@@ -69,3 +69,24 @@ export async function ensureDemoUsageTable(): Promise<void> {
     )
   `;
 }
+
+/**
+ * Ensures the global usage tracking table exists.
+ */
+export async function ensureGlobalUsageTable(): Promise<void> {
+  await sql`
+    CREATE TABLE IF NOT EXISTS global_usage (
+      id           INT PRIMARY KEY DEFAULT 1,
+      daily_count  INT NOT NULL DEFAULT 0,
+      max_limit    INT NOT NULL DEFAULT 5000,
+      last_reset   DATE NOT NULL DEFAULT CURRENT_DATE,
+      CONSTRAINT one_row CHECK (id = 1)
+    )
+  `;
+  // Initialize if empty
+  await sql`
+    INSERT INTO global_usage (id, daily_count, max_limit, last_reset)
+    VALUES (1, 0, 5000, CURRENT_DATE)
+    ON CONFLICT (id) DO NOTHING
+  `;
+}

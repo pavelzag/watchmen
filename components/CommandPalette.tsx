@@ -4,6 +4,10 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { Loader2, X, Terminal } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { saveQuery, getHistory } from "@/lib/query-history";
+import type { ResourceItem } from "@/lib/claude/query-processor";
+import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
+import { Clock, Tag, ChevronDown, ChevronUp, ArrowRight, User, HardDrive, Server, KeySquare, MonitorDot, Play, Database, BarChart3, Radio, Lock, Flame, ShieldAlert, Users } from "lucide-react";
+import Link from "next/link";
 
 // Simple cross-component event bus — no context provider needed
 export function openCommandPalette() {
@@ -15,6 +19,61 @@ export function openCommandPalette() {
 interface ResultPeek {
     answer: string;
     query: string;
+    resources?: ResourceItem[];
+    fetchedAt: string;
+}
+
+const RESOURCE_LINKS: Record<string, string> = {
+    bucket: "/dashboard/buckets",
+    gke_cluster: "/dashboard/clusters",
+    service_account: "/dashboard/service-accounts",
+    vm: "/dashboard/vms",
+    cloud_run: "/dashboard/cloud-run",
+    cloud_sql: "/dashboard/cloud-sql",
+    bigquery: "/dashboard/bigquery",
+    pubsub: "/dashboard/pubsub",
+    secret: "/dashboard/secrets",
+    firewall: "/dashboard/firewall",
+    s3_bucket: "/dashboard/aws/s3",
+    ec2_instance: "/dashboard/aws/ec2",
+    rds_instance: "/dashboard/aws/rds",
+    eks_cluster: "/dashboard/aws/eks",
+    lambda_function: "/dashboard/aws/lambda",
+};
+
+function resourceHref(item: ResourceItem): string {
+    const base = RESOURCE_LINKS[item.type ?? ""];
+    if (!base) return "#";
+    return `${base}?search=${encodeURIComponent(item.name)}`;
+}
+
+function renderMarkdown(text: string): string {
+    return text
+        .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+        .replace(/\*(.*?)\*/g, "<em>$1</em>")
+        .replace(/^- (.+)$/gm, "<li>$1</li>")
+        .replace(/(<li>.*<\/li>\n?)+/g, (match) => `<ul>${match}</ul>`)
+        .replace(/\n/g, "<br />");
+}
+
+function linkifyResources(text: string, resources: ResourceItem[]): string {
+    if (!resources.length) return text;
+    const sorted = [...resources].sort((a, b) => b.name.length - a.name.length);
+    const seen = new Set<string>();
+    let out = text;
+    for (const item of sorted) {
+        if (seen.has(item.name)) continue;
+        seen.add(item.name);
+        const href = resourceHref(item);
+        if (href === "#") continue;
+        const esc = item.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        out = out.replace(
+            new RegExp(`(^|[^\\w@./:-])${esc}(?=[^\\w@./:"'>-]|$)`, "gm"),
+            (_, pre) =>
+                `${pre}<a href="${href}" style="color:#00ff41;text-decoration:underline;text-decoration-color:#005c16;font-family:inherit">${item.name}</a>`
+        );
+    }
+    return out;
 }
 
 export default function CommandPalette() {
@@ -85,7 +144,12 @@ export default function CommandPalette() {
             const data = await res.json();
             if (!res.ok) throw new Error(data.error ?? "Request failed");
             saveQuery(data.query, data.answer);
-            setResult({ answer: data.answer, query: data.query });
+            setResult({
+                answer: data.answer,
+                query: data.query,
+                resources: data.resources,
+                fetchedAt: data.fetchedAt || new Date().toISOString()
+            });
         } catch (err) {
             setError(err instanceof Error ? err.message : "Unknown error");
         } finally {
@@ -201,38 +265,36 @@ export default function CommandPalette() {
                 {/* Scrollable output area */}
                 {(error || result) && <div className="overflow-y-auto flex-1">
 
-                {/* Error */}
-                {error && (
-                    <div
-                        className="mx-4 mb-3 px-3 py-2 text-xs"
-                        style={{ border: "1px solid #ff3333", background: "#1a0000", color: "#ff3333" }}
-                    >
-                        !! ERROR: {error}
-                    </div>
-                )}
-
-                {/* Result */}
-                {result && (
-                    <div
-                        className="mx-4 mb-4 p-3 text-sm"
-                        style={{ border: "1px solid #005c16", background: "#050d05" }}
-                    >
-                        <p className="text-xs mb-2 uppercase tracking-widest" style={{ color: "#005c16" }}>
-              // OUTPUT
-                        </p>
+                    {/* Error */}
+                    {error && (
                         <div
-                            className="prose-answer leading-relaxed"
-                            dangerouslySetInnerHTML={{
-                                __html: result.answer
-                                    .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-                                    .replace(/\n/g, "<br />")
-                            }}
-                        />
-                        <div className="mt-3 pt-2 text-xs" style={{ borderTop: "1px solid #003010", color: "#005c16" }}>
-              // query saved to history · close overlay to return to dashboard
+                            className="mx-4 mb-3 px-3 py-2 text-xs"
+                            style={{ border: "1px solid #ff3333", background: "#1a0000", color: "#ff3333" }}
+                        >
+                            !! ERROR: {error}
                         </div>
-                    </div>
-                )}
+                    )}
+
+                    {/* Result */}
+                    {result && (
+                        <div
+                            className="mx-4 mb-4 p-3 text-sm"
+                            style={{ border: "1px solid #005c16", background: "#050d05" }}
+                        >
+                            <p className="text-xs mb-2 uppercase tracking-widest" style={{ color: "#005c16" }}>
+              // OUTPUT
+                            </p>
+                            <div
+                                className="prose-answer leading-relaxed"
+                                dangerouslySetInnerHTML={{
+                                    __html: renderMarkdown(linkifyResources(result.answer, result.resources ?? []))
+                                }}
+                            />
+                            <div className="mt-3 pt-2 text-xs" style={{ borderTop: "1px solid #003010", color: "#005c16" }}>
+              // query saved to history · close overlay to return to dashboard
+                            </div>
+                        </div>
+                    )}
 
                 </div>}
             </div>
