@@ -2,9 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { fetchGcpSnapshot } from "@/lib/gcp";
 import { useMockData } from "@/lib/gcp/client";
-import { sql, ensureGcpSnapshotTable, ensureComplianceTables } from "@/lib/db";
+import { fetchAwsSnapshot } from "@/lib/aws"; // Added AWS
+import { useMockAwsData } from "@/lib/aws/client"; // Added AWS
+import { sql, ensureGcpSnapshotTable, ensureAwsSnapshotTable, ensureComplianceTables } from "@/lib/db";
 import { runSoc2 } from "@/lib/compliance/soc2";
 import { runIso27001 } from "@/lib/compliance/iso27001";
+import { runAwsSoc2 } from "@/lib/compliance/aws-soc2"; // Added AWS
+import { runAwsIso27001 } from "@/lib/compliance/aws-iso27001"; // Added AWS
 import type { ComplianceReport } from "@/lib/compliance/types";
 
 export async function GET(req: NextRequest) {
@@ -16,28 +20,53 @@ export async function GET(req: NextRequest) {
   const standard = req.nextUrl.searchParams.get("standard") ?? "soc2";
   const userEmail = session.user.email;
   const isMock = useMockData();
+  const isAwsMock = useMockAwsData();
 
   try {
-    let snapshot;
+    let gcpSnapshot;
+    let awsSnapshot;
 
-    if (isMock) {
-      snapshot = await fetchGcpSnapshot();
+    if (isMock || session.isDemoUser) {
+      gcpSnapshot = await fetchGcpSnapshot({ forceMock: true });
     } else {
       await ensureGcpSnapshotTable();
-      await ensureComplianceTables();
-      const result = await sql`
-        SELECT snapshot FROM user_snapshots WHERE user_email = ${userEmail}
-      `;
-      if (result.rows.length === 0) {
-        return NextResponse.json(
-          { error: "No snapshot yet. Please wait for the initial scan." },
-          { status: 404 }
-        );
-      }
-      snapshot = result.rows[0].snapshot;
+      const result = await sql`SELECT snapshot FROM user_snapshots WHERE user_email = ${userEmail}`;
+      if (result.rows.length > 0) gcpSnapshot = result.rows[0].snapshot;
     }
 
-    const report: ComplianceReport = standard === "iso27001" ? runIso27001(snapshot) : runSoc2(snapshot);
+    if (isAwsMock || session.isDemoUser) {
+      awsSnapshot = await fetchAwsSnapshot({ forceMock: true });
+    } else {
+      await ensureAwsSnapshotTable();
+      const result = await sql`SELECT snapshot FROM aws_snapshots WHERE user_email = ${userEmail}`;
+      if (result.rows.length > 0) awsSnapshot = result.rows[0].snapshot;
+    }
+
+    if (!gcpSnapshot && !awsSnapshot) {
+      return NextResponse.json({ error: "No snapshots yet." }, { status: 404 });
+    }
+
+    let report: ComplianceReport;
+    const gcpReport = standard === "iso27001" ? runIso27001(gcpSnapshot) : runSoc2(gcpSnapshot);
+    const awsReport = standard === "iso27001" ? runAwsIso27001(awsSnapshot) : runAwsSoc2(awsSnapshot);
+
+    // Merge reports
+    report = {
+      standard: gcpReport.standard + " & " + awsReport.standard,
+      generatedAt: new Date().toISOString(),
+      totalControls: gcpReport.totalControls + awsReport.totalControls,
+      passingControls: gcpReport.passingControls + awsReport.passingControls,
+      failingControls: gcpReport.failingControls + awsReport.failingControls,
+      warningControls: gcpReport.warningControls + awsReport.warningControls,
+      suppressedControls: gcpReport.suppressedControls + awsReport.suppressedControls,
+      score: 0, // Recalculated below
+      categories: [...gcpReport.categories, ...awsReport.categories],
+    };
+
+    // Recalculate score
+    report.score = report.totalControls === 0 ? 100 : Math.round(
+      ((report.passingControls + report.suppressedControls + report.warningControls * 0.5) / report.totalControls) * 100
+    );
 
     // Apply suppressions (skip in mock mode)
     if (!isMock) {
@@ -68,10 +97,10 @@ export async function GET(req: NextRequest) {
             report.totalControls === 0
               ? 100
               : Math.round(
-                  ((report.passingControls + report.suppressedControls + report.warningControls * 0.5) /
-                    report.totalControls) *
-                    100
-                );
+                ((report.passingControls + report.suppressedControls + report.warningControls * 0.5) /
+                  report.totalControls) *
+                100
+              );
         }
       } catch (err) {
         console.warn("[api/compliance] could not load suppressions:", err);
