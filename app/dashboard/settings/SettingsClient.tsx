@@ -113,22 +113,6 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
   const [demoAwsInputs, setDemoAwsInputs] = useState({ accessKeyId: "", secretAccessKey: "", region: "us-east-1" });
   const [showDemoAwsSecret, setShowDemoAwsSecret] = useState(false);
   const [demoSaved, setDemoSaved] = useState<Record<string, boolean>>({ gcp: false, aws: false });
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
-
-  useEffect(() => {
-    const saved = localStorage.getItem("watchmen-theme") as "dark" | "light";
-    if (saved) {
-      setTheme(saved);
-      document.documentElement.setAttribute("data-theme", saved);
-    }
-  }, []);
-
-  const toggleTheme = () => {
-    const next = theme === "dark" ? "light" : "dark";
-    setTheme(next);
-    localStorage.setItem("watchmen-theme", next);
-    document.documentElement.setAttribute("data-theme", next);
-  };
 
   useEffect(() => {
     fetch("/api/settings/keys")
@@ -338,12 +322,6 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
         </Link>
         <div className="flex-1 flex items-center justify-between">
           <h1 className="text-lg font-bold tracking-tighter" style={{ color: "var(--text-strong)" }}>SETTINGS</h1>
-          <button
-            onClick={toggleTheme}
-            className="terminal-btn flex items-center gap-2 px-3 py-1 text-[10px] uppercase tracking-widest"
-          >
-            {theme === "dark" ? "🌙 Dark" : "☀️ Light"} Theme
-          </button>
         </div>
       </div>
 

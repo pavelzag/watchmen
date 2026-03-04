@@ -157,6 +157,7 @@ function buildGcpContext(intent: QueryIntent, snapshot: GcpSnapshot): any {
       vms: snapshot.vms.length,
       functions: snapshot.cloudRunServices.length,
       gkeClusters: snapshot.gkeClusters.length,
+      bigqueryDatasets: snapshot.bigqueryDatasets.length,
     }
   };
 
@@ -169,7 +170,16 @@ function buildGcpContext(intent: QueryIntent, snapshot: GcpSnapshot): any {
     }));
   }
 
-  // 2. Buckets & Security
+  // 2. BigQuery Datasets
+  if (queryType === "list_resources" && (resourceType === "bigquery" || !resourceType)) {
+    ctx.bigqueryDatasets = snapshot.bigqueryDatasets.map(ds => ({
+      id: ds.datasetId,
+      location: ds.location,
+      roles: ds.iamPolicy.bindings.map(b => ({ role: b.role, members: b.members }))
+    }));
+  }
+
+  // 3. Buckets & Security
   if (queryType === "security_findings" || (queryType === "list_resources" && (resourceType === "bucket" || !resourceType))) {
     ctx.bucketDetails = {
       total: snapshot.storageBuckets.length,

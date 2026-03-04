@@ -19,16 +19,6 @@ export default async function DashboardLayout({
           style={{ background: "#050d05", borderBottom: "1px solid #005c16" }}
         >
           <span style={{ color: "#00aa2b" }}>// DEMO MODE</span>
-          <span style={{ color: "#005c16" }}>
-            {" "}— exploring mock GCP and AWS data.{" "}
-          </span>
-          <a
-            href="/dashboard/settings"
-            className="underline"
-            style={{ color: "#00ff41" }}
-          >
-            [SETTINGS]
-          </a>
         </div>
       )}
       <Navbar />

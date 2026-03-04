@@ -69,9 +69,6 @@ export default async function Navbar() {
         className="max-w-7xl mx-auto px-4 md:px-6 h-8 flex items-center gap-0 overflow-x-auto no-scrollbar scroll-smooth"
         style={{ borderTop: "1px solid var(--bg-card2)" }}
       >
-        <div className="flex items-center shrink-0">
-          <NavbarCloudTabs />
-        </div>
         <NavLink href="/dashboard/findings" icon={<ShieldAlert className="w-3 h-3" />} label="FINDINGS" danger />
         <NavLink href="/dashboard/history" icon={<Clock className="w-3 h-3" />} label="HISTORY" />
         <NavLink href="/dashboard/compliance" icon={<ClipboardCheck className="w-3 h-3" />} label="COMPLIANCE" />
