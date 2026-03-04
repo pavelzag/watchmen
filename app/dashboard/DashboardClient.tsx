@@ -8,6 +8,7 @@ import SnapshotStats from "@/components/SnapshotStats";
 import { Trash2 } from "lucide-react";
 import { saveSnapshot } from "@/lib/snapshot-history";
 import type { GcpSnapshot } from "@/lib/gcp/types";
+import { getDemoCredentials } from "@/lib/demo-credentials";
 
 export default function DashboardClient() {
   const [results, setResults] = useState<QueryResult[]>([]);
@@ -19,7 +20,13 @@ export default function DashboardClient() {
   const triggerScan = useCallback(async () => {
     setScanning(true);
     try {
-      const res = await fetch("/api/scan", { method: "POST" });
+      const demoCreds = getDemoCredentials();
+      const body = demoCreds.gcp ? { demoCredentials: { gcp: demoCreds.gcp } } : {};
+      const res = await fetch("/api/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
       if (res.status === 422) {
         const data = await res.json();
         if (data.credentialsRequired) {
@@ -42,6 +49,11 @@ export default function DashboardClient() {
   }, []);
 
   useEffect(() => {
+    // If demo credentials are already stored in sessionStorage, trigger a real scan immediately
+    if (getDemoCredentials().gcp) {
+      triggerScan();
+      return;
+    }
     fetch("/api/scan")
       .then((r) => r.json())
       .then((data) => {

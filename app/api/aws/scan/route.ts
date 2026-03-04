@@ -1,11 +1,11 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { fetchAwsSnapshot } from "@/lib/aws";
 import { sql, ensureAwsSnapshotTable } from "@/lib/db";
 import { useMockAwsData } from "@/lib/aws/client";
 import { getUserCloudCredentials } from "@/lib/credentials";
 
-export async function POST() {
+export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -14,6 +14,33 @@ export async function POST() {
   const email = session.user?.email;
   if (!email) {
     return NextResponse.json({ error: "No user email in session." }, { status: 400 });
+  }
+
+  // Demo user with browser-supplied credentials → real scan, no DB credential storage
+  const body = await req.json().catch(() => ({}));
+  type DemoBody = { demoCredentials?: { aws?: { accessKeyId?: string; secretAccessKey?: string; region?: string } } };
+  const demoCreds = (body as DemoBody)?.demoCredentials?.aws;
+
+  if (session.isDemoUser && demoCreds?.accessKeyId && demoCreds?.secretAccessKey) {
+    try {
+      const snapshot = await fetchAwsSnapshot({
+        accessKeyId: demoCreds.accessKeyId,
+        secretAccessKey: demoCreds.secretAccessKey,
+        region: demoCreds.region,
+      });
+      await ensureAwsSnapshotTable();
+      await sql`
+        INSERT INTO aws_snapshots (user_email, snapshot, fetched_at)
+        VALUES (${email}, ${JSON.stringify(snapshot)}, NOW())
+        ON CONFLICT (user_email) DO UPDATE
+          SET snapshot = EXCLUDED.snapshot,
+              fetched_at = EXCLUDED.fetched_at
+      `;
+      return NextResponse.json({ ok: true, fetchedAt: snapshot.fetchedAt });
+    } catch (err) {
+      console.error("[api/aws/scan] POST demo-real error:", err);
+      return NextResponse.json({ error: "AWS scan failed with provided credentials." }, { status: 500 });
+    }
   }
 
   // Mock mode: return fixture data
@@ -72,8 +99,25 @@ export async function GET() {
     return NextResponse.json({ error: "No user email in session." }, { status: 400 });
   }
 
-  // Mock mode: skip DB, return live data
-  if (useMockAwsData() || session.isDemoUser) {
+  // Demo user: prefer real DB snapshot, else mock
+  if (session.isDemoUser) {
+    try {
+      await ensureAwsSnapshotTable();
+      const result = await sql`SELECT snapshot, fetched_at FROM aws_snapshots WHERE user_email = ${email}`;
+      if (result.rows.length > 0) {
+        return NextResponse.json({ snapshot: result.rows[0].snapshot, fetchedAt: result.rows[0].fetched_at });
+      }
+    } catch { /* fall through to mock */ }
+    try {
+      const snapshot = await fetchAwsSnapshot({ forceMock: true });
+      return NextResponse.json({ snapshot, fetchedAt: snapshot.fetchedAt });
+    } catch (err) {
+      console.error("[api/aws/scan] GET mock error:", err);
+      return NextResponse.json({ error: "Failed to load mock AWS data." }, { status: 500 });
+    }
+  }
+
+  if (useMockAwsData()) {
     try {
       const snapshot = await fetchAwsSnapshot({ forceMock: true });
       return NextResponse.json({ snapshot, fetchedAt: snapshot.fetchedAt });

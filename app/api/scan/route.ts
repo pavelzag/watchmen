@@ -1,11 +1,11 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { fetchGcpSnapshot, extractUsers, extractServiceAccountEmails } from "@/lib/gcp";
 import { sql, ensureGcpSnapshotTable } from "@/lib/db";
 import { useMockData } from "@/lib/gcp/client";
 import { getUserCloudCredentials } from "@/lib/credentials";
 
-export async function POST() {
+export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -17,6 +17,29 @@ export async function POST() {
   const email = session.user?.email;
   if (!email) {
     return NextResponse.json({ error: "No user email in session." }, { status: 400 });
+  }
+
+  // Demo user with browser-supplied credentials → real scan, no DB credential storage
+  const body = await req.json().catch(() => ({}));
+  const demoGcpKey = (body as { demoCredentials?: { gcp?: { serviceAccountKey?: string } } })
+    ?.demoCredentials?.gcp?.serviceAccountKey;
+
+  if (session.isDemoUser && demoGcpKey) {
+    try {
+      const snapshot = await fetchGcpSnapshot({ serviceAccountKey: demoGcpKey });
+      await ensureGcpSnapshotTable();
+      await sql`
+        INSERT INTO user_snapshots (user_email, snapshot, fetched_at)
+        VALUES (${email}, ${JSON.stringify(snapshot)}, NOW())
+        ON CONFLICT (user_email) DO UPDATE
+          SET snapshot = EXCLUDED.snapshot,
+              fetched_at = EXCLUDED.fetched_at
+      `;
+      return NextResponse.json({ ok: true, fetchedAt: snapshot.fetchedAt });
+    } catch (err) {
+      console.error("[api/scan] POST demo-real error:", err);
+      return NextResponse.json({ error: "Scan failed with provided credentials." }, { status: 500 });
+    }
   }
 
   // Mock mode: skip DB, return fixture data
@@ -74,8 +97,33 @@ export async function GET() {
     return NextResponse.json({ error: "No user email in session." }, { status: 400 });
   }
 
-  // Mock mode: skip DB, return live data
-  if (useMockData() || session.isDemoUser) {
+  // Demo user: prefer real DB snapshot (from a previous real-credential scan), else mock
+  if (session.isDemoUser) {
+    try {
+      await ensureGcpSnapshotTable();
+      const result = await sql`SELECT snapshot, fetched_at FROM user_snapshots WHERE user_email = ${email}`;
+      if (result.rows.length > 0) {
+        const snapshot = result.rows[0].snapshot;
+        return NextResponse.json({
+          snapshot: { ...snapshot, users: extractUsers(snapshot), serviceAccountEmails: extractServiceAccountEmails(snapshot) },
+          fetchedAt: result.rows[0].fetched_at,
+        });
+      }
+    } catch { /* fall through to mock */ }
+    try {
+      const snapshot = await fetchGcpSnapshot({ forceMock: true });
+      return NextResponse.json({
+        snapshot: { ...snapshot, users: extractUsers(snapshot), serviceAccountEmails: extractServiceAccountEmails(snapshot) },
+        fetchedAt: snapshot.fetchedAt,
+      });
+    } catch (err) {
+      console.error("[api/scan] GET mock error:", err);
+      return NextResponse.json({ error: "Failed to load mock data." }, { status: 500 });
+    }
+  }
+
+  // Non-demo mock mode
+  if (useMockData()) {
     try {
       const snapshot = await fetchGcpSnapshot({ forceMock: true });
       return NextResponse.json({

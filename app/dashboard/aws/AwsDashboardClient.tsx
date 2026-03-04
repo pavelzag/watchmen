@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import AwsSnapshotStats from "@/components/AwsSnapshotStats";
+import { getDemoCredentials } from "@/lib/demo-credentials";
 
 export default function AwsDashboardClient() {
   const [scanVersion, setScanVersion] = useState(0);
@@ -10,7 +11,13 @@ export default function AwsDashboardClient() {
   const triggerScan = useCallback(async () => {
     setScanning(true);
     try {
-      await fetch("/api/aws/scan", { method: "POST" });
+      const demoCreds = getDemoCredentials();
+      const body = demoCreds.aws ? { demoCredentials: { aws: demoCreds.aws } } : {};
+      await fetch("/api/aws/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
       setScanVersion((v) => v + 1);
     } finally {
       setScanning(false);
@@ -18,6 +25,10 @@ export default function AwsDashboardClient() {
   }, []);
 
   useEffect(() => {
+    if (getDemoCredentials().aws) {
+      triggerScan();
+      return;
+    }
     fetch("/api/aws/scan")
       .then((r) => r.json())
       .then((data) => {
