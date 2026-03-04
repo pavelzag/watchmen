@@ -23,6 +23,11 @@ export async function POST(req: NextRequest) {
   if (browserKey && browserProvider) {
     provider = browserProvider;
     apiKey = browserKey;
+  } else if (session.isDemoUser) {
+    return NextResponse.json(
+      { error: "Demo users must provide their own API key in Settings (stored in this browser only)." },
+      { status: 422 }
+    );
   } else {
     try {
       const resolved = await resolveAI(session.user.email);
@@ -30,7 +35,7 @@ export async function POST(req: NextRequest) {
       apiKey = resolved.key;
     } catch {
       return NextResponse.json(
-        { error: "No AI key configured. Go to Settings → AI Keys to add one." },
+        { error: "No AI key configured. Add one in Settings." },
         { status: 422 }
       );
     }

@@ -20,6 +20,11 @@ export async function POST(req: NextRequest) {
   if (browserKey && browserProvider) {
     provider = browserProvider;
     apiKey = browserKey;
+  } else if (session.isDemoUser) {
+    return NextResponse.json(
+      { error: "Demo users must provide their own API key in Settings (stored in this browser only)." },
+      { status: 422 }
+    );
   } else {
     try {
       const resolved = await resolveAI(session.user.email);

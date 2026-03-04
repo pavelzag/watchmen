@@ -8,6 +8,11 @@ export async function GET() {
   const session = await auth();
   if (!session?.user?.email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  // Demo users should only use browser-stored keys
+  if (session.isDemoUser) {
+    return NextResponse.json({ keys: [] });
+  }
+
   try {
     const keys = await listUserKeys(session.user.email);
     return NextResponse.json({ keys });
@@ -21,7 +26,7 @@ export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session?.user?.email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const { provider, apiKey } = await req.json() as { provider: AIProvider; apiKey: string };
+  const { provider, apiKey, dryRun } = await req.json() as { provider: AIProvider; apiKey: string; dryRun?: boolean };
 
   if (!["openai", "anthropic", "google"].includes(provider)) {
     return NextResponse.json({ error: "Invalid provider." }, { status: 400 });
@@ -36,6 +41,19 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: `Key validation failed: ${msg}` }, { status: 422 });
+  }
+
+  // If this is a dry run (browser-only storage), stop here
+  if (dryRun) {
+    return NextResponse.json({ ok: true, message: "Key validated." });
+  }
+
+  // Demo users are not allowed to save keys to the database
+  if (session.isDemoUser) {
+    return NextResponse.json(
+      { error: "In Demo mode, please use the 'Save to browser only' option to keep keys isolated." },
+      { status: 403 }
+    );
   }
 
   const keyHint = apiKey.trim().slice(-4);

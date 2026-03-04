@@ -7,6 +7,10 @@ export async function PATCH(req: NextRequest) {
   const session = await auth();
   if (!session?.user?.email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  if (session.isDemoUser) {
+    return NextResponse.json({ error: "Demo users manage active provider locally." }, { status: 403 });
+  }
+
   const { provider } = await req.json() as { provider: string };
   const email = session.user.email;
 

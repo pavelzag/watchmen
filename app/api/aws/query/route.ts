@@ -199,17 +199,31 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Query must be under 500 characters." }, { status: 400 });
   }
 
-  let provider: Awaited<ReturnType<typeof resolveAI>>["provider"];
+  // Resolve the user's AI key: check body first (browser-only), then fallback to DB
+  let provider: "openai" | "anthropic" | "google";
   let apiKey: string;
-  try {
-    const resolved = await resolveAI(session.user.email);
-    provider = resolved.provider;
-    apiKey = resolved.key;
-  } catch {
+  const browserKey = (body as any)?.demoCredentials?.aiKey;
+  const browserProvider = (body as any)?.demoCredentials?.aiProvider;
+
+  if (browserKey && browserProvider) {
+    provider = browserProvider;
+    apiKey = browserKey;
+  } else if (session.isDemoUser) {
     return NextResponse.json(
-      { error: "No AI key configured. Go to Settings → AI Keys to add one." },
+      { error: "Demo users must provide their own API key in Settings (stored in this browser only)." },
       { status: 422 }
     );
+  } else {
+    try {
+      const resolved = await resolveAI(session.user.email);
+      provider = resolved.provider as any;
+      apiKey = resolved.key;
+    } catch {
+      return NextResponse.json(
+        { error: "No AI key configured. Go to Settings → AI Keys to add one." },
+        { status: 422 }
+      );
+    }
   }
 
   try {

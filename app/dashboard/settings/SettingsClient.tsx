@@ -12,7 +12,7 @@ import {
   clearDemoCredentials,
   type DemoCredentials,
 } from "@/lib/demo-credentials";
-import { getBrowserAIKeys, setBrowserAIKey, removeBrowserAIKey, type BrowserAIKeys } from "@/lib/ai/browser-ai-keys";
+import { getBrowserAIKeys, setBrowserAIKey, removeBrowserAIKey, getActiveBrowserProvider, setActiveBrowserProvider, type BrowserAIKeys } from "@/lib/ai/browser-ai-keys";
 
 interface CloudCredRecord {
   provider: string;
@@ -101,7 +101,11 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
 
   // Browser-only AI keys
   const [browserKeys, setBrowserKeys] = useState<BrowserAIKeys>({});
-  const [saveToBrowser, setSaveToBrowser] = useState<Record<AIProvider, boolean>>({ google: false, openai: false, anthropic: false });
+  const [saveToBrowser, setSaveToBrowser] = useState<Record<AIProvider, boolean>>(() => ({
+    google: isDemoUser,
+    openai: isDemoUser,
+    anthropic: isDemoUser,
+  }));
 
   // Browser-only demo credentials state
   const [demoCreds, setDemoCreds] = useState<DemoCredentials>({});
@@ -205,7 +209,13 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
     setBrowserKeys(getBrowserAIKeys());
   }
 
-  async function setActive(provider: AIProvider) {
+  async function setActive(provider: AIProvider, isBrowserStored?: boolean) {
+    if (isBrowserStored) {
+      setActiveBrowserProvider(provider);
+      setBrowserKeys(getBrowserAIKeys());
+      return;
+    }
+
     setActivating(provider);
     try {
       const res = await fetch("/api/settings/keys/active", {
@@ -339,7 +349,22 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
 
       {/* Provider cards */}
       <div className="space-y-4">
-        <h2 className="text-xs text-slate-500 font-medium uppercase tracking-wider">AI Provider Keys</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-xs text-slate-500 font-medium uppercase tracking-wider">AI Provider Keys</h2>
+          {isDemoUser && (
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] bg-amber-500/10 border border-amber-500/20 text-amber-500 font-medium">
+              <ShieldCheck className="w-3 h-3" />
+              Demo Mode: Browser-Only Storage Forced
+            </div>
+          )}
+        </div>
+        {isDemoUser && (
+          <div className="p-3 rounded-lg border border-amber-500/25 bg-amber-500/8">
+            <p className="text-xs text-amber-300/80 leading-relaxed">
+              <span className="font-semibold text-amber-300">Isolated Sessions.</span> To keep the demo experience clean, AI keys added in this account are stored <span className="font-semibold text-amber-300">only in your current browser</span>. They will not be shared with other users of the demo account, and will not appear in other browsers.
+            </p>
+          </div>
+        )}
         {loading ? (
           <div className="space-y-3">
             {[...Array(3)].map((_, i) => (
@@ -354,10 +379,14 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
               const isActivating = activating === prov.id;
               const serverRecord = keys.find((k) => k.provider === prov.id);
               const browserKey = browserKeys[prov.id];
-              const isActive = serverRecord?.isActive;
+              const activeBrowserProv = getActiveBrowserProvider();
 
-              const record = browserKey ? { provider: prov.id, keyHint: browserKey.slice(-4), isActive } : serverRecord;
               const isBrowserStored = !!browserKey;
+              const isActive = isBrowserStored
+                ? activeBrowserProv === prov.id || (!activeBrowserProv && Object.keys(browserKeys)[0] === prov.id)
+                : serverRecord?.isActive;
+
+              const record = isBrowserStored ? { provider: prov.id, keyHint: browserKey.slice(-4), isActive } : serverRecord;
 
               return (
                 <div
@@ -397,9 +426,9 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
                             </span>
                           )}
                         </span>
-                        {!isActive && keys.length > 1 && (
+                        {!isActive && (keys.length > 1 || Object.keys(browserKeys).length > 1) && (
                           <button
-                            onClick={() => setActive(prov.id)}
+                            onClick={() => setActive(prov.id, isBrowserStored)}
                             disabled={isActivating}
                             className="text-xs text-slate-400 hover:text-slate-200 transition-colors px-2 py-0.5 rounded border border-slate-700 hover:border-slate-500"
                           >
@@ -452,15 +481,16 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
                         {isSaving ? "Testing…" : record ? "Update" : "Add & Test"}
                       </button>
                     </div>
-                    <label className="flex items-center gap-2 cursor-pointer group">
+                    <label className={cn("flex items-center gap-2 group", isDemoUser ? "cursor-not-allowed" : "cursor-pointer")}>
                       <input
                         type="checkbox"
+                        disabled={isDemoUser}
                         checked={saveToBrowser[prov.id]}
                         onChange={(e) => setSaveToBrowser((s) => ({ ...s, [prov.id]: e.target.checked }))}
-                        className="w-3.5 h-3.5 rounded border-slate-700 bg-slate-900 text-sky-500 focus:ring-sky-500/20"
+                        className="w-3.5 h-3.5 rounded border-slate-700 bg-slate-900 text-sky-500 focus:ring-sky-500/20 disabled:opacity-50"
                       />
                       <span className="text-[11px] text-slate-500 group-hover:text-slate-400 transition-colors">
-                        Save to this browser only (prevents sharing across browsers)
+                        Save to this browser only {isDemoUser ? "(required in demo mode)" : "(prevents sharing across browsers)"}
                       </span>
                     </label>
                   </div>
