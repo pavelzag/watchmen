@@ -57,3 +57,15 @@ export async function ensureComplianceTables(): Promise<void> {
     )
   `;
 }
+/**
+ * Ensures the demo usage tracking table exists.
+ */
+export async function ensureDemoUsageTable(): Promise<void> {
+  await sql`
+    CREATE TABLE IF NOT EXISTS demo_usage (
+      user_email   TEXT PRIMARY KEY,
+      daily_count  INT NOT NULL DEFAULT 0,
+      last_reset   DATE NOT NULL DEFAULT CURRENT_DATE
+    )
+  `;
+}

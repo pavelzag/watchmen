@@ -94,9 +94,63 @@ export async function callAI(provider: AIProvider, apiKey: string, prompt: strin
 /**
  * Resolves the active AI key for a user (from their Settings → AI Keys).
  * Throws "NO_AI_KEY" if none is configured.
+ * 
+ * SPECIAL CASE: For demo users, if no personal key is provided, we can fallback 
+ * to a server-side Gemini key if configured and within limits.
  */
-export async function resolveAI(userEmail: string): Promise<{ provider: AIProvider; key: string }> {
+export async function resolveAI(userEmail: string, isDemoUser?: boolean): Promise<{ provider: AIProvider; key: string }> {
+  // 1. Try personal/configured key first
   const userKey = await getActiveKey(userEmail);
   if (userKey) return userKey;
+
+  // 2. Fallback for Demo User
+  if (isDemoUser && process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+    await checkAndIncrementDemoUsage(userEmail);
+    return { provider: "google", key: process.env.GOOGLE_GENERATIVE_AI_API_KEY };
+  }
+
   throw new Error("NO_AI_KEY");
+}
+
+const MAX_DAILY_DEMO_QUERIES = 20;
+
+/**
+ * Checks if a demo user is under their daily limit and increments the count.
+ * Throws "DEMO_LIMIT_REACHED" if over limit.
+ */
+async function checkAndIncrementDemoUsage(userEmail: string): Promise<void> {
+  const { ensureDemoUsageTable } = await import("@/lib/db");
+  await ensureDemoUsageTable();
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  // Handled by SQL: Upsert with reset if date changed
+  const result = await sql`
+    INSERT INTO demo_usage (user_email, daily_count, last_reset)
+    VALUES (${userEmail}, 1, CURRENT_DATE)
+    ON CONFLICT (user_email) DO UPDATE
+    SET 
+      daily_count = CASE 
+        WHEN demo_usage.last_reset = EXCLUDED.last_reset THEN demo_usage.daily_count + 1
+        ELSE 1
+      END,
+      last_reset = EXCLUDED.last_reset
+    RETURNING daily_count
+  `;
+
+  if (result.rows[0].daily_count > MAX_DAILY_DEMO_QUERIES) {
+    throw new Error("DEMO_LIMIT_REACHED");
+  }
+}
+
+/** Returns the current usage for a demo user. */
+export async function getDemoUsage(userEmail: string): Promise<{ count: number; limit: number }> {
+  const result = await sql`
+    SELECT daily_count FROM demo_usage 
+    WHERE user_email = ${userEmail} AND last_reset = CURRENT_DATE
+  `;
+  return {
+    count: result.rows[0]?.daily_count ?? 0,
+    limit: MAX_DAILY_DEMO_QUERIES
+  };
 }

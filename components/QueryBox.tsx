@@ -40,11 +40,25 @@ export default function QueryBox({ onResult }: QueryBoxProps) {
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<QueryHistoryEntry[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [demoUsage, setDemoUsage] = useState<{ count: number; limit: number } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     setHistory(getHistory());
+    fetchUsage();
   }, []);
+
+  async function fetchUsage() {
+    try {
+      const res = await fetch("/api/demo/usage");
+      if (res.ok) {
+        const data = await res.json();
+        if (data.limit > 0) setDemoUsage(data);
+      }
+    } catch {
+      // Ignore
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -73,6 +87,7 @@ export default function QueryBox({ onResult }: QueryBoxProps) {
       saveQuery(result.query, result.answer);
       setHistory(getHistory());
       setQuery("");
+      fetchUsage();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
@@ -154,7 +169,14 @@ export default function QueryBox({ onResult }: QueryBoxProps) {
             className="flex items-center justify-between px-3 py-2 text-xs"
             style={{ borderTop: "1px solid #0a1a0a" }}
           >
-            <span style={{ color: "#005c16" }}>// Enter to execute · Shift+Enter for newline</span>
+            <div className="flex items-center gap-4">
+              {demoUsage && (
+                <span style={{ color: demoUsage.count >= demoUsage.limit ? "#ff3333" : "#00aa2b" }}>
+                  // demo credits: {demoUsage.limit - demoUsage.count} / {demoUsage.limit}
+                </span>
+              )}
+              <span style={{ color: "#005c16" }}>// Enter to execute · Shift+Enter for newline</span>
+            </div>
             <button
               type="submit"
               disabled={!query.trim() || loading}
