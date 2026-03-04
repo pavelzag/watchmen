@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { auth, signIn } from "@/lib/auth";
 import { Terminal, ShieldAlert, Zap } from "lucide-react";
+import Footer from "@/components/Footer";
 
 const DEMO_MODE = process.env.DEMO_MODE === "true";
 
@@ -36,7 +37,7 @@ export default async function LoginPage() {
             </span>
           </div>
           <p className="text-xs uppercase tracking-widest" style={{ color: "#005c16" }}>
-            GCP IAM EXPLORER
+            CLOUD SECURITY EXPLORER
           </p>
         </div>
 
@@ -55,7 +56,7 @@ export default async function LoginPage() {
             <p className="text-xs" style={{ color: "#005c16" }}>
               {DEMO_MODE
                 ? "interactive demo · no account required"
-                : "query your GCP IAM permissions using natural language"}
+                : "query your GCP and AWS cloud security using natural language"}
             </p>
           </div>
 
@@ -137,9 +138,10 @@ export default async function LoginPage() {
         {/* Bottom decoration */}
         <div className="mt-4 flex items-center justify-center gap-2 text-xs" style={{ color: "#003010" }}>
           <ShieldAlert className="w-3 h-3" />
-          <span>WATCHMEN v0.1.0 · GCP IAM SECURITY EXPLORER</span>
+          <span>WATCHMEN v0.1.0 · CLOUD SECURITY EXPLORER</span>
         </div>
       </div>
+      <Footer />
     </div>
   );
 }

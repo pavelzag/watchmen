@@ -5,8 +5,8 @@ import CommandPalette from "@/components/CommandPalette";
 import GlobalKeyNav from "@/components/GlobalKeyNav";
 
 export const metadata: Metadata = {
-  title: "WATCHMEN // GCP IAM EXPLORER",
-  description: "Query your GCP IAM permissions using natural language",
+  title: "WATCHMEN // CLOUD SECURITY EXPLORER",
+  description: "Query your GCP and AWS cloud security using natural language",
   icons: { icon: "/favicon.svg" },
 };
 

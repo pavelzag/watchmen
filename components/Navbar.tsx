@@ -29,7 +29,7 @@ export default async function Navbar() {
           </span>
           <span style={{ color: "#005c16" }}>&gt;</span>
           <span className="text-xs tracking-widest uppercase" style={{ color: "#00aa2b" }}>
-            GCP IAM EXPLORER
+            CLOUD SECURITY EXPLORER
           </span>
           <span className="blink text-xs" style={{ color: "#00ff41" }}>_</span>
         </div>

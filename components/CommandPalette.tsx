@@ -44,11 +44,9 @@ export default function CommandPalette() {
     // Listen for global open event + "/" key
     useEffect(() => {
         function handleOpen() {
-            if (isAws) setOpen(true);
+            setOpen(true);
         }
         function handleKey(e: KeyboardEvent) {
-            if (!isAws) return;
-
             // "/" opens palette when not already in an input
             const tag = (e.target as HTMLElement).tagName;
             if (
@@ -70,7 +68,7 @@ export default function CommandPalette() {
             window.removeEventListener("cmd-palette:open", handleOpen);
             window.removeEventListener("keydown", handleKey);
         };
-    }, [isAws]);
+    }, []);
 
     const submit = useCallback(async () => {
         if (!query.trim() || loading) return;
@@ -78,7 +76,8 @@ export default function CommandPalette() {
         setError(null);
         setResult(null);
         try {
-            const res = await fetch("/api/query", {
+            const endpoint = isAws ? "/api/aws/query" : "/api/query";
+            const res = await fetch(endpoint, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ query: query.trim() }),
@@ -168,7 +167,7 @@ export default function CommandPalette() {
                         value={query}
                         onChange={(e) => { setQuery(e.target.value); setHistIdx(-1); }}
                         onKeyDown={handleKeyDown}
-                        placeholder="ask anything about your GCP permissions..."
+                        placeholder={isAws ? "ask anything about your AWS resources..." : "ask anything about your GCP permissions..."}
                         rows={2}
                         disabled={loading}
                         className="flex-1 resize-none outline-none text-sm leading-relaxed"

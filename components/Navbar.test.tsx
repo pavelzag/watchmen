@@ -34,7 +34,7 @@ describe('Navbar', () => {
         render(NavbarComponent);
 
         expect(screen.getByText('WATCHMEN')).toBeInTheDocument();
-        expect(screen.getByText('GCP IAM EXPLORER')).toBeInTheDocument();
+        expect(screen.getByText('CLOUD SECURITY EXPLORER')).toBeInTheDocument();
     });
 
     it('renders sign out button and user info when authenticated', async () => {

@@ -1,15 +1,9 @@
 "use client";
 
-import { usePathname } from "next/navigation";
 import { openCommandPalette } from "./CommandPalette";
 import { MessageSquare } from "lucide-react";
 
 export default function NavbarAskButton() {
-    const pathname = usePathname();
-    const isAws = pathname?.startsWith("/dashboard/aws") ?? false;
-
-    if (!isAws) return null;
-
     return (
         <button
             onClick={openCommandPalette}

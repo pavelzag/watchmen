@@ -95,10 +95,6 @@ export default function DashboardClient() {
         </div>
       </div>
 
-      {/* Footer */}
-      <footer className="text-center py-3 text-xs" style={{ color: "#003010" }}>
-        Conceived with love by Pavel Zagalsky 2026
-      </footer>
     </div>
   );
 }

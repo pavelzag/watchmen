@@ -23,7 +23,7 @@ export function getAwsClientOptions(region: string, creds?: AwsCredentials) {
 
 export function useMockAwsData(forced?: boolean): boolean {
   if (forced !== undefined) return forced;
-  return process.env.USE_MOCK_AWS_DATA === "true";
+  return process.env.USE_MOCK_AWS_DATA === "true" || process.env.DEMO_MODE === "true";
 }
 
 /**

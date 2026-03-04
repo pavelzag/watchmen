@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import Navbar from "@/components/Navbar";
+import Footer from "@/components/Footer";
 
 export default async function DashboardLayout({
   children,
@@ -19,7 +20,7 @@ export default async function DashboardLayout({
         >
           <span style={{ color: "#00aa2b" }}>// DEMO MODE</span>
           <span style={{ color: "#005c16" }}>
-            {" "}— exploring mock GCP data.{" "}
+            {" "}— exploring mock GCP and AWS data.{" "}
           </span>
           <a
             href="/dashboard/settings"
@@ -32,6 +33,7 @@ export default async function DashboardLayout({
       )}
       <Navbar />
       <main className="max-w-7xl mx-auto px-6 py-6">{children}</main>
+      <Footer />
     </div>
   );
 }
