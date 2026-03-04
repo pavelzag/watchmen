@@ -19,22 +19,25 @@
   --border-dim: #005c16;
   --text-primary: #00ff41;
   --text-muted: #00aa2b;
+  --text-strong: #ffffff;
 }
 
 [data-theme='light'] {
-  --bg: #fdf6e3;
-  --bg-card: #eee8d5;
-  --bg-card2: #93a1a115;
-  --green: #005c16;
-  --green-dim: #00aa2b;
-  --green-glow: rgba(0, 92, 22, 0.1);
-  --red: #d33682;
-  --red-dim: #859900;
-  --amber: #b58900;
-  --border: #005c16;
-  --border-dim: #93a1a1;
+  --bg: #ffffff;
+  --bg-card: #f8f9fa;
+  --bg-card2: #f1f3f5;
+  --green: #008822;
+  /* Darker green for contrast on white */
+  --green-dim: #006611;
+  --green-glow: rgba(0, 136, 34, 0.08);
+  --red: #d93025;
+  --red-dim: #a50e0e;
+  --amber: #f29900;
+  --border: #008822;
+  --border-dim: #dee2e6;
   --text-primary: #073642;
   --text-muted: #586e75;
+  --text-strong: #000000;
 }
 
 @layer base {
@@ -149,7 +152,7 @@
 
   .prose-answer strong {
     font-weight: 700;
-    color: #fff;
+    color: var(--text-strong);
   }
 
   .prose-answer ul {
@@ -168,15 +171,15 @@
 
   /* Terminal button hover styles (CSS-only — works in Server Components) */
   .terminal-btn {
-    border: 1px solid #005c16;
-    color: #00aa2b;
+    border: 1px solid var(--border-dim);
+    color: var(--text-muted);
     background: transparent;
     transition: border-color 0.15s, color 0.15s;
   }
 
   .terminal-btn:hover {
-    border-color: #00ff41;
-    color: #00ff41;
+    border-color: var(--green);
+    color: var(--green);
   }
 
   .terminal-btn-danger {
@@ -212,27 +215,27 @@
   }
 
   .terminal-chip {
-    border: 1px solid #003010;
-    color: #00aa2b;
+    border: 1px solid var(--border-dim);
+    color: var(--text-muted);
     background: transparent;
     transition: border-color 0.15s, color 0.15s, box-shadow 0.15s;
   }
 
   .terminal-chip:hover {
-    border-color: #00ff41;
-    color: #00ff41;
-    box-shadow: 0 0 6px #00ff4133;
+    border-color: var(--green);
+    color: var(--green);
+    box-shadow: 0 0 6px var(--green-glow);
   }
 
   .terminal-card-link {
-    border: 1px solid #003010;
-    background: #0a0a0a;
+    border: 1px solid var(--border-dim);
+    background: var(--bg);
     transition: border-color 0.15s, box-shadow 0.15s;
   }
 
   .terminal-card-link:hover {
-    border-color: #00ff41;
-    box-shadow: 0 0 8px #00ff4133;
+    border-color: var(--green);
+    box-shadow: 0 0 8px var(--green-glow);
   }
 
   .terminal-findings-link {

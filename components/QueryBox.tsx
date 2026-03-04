@@ -118,9 +118,9 @@ export default function QueryBox({ onResult }: QueryBoxProps) {
       <div
         className="relative overflow-hidden group"
         style={{
-          border: "1px solid #005c16",
-          background: "#0a0a0a",
-          boxShadow: "0 0 20px rgba(0, 255, 65, 0.05)",
+          border: "1px solid var(--border)",
+          background: "var(--bg-card)",
+          boxShadow: "0 0 20px var(--green-glow)",
         }}
       >
         <form onSubmit={handleSubmit} className="flex flex-col text-sm md:text-base">
@@ -132,26 +132,26 @@ export default function QueryBox({ onResult }: QueryBoxProps) {
             onKeyDown={handleKeyDown}
             placeholder="Ask anything about your cloud infrastructure..."
             className="w-full bg-transparent p-4 md:p-6 focus:outline-none resize-none no-scrollbar placeholder:opacity-30"
-            style={{ color: "#00ff41", minHeight: "80px", fontFamily: "JetBrains Mono, monospace" }}
+            style={{ color: "var(--text-primary)", minHeight: "80px", fontFamily: "JetBrains Mono, monospace" }}
           />
 
           {/* Toolbar */}
           <div
             className="flex flex-col sm:flex-row items-start sm:items-center justify-between px-3 md:px-6 py-3 gap-3"
-            style={{ borderTop: "1px solid #0a1a0a", background: "#050505" }}
+            style={{ borderTop: "1px solid var(--bg-card2)", background: "var(--bg-card2)" }}
           >
             <div className="flex flex-wrap items-center gap-3 md:gap-4 text-[10px] md:text-xs">
               {demoUsage && (
                 <div className="flex gap-3">
-                  <span style={{ color: demoUsage.count >= demoUsage.limit ? "#ff3333" : "#00aa2b" }}>
+                  <span style={{ color: demoUsage.count >= demoUsage.limit ? "var(--red)" : "var(--text-muted)" }}>
                     // user: {demoUsage.limit - demoUsage.count} left
                   </span>
-                  <span style={{ color: demoUsage.globalCount >= demoUsage.globalLimit ? "#ff3333" : "#005c16" }}>
+                  <span style={{ color: demoUsage.globalCount >= demoUsage.globalLimit ? "var(--red)" : "var(--border-dim)" }}>
                     // global: {demoUsage.globalLimit - demoUsage.globalCount} / {demoUsage.globalLimit}
                   </span>
                 </div>
               )}
-              <span className="hidden sm:inline" style={{ color: "#005c16" }}>// Enter to execute</span>
+              <span className="hidden sm:inline" style={{ color: "var(--border-dim)" }}>// Enter to execute</span>
             </div>
             <button
               type="submit"
@@ -159,8 +159,8 @@ export default function QueryBox({ onResult }: QueryBoxProps) {
               className="flex items-center gap-1.5 px-4 py-1 text-xs uppercase tracking-widest transition-all"
               style={
                 query.trim() && !loading
-                  ? { background: "#00ff41", color: "#090909", fontWeight: 700 }
-                  : { border: "1px solid #003010", color: "#004411", background: "transparent", cursor: "not-allowed" }
+                  ? { background: "var(--green)", color: "var(--bg)", fontWeight: 700 }
+                  : { border: "1px solid var(--border-dim)", color: "var(--text-muted)", opacity: 0.5, background: "transparent", cursor: "not-allowed" }
               }
             >
               {loading ? (
@@ -170,14 +170,14 @@ export default function QueryBox({ onResult }: QueryBoxProps) {
             </button>
           </div>
         </form>
-      </div>
+      </div >
 
       {/* Error */}
       {
         error && (
           <div
-            className="px-3 py-2 text-sm"
-            style={{ border: "1px solid #ff3333", background: "#1a0000", color: "#ff3333" }}
+            className="px-3 py-2 text-sm font-bold"
+            style={{ border: "1px solid var(--red)", background: "rgba(255, 0, 0, 0.05)", color: "var(--red)" }}
           >
             !! ERROR: {error}
           </div>
@@ -188,7 +188,7 @@ export default function QueryBox({ onResult }: QueryBoxProps) {
       {
         !query && (
           <div className="space-y-2">
-            <p className="text-xs uppercase tracking-widest" style={{ color: "#005c16" }}>
+            <p className="text-xs uppercase tracking-widest" style={{ color: "var(--border-dim)" }}>
             // suggested commands
             </p>
             <div className="flex flex-wrap gap-2">
@@ -196,15 +196,14 @@ export default function QueryBox({ onResult }: QueryBoxProps) {
                 <button
                   key={q}
                   onClick={() => useQuery(q)}
-                  className="px-3 py-1 text-xs text-left transition-all"
-                  style={{ border: "1px solid #003010", color: "#00aa2b", background: "transparent" }}
+                  className="px-3 py-1 text-xs text-left transition-all border border-border-dim text-text-muted hover:border-green hover:text-green bg-transparent"
                   onMouseEnter={(e) => {
-                    (e.currentTarget as HTMLButtonElement).style.borderColor = "#00ff41";
-                    (e.currentTarget as HTMLButtonElement).style.color = "#00ff41";
+                    (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--green)";
+                    (e.currentTarget as HTMLButtonElement).style.color = "var(--green)";
                   }}
                   onMouseLeave={(e) => {
-                    (e.currentTarget as HTMLButtonElement).style.borderColor = "#003010";
-                    (e.currentTarget as HTMLButtonElement).style.color = "#00aa2b";
+                    (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--border-dim)";
+                    (e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)";
                   }}
                 >
                   &gt; {q}
@@ -223,7 +222,7 @@ export default function QueryBox({ onResult }: QueryBoxProps) {
               <button
                 onClick={() => setShowHistory((s) => !s)}
                 className="flex items-center gap-1.5 text-xs transition-colors"
-                style={{ color: "#005c16" }}
+                style={{ color: "var(--border-dim)" }}
               >
                 <History className="w-3 h-3" />
               // history ({history.length})
@@ -236,7 +235,7 @@ export default function QueryBox({ onResult }: QueryBoxProps) {
                 <button
                   onClick={handleClearHistory}
                   className="flex items-center gap-1 text-xs"
-                  style={{ color: "#ff3333" }}
+                  style={{ color: "var(--red)" }}
                 >
                   <X className="w-3 h-3" />
                   [CLEAR]
@@ -251,14 +250,14 @@ export default function QueryBox({ onResult }: QueryBoxProps) {
                     onClick={() => useQuery(entry.query)}
                     title={entry.query}
                     className="px-3 py-1 text-xs text-left max-w-[260px] truncate transition-all"
-                    style={{ border: "1px solid #003010", color: "#00aa2b" }}
+                    style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}
                     onMouseEnter={(e) => {
-                      (e.currentTarget as HTMLButtonElement).style.borderColor = "#00ff41";
-                      (e.currentTarget as HTMLButtonElement).style.color = "#00ff41";
+                      (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--green)";
+                      (e.currentTarget as HTMLButtonElement).style.color = "var(--green)";
                     }}
                     onMouseLeave={(e) => {
-                      (e.currentTarget as HTMLButtonElement).style.borderColor = "#003010";
-                      (e.currentTarget as HTMLButtonElement).style.color = "#00aa2b";
+                      (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--border-dim)";
+                      (e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)";
                     }}
                   >
                     ↑ {entry.query}

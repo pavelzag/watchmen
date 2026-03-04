@@ -332,15 +332,15 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
     <div className="space-y-8 max-w-3xl">
       {/* Header */}
       <div className="flex items-center gap-4">
-        <Link href="/dashboard" className="flex items-center gap-1.5 text-sm text-slate-400 hover:text-slate-200 transition-colors shrink-0">
-          <ArrowLeft className="w-4 h-4" />
+        <Link href="/dashboard" className="flex items-center gap-1.5 text-xs uppercase tracking-widest transition-colors shrink-0" style={{ color: "var(--text-muted)" }}>
+          <ArrowLeft className="w-3 h-3" />
           Dashboard
         </Link>
         <div className="flex-1 flex items-center justify-between">
-          <h1 className="text-lg font-semibold text-white">Settings</h1>
+          <h1 className="text-lg font-bold tracking-tighter" style={{ color: "var(--text-strong)" }}>SETTINGS</h1>
           <button
             onClick={toggleTheme}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900/50 text-slate-400 hover:text-white transition-all"
+            className="terminal-btn flex items-center gap-2 px-3 py-1 text-[10px] uppercase tracking-widest"
           >
             {theme === "dark" ? "🌙 Dark" : "☀️ Light"} Theme
           </button>
@@ -351,7 +351,7 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
 
       {/* Active key summary */}
       {activeKey && (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+        <div className="flex items-center gap-2 px-3 py-2 border border-emerald-500/20" style={{ background: "rgba(16, 185, 129, 0.05)" }}>
           <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
           <p className="text-xs text-emerald-300">
             Active provider: <span className="font-semibold">{PROVIDERS.find((p) => p.id === activeKey.provider)?.name}</span>
@@ -368,7 +368,7 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
         {loading ? (
           <div className="space-y-3">
             {[...Array(3)].map((_, i) => (
-              <div key={i} className="glass rounded-xl p-5 animate-pulse h-32" />
+              <div key={i} className="animate-pulse h-32" style={{ background: "var(--bg-card2)", border: "1px solid var(--border-dim)" }} />
             ))}
           </div>
         ) : (
@@ -411,17 +411,17 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
                             </span>
                           )}
                         </div>
-                        <p className="text-xs text-slate-500 mt-0.5">{prov.description}</p>
-                        <p className="text-xs text-slate-600 font-mono mt-0.5">Model: {prov.models}</p>
+                        <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>{prov.description}</p>
+                        <p className="text-xs font-mono mt-0.5" style={{ color: "var(--border-dim)" }}>Model: {prov.models}</p>
                       </div>
                     </div>
                     {record ? (
                       <div className="flex items-center gap-2 shrink-0">
-                        <span className="flex items-center gap-1 text-xs text-emerald-400">
+                        <span className="flex items-center gap-1 text-xs" style={{ color: "var(--green)" }}>
                           <Check className="w-3 h-3" />
                           <span className="font-mono">····{record.keyHint}</span>
                           {isBrowserStored && (
-                            <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] bg-blue-500/15 border border-blue-500/25 text-blue-400 font-sans font-normal uppercase tracking-wider">
+                            <span className="ml-1.5 px-1.5 py-0.5 text-[10px] font-sans font-normal uppercase tracking-wider" style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}>
                               Browser
                             </span>
                           )}
@@ -430,7 +430,7 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
                           <button
                             onClick={() => setActive(prov.id, isBrowserStored)}
                             disabled={isActivating}
-                            className="text-xs text-slate-400 hover:text-slate-200 transition-colors px-2 py-0.5 rounded border border-slate-700 hover:border-slate-500"
+                            className="terminal-btn text-xs px-2 py-0.5"
                           >
                             {isActivating ? <Loader2 className="w-3 h-3 animate-spin" /> : "Set active"}
                           </button>
@@ -438,14 +438,15 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
                         <button
                           onClick={() => isBrowserStored ? deleteBrowserKey(prov.id) : deleteKey(prov.id)}
                           disabled={isDeleting}
-                          className="text-slate-600 hover:text-red-400 transition-colors"
+                          className="hover:text-red-400 transition-colors"
+                          style={{ color: "var(--text-muted)" }}
                           title="Remove key"
                         >
                           {isDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
                         </button>
                       </div>
                     ) : (
-                      <span className="text-xs text-slate-600 shrink-0">Not configured</span>
+                      <span className="text-xs shrink-0" style={{ color: "var(--text-muted)" }}>Not configured</span>
                     )}
                   </div>
                   <div className="space-y-3">
@@ -456,13 +457,15 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
                           value={inputs[prov.id]}
                           onChange={(e) => setInputs((i) => ({ ...i, [prov.id]: e.target.value }))}
                           placeholder={record ? `Update key (${prov.placeholder})` : `Paste API key (${prov.placeholder})`}
-                          className="w-full pl-3 pr-9 py-2 rounded-lg bg-slate-900/60 border border-slate-700 text-sm text-slate-200 placeholder:text-slate-600 outline-none focus:border-sky-500/50 font-mono text-xs"
+                          className="w-full pl-3 pr-9 py-2 bg-transparent border text-sm placeholder:opacity-30 outline-none font-mono text-xs"
+                          style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
                           onKeyDown={(e) => e.key === "Enter" && saveKey(prov.id)}
                         />
                         <button
                           type="button"
                           onClick={() => setShowKey((s) => ({ ...s, [prov.id]: !s[prov.id] }))}
-                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 hover:text-white transition-colors"
+                          style={{ color: "var(--text-muted)" }}
                         >
                           {showKey[prov.id] ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                         </button>
@@ -470,12 +473,12 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
                       <button
                         onClick={() => saveKey(prov.id)}
                         disabled={!inputs[prov.id].trim() || isSaving}
-                        className={cn(
-                          "flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-all duration-150",
+                        className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold transition-all duration-150"
+                        style={
                           inputs[prov.id].trim() && !isSaving
-                            ? cn(prov.accent, "text-white hover:opacity-90")
-                            : "bg-slate-700/50 text-slate-500 cursor-not-allowed"
-                        )}
+                            ? { background: "var(--green)", color: "var(--bg)" }
+                            : { border: "1px solid var(--border-dim)", color: "var(--text-muted)", opacity: 0.5 }
+                        }
                       >
                         {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
                         {isSaving ? "Testing…" : record ? "Update" : "Add & Test"}
@@ -487,14 +490,14 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
                         disabled={isDemoUser}
                         checked={saveToBrowser[prov.id]}
                         onChange={(e) => setSaveToBrowser((s) => ({ ...s, [prov.id]: e.target.checked }))}
-                        className="w-3.5 h-3.5 rounded border-slate-700 bg-slate-900 text-sky-500 focus:ring-sky-500/20 disabled:opacity-50"
+                        className="w-3.5 h-3.5 border border-border-dim bg-transparent text-green-500 focus:ring-green-500/20 disabled:opacity-50"
                       />
-                      <span className="text-[11px] text-slate-500 group-hover:text-slate-400 transition-colors">
+                      <span className="text-[11px] transition-colors" style={{ color: "var(--text-muted)" }}>
                         Save to this browser only {isDemoUser ? "(required in demo mode)" : "(prevents sharing across browsers)"}
                       </span>
                     </label>
                   </div>
-                  <p className="text-xs text-slate-600">
+                  <p className="text-[10px] uppercase tracking-wider" style={{ color: "var(--border-dim)" }}>
                     Key is tested before saving and stored encrypted. Never shared with third parties.
                   </p>
                 </div>
@@ -507,13 +510,13 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
       {/* Cloud Credentials */}
       <div className="space-y-4">
         <div>
-          <h2 className="text-xs text-slate-500 font-medium uppercase tracking-wider text-green-500">Cloud Credentials</h2>
+          <h2 className="text-xs font-bold uppercase tracking-widest" style={{ color: "var(--border-dim)" }}>Cloud Credentials</h2>
         </div>
 
         {cloudLoading ? (
           <div className="space-y-3">
             {[...Array(2)].map((_, i) => (
-              <div key={i} className="glass rounded-xl p-5 animate-pulse h-40" />
+              <div key={i} className="animate-pulse h-40" style={{ background: "var(--bg-card2)", border: "1px solid var(--border-dim)" }} />
             ))}
           </div>
         ) : isDemoUser ? (
@@ -523,13 +526,13 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
             {(() => {
               const stored = demoCreds.gcp;
               return (
-                <div className="rounded-xl border p-5 space-y-4 bg-blue-500/8 border-blue-500/25">
+                <div className="border p-5 space-y-4" style={{ background: "rgba(59, 130, 246, 0.05)", borderColor: "rgba(59, 130, 246, 0.2)" }}>
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-lg flex items-center justify-center text-sm font-bold text-white shrink-0 bg-blue-500">G</div>
+                      <div className="w-9 h-9 flex items-center justify-center text-sm font-bold text-white shrink-0 bg-blue-500">G</div>
                       <div>
-                        <span className="text-sm font-semibold text-blue-400">Google Cloud Platform</span>
-                        <p className="text-xs text-slate-500 mt-0.5">Service account key · browser session only</p>
+                        <span className="text-sm font-bold text-blue-500">Google Cloud Platform</span>
+                        <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>Service account key · browser session only</p>
                       </div>
                     </div>
                     {stored ? (
@@ -575,13 +578,13 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
             {(() => {
               const stored = demoCreds.aws;
               return (
-                <div className="rounded-xl border p-5 space-y-4 bg-orange-500/8 border-orange-500/25">
+                <div className="border p-5 space-y-4" style={{ background: "rgba(249, 115, 22, 0.05)", borderColor: "rgba(249, 115, 22, 0.2)" }}>
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-lg flex items-center justify-center text-sm font-bold text-white shrink-0 bg-orange-500">A</div>
+                      <div className="w-9 h-9 flex items-center justify-center text-sm font-bold text-white shrink-0 bg-orange-500">A</div>
                       <div>
-                        <span className="text-sm font-semibold text-orange-400">Amazon Web Services</span>
-                        <p className="text-xs text-slate-500 mt-0.5">IAM access keys · browser session only</p>
+                        <span className="text-sm font-bold text-orange-500">Amazon Web Services</span>
+                        <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>IAM access keys · browser session only</p>
                       </div>
                     </div>
                     {stored ? (
@@ -603,7 +606,8 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
                       value={demoAwsInputs.accessKeyId}
                       onChange={(e) => setDemoAwsInputs((i) => ({ ...i, accessKeyId: e.target.value }))}
                       placeholder={stored ? "New Access Key ID (leave blank to keep)" : "Access Key ID (AKIA...)"}
-                      className="w-full px-3 py-2 rounded-lg bg-slate-900/60 border border-slate-700 text-xs text-slate-200 placeholder:text-slate-600 outline-none focus:border-sky-500/50 font-mono"
+                      className="w-full px-3 py-2 bg-transparent border text-xs placeholder:opacity-30 outline-none font-mono"
+                      style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
                     />
                     <div className="relative">
                       <input
@@ -611,9 +615,10 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
                         value={demoAwsInputs.secretAccessKey}
                         onChange={(e) => setDemoAwsInputs((i) => ({ ...i, secretAccessKey: e.target.value }))}
                         placeholder="Secret Access Key"
-                        className="w-full pl-3 pr-9 py-2 rounded-lg bg-slate-900/60 border border-slate-700 text-xs text-slate-200 placeholder:text-slate-600 outline-none focus:border-sky-500/50 font-mono"
+                        className="w-full pl-3 pr-9 py-2 bg-transparent border text-xs placeholder:opacity-30 outline-none font-mono"
+                        style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
                       />
-                      <button type="button" onClick={() => setShowDemoAwsSecret((s) => !s)} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
+                      <button type="button" onClick={() => setShowDemoAwsSecret((s) => !s)} className="absolute right-2.5 top-1/2 -translate-y-1/2 hover:text-white transition-colors" style={{ color: "var(--text-muted)" }}>
                         {showDemoAwsSecret ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                       </button>
                     </div>
@@ -622,17 +627,18 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
                       value={demoAwsInputs.region}
                       onChange={(e) => setDemoAwsInputs((i) => ({ ...i, region: e.target.value }))}
                       placeholder="Region (default: us-east-1)"
-                      className="w-full px-3 py-2 rounded-lg bg-slate-900/60 border border-slate-700 text-xs text-slate-200 placeholder:text-slate-600 outline-none focus:border-sky-500/50 font-mono"
+                      className="w-full px-3 py-2 bg-transparent border text-xs placeholder:opacity-30 outline-none font-mono"
+                      style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
                     />
                     <button
                       onClick={saveDemoAwsCred}
                       disabled={!demoAwsInputs.accessKeyId.trim() || !demoAwsInputs.secretAccessKey.trim()}
-                      className={cn(
-                        "flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-all duration-150",
+                      className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold transition-all duration-150"
+                      style={
                         demoAwsInputs.accessKeyId.trim() && demoAwsInputs.secretAccessKey.trim()
-                          ? "bg-orange-500 text-white hover:opacity-90"
-                          : "bg-slate-700/50 text-slate-500 cursor-not-allowed"
-                      )}
+                          ? { background: "var(--green)", color: "var(--bg)" }
+                          : { border: "1px solid var(--border-dim)", color: "var(--text-muted)", opacity: 0.5 }
+                      }
                     >
                       {demoSaved.aws ? <Check className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
                       {demoSaved.aws ? "Saved to browser!" : stored ? "Replace" : "Save to browser"}
@@ -642,7 +648,7 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
               );
             })()}
 
-            <p className="text-xs text-slate-600 flex items-center gap-1.5">
+            <p className="text-xs flex items-center gap-1.5" style={{ color: "var(--text-muted)" }}>
               <ShieldCheck className="w-3 h-3" />
               Go back to the dashboard and click Sync — your real cloud data will be scanned using these credentials.
             </p>
@@ -657,13 +663,13 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
               const isDeleting = cloudDeleting.gcp;
               const error = cloudErrors.gcp;
               return (
-                <div className="rounded-xl border p-5 space-y-4 transition-all duration-150 bg-blue-500/8 border-blue-500/25">
+                <div className="border p-5 space-y-4 transition-all duration-150" style={{ background: "rgba(59, 130, 246, 0.05)", borderColor: "rgba(59, 130, 246, 0.2)" }}>
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-lg flex items-center justify-center text-sm font-bold text-white shrink-0 bg-blue-500">G</div>
+                      <div className="w-9 h-9 flex items-center justify-center text-sm font-bold text-white shrink-0 bg-blue-500">G</div>
                       <div>
-                        <span className="text-sm font-semibold text-blue-400">Google Cloud Platform</span>
-                        <p className="text-xs text-slate-500 mt-0.5">Service account key for GCP scanning</p>
+                        <span className="text-sm font-bold text-blue-500">Google Cloud Platform</span>
+                        <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>Service account key for GCP scanning</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
@@ -713,58 +719,61 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
               const isDeleting = cloudDeleting.aws;
               const error = cloudErrors.aws;
               return (
-                <div className="rounded-xl border p-5 space-y-4 transition-all duration-150 bg-orange-500/8 border-orange-500/25">
+                <div className="border p-5 space-y-4 transition-all duration-150" style={{ background: "rgba(249, 115, 22, 0.05)", borderColor: "rgba(249, 115, 22, 0.2)" }}>
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-lg flex items-center justify-center text-sm font-bold text-white shrink-0 bg-orange-500">A</div>
+                      <div className="w-9 h-9 flex items-center justify-center text-sm font-bold text-white shrink-0 bg-orange-500">A</div>
                       <div>
-                        <span className="text-sm font-semibold text-orange-400">Amazon Web Services</span>
-                        <p className="text-xs text-slate-500 mt-0.5">IAM access keys for AWS scanning</p>
+                        <span className="text-sm font-bold" style={{ color: "var(--amber)" }}>Amazon Web Services</span>
+                        <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>IAM access keys for AWS scanning</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       {record ? (
                         <>
-                          <span className="flex items-center gap-1 text-xs text-emerald-400">
+                          <span className="flex items-center gap-1 text-xs" style={{ color: "var(--green)" }}>
                             <Check className="w-3 h-3" /> Connected
                           </span>
-                          <button onClick={() => deleteCloudCred("aws")} disabled={isDeleting} className="text-slate-600 hover:text-red-400 transition-colors">
+                          <button onClick={() => deleteCloudCred("aws")} disabled={isDeleting} className="hover:text-red-400 transition-colors" style={{ color: "var(--text-muted)" }}>
                             {isDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
                           </button>
                         </>
                       ) : (
-                        <span className="text-xs text-slate-600">Not configured</span>
+                        <span className="text-xs shrink-0" style={{ color: "var(--text-muted)" }}>Not configured</span>
                       )}
                     </div>
                   </div>
                   <div className="space-y-2">
                     <input type="text" value={awsInputs.accessKeyId} onChange={(e) => setAwsInputs((i) => ({ ...i, accessKeyId: e.target.value }))}
                       placeholder={record ? "New Access Key ID (leave blank to keep existing)" : "Access Key ID (AKIA...)"}
-                      className="w-full px-3 py-2 rounded-lg bg-slate-900/60 border border-slate-700 text-xs text-slate-200 placeholder:text-slate-600 outline-none focus:border-sky-500/50 font-mono"
+                      className="w-full px-3 py-2 bg-transparent border text-xs placeholder:opacity-30 outline-none font-mono"
+                      style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
                     />
                     <div className="relative">
                       <input type={showAwsSecret ? "text" : "password"} value={awsInputs.secretAccessKey} onChange={(e) => setAwsInputs((i) => ({ ...i, secretAccessKey: e.target.value }))}
                         placeholder="Secret Access Key"
-                        className="w-full pl-3 pr-9 py-2 rounded-lg bg-slate-900/60 border border-slate-700 text-xs text-slate-200 placeholder:text-slate-600 outline-none focus:border-sky-500/50 font-mono"
+                        className="w-full pl-3 pr-9 py-2 bg-transparent border text-xs placeholder:opacity-30 outline-none font-mono"
+                        style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
                       />
-                      <button type="button" onClick={() => setShowAwsSecret((s) => !s)} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
+                      <button type="button" onClick={() => setShowAwsSecret((s) => !s)} className="absolute right-2.5 top-1/2 -translate-y-1/2 hover:text-white transition-colors" style={{ color: "var(--text-muted)" }}>
                         {showAwsSecret ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                       </button>
                     </div>
                     <input type="text" value={awsInputs.region} onChange={(e) => setAwsInputs((i) => ({ ...i, region: e.target.value }))}
                       placeholder="Region (default: us-east-1)"
-                      className="w-full px-3 py-2 rounded-lg bg-slate-900/60 border border-slate-700 text-xs text-slate-200 placeholder:text-slate-600 outline-none focus:border-sky-500/50 font-mono"
+                      className="w-full px-3 py-2 bg-transparent border text-xs placeholder:opacity-30 outline-none font-mono"
+                      style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
                     />
                     {error && <p className="text-xs text-red-400 font-mono">{error}</p>}
                     <button
                       onClick={() => saveCloudCred("aws")}
                       disabled={(!awsInputs.accessKeyId.trim() || !awsInputs.secretAccessKey.trim()) || isSaving}
-                      className={cn(
-                        "flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-all duration-150",
+                      className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold transition-all duration-150"
+                      style={
                         (awsInputs.accessKeyId.trim() && awsInputs.secretAccessKey.trim()) && !isSaving
-                          ? "bg-orange-500 text-white hover:opacity-90"
-                          : "bg-slate-700/50 text-slate-500 cursor-not-allowed"
-                      )}
+                          ? { background: "var(--green)", color: "var(--bg)" }
+                          : { border: "1px solid var(--border-dim)", color: "var(--text-muted)", opacity: 0.5 }
+                      }
                     >
                       {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
                       {isSaving ? "Testing…" : record ? "Update & Test" : "Connect & Test"}
@@ -781,23 +790,23 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
       {errorLog.length > 0 && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <h2 className="text-xs text-slate-500 font-medium uppercase tracking-wider flex items-center gap-2">
-              <AlertCircle className="w-3.5 h-3.5 text-red-400" />
+            <h2 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2" style={{ color: "var(--text-muted)" }}>
+              <AlertCircle className="w-3.5 h-3.5" style={{ color: "var(--red)" }} />
               Error Log ({errorLog.length})
             </h2>
-            <button onClick={() => setErrorLog([])} className="text-xs text-slate-600 hover:text-slate-400 flex items-center gap-1 transition-colors">
+            <button onClick={() => setErrorLog([])} className="text-xs hover:text-white flex items-center gap-1 transition-colors" style={{ color: "var(--text-muted)" }}>
               <X className="w-3 h-3" /> Clear
             </button>
           </div>
-          <div className="rounded-xl border border-red-500/20 bg-red-500/5 overflow-hidden">
+          <div className="border overflow-hidden" style={{ borderColor: "rgba(239, 68, 68, 0.2)", background: "rgba(239, 68, 68, 0.05)" }}>
             <div className="max-h-64 overflow-y-auto">
               {errorLog.map((entry) => (
-                <div key={entry.id} className="px-4 py-2.5 border-b border-red-500/10 last:border-0">
+                <div key={entry.id} className="px-4 py-2.5 border-b last:border-0" style={{ borderColor: "rgba(239, 68, 68, 0.1)" }}>
                   <div className="flex items-center gap-2 mb-0.5">
-                    <span className="text-xs font-semibold text-red-400 uppercase">{entry.provider}</span>
-                    <span className="text-xs text-slate-600 font-mono">{new Date(entry.timestamp).toLocaleTimeString()}</span>
+                    <span className="text-xs font-bold uppercase" style={{ color: "var(--red)" }}>{entry.provider}</span>
+                    <span className="text-xs font-mono" style={{ color: "var(--border-dim)" }}>{new Date(entry.timestamp).toLocaleTimeString()}</span>
                   </div>
-                  <p className="text-xs text-red-300/80 font-mono break-all">{entry.message}</p>
+                  <p className="text-xs font-mono break-all" style={{ color: "var(--text-primary)" }}>{entry.message}</p>
                 </div>
               ))}
             </div>

@@ -8,14 +8,14 @@ export default function NavbarCloudTabs() {
   const isAws = pathname?.startsWith("/dashboard/aws") ?? false;
 
   return (
-    <div className="flex items-center" style={{ borderRight: "1px solid #003010", marginRight: "4px", paddingRight: "4px" }}>
+    <div className="flex items-center" style={{ borderRight: "1px solid var(--bg-card2)", marginRight: "4px", paddingRight: "4px" }}>
       <Link
         href="/dashboard"
         className="flex items-center gap-1 px-2 md:px-3 h-full text-[10px] md:text-xs uppercase tracking-widest transition-colors border-r"
         style={{
-          color: !isAws ? "#00ff41" : "#005c16",
-          background: !isAws ? "#0a1a0a" : "transparent",
-          borderColor: "#0a1a0a",
+          color: !isAws ? "var(--text-primary)" : "var(--text-muted)",
+          background: !isAws ? "var(--bg-card2)" : "transparent",
+          borderColor: "var(--bg-card2)",
           height: "100%",
           display: "flex",
           alignItems: "center",
@@ -27,9 +27,9 @@ export default function NavbarCloudTabs() {
         href="/dashboard/aws"
         className="flex items-center gap-1 px-2 md:px-3 h-full text-[10px] md:text-xs uppercase tracking-widest transition-colors border-r"
         style={{
-          color: isAws ? "#00ff41" : "#005c16",
-          background: isAws ? "#0a1a0a" : "transparent",
-          borderColor: "#0a1a0a",
+          color: isAws ? "var(--text-primary)" : "var(--text-muted)",
+          background: isAws ? "var(--bg-card2)" : "transparent",
+          borderColor: "var(--bg-card2)",
           height: "100%",
           display: "flex",
           alignItems: "center",

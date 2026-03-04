@@ -9,8 +9,8 @@ export default async function Navbar() {
   return (
     <header
       style={{
-        borderBottom: "1px solid #005c16",
-        background: "#090909",
+        borderBottom: "1px solid var(--border-dim)",
+        background: "var(--bg)",
         position: "sticky",
         top: 0,
         zIndex: 50,
@@ -21,12 +21,12 @@ export default async function Navbar() {
         {/* Logo and hint */}
         <div className="flex items-baseline gap-3 shrink-0">
           <Link href="/dashboard" className="flex items-center gap-2">
-            <Shield className="w-5 h-5" style={{ color: "#00ff41" }} />
-            <span className="font-bold tracking-tighter text-lg" style={{ color: "#00ff41" }}>
+            <Shield className="w-5 h-5" style={{ color: "var(--green)" }} />
+            <span className="font-bold tracking-tighter text-lg" style={{ color: "var(--green)" }}>
               WATCHMEN
             </span>
           </Link>
-          <span className="hidden md:inline text-[10px] uppercase tracking-widest opacity-40" style={{ color: "#00ff41" }}>
+          <span className="hidden md:inline text-[10px] uppercase tracking-widest opacity-40" style={{ color: "var(--green)" }}>
             // press / for brain
           </span>
         </div>
@@ -41,9 +41,9 @@ export default async function Navbar() {
           <NavbarAskButton />
           {session?.user && (
             <>
-              <span className="text-xs hidden md:block" style={{ color: "#005c16" }}>
-                <span style={{ color: "#00aa2b" }}>// logged-in:</span>{" "}
-                <span style={{ color: "#00ff41" }}>{session.user.email}</span>
+              <span className="text-xs hidden md:block" style={{ color: "var(--border-dim)" }}>
+                <span style={{ color: "var(--text-muted)" }}>// logged-in:</span>{" "}
+                <span style={{ color: "var(--text-primary)" }}>{session.user.email}</span>
               </span>
               <form
                 action={async () => {
@@ -67,7 +67,7 @@ export default async function Navbar() {
       {/* Sub-nav */}
       <div
         className="max-w-7xl mx-auto px-4 md:px-6 h-8 flex items-center gap-0 overflow-x-auto no-scrollbar scroll-smooth"
-        style={{ borderTop: "1px solid #0a1a0a" }}
+        style={{ borderTop: "1px solid var(--bg-card2)" }}
       >
         <div className="flex items-center shrink-0">
           <NavbarCloudTabs />
@@ -94,7 +94,7 @@ function NavLink({
       href={href}
       className={`flex items-center gap-1.5 px-3 h-full text-xs uppercase tracking-widest ${danger ? "terminal-nav-link-danger" : "terminal-nav-link"
         }`}
-      style={{ borderRight: "1px solid #0a1a0a" }}
+      style={{ borderRight: "1px solid var(--bg-card2)" }}
     >
       {icon}
       <span className="hidden sm:inline">{label}</span>
