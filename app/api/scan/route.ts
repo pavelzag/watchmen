@@ -98,19 +98,8 @@ export async function GET() {
     return NextResponse.json({ error: "No user email in session." }, { status: 400 });
   }
 
-  // Demo user: prefer real DB snapshot (from a previous real-credential scan), else mock
+  // Demo user: always return mock — real snapshots are returned inline from POST and cached in sessionStorage
   if (session.isDemoUser) {
-    try {
-      await ensureGcpSnapshotTable();
-      const result = await sql`SELECT snapshot, fetched_at FROM user_snapshots WHERE user_email = ${email}`;
-      if (result.rows.length > 0) {
-        const snapshot = result.rows[0].snapshot;
-        return NextResponse.json({
-          snapshot: { ...snapshot, users: extractUsers(snapshot), serviceAccountEmails: extractServiceAccountEmails(snapshot) },
-          fetchedAt: result.rows[0].fetched_at,
-        });
-      }
-    } catch { /* fall through to mock */ }
     try {
       const snapshot = await fetchGcpSnapshot({ forceMock: true });
       return NextResponse.json({
