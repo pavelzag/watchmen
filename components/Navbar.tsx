@@ -32,9 +32,6 @@ export default async function Navbar() {
         </div>
 
         {/* Cloud tabs - scrollable on mobile */}
-        <div className="flex-1 flex justify-center overflow-x-auto no-scrollbar px-4">
-          <NavbarCloudTabs />
-        </div>
 
         {/* Right: ask button + user + logout */}
         <div className="flex items-center gap-3 shrink-0">
@@ -64,11 +61,11 @@ export default async function Navbar() {
         </div>
       </div>
 
-      {/* Sub-nav */}
       <div
         className="max-w-7xl mx-auto px-4 md:px-6 h-8 flex items-center gap-0 overflow-x-auto no-scrollbar scroll-smooth"
         style={{ borderTop: "1px solid var(--bg-card2)" }}
       >
+        <NavbarCloudTabs />
         <NavLink href="/dashboard/findings" icon={<ShieldAlert className="w-3 h-3" />} label="FINDINGS" danger />
         <NavLink href="/dashboard/history" icon={<Clock className="w-3 h-3" />} label="HISTORY" />
         <NavLink href="/dashboard/compliance" icon={<ClipboardCheck className="w-3 h-3" />} label="COMPLIANCE" />
