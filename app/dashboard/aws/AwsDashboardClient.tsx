@@ -52,9 +52,6 @@ export default function AwsDashboardClient() {
   return (
     <div className="min-h-screen p-4 flex flex-col" style={{ background: "#090909" }}>
       <div className="max-w-4xl mx-auto w-full space-y-4 flex-1">
-        <p className="text-xs uppercase tracking-widest" style={{ color: "#005c16" }}>
-          // AWS SECURITY DASHBOARD
-        </p>
 
         <AwsSnapshotStats
           scanVersion={scanVersion}

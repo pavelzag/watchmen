@@ -51,7 +51,7 @@ export default function AwsSnapshotStats({ scanVersion, onSyncRequest, isSyncing
       return;
     }
     fetchStats();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scanVersion, overrideSnapshot]);
 
   useEffect(() => {
@@ -109,9 +109,6 @@ export default function AwsSnapshotStats({ scanVersion, onSyncRequest, isSyncing
     <div className="space-y-3">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <span className="text-xs uppercase tracking-widest" style={{ color: "#005c16" }}>
-          // AWS SNAPSHOT
-        </span>
         {onSyncRequest && (
           <button
             onClick={onSyncRequest}
