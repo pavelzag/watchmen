@@ -13,21 +13,7 @@ interface ResultCardProps {
 
 type IntentLink = { href: string; label: string; Icon: React.ElementType };
 
-const RESOURCE_LINKS: Record<string, Omit<IntentLink, "href"> & { path: string }> = {
-  bucket: { path: "/dashboard/buckets", label: "Buckets", Icon: HardDrive },
-  gke_cluster: { path: "/dashboard/clusters", label: "GKE Clusters", Icon: Server },
-  service_account: { path: "/dashboard/service-accounts", label: "Service Accounts", Icon: KeySquare },
-  vm: { path: "/dashboard/vms", label: "VMs", Icon: MonitorDot },
-  cloud_run: { path: "/dashboard/cloud-run", label: "Cloud Run", Icon: Play },
-  cloud_sql: { path: "/dashboard/cloud-sql", label: "Cloud SQL", Icon: Database },
-  bigquery: { path: "/dashboard/bigquery", label: "BigQuery", Icon: BarChart3 },
-  pubsub: { path: "/dashboard/pubsub", label: "Pub/Sub", Icon: Radio },
-  secret: { path: "/dashboard/secrets", label: "Secrets", Icon: Lock },
-  firewall: { path: "/dashboard/firewall", label: "Firewall Rules", Icon: Flame },
-  iam_user: { path: "/dashboard/aws/iam", label: "IAM Users", Icon: User },
-  iam_role: { path: "/dashboard/aws/iam", label: "IAM Roles", Icon: KeySquare },
-  aws_account: { path: "/dashboard/aws", label: "AWS Account", Icon: Server },
-};
+import { RESOURCE_LINKS, getResourceHref, linkifyText } from "@/lib/utils/linkify";
 
 function buildLinks(intent: QueryResult["intent"]): IntentLink[] {
   const links: IntentLink[] = [];
@@ -47,10 +33,13 @@ function buildLinks(intent: QueryResult["intent"]): IntentLink[] {
   return links;
 }
 
+// Local helpers now use shared utility
 function resourceHref(item: ResourceItem): string {
-  const base = RESOURCE_LINKS[item.type ?? ""]?.path;
-  if (!base) return "#";
-  return `${base}?search=${encodeURIComponent(item.name)}`;
+  return getResourceHref(item);
+}
+
+function linkifyResources(text: string, resources: ResourceItem[]): string {
+  return linkifyText(text, resources, resourceHref);
 }
 
 function ResourceIcon({ type }: { type: ResourceItem["type"] }) {
@@ -66,37 +55,6 @@ function renderMarkdown(text: string): string {
     .replace(/^- (.+)$/gm, "<li>$1</li>")
     .replace(/(<li>.*<\/li>\n?)+/g, (match) => `<ul>${match}</ul>`)
     .replace(/\n/g, "<br />");
-}
-
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-/**
- * Replaces resource name occurrences in the raw answer text with <a> links.
- * Runs before markdown rendering so the injected tags survive unchanged.
- * Sorts resources longest-first to prevent shorter names from matching inside
- * already-replaced hrefs (e.g. "my-bucket" won't match inside "my-bucket-archive").
- */
-function linkifyResources(text: string, resources: ResourceItem[]): string {
-  if (!resources.length) return text;
-  const sorted = [...resources].sort((a, b) => b.name.length - a.name.length);
-  const seen = new Set<string>();
-  let out = text;
-  for (const item of sorted) {
-    if (seen.has(item.name)) continue;
-    seen.add(item.name);
-    const href = resourceHref(item);
-    if (href === "#") continue;
-    const esc = escapeRegex(item.name);
-    // Match name only when not surrounded by chars that extend resource names or HTML attributes
-    out = out.replace(
-      new RegExp(`(^|[^\\w@./:-])${esc}(?=[^\\w@./:"'>-]|$)`, "gm"),
-      (_, pre) =>
-        `${pre}<a href="${href}" style="color:#00ff41;text-decoration:underline;text-decoration-color:#005c16;font-family:inherit">${item.name}</a>`
-    );
-  }
-  return out;
 }
 
 const CHIP_LIMIT = 12;

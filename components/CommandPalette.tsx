@@ -5,7 +5,7 @@ import { Loader2, X, Terminal } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { saveQuery, getHistory } from "@/lib/query-history";
 import type { ResourceItem } from "@/lib/claude/query-processor";
-import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
+import { linkifyText } from "@/lib/utils/linkify";
 import { Clock, Tag, ChevronDown, ChevronUp, ArrowRight, User, HardDrive, Server, KeySquare, MonitorDot, Play, Database, BarChart3, Radio, Lock, Flame, ShieldAlert, Users } from "lucide-react";
 import Link from "next/link";
 
@@ -23,6 +23,7 @@ interface ResultPeek {
     fetchedAt: string;
 }
 
+// Shared linkify used below
 const RESOURCE_LINKS: Record<string, string> = {
     bucket: "/dashboard/buckets",
     gke_cluster: "/dashboard/clusters",
@@ -60,23 +61,7 @@ function renderMarkdown(text: string): string {
 }
 
 function linkifyResources(text: string, resources: ResourceItem[]): string {
-    if (!resources.length) return text;
-    const sorted = [...resources].sort((a, b) => b.name.length - a.name.length);
-    const seen = new Set<string>();
-    let out = text;
-    for (const item of sorted) {
-        if (seen.has(item.name)) continue;
-        seen.add(item.name);
-        const href = resourceHref(item);
-        if (href === "#") continue;
-        const esc = item.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        out = out.replace(
-            new RegExp(`(^|[^\\w@./:-])${esc}(?=[^\\w@./:"'>-]|$)`, "gm"),
-            (_, pre) =>
-                `${pre}<a href="${href}" style="color:#00ff41;text-decoration:underline;text-decoration-color:#005c16;font-family:inherit">${item.name}</a>`
-        );
-    }
-    return out;
+    return linkifyText(text, resources, resourceHref);
 }
 
 export default function CommandPalette() {
@@ -158,7 +143,7 @@ export default function CommandPalette() {
         } finally {
             setLoading(false);
         }
-    }, [query, loading]);
+    }, [query, loading, isAws]); // Added isAws to dependency array
 
     function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
         if (e.key === "Enter" && !e.shiftKey) {
@@ -261,7 +246,7 @@ export default function CommandPalette() {
                         }
                     >
                         {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
-                        {loading ? "EXECUTING..." : "[EXECUTE]"}
+                        {loading ? "[EXECUTING]" : "[EXECUTE]"}
                     </button>
                 </div>
 
@@ -288,10 +273,8 @@ export default function CommandPalette() {
               // OUTPUT
                             </p>
                             <div
-                                className="prose-answer leading-relaxed"
-                                dangerouslySetInnerHTML={{
-                                    __html: renderMarkdown(linkifyResources(result.answer, result.resources ?? []))
-                                }}
+                                className="prose-answer text-[11px] md:text-xs leading-relaxed break-words"
+                                dangerouslySetInnerHTML={{ __html: renderMarkdown(linkifyText(result.answer, result.resources ?? [], resourceHref)) }}
                             />
                             <div className="mt-3 pt-2 text-xs" style={{ borderTop: "1px solid #003010", color: "#005c16" }}>
               // query saved to history · close overlay to return to dashboard

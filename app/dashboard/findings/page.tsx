@@ -7,6 +7,8 @@ import { cn } from "@/lib/utils";
 import { computeFindings } from "@/lib/findings";
 import type { GcpSnapshot, SecurityFinding, SecurityFindingSeverity } from "@/lib/gcp/types";
 import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
+import { linkifyText } from "@/lib/utils/linkify";
+import type { ResourceItem } from "@/lib/claude/query-processor";
 
 const SEVERITY_CONFIG: Record<SecurityFindingSeverity, { label: string; color: string; bg: string; border: string; dot: string }> = {
   critical: {
@@ -52,8 +54,13 @@ function SeverityBadge({ severity }: { severity: SecurityFindingSeverity }) {
 }
 
 // Minimal markdown renderer for AI recommendations
-function renderMd(text: string): string {
-  return text
+function renderMd(text: string, finding: SecurityFinding): string {
+  // We manufacture a resource item for the primary finding resource to ensure it's always linkable
+  const resources: ResourceItem[] = [
+    { name: finding.resourceName, projectId: finding.projectId, type: finding.resourceType as any, cloud: "gcp" }
+  ];
+
+  const html = text
     // Code blocks
     .replace(/```[\w]*\n?([\s\S]*?)```/g, (_, code) =>
       `<pre class="bg-slate-900 border border-slate-700/50 rounded-lg px-3 py-2 text-xs font-mono text-slate-300 overflow-x-auto my-2 whitespace-pre-wrap">${code.trim()}</pre>`
@@ -74,6 +81,8 @@ function renderMd(text: string): string {
     .replace(/(<li[\s\S]*?<\/li>\n?)+/g, (m) => `<ul class="space-y-1 my-1">${m}</ul>`)
     // Line breaks (non-header, non-list)
     .replace(/\n(?!<)/g, "<br />");
+
+  return linkifyText(html, resources);
 }
 
 interface RecState {
@@ -110,7 +119,7 @@ function FindingCard({ finding, cfg }: { finding: SecurityFinding; cfg: typeof S
   }
 
   return (
-    <div data-nav tabIndex={0} className={cn("rounded-xl border glass space-y-2", cfg.border)}>
+    <div data-nav tabIndex={0} className={cn("rounded-xl border glass space-y-2 group", cfg.border)}>
       {/* Main content */}
       <div className="p-4 space-y-2">
         <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -122,8 +131,15 @@ function FindingCard({ finding, cfg }: { finding: SecurityFinding; cfg: typeof S
             {finding.projectId}
           </span>
         </div>
-        <p className="text-sm font-semibold text-white">{finding.title}</p>
-        <p className="text-xs text-slate-400 leading-relaxed">{finding.description}</p>
+        <p className="text-sm font-semibold text-white uppercase tracking-tight flex items-center gap-2">
+          {finding.title}
+          <button onClick={askAI} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-violet-400" title="Explain with AI">
+            <Sparkles className="w-3 h-3" />
+          </button>
+        </p>
+        <p className="text-xs text-slate-400 leading-relaxed group-hover:text-slate-300 transition-colors">
+          {finding.description}
+        </p>
         {finding.remediationHint && (
           <div className="pt-1 border-t border-slate-700/50">
             <p className="text-xs text-slate-500">
@@ -182,7 +198,7 @@ function FindingCard({ finding, cfg }: { finding: SecurityFinding; cfg: typeof S
           <div className="px-4 pb-4 border-t border-slate-700/30">
             <div
               className="mt-3 text-xs text-slate-300 leading-relaxed prose-answer"
-              dangerouslySetInnerHTML={{ __html: renderMd(rec.text) }}
+              dangerouslySetInnerHTML={{ __html: renderMd(rec.text, finding) }}
             />
             <button
               onClick={askAI}

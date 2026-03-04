@@ -6,17 +6,35 @@
 
 /* ── Terminal palette ─────────────────────────────────── */
 :root {
+  --bg: #090909;
+  --bg-card: #0d0d0d;
+  --bg-card2: #111411;
   --green: #00ff41;
   --green-dim: #00aa2b;
   --green-glow: #00ff4133;
   --red: #ff3333;
   --red-dim: #aa0000;
   --amber: #ffaa00;
-  --bg: #090909;
-  --bg-card: #0d0d0d;
-  --bg-card2: #111411;
   --border: #00ff41;
   --border-dim: #005c16;
+  --text-primary: #00ff41;
+  --text-muted: #00aa2b;
+}
+
+[data-theme='light'] {
+  --bg: #fdf6e3;
+  --bg-card: #eee8d5;
+  --bg-card2: #93a1a115;
+  --green: #005c16;
+  --green-dim: #00aa2b;
+  --green-glow: rgba(0, 92, 22, 0.1);
+  --red: #d33682;
+  --red-dim: #859900;
+  --amber: #b58900;
+  --border: #005c16;
+  --border-dim: #93a1a1;
+  --text-primary: #073642;
+  --text-muted: #586e75;
 }
 
 @layer base {
@@ -28,7 +46,8 @@
   html,
   body {
     background-color: var(--bg);
-    color: var(--green);
+    color: var(--text-primary);
+    transition: background-color 0.2s, color 0.2s;
   }
 
   body {
