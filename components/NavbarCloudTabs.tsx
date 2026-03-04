@@ -11,7 +11,7 @@ export default function NavbarCloudTabs() {
     <div className="flex items-center" style={{ borderRight: "1px solid #003010", marginRight: "4px", paddingRight: "4px" }}>
       <Link
         href="/dashboard"
-        className="flex items-center gap-1 px-3 h-full text-xs uppercase tracking-widest transition-colors border-r"
+        className="flex items-center gap-1 px-2 md:px-3 h-full text-[10px] md:text-xs uppercase tracking-widest transition-colors border-r"
         style={{
           color: !isAws ? "#00ff41" : "#005c16",
           background: !isAws ? "#0a1a0a" : "transparent",
@@ -21,11 +21,11 @@ export default function NavbarCloudTabs() {
           alignItems: "center",
         }}
       >
-        [GCP]
+        GCP
       </Link>
       <Link
         href="/dashboard/aws"
-        className="flex items-center gap-1 px-3 h-full text-xs uppercase tracking-widest transition-colors border-r"
+        className="flex items-center gap-1 px-2 md:px-3 h-full text-[10px] md:text-xs uppercase tracking-widest transition-colors border-r"
         style={{
           color: isAws ? "#00ff41" : "#005c16",
           background: isAws ? "#0a1a0a" : "transparent",
@@ -35,7 +35,7 @@ export default function NavbarCloudTabs() {
           alignItems: "center",
         }}
       >
-        [AWS]
+        AWS
       </Link>
     </div>
   );

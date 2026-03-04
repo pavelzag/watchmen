@@ -323,18 +323,7 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
         <h1 className="text-lg font-semibold text-white">Settings</h1>
       </div>
 
-      {/* No-key notice */}
-      {!loading && !hasAnyKey && (
-        <div className="flex items-start gap-3 p-4 rounded-xl border border-amber-500/30 bg-amber-500/8">
-          <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-          <div>
-            <p className="text-sm font-medium text-amber-300">No AI keys configured</p>
-            <p className="text-xs text-amber-400/80 mt-0.5">
-              Advanced features (AI security recommendations, natural language queries) are using the system default key. Add your own key below to use your preferred provider and quota.
-            </p>
-          </div>
-        </div>
-      )}
+      {/* No-key notice - REMOVED */}
 
       {/* Active key summary */}
       {activeKey && (
@@ -350,21 +339,8 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
       {/* Provider cards */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-xs text-slate-500 font-medium uppercase tracking-wider">AI Provider Keys</h2>
-          {isDemoUser && (
-            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] bg-amber-500/10 border border-amber-500/20 text-amber-500 font-medium">
-              <ShieldCheck className="w-3 h-3" />
-              Demo Mode: Browser-Only Storage Forced
-            </div>
-          )}
+          <h2 className="text-xs text-slate-500 font-medium uppercase tracking-wider text-green-500">AI Provider Keys</h2>
         </div>
-        {isDemoUser && (
-          <div className="p-3 rounded-lg border border-amber-500/25 bg-amber-500/8">
-            <p className="text-xs text-amber-300/80 leading-relaxed">
-              <span className="font-semibold text-amber-300">Isolated Sessions.</span> To keep the demo experience clean, AI keys added in this account are stored <span className="font-semibold text-amber-300">only in your current browser</span>. They will not be shared with other users of the demo account, and will not appear in other browsers.
-            </p>
-          </div>
-        )}
         {loading ? (
           <div className="space-y-3">
             {[...Array(3)].map((_, i) => (
@@ -507,18 +483,7 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
       {/* Cloud Credentials */}
       <div className="space-y-4">
         <div>
-          <h2 className="text-xs text-slate-500 font-medium uppercase tracking-wider">Cloud Credentials</h2>
-          {isDemoUser && (
-            <div className="flex items-start gap-2 mt-2 p-3 rounded-lg border border-amber-500/25 bg-amber-500/8">
-              <ShieldCheck className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
-              <p className="text-xs text-amber-300/80 leading-relaxed">
-                <span className="font-semibold text-amber-300">Browser-only storage.</span>{" "}
-                Your credentials are saved exclusively in this browser tab&apos;s session memory (sessionStorage) and are{" "}
-                <span className="font-semibold">never written to our database</span>. They are sent over HTTPS for each
-                scan request and discarded immediately after. Closing this tab clears them permanently.
-              </p>
-            </div>
-          )}
+          <h2 className="text-xs text-slate-500 font-medium uppercase tracking-wider text-green-500">Cloud Credentials</h2>
         </div>
 
         {cloudLoading ? (

@@ -39,6 +39,9 @@ const RESOURCE_LINKS: Record<string, string> = {
     rds_instance: "/dashboard/aws/rds",
     eks_cluster: "/dashboard/aws/eks",
     lambda_function: "/dashboard/aws/lambda",
+    iam_user: "/dashboard/aws/iam",
+    iam_role: "/dashboard/aws/iam",
+    aws_account: "/dashboard/aws",
 };
 
 function resourceHref(item: ResourceItem): string {

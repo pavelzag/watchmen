@@ -24,6 +24,9 @@ const RESOURCE_LINKS: Record<string, Omit<IntentLink, "href"> & { path: string }
   pubsub: { path: "/dashboard/pubsub", label: "Pub/Sub", Icon: Radio },
   secret: { path: "/dashboard/secrets", label: "Secrets", Icon: Lock },
   firewall: { path: "/dashboard/firewall", label: "Firewall Rules", Icon: Flame },
+  iam_user: { path: "/dashboard/aws/iam", label: "IAM Users", Icon: User },
+  iam_role: { path: "/dashboard/aws/iam", label: "IAM Roles", Icon: KeySquare },
+  aws_account: { path: "/dashboard/aws", label: "AWS Account", Icon: Server },
 };
 
 function buildLinks(intent: QueryResult["intent"]): IntentLink[] {
