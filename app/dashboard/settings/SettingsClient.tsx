@@ -12,6 +12,7 @@ import {
   clearDemoCredentials,
   type DemoCredentials,
 } from "@/lib/demo-credentials";
+import { getBrowserAIKeys, setBrowserAIKey, removeBrowserAIKey, type BrowserAIKeys } from "@/lib/ai/browser-ai-keys";
 
 interface CloudCredRecord {
   provider: string;
@@ -98,6 +99,10 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
   const [cloudDeleting, setCloudDeleting] = useState<Record<string, boolean>>({ gcp: false, aws: false });
   const [cloudErrors, setCloudErrors] = useState<Record<string, string>>({ gcp: "", aws: "" });
 
+  // Browser-only AI keys
+  const [browserKeys, setBrowserKeys] = useState<BrowserAIKeys>({});
+  const [saveToBrowser, setSaveToBrowser] = useState<Record<AIProvider, boolean>>({ google: false, openai: false, anthropic: false });
+
   // Browser-only demo credentials state
   const [demoCreds, setDemoCreds] = useState<DemoCredentials>({});
   const [demoGcpInput, setDemoGcpInput] = useState("");
@@ -109,8 +114,10 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
     fetch("/api/settings/keys")
       .then((r) => r.json())
       .then((d) => setKeys(d.keys ?? []))
-      .catch(() => {})
+      .catch(() => { })
       .finally(() => setLoading(false));
+
+    setBrowserKeys(getBrowserAIKeys());
   }, []);
 
   useEffect(() => {
@@ -121,7 +128,7 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
       fetch("/api/settings/credentials")
         .then((r) => r.json())
         .then((d) => setCloudCreds(d.credentials ?? []))
-        .catch(() => {})
+        .catch(() => { })
         .finally(() => setCloudLoading(false));
     }
   }, [isDemoUser]);
@@ -137,20 +144,45 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
     const apiKey = inputs[provider].trim();
     if (!apiKey) return;
     setSaving((s) => ({ ...s, [provider]: true }));
-    try {
-      const res = await fetch("/api/settings/keys", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider, apiKey }),
-      });
-      const data = await res.json();
-      if (!res.ok) { addError(provider, data.error ?? "Unknown error"); return; }
-      setKeys(data.keys);
-      setInputs((i) => ({ ...i, [provider]: "" }));
-    } catch (e) {
-      addError(provider, e instanceof Error ? e.message : "Network error");
-    } finally {
-      setSaving((s) => ({ ...s, [provider]: false }));
+
+    if (saveToBrowser[provider]) {
+      // Save to browser storage
+      try {
+        const res = await fetch("/api/settings/keys", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ provider, apiKey, dryRun: true }), // Dry run for browser keys
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          addError(provider, data.error ?? "Key validation failed");
+          return;
+        }
+        setBrowserAIKey(provider, apiKey);
+        setBrowserKeys(getBrowserAIKeys());
+        setInputs((i) => ({ ...i, [provider]: "" }));
+      } catch (e) {
+        addError(provider, e instanceof Error ? e.message : "Network error during validation");
+      } finally {
+        setSaving((s) => ({ ...s, [provider]: false }));
+      }
+    } else {
+      // Save to server
+      try {
+        const res = await fetch("/api/settings/keys", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ provider, apiKey }),
+        });
+        const data = await res.json();
+        if (!res.ok) { addError(provider, data.error ?? "Unknown error"); return; }
+        setKeys(data.keys);
+        setInputs((i) => ({ ...i, [provider]: "" }));
+      } catch (e) {
+        addError(provider, e instanceof Error ? e.message : "Network error");
+      } finally {
+        setSaving((s) => ({ ...s, [provider]: false }));
+      }
     }
   }
 
@@ -166,6 +198,11 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
     } finally {
       setDeleting((d) => ({ ...d, [provider]: false }));
     }
+  }
+
+  function deleteBrowserKey(provider: AIProvider) {
+    removeBrowserAIKey(provider);
+    setBrowserKeys(getBrowserAIKeys());
   }
 
   async function setActive(provider: AIProvider) {
@@ -194,10 +231,10 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
         provider === "gcp"
           ? { serviceAccountKey: gcpKeyInput.trim() }
           : {
-              accessKeyId: awsInputs.accessKeyId.trim(),
-              secretAccessKey: awsInputs.secretAccessKey.trim(),
-              region: awsInputs.region.trim() || "us-east-1",
-            };
+            accessKeyId: awsInputs.accessKeyId.trim(),
+            secretAccessKey: awsInputs.secretAccessKey.trim(),
+            region: awsInputs.region.trim() || "us-east-1",
+          };
       const res = await fetch("/api/settings/credentials", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -312,11 +349,15 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
         ) : (
           <div className="space-y-3">
             {PROVIDERS.map((prov) => {
-              const record = keys.find((k) => k.provider === prov.id);
               const isSaving = saving[prov.id];
               const isDeleting = deleting[prov.id];
               const isActivating = activating === prov.id;
-              const isActive = record?.isActive;
+              const serverRecord = keys.find((k) => k.provider === prov.id);
+              const browserKey = browserKeys[prov.id];
+              const isActive = serverRecord?.isActive;
+
+              const record = browserKey ? { provider: prov.id, keyHint: browserKey.slice(-4), isActive } : serverRecord;
+              const isBrowserStored = !!browserKey;
 
               return (
                 <div
@@ -350,6 +391,11 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
                         <span className="flex items-center gap-1 text-xs text-emerald-400">
                           <Check className="w-3 h-3" />
                           <span className="font-mono">····{record.keyHint}</span>
+                          {isBrowserStored && (
+                            <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] bg-blue-500/15 border border-blue-500/25 text-blue-400 font-sans font-normal uppercase tracking-wider">
+                              Browser
+                            </span>
+                          )}
                         </span>
                         {!isActive && keys.length > 1 && (
                           <button
@@ -361,7 +407,7 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
                           </button>
                         )}
                         <button
-                          onClick={() => deleteKey(prov.id)}
+                          onClick={() => isBrowserStored ? deleteBrowserKey(prov.id) : deleteKey(prov.id)}
                           disabled={isDeleting}
                           className="text-slate-600 hover:text-red-400 transition-colors"
                           title="Remove key"
@@ -373,37 +419,50 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
                       <span className="text-xs text-slate-600 shrink-0">Not configured</span>
                     )}
                   </div>
-                  <div className="flex gap-2">
-                    <div className="relative flex-1">
-                      <input
-                        type={showKey[prov.id] ? "text" : "password"}
-                        value={inputs[prov.id]}
-                        onChange={(e) => setInputs((i) => ({ ...i, [prov.id]: e.target.value }))}
-                        placeholder={record ? `Update key (${prov.placeholder})` : `Paste API key (${prov.placeholder})`}
-                        className="w-full pl-3 pr-9 py-2 rounded-lg bg-slate-900/60 border border-slate-700 text-sm text-slate-200 placeholder:text-slate-600 outline-none focus:border-sky-500/50 font-mono text-xs"
-                        onKeyDown={(e) => e.key === "Enter" && saveKey(prov.id)}
-                      />
+                  <div className="space-y-3">
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <input
+                          type={showKey[prov.id] ? "text" : "password"}
+                          value={inputs[prov.id]}
+                          onChange={(e) => setInputs((i) => ({ ...i, [prov.id]: e.target.value }))}
+                          placeholder={record ? `Update key (${prov.placeholder})` : `Paste API key (${prov.placeholder})`}
+                          className="w-full pl-3 pr-9 py-2 rounded-lg bg-slate-900/60 border border-slate-700 text-sm text-slate-200 placeholder:text-slate-600 outline-none focus:border-sky-500/50 font-mono text-xs"
+                          onKeyDown={(e) => e.key === "Enter" && saveKey(prov.id)}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowKey((s) => ({ ...s, [prov.id]: !s[prov.id] }))}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                        >
+                          {showKey[prov.id] ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
                       <button
-                        type="button"
-                        onClick={() => setShowKey((s) => ({ ...s, [prov.id]: !s[prov.id] }))}
-                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                        onClick={() => saveKey(prov.id)}
+                        disabled={!inputs[prov.id].trim() || isSaving}
+                        className={cn(
+                          "flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-all duration-150",
+                          inputs[prov.id].trim() && !isSaving
+                            ? cn(prov.accent, "text-white hover:opacity-90")
+                            : "bg-slate-700/50 text-slate-500 cursor-not-allowed"
+                        )}
                       >
-                        {showKey[prov.id] ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                        {isSaving ? "Testing…" : record ? "Update" : "Add & Test"}
                       </button>
                     </div>
-                    <button
-                      onClick={() => saveKey(prov.id)}
-                      disabled={!inputs[prov.id].trim() || isSaving}
-                      className={cn(
-                        "flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-all duration-150",
-                        inputs[prov.id].trim() && !isSaving
-                          ? cn(prov.accent, "text-white hover:opacity-90")
-                          : "bg-slate-700/50 text-slate-500 cursor-not-allowed"
-                      )}
-                    >
-                      {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
-                      {isSaving ? "Testing…" : record ? "Update" : "Add & Test"}
-                    </button>
+                    <label className="flex items-center gap-2 cursor-pointer group">
+                      <input
+                        type="checkbox"
+                        checked={saveToBrowser[prov.id]}
+                        onChange={(e) => setSaveToBrowser((s) => ({ ...s, [prov.id]: e.target.checked }))}
+                        className="w-3.5 h-3.5 rounded border-slate-700 bg-slate-900 text-sky-500 focus:ring-sky-500/20"
+                      />
+                      <span className="text-[11px] text-slate-500 group-hover:text-slate-400 transition-colors">
+                        Save to this browser only (prevents sharing across browsers)
+                      </span>
+                    </label>
                   </div>
                   <p className="text-xs text-slate-600">
                     Key is tested before saving and stored encrypted. Never shared with third parties.

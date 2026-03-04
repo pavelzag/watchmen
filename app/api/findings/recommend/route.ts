@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { resolveAI, callAI } from "@/lib/ai/client";
+import { resolveAI, callAI, type AIProvider } from "@/lib/ai/client";
 import type { SecurityFinding } from "@/lib/gcp/types";
 
 export async function POST(req: NextRequest) {
@@ -9,31 +9,37 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  let finding: SecurityFinding;
-  try {
-    finding = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+  const bodyData = await req.json().catch(() => ({}));
+
+  // Resolve the user's AI key: check body first (browser-only), then fallback to DB
+  let provider: AIProvider;
+  let apiKey: string;
+  const browserKey = bodyData.demoCredentials?.aiKey;
+  const browserProvider = bodyData.demoCredentials?.aiProvider as AIProvider;
+
+  if (browserKey && browserProvider) {
+    provider = browserProvider;
+    apiKey = browserKey;
+  } else {
+    try {
+      const resolved = await resolveAI(session.user.email);
+      provider = resolved.provider;
+      apiKey = resolved.key;
+    } catch {
+      return NextResponse.json(
+        { error: "No AI key configured. Add one in Settings." },
+        { status: 422 }
+      );
+    }
   }
 
-  let provider: string;
-  let apiKey: string;
-  try {
-    const resolved = await resolveAI(session.user.email);
-    provider = resolved.provider;
-    apiKey = resolved.key;
-  } catch {
-    return NextResponse.json(
-      { error: "No AI key configured. Add one in Settings." },
-      { status: 422 }
-    );
-  }
+  const finding: SecurityFinding = bodyData;
 
   const prompt = `You are a senior GCP security engineer. A security scanner found the following issue in a GCP environment. Provide a detailed, actionable remediation guide.
 
 **Finding**
 - Title: ${finding.title}
-- Severity: ${finding.severity.toUpperCase()}
+- Severity: ${finding.severity?.toUpperCase()}
 - Resource: ${finding.resourceName} (type: ${finding.resourceType})
 - Project: ${finding.projectId}
 - Description: ${finding.description}
@@ -56,7 +62,7 @@ Provide numbered steps with concrete \`gcloud\` CLI commands or GCP Console navi
 Keep the entire response concise and actionable. Do not include an introduction or conclusion.`;
 
   try {
-    const recommendation = await callAI(provider as Parameters<typeof callAI>[0], apiKey, prompt);
+    const recommendation = await callAI(provider, apiKey, prompt);
     return NextResponse.json({ recommendation });
   } catch (err) {
     console.error("[api/findings/recommend] error:", err);

@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { Loader2, History, X, ChevronDown } from "lucide-react";
 import { saveQuery, getHistory, clearHistory, type QueryHistoryEntry } from "@/lib/query-history";
 import type { ResourceItem } from "@/lib/claude/query-processor";
+import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
 
 const SUGGESTED_QUERIES = [
   "Which buckets are publicly accessible?",
@@ -53,10 +54,16 @@ export default function QueryBox({ onResult }: QueryBoxProps) {
     setError(null);
 
     try {
+      const browserAI = getActiveBrowserAIKey();
+      const demoCredentials = browserAI ? { aiKey: browserAI.key, aiProvider: browserAI.provider } : undefined;
+
       const res = await fetch("/api/query", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: query.trim() }),
+        body: JSON.stringify({
+          query: query.trim(),
+          demoCredentials
+        }),
       });
 
       const data = await res.json();

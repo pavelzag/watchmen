@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ComplianceReport, ComplianceCategory, ControlResult, ControlStatus, ControlImpact } from "@/lib/compliance/types";
+import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
 
 // ── Config ────────────────────────────────────────────────────────────────
 
@@ -53,9 +54,9 @@ const STATUS_CONFIG: Record<ControlStatus, { label: string; color: string; bg: s
 
 const IMPACT_CONFIG: Record<ControlImpact, { label: string; color: string }> = {
   critical: { label: "Critical", color: "text-red-400" },
-  high:     { label: "High",     color: "text-orange-400" },
-  medium:   { label: "Medium",   color: "text-amber-400" },
-  low:      { label: "Low",      color: "text-slate-400" },
+  high: { label: "High", color: "text-orange-400" },
+  medium: { label: "Medium", color: "text-amber-400" },
+  low: { label: "Low", color: "text-slate-400" },
 };
 
 // Control ID → resource page slug for evidence chip links
@@ -71,25 +72,25 @@ const CONTROL_RESOURCE_PAGE: Record<string, string> = {
   "CC6.7.a": "firewall",
   "CC6.7.b": "firewall",
   "CC6.7.c": "cloud-sql",
-  "C1.1.a":  "buckets",
-  "C1.1.b":  "secrets",
-  "C1.1.c":  "cloud-run",
+  "C1.1.a": "buckets",
+  "C1.1.b": "secrets",
+  "C1.1.c": "cloud-run",
   "CC7.1.a": "clusters",
   "CC7.1.b": "clusters",
   "CC7.2.a": "vms",
-  "A1.2.a":  "cloud-sql",
-  "A1.2.b":  "buckets",
+  "A1.2.a": "cloud-sql",
+  "A1.2.b": "buckets",
   // ISO 27001
   "A.5.15.a": "users",
   "A.5.16.a": "service-accounts",
   "A.5.17.a": "service-accounts",
   "A.5.17.b": "clusters",
   "A.5.18.a": "service-accounts",
-  "A.8.2.a":  "service-accounts",
-  "A.8.3.a":  "buckets",
-  "A.8.5.a":  "secrets",
-  "A.8.5.b":  "cloud-run",
-  "A.8.8.a":  "clusters",
+  "A.8.2.a": "service-accounts",
+  "A.8.3.a": "buckets",
+  "A.8.5.a": "secrets",
+  "A.8.5.b": "cloud-run",
+  "A.8.8.a": "clusters",
   "A.8.14.a": "cloud-sql",
   "A.8.14.b": "buckets",
   "A.8.20.a": "firewall",
@@ -103,17 +104,17 @@ const CONTROL_RESOURCE_PAGE: Record<string, string> = {
 // ── Reference links ───────────────────────────────────────────────────────
 
 const AICPA_SOC2_PAGE = "https://www.aicpa-cima.com/topic/audit-assurance/audit-and-assurance-greater-than-soc-2";
-const AICPA_TSC_PDF   = "https://www.aicpa-cima.com/resources/download/2017-trust-services-criteria-with-revised-points-of-focus-2022";
+const AICPA_TSC_PDF = "https://www.aicpa-cima.com/resources/download/2017-trust-services-criteria-with-revised-points-of-focus-2022";
 
 const SOC2_AICPA_URL: Record<string, string> = {
   "CC6.1": AICPA_SOC2_PAGE,
   "CC6.3": AICPA_SOC2_PAGE,
   "CC6.6": AICPA_SOC2_PAGE,
   "CC6.7": AICPA_SOC2_PAGE,
-  "C1.1":  AICPA_TSC_PDF,
+  "C1.1": AICPA_TSC_PDF,
   "CC7.1": AICPA_SOC2_PAGE,
   "CC7.2": AICPA_SOC2_PAGE,
-  "A1.2":  AICPA_SOC2_PAGE,
+  "A1.2": AICPA_SOC2_PAGE,
 };
 
 const ISMS_BASE = "https://www.isms.online/iso-27001/annex-a-2022";
@@ -123,10 +124,10 @@ const ISO27001_URL: Record<string, string> = {
   "A.5.16": `${ISMS_BASE}/5-16-identity-management-2022/`,
   "A.5.17": `${ISMS_BASE}/5-17-authentication-information-2022/`,
   "A.5.18": `${ISMS_BASE}/5-18-access-rights-2022/`,
-  "A.8.2":  `${ISMS_BASE}/8-2-privileged-access-rights-2022/`,
-  "A.8.3":  `${ISMS_BASE}/8-3-information-access-restriction-2022/`,
-  "A.8.5":  `${ISMS_BASE}/8-5-secure-authentication-2022/`,
-  "A.8.8":  `${ISMS_BASE}/8-8-management-of-technical-vulnerabilities-2022/`,
+  "A.8.2": `${ISMS_BASE}/8-2-privileged-access-rights-2022/`,
+  "A.8.3": `${ISMS_BASE}/8-3-information-access-restriction-2022/`,
+  "A.8.5": `${ISMS_BASE}/8-5-secure-authentication-2022/`,
+  "A.8.8": `${ISMS_BASE}/8-8-management-of-technical-vulnerabilities-2022/`,
   "A.8.14": `${ISMS_BASE}/8-14-redundancy-of-information-processing-facilities-2022/`,
   "A.8.20": `${ISMS_BASE}/8-20-networks-security-2022/`,
   "A.8.21": `${ISMS_BASE}/8-21-security-of-network-services-2022/`,
@@ -356,6 +357,10 @@ function ControlCard({
           description: control.description,
           evidence: control.evidence,
           standard: standard === "iso27001" ? "ISO 27001:2022" : "SOC 2 Type II",
+          demoCredentials: (() => {
+            const browserAI = getActiveBrowserAIKey();
+            return browserAI ? { aiKey: browserAI.key, aiProvider: browserAI.provider } : undefined;
+          })(),
         }),
       });
       const data = await res.json();
@@ -532,8 +537,8 @@ function ControlCard({
               rec.loading
                 ? "text-slate-500 cursor-not-allowed"
                 : rec.text
-                ? "text-violet-400 hover:text-violet-300 bg-violet-500/10 hover:bg-violet-500/15"
-                : "text-slate-400 hover:text-violet-400 hover:bg-violet-500/10"
+                  ? "text-violet-400 hover:text-violet-300 bg-violet-500/10 hover:bg-violet-500/15"
+                  : "text-slate-400 hover:text-violet-400 hover:bg-violet-500/10"
             )}
           >
             {rec.loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
@@ -660,8 +665,8 @@ function CategorySection({
 type Standard = "soc2" | "iso27001";
 
 const STANDARDS: { id: Standard; label: string; sublabel: string }[] = [
-  { id: "soc2",      label: "SOC 2",       sublabel: "Type II" },
-  { id: "iso27001",  label: "ISO 27001",   sublabel: "2022" },
+  { id: "soc2", label: "SOC 2", sublabel: "Type II" },
+  { id: "iso27001", label: "ISO 27001", sublabel: "2022" },
 ];
 
 export default function CompliancePage() {
@@ -912,10 +917,10 @@ export default function CompliancePage() {
                   ? f === "fail"
                     ? "bg-red-500/15 text-red-400 border-red-500/30"
                     : f === "warning"
-                    ? "bg-amber-500/15 text-amber-400 border-amber-500/30"
-                    : f === "suppressed"
-                    ? "bg-slate-500/15 text-slate-400 border-slate-500/30"
-                    : "bg-slate-700 text-white border-slate-600"
+                      ? "bg-amber-500/15 text-amber-400 border-amber-500/30"
+                      : f === "suppressed"
+                        ? "bg-slate-500/15 text-slate-400 border-slate-500/30"
+                        : "bg-slate-700 text-white border-slate-600"
                   : "text-slate-500 border-slate-700/50 hover:text-slate-300 hover:border-slate-600"
               )}
             >

@@ -6,6 +6,7 @@ import { ArrowLeft, ShieldAlert, ShieldCheck, RefreshCw, Sparkles, Loader2, Chev
 import { cn } from "@/lib/utils";
 import { computeFindings } from "@/lib/findings";
 import type { GcpSnapshot, SecurityFinding, SecurityFindingSeverity } from "@/lib/gcp/types";
+import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
 
 const SEVERITY_CONFIG: Record<SecurityFindingSeverity, { label: string; color: string; bg: string; border: string; dot: string }> = {
   critical: {
@@ -92,7 +93,13 @@ function FindingCard({ finding, cfg }: { finding: SecurityFinding; cfg: typeof S
       const res = await fetch("/api/findings/recommend", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(finding),
+        body: JSON.stringify({
+          ...finding,
+          demoCredentials: (() => {
+            const browserAI = getActiveBrowserAIKey();
+            return browserAI ? { aiKey: browserAI.key, aiProvider: browserAI.provider } : undefined;
+          })(),
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed");
@@ -138,8 +145,8 @@ function FindingCard({ finding, cfg }: { finding: SecurityFinding; cfg: typeof S
               rec.loading
                 ? "text-slate-500 cursor-not-allowed"
                 : rec.text
-                ? "text-violet-400 hover:text-violet-300 bg-violet-500/10 hover:bg-violet-500/15"
-                : "text-slate-400 hover:text-violet-400 hover:bg-violet-500/10"
+                  ? "text-violet-400 hover:text-violet-300 bg-violet-500/10 hover:bg-violet-500/15"
+                  : "text-slate-400 hover:text-violet-400 hover:bg-violet-500/10"
             )}
           >
             {rec.loading ? (

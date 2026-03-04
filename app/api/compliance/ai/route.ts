@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { resolveAI, callAI } from "@/lib/ai/client";
+import { resolveAI, callAI, type AIProvider } from "@/lib/ai/client";
 
 interface ComplianceAiRequest {
   controlId: string;
@@ -8,6 +8,7 @@ interface ComplianceAiRequest {
   description: string;
   evidence: { name: string; projectId: string }[];
   standard?: string; // "SOC 2 Type II" | "ISO 27001:2022"
+  demoCredentials?: { aiKey?: string; aiProvider?: string };
 }
 
 export async function POST(req: NextRequest) {
@@ -16,38 +17,42 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  let body: ComplianceAiRequest;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
-  }
+  const bodyData: ComplianceAiRequest = await req.json().catch(() => ({}));
 
-  let provider: string;
+  // Resolve the user's AI key: check body first (browser-only), then fallback to DB
+  let provider: AIProvider;
   let apiKey: string;
-  try {
-    const resolved = await resolveAI(session.user.email);
-    provider = resolved.provider;
-    apiKey = resolved.key;
-  } catch {
-    return NextResponse.json(
-      { error: "No AI key configured. Add one in Settings." },
-      { status: 422 }
-    );
+  const browserKey = bodyData.demoCredentials?.aiKey;
+  const browserProvider = bodyData.demoCredentials?.aiProvider as AIProvider;
+
+  if (browserKey && browserProvider) {
+    provider = browserProvider;
+    apiKey = browserKey;
+  } else {
+    try {
+      const resolved = await resolveAI(session.user.email);
+      provider = resolved.provider;
+      apiKey = resolved.key;
+    } catch {
+      return NextResponse.json(
+        { error: "No AI key configured. Add one in Settings." },
+        { status: 422 }
+      );
+    }
   }
 
-  const standard = body.standard ?? "SOC 2 Type II";
+  const standard = bodyData.standard ?? "SOC 2 Type II";
   const affectedList =
-    body.evidence.length > 0
-      ? body.evidence.map((e) => `- ${e.name} (project: ${e.projectId})`).join("\n")
+    bodyData.evidence?.length > 0
+      ? bodyData.evidence.map((e) => `- ${e.name} (project: ${e.projectId})`).join("\n")
       : "No specific resources identified (control passed or evidence not available).";
 
   const prompt = `You are a senior GCP security and compliance engineer specializing in ${standard} audits. A compliance scanner flagged the following control violation. Provide a detailed, actionable remediation guide.
 
 **${standard} Control**
-- Control ID: ${body.controlId}
-- Title: ${body.title}
-- Description: ${body.description}
+- Control ID: ${bodyData.controlId}
+- Title: ${bodyData.title}
+- Description: ${bodyData.description}
 
 **Affected Resources**
 ${affectedList}
@@ -69,7 +74,7 @@ Provide numbered steps with concrete \`gcloud\` CLI commands or GCP Console navi
 Keep the entire response concise and actionable. Do not include an introduction or conclusion.`;
 
   try {
-    const recommendation = await callAI(provider as Parameters<typeof callAI>[0], apiKey, prompt);
+    const recommendation = await callAI(provider, apiKey, prompt);
     return NextResponse.json({ recommendation });
   } catch (err) {
     console.error("[api/compliance/ai] error:", err);

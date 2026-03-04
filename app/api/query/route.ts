@@ -3,7 +3,7 @@ import { auth } from "@/lib/auth";
 import { fetchGcpSnapshot } from "@/lib/gcp";
 import { useMockData } from "@/lib/gcp/client";
 import { extractIntent, generateAnswer, extractResources } from "@/lib/claude/query-processor";
-import { resolveAI } from "@/lib/ai/client";
+import { callAI, resolveAI, type AIProvider } from "@/lib/ai/client"; // Updated import
 import { sql, ensureGcpSnapshotTable } from "@/lib/db";
 
 export async function POST(req: NextRequest) {
@@ -13,28 +13,30 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json();
-  const query: string = body?.query?.trim();
 
-  if (!query || query.length < 3) {
-    return NextResponse.json({ error: "Query must be at least 3 characters." }, { status: 400 });
-  }
-  if (query.length > 500) {
-    return NextResponse.json({ error: "Query must be under 500 characters." }, { status: 400 });
-  }
-
-  // Resolve the user's AI key before doing anything else
-  let provider: Awaited<ReturnType<typeof resolveAI>>["provider"];
+  // Resolve the user's AI key: check body first (browser-only), then fallback to DB
+  let provider: AIProvider;
   let apiKey: string;
-  try {
-    const resolved = await resolveAI(session.user.email);
-    provider = resolved.provider;
-    apiKey = resolved.key;
-  } catch {
-    return NextResponse.json(
-      { error: "No AI key configured. Go to Settings → AI Keys to add one." },
-      { status: 422 }
-    );
+  const browserKey = (body as any)?.demoCredentials?.aiKey;
+  const browserProvider = (body as any)?.demoCredentials?.aiProvider;
+
+  if (browserKey && browserProvider) {
+    provider = browserProvider;
+    apiKey = browserKey;
+  } else {
+    try {
+      const resolved = await resolveAI(session.user.email);
+      provider = resolved.provider;
+      apiKey = resolved.key;
+    } catch {
+      return NextResponse.json(
+        { error: "No AI key configured. Go to Settings → AI Keys to add one." },
+        { status: 422 }
+      );
+    }
   }
+
+  const query: string = body?.query?.trim();
 
   try {
     let snapshot;
