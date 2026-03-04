@@ -22,8 +22,15 @@ export default async function Navbar() {
       <div className="max-w-7xl mx-auto px-6 h-12 flex items-center justify-between">
         {/* Logo and hint */}
         <div className="flex items-baseline gap-3 shrink-0">
-          <Link href="/dashboard" className="flex items-center gap-2">
-            <Shield className="w-5 h-5" style={{ color: "var(--green)" }} />
+          <Link href="/dashboard" className="flex items-center gap-2 group">
+            <div className="relative w-5 h-5 transition-transform group-hover:scale-110">
+              <svg viewBox="0 0 24 24" fill="currentColor" style={{ color: "var(--green)" }}>
+                <path d="M12 2c-.5 0-1 .5-1.5 1.5S9 6 9 8s.5 4 1.5 5.5S12 16 12 16s.5-1 1.5-2.5S15 10 15 8s-.5-4.5-1.5-6S12.5 2 12 2z" opacity="0.8" />
+                <path d="M12 22c.5 0 1-.5 1.5-1.5S15 18 15 16s-.5-4 1.5-5.5S18 8 18 8s-.5 1-1.5 2.5S15 14 15 16s.5 4.5 1.5 6s.5 0 0 0z" opacity="0.6" />
+                <path d="M12 22c-.5 0-1-.5-1.5-1.5S9 18 9 16s.5-4-1.5-5.5S6 8 6 8s.5 1 1.5 2.5S9 14 9 16s-.5 4.5-1.5 6s-.5 0 0 0z" opacity="0.6" />
+                <circle cx="12" cy="12" r="1.5" />
+              </svg>
+            </div>
             <span className="font-bold tracking-tighter text-lg" style={{ color: "var(--green)" }}>
               WATCHMEN
             </span>

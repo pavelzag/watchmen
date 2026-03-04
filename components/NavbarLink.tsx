@@ -23,7 +23,7 @@ export default function NavbarLink({ href, icon, label, danger }: NavbarLinkProp
             style={{
                 borderRight: "1px solid var(--bg-card2)",
                 background: isActive ? "var(--bg-card2)" : "transparent",
-                color: isActive ? "var(--text-primary)" : undefined,
+                color: isActive && !danger ? "var(--text-primary)" : undefined,
             }}
         >
             {icon}
