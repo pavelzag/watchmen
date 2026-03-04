@@ -12,6 +12,8 @@ export type DemoAwsCredentials = { accessKeyId: string; secretAccessKey: string;
 export type DemoCredentials = { gcp?: DemoGcpCredentials; aws?: DemoAwsCredentials };
 
 const STORAGE_KEY = "watchmen_demo_creds";
+const GCP_SNAP_KEY = "watchmen_demo_gcp_snap";
+const AWS_SNAP_KEY = "watchmen_demo_aws_snap";
 
 function read(): DemoCredentials {
   if (typeof window === "undefined") return {};
@@ -41,9 +43,36 @@ export function setDemoAwsCredentials(creds: DemoAwsCredentials): void {
 export function clearDemoCredentials(provider?: "gcp" | "aws"): void {
   if (!provider) {
     sessionStorage.removeItem(STORAGE_KEY);
+    sessionStorage.removeItem(GCP_SNAP_KEY);
+    sessionStorage.removeItem(AWS_SNAP_KEY);
     return;
   }
   const data = read();
   delete data[provider];
   write(data);
+  sessionStorage.removeItem(provider === "gcp" ? GCP_SNAP_KEY : AWS_SNAP_KEY);
+}
+
+// ── Snapshot cache (session-only, never stored server-side) ───────────────
+
+export function setDemoGcpSnapshot(snapshot: object): void {
+  sessionStorage.setItem(GCP_SNAP_KEY, JSON.stringify(snapshot));
+}
+
+export function getDemoGcpSnapshot(): object | null {
+  if (typeof window === "undefined") return null;
+  const raw = sessionStorage.getItem(GCP_SNAP_KEY);
+  if (!raw) return null;
+  try { return JSON.parse(raw) as object; } catch { return null; }
+}
+
+export function setDemoAwsSnapshot(snapshot: object): void {
+  sessionStorage.setItem(AWS_SNAP_KEY, JSON.stringify(snapshot));
+}
+
+export function getDemoAwsSnapshot(): object | null {
+  if (typeof window === "undefined") return null;
+  const raw = sessionStorage.getItem(AWS_SNAP_KEY);
+  if (!raw) return null;
+  try { return JSON.parse(raw) as object; } catch { return null; }
 }

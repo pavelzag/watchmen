@@ -8,7 +8,7 @@ import SnapshotStats from "@/components/SnapshotStats";
 import { Trash2 } from "lucide-react";
 import { saveSnapshot } from "@/lib/snapshot-history";
 import type { GcpSnapshot } from "@/lib/gcp/types";
-import { getDemoCredentials } from "@/lib/demo-credentials";
+import { getDemoCredentials, getDemoGcpSnapshot, setDemoGcpSnapshot } from "@/lib/demo-credentials";
 
 export default function DashboardClient() {
   const [results, setResults] = useState<QueryResult[]>([]);
@@ -16,6 +16,7 @@ export default function DashboardClient() {
   const [scanning, setScanning] = useState(false);
   const [hasAiKey, setHasAiKey] = useState<boolean | null>(null);
   const [gcpCredsRequired, setGcpCredsRequired] = useState(false);
+  const [demoSnapshot, setDemoSnapshot] = useState<object | null>(() => getDemoGcpSnapshot());
 
   const triggerScan = useCallback(async () => {
     setScanning(true);
@@ -27,12 +28,14 @@ export default function DashboardClient() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      if (res.status === 422) {
-        const data = await res.json();
-        if (data.credentialsRequired) {
-          setGcpCredsRequired(true);
-          return;
-        }
+      const data = await res.json().catch(() => ({})) as { credentialsRequired?: boolean; snapshot?: object };
+      if (res.status === 422 && data.credentialsRequired) {
+        setGcpCredsRequired(true);
+        return;
+      }
+      if (data.snapshot) {
+        setDemoGcpSnapshot(data.snapshot);
+        setDemoSnapshot(data.snapshot);
       }
       setGcpCredsRequired(false);
       setScanVersion((v) => v + 1);
@@ -79,6 +82,7 @@ export default function DashboardClient() {
           scanVersion={scanVersion}
           onSyncRequest={triggerScan}
           isSyncing={scanning}
+          overrideSnapshot={demoSnapshot}
         />
       </div>
 

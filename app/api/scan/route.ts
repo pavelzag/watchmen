@@ -25,17 +25,18 @@ export async function POST(req: NextRequest) {
     ?.demoCredentials?.gcp?.serviceAccountKey;
 
   if (session.isDemoUser && demoGcpKey) {
+    // Real scan with browser-only credentials — snapshot returned inline, never written to DB
     try {
       const snapshot = await fetchGcpSnapshot({ serviceAccountKey: demoGcpKey });
-      await ensureGcpSnapshotTable();
-      await sql`
-        INSERT INTO user_snapshots (user_email, snapshot, fetched_at)
-        VALUES (${email}, ${JSON.stringify(snapshot)}, NOW())
-        ON CONFLICT (user_email) DO UPDATE
-          SET snapshot = EXCLUDED.snapshot,
-              fetched_at = EXCLUDED.fetched_at
-      `;
-      return NextResponse.json({ ok: true, fetchedAt: snapshot.fetchedAt });
+      return NextResponse.json({
+        ok: true,
+        snapshot: {
+          ...snapshot,
+          users: extractUsers(snapshot),
+          serviceAccountEmails: extractServiceAccountEmails(snapshot),
+          fetchedAt: snapshot.fetchedAt,
+        },
+      });
     } catch (err) {
       console.error("[api/scan] POST demo-real error:", err);
       return NextResponse.json({ error: "Scan failed with provided credentials." }, { status: 500 });

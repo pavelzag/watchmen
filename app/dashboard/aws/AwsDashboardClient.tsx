@@ -2,22 +2,29 @@
 
 import { useState, useEffect, useCallback } from "react";
 import AwsSnapshotStats from "@/components/AwsSnapshotStats";
-import { getDemoCredentials } from "@/lib/demo-credentials";
+import { getDemoCredentials, getDemoAwsSnapshot, setDemoAwsSnapshot } from "@/lib/demo-credentials";
+import type { AwsSnapshot } from "@/lib/aws/types";
 
 export default function AwsDashboardClient() {
   const [scanVersion, setScanVersion] = useState(0);
   const [scanning, setScanning] = useState(false);
+  const [demoSnapshot, setDemoSnapshot] = useState<AwsSnapshot | null>(() => getDemoAwsSnapshot() as AwsSnapshot | null);
 
   const triggerScan = useCallback(async () => {
     setScanning(true);
     try {
       const demoCreds = getDemoCredentials();
       const body = demoCreds.aws ? { demoCredentials: { aws: demoCreds.aws } } : {};
-      await fetch("/api/aws/scan", {
+      const res = await fetch("/api/aws/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+      const data = await res.json().catch(() => ({})) as { snapshot?: AwsSnapshot };
+      if (data.snapshot) {
+        setDemoAwsSnapshot(data.snapshot);
+        setDemoSnapshot(data.snapshot);
+      }
       setScanVersion((v) => v + 1);
     } finally {
       setScanning(false);
@@ -53,6 +60,7 @@ export default function AwsDashboardClient() {
           scanVersion={scanVersion}
           onSyncRequest={triggerScan}
           isSyncing={scanning}
+          overrideSnapshot={demoSnapshot}
         />
       </div>
 

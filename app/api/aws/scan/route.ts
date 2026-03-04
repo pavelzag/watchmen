@@ -28,15 +28,8 @@ export async function POST(req: NextRequest) {
         secretAccessKey: demoCreds.secretAccessKey,
         region: demoCreds.region,
       });
-      await ensureAwsSnapshotTable();
-      await sql`
-        INSERT INTO aws_snapshots (user_email, snapshot, fetched_at)
-        VALUES (${email}, ${JSON.stringify(snapshot)}, NOW())
-        ON CONFLICT (user_email) DO UPDATE
-          SET snapshot = EXCLUDED.snapshot,
-              fetched_at = EXCLUDED.fetched_at
-      `;
-      return NextResponse.json({ ok: true, fetchedAt: snapshot.fetchedAt });
+      // Return inline — never written to DB so other demo sessions can't see it
+      return NextResponse.json({ ok: true, snapshot, fetchedAt: snapshot.fetchedAt });
     } catch (err) {
       console.error("[api/aws/scan] POST demo-real error:", err);
       return NextResponse.json({ error: "AWS scan failed with provided credentials." }, { status: 500 });
@@ -99,15 +92,8 @@ export async function GET() {
     return NextResponse.json({ error: "No user email in session." }, { status: 400 });
   }
 
-  // Demo user: prefer real DB snapshot, else mock
+  // Demo user: always return mock — real snapshots are returned inline from POST and cached in sessionStorage
   if (session.isDemoUser) {
-    try {
-      await ensureAwsSnapshotTable();
-      const result = await sql`SELECT snapshot, fetched_at FROM aws_snapshots WHERE user_email = ${email}`;
-      if (result.rows.length > 0) {
-        return NextResponse.json({ snapshot: result.rows[0].snapshot, fetchedAt: result.rows[0].fetched_at });
-      }
-    } catch { /* fall through to mock */ }
     try {
       const snapshot = await fetchAwsSnapshot({ forceMock: true });
       return NextResponse.json({ snapshot, fetchedAt: snapshot.fetchedAt });

@@ -32,9 +32,10 @@ interface SnapshotStatsProps {
   scanVersion?: number;
   onSyncRequest?: () => void;
   isSyncing?: boolean;
+  overrideSnapshot?: object | null;
 }
 
-export default function SnapshotStats({ scanVersion, onSyncRequest, isSyncing }: SnapshotStatsProps) {
+export default function SnapshotStats({ scanVersion, onSyncRequest, isSyncing, overrideSnapshot }: SnapshotStatsProps) {
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -59,7 +60,16 @@ export default function SnapshotStats({ scanVersion, onSyncRequest, isSyncing }:
     }
   }
 
-  useEffect(() => { fetchStats(); }, [scanVersion]);
+  useEffect(() => {
+    if (overrideSnapshot != null) {
+      setStats({ ...(overrideSnapshot as Stats), _snap: overrideSnapshot as GcpSnapshot });
+      setLoading(false);
+      setError(null);
+      return;
+    }
+    fetchStats();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scanVersion, overrideSnapshot]);
 
   useEffect(() => {
     if (!stats) return;

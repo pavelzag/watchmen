@@ -14,9 +14,10 @@ interface AwsSnapshotStatsProps {
   scanVersion?: number;
   onSyncRequest?: () => void;
   isSyncing?: boolean;
+  overrideSnapshot?: AwsSnapshot | null;
 }
 
-export default function AwsSnapshotStats({ scanVersion, onSyncRequest, isSyncing }: AwsSnapshotStatsProps) {
+export default function AwsSnapshotStats({ scanVersion, onSyncRequest, isSyncing, overrideSnapshot }: AwsSnapshotStatsProps) {
   const [snap, setSnap] = useState<AwsSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -42,7 +43,16 @@ export default function AwsSnapshotStats({ scanVersion, onSyncRequest, isSyncing
     }
   }
 
-  useEffect(() => { fetchStats(); }, [scanVersion]);
+  useEffect(() => {
+    if (overrideSnapshot != null) {
+      setSnap(overrideSnapshot);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+    fetchStats();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scanVersion, overrideSnapshot]);
 
   useEffect(() => {
     if (!snap) return;
