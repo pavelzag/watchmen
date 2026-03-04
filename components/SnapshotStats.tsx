@@ -126,9 +126,6 @@ export default function SnapshotStats({ scanVersion, onSyncRequest, isSyncing, o
     <div className="space-y-3">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <span className="text-xs uppercase tracking-widest" style={{ color: "#005c16" }}>
-          // GCP SNAPSHOT
-        </span>
         {onSyncRequest && (
           <button
             onClick={onSyncRequest}
