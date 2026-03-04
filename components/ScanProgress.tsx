@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { ScanLine } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const STEPS = [
+const GCP_STEPS = [
   "Connecting to GCP…",
   "Fetching IAM policies…",
   "Fetching service accounts…",
@@ -21,13 +21,32 @@ const STEPS = [
   "Saving snapshot…",
 ];
 
-const STEP_DURATION = 2400; // ms per step — ~33s total for 14 steps
+const AWS_STEPS = [
+  "Connecting to AWS…",
+  "Fetching IAM users…",
+  "Fetching IAM roles…",
+  "Fetching S3 buckets…",
+  "Fetching EKS clusters…",
+  "Fetching EC2 instances…",
+  "Fetching Lambda functions…",
+  "Fetching RDS instances…",
+  "Fetching Redshift clusters…",
+  "Fetching SNS topics…",
+  "Fetching secrets…",
+  "Fetching security groups…",
+  "Computing security findings…",
+  "Saving snapshot…",
+];
+
+const STEP_DURATION = 2000; // ms per step
 
 interface ScanProgressProps {
   isScanning: boolean;
+  provider?: "gcp" | "aws";
 }
 
-export default function ScanProgress({ isScanning }: ScanProgressProps) {
+export default function ScanProgress({ isScanning, provider = "gcp" }: ScanProgressProps) {
+  const steps = provider === "aws" ? AWS_STEPS : GCP_STEPS;
   const [stepIndex, setStepIndex] = useState(0);
   const [done, setDone] = useState(false);
   const [visible, setVisible] = useState(false);
@@ -38,7 +57,7 @@ export default function ScanProgress({ isScanning }: ScanProgressProps) {
       setDone(false);
       setStepIndex(0);
       const id = setInterval(() => {
-        setStepIndex((i) => Math.min(i + 1, STEPS.length - 1));
+        setStepIndex((i) => Math.min(i + 1, steps.length - 1));
       }, STEP_DURATION);
       return () => clearInterval(id);
     } else if (visible) {
@@ -51,13 +70,13 @@ export default function ScanProgress({ isScanning }: ScanProgressProps) {
       }, 1000);
       return () => clearTimeout(t);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isScanning]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isScanning, provider]);
 
   if (!visible) return null;
 
-  const pct = done ? 100 : Math.round((stepIndex / (STEPS.length - 1)) * 92) + 2;
-  const label = done ? "Snapshot saved!" : STEPS[stepIndex];
+  const pct = done ? 100 : Math.round((stepIndex / (steps.length - 1)) * 92) + 2;
+  const label = done ? "Snapshot saved!" : steps[stepIndex];
 
   return (
     <div className="rounded-xl border border-sky-500/25 bg-gradient-to-br from-sky-500/8 to-violet-500/8 p-4 space-y-3">
@@ -97,7 +116,7 @@ export default function ScanProgress({ isScanning }: ScanProgressProps) {
 
       {/* Step dots */}
       <div className="flex items-center gap-1">
-        {STEPS.map((_, i) => (
+        {steps.map((_, i) => (
           <div
             key={i}
             className={cn(
@@ -105,8 +124,8 @@ export default function ScanProgress({ isScanning }: ScanProgressProps) {
               i < stepIndex || done
                 ? "bg-sky-500/70"
                 : i === stepIndex
-                ? "bg-sky-400 animate-pulse"
-                : "bg-slate-700"
+                  ? "bg-sky-400 animate-pulse"
+                  : "bg-slate-700"
             )}
           />
         ))}

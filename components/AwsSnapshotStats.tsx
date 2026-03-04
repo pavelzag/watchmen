@@ -9,6 +9,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { computeAwsFindings } from "@/lib/aws-findings";
 import type { AwsSnapshot } from "@/lib/aws/types";
+import ScanProgress from "@/components/ScanProgress";
 
 interface AwsSnapshotStatsProps {
   scanVersion?: number;
@@ -134,6 +135,8 @@ export default function AwsSnapshotStats({ scanVersion, onSyncRequest, isSyncing
           !! ERROR: {error}
         </div>
       )}
+
+      <ScanProgress isScanning={!!isSyncing} provider="aws" />
 
       {/* Loading skeleton */}
       {(loading || isSyncing) && !snap && (

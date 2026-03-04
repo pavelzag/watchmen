@@ -3,6 +3,8 @@ import { LayoutDashboard, ShieldAlert, Clock, ClipboardCheck, Settings, LogOut, 
 import Link from "next/link";
 import NavbarAskButton from "./NavbarAskButton";
 import NavbarCloudTabs from "./NavbarCloudTabs";
+import NavbarSubNav from "./NavbarSubNav";
+import NavbarLink from "./NavbarLink";
 
 export default async function Navbar() {
   const session = await auth();
@@ -61,38 +63,14 @@ export default async function Navbar() {
         </div>
       </div>
 
-      <div
-        className="max-w-7xl mx-auto px-4 md:px-6 h-8 flex items-center gap-0 overflow-x-auto no-scrollbar scroll-smooth"
-        style={{ borderTop: "1px solid var(--bg-card2)" }}
-      >
-        <NavbarCloudTabs />
-        <NavLink href="/dashboard/findings" icon={<ShieldAlert className="w-3 h-3" />} label="FINDINGS" danger />
-        <NavLink href="/dashboard/history" icon={<Clock className="w-3 h-3" />} label="HISTORY" />
-        <NavLink href="/dashboard/compliance" icon={<ClipboardCheck className="w-3 h-3" />} label="COMPLIANCE" />
-        <NavLink href="/dashboard/settings" icon={<Settings className="w-3 h-3" />} label="SETTINGS" />
-      </div>
+      <NavbarSubNav>
+        <NavbarLink href="/dashboard/findings" icon={<ShieldAlert className="w-3 h-3" />} label="FINDINGS" danger />
+        <NavbarLink href="/dashboard/history" icon={<Clock className="w-3 h-3" />} label="HISTORY" />
+        <NavbarLink href="/dashboard/compliance" icon={<ClipboardCheck className="w-3 h-3" />} label="COMPLIANCE" />
+        <NavbarLink href="/dashboard/settings" icon={<Settings className="w-3 h-3" />} label="SETTINGS" />
+      </NavbarSubNav>
     </header>
   );
 }
 
-function NavLink({
-  href, icon, label, danger,
-}: {
-  href: string;
-  icon: React.ReactNode;
-  label: string;
-  danger?: boolean;
-}) {
-  return (
-    <Link
-      href={href}
-      className={`flex items-center gap-1.5 px-3 h-full text-xs uppercase tracking-widest ${danger ? "terminal-nav-link-danger" : "terminal-nav-link"
-        }`}
-      style={{ borderRight: "1px solid var(--bg-card2)" }}
-    >
-      {icon}
-      <span className="hidden sm:inline">{label}</span>
-    </Link>
-  );
-}
 
