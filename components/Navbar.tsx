@@ -24,11 +24,13 @@ export default async function Navbar() {
         <div className="flex items-baseline gap-3 shrink-0">
           <Link href="/dashboard" className="flex items-center gap-2 group">
             <div className="relative w-5 h-5 transition-transform group-hover:scale-110">
-              <svg viewBox="0 0 24 24" fill="currentColor" style={{ color: "var(--green)" }}>
-                <path d="M12 2c-.5 0-1 .5-1.5 1.5S9 6 9 8s.5 4 1.5 5.5S12 16 12 16s.5-1 1.5-2.5S15 10 15 8s-.5-4.5-1.5-6S12.5 2 12 2z" opacity="0.8" />
-                <path d="M12 22c.5 0 1-.5 1.5-1.5S15 18 15 16s-.5-4 1.5-5.5S18 8 18 8s-.5 1-1.5 2.5S15 14 15 16s.5 4.5 1.5 6s.5 0 0 0z" opacity="0.6" />
-                <path d="M12 22c-.5 0-1-.5-1.5-1.5S9 18 9 16s.5-4-1.5-5.5S6 8 6 8s.5 1 1.5 2.5S9 14 9 16s-.5 4.5-1.5 6s-.5 0 0 0z" opacity="0.6" />
-                <circle cx="12" cy="12" r="1.5" />
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ color: "var(--green)" }}>
+                {/* Shield Outline */}
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" stroke="currentColor" fill="none" />
+                {/* Symmetrical Inkblot Patterns */}
+                <path d="M12 6c-1.5 0-2.5 1-2.5 2.5S10 11 11 12s1 2 1 2 .5-1 1.5-2 1-1.5 1-3.5S13.5 6 12 6z" fill="currentColor" opacity="0.9" stroke="none" />
+                <path d="M10 10c-.5 0-1 .5-1.5 1.5S8 14 9 15.5s1 2 1 2 .5-1 1.5-2.5 1-2 1-3.5-1-1.5-2.5-1.5z" fill="currentColor" opacity="0.6" stroke="none" />
+                <path d="M14 10c.5 0 1 .5 1.5 1.5S16 14 15 15.5s-1 2-1 2-.5-1-1.5-2.5-1-2-1-3.5 1-1.5 2.5-1.5z" fill="currentColor" opacity="0.6" stroke="none" />
               </svg>
             </div>
             <span className="font-bold tracking-tighter text-lg" style={{ color: "var(--green)" }}>

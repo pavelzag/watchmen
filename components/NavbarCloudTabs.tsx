@@ -5,7 +5,15 @@ import { usePathname } from "next/navigation";
 
 export default function NavbarCloudTabs() {
   const pathname = usePathname();
-  const isAws = pathname?.startsWith("/dashboard/aws") ?? false;
+
+  // Specific sub-menus that should dim the cloud tabs
+  const isSubMenu = ["/findings", "/history", "/compliance", "/settings"].some(sub =>
+    pathname.includes(sub)
+  );
+
+  const isAwsContext = pathname?.startsWith("/dashboard/aws") ?? false;
+  const isAwsActive = isAwsContext && !isSubMenu;
+  const isGcpActive = !isAwsContext && pathname?.startsWith("/dashboard") && !isSubMenu;
 
   return (
     <div className="flex items-center h-full">
@@ -13,8 +21,8 @@ export default function NavbarCloudTabs() {
         href="/dashboard"
         className="flex items-center gap-1.5 px-3 h-full text-xs uppercase tracking-widest transition-colors border-r"
         style={{
-          color: !isAws ? "var(--text-primary)" : "var(--text-muted)",
-          background: !isAws ? "var(--bg-card2)" : "transparent",
+          color: isGcpActive ? "var(--text-primary)" : "var(--text-muted)",
+          background: isGcpActive ? "var(--bg-card2)" : "transparent",
           borderColor: "var(--bg-card2)",
         }}
       >
@@ -24,8 +32,8 @@ export default function NavbarCloudTabs() {
         href="/dashboard/aws"
         className="flex items-center gap-1.5 px-3 h-full text-xs uppercase tracking-widest transition-colors border-r"
         style={{
-          color: isAws ? "var(--text-primary)" : "var(--text-muted)",
-          background: isAws ? "var(--bg-card2)" : "transparent",
+          color: isAwsActive ? "var(--text-primary)" : "var(--text-muted)",
+          background: isAwsActive ? "var(--bg-card2)" : "transparent",
           borderColor: "var(--bg-card2)",
         }}
       >
