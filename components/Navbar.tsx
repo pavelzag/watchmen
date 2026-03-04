@@ -32,6 +32,9 @@ export default async function Navbar() {
             CLOUD SECURITY EXPLORER
           </span>
           <span className="blink text-xs" style={{ color: "#00ff41" }}>_</span>
+          <span className="text-[10px] ml-4 font-mono select-none" style={{ color: "#003010" }}>
+            // press <span style={{ color: "#005c16" }}>/</span> for brain
+          </span>
         </div>
 
         {/* Right: ask button + user + logout */}

@@ -206,21 +206,25 @@ export async function POST(req: NextRequest) {
   const browserProvider = (body as any)?.demoCredentials?.aiProvider;
 
   if (browserKey && browserProvider) {
-    provider = browserProvider;
+    provider = browserProvider as any;
     apiKey = browserKey;
-  } else if (session.isDemoUser) {
-    return NextResponse.json(
-      { error: "Demo users must provide their own API key in Settings (stored in this browser only)." },
-      { status: 422 }
-    );
   } else {
     try {
-      const resolved = await resolveAI(session.user.email);
+      const resolved = await resolveAI(session.user.email, session.isDemoUser);
       provider = resolved.provider as any;
       apiKey = resolved.key;
-    } catch {
+    } catch (err: any) {
+      if (err.message === "DEMO_LIMIT_REACHED") {
+        return NextResponse.json(
+          { error: "Daily demo AI limit reached (20 queries). Please provide your own Gemini/Claude key in Settings to continue." },
+          { status: 429 }
+        );
+      }
+      const demoMsg = session.isDemoUser
+        ? " (or provide your own API key in Settings)"
+        : " in Settings";
       return NextResponse.json(
-        { error: "No AI key configured. Go to Settings → AI Keys to add one." },
+        { error: `No AI key configured${demoMsg}.` },
         { status: 422 }
       );
     }
