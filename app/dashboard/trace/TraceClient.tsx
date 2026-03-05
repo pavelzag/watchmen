@@ -54,7 +54,7 @@ export default function TraceClient() {
     const logEndRef = useRef<HTMLDivElement>(null);
 
     const addLog = (msg: string) => {
-        setLogs(prev => [...prev, `[${new time.Time().toLocaleTimeString()}] ${msg}`]);
+        setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
     };
 
     useEffect(() => {
