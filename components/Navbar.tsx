@@ -1,5 +1,5 @@
 import { auth, signOut } from "@/lib/auth";
-import { LayoutDashboard, ShieldAlert, Clock, ClipboardCheck, Settings, LogOut, Terminal, Shield } from "lucide-react";
+import { LayoutDashboard, ShieldAlert, Clock, ClipboardCheck, Settings, LogOut, Terminal, Shield, IterationCw } from "lucide-react";
 import Link from "next/link";
 import NavbarAskButton from "./NavbarAskButton";
 import NavbarCloudTabs from "./NavbarCloudTabs";
@@ -73,6 +73,7 @@ export default async function Navbar() {
       </div>
 
       <NavbarSubNav>
+        <NavbarLink href="/dashboard/trace" icon={<IterationCw className="w-3 h-3" />} label="TRACE" />
         <NavbarLink href="/dashboard/findings" icon={<ShieldAlert className="w-3 h-3" />} label="FINDINGS" danger />
         <NavbarLink href="/dashboard/history" icon={<Clock className="w-3 h-3" />} label="HISTORY" />
         <NavbarLink href="/dashboard/compliance" icon={<ClipboardCheck className="w-3 h-3" />} label="COMPLIANCE" />

@@ -7,6 +7,7 @@ import NavbarCloudTabs from "./NavbarCloudTabs";
 const NAV_ITEMS = [
     { href: "/dashboard", label: "GCP" },
     { href: "/dashboard/aws", label: "AWS" },
+    { href: "/dashboard/trace", label: "TRACE" },
     { href: "/dashboard/findings", label: "FINDINGS" },
     { href: "/dashboard/history", label: "HISTORY" },
     { href: "/dashboard/compliance", label: "COMPLIANCE" },
