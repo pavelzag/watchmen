@@ -28,7 +28,8 @@ import {
     Layout,
     Wifi,
     HardDrive,
-    Bell
+    Bell,
+    X
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -555,11 +556,30 @@ export default function TraceClient() {
                                                         <div className="flex items-center gap-2 text-[10px] text-emerald-500 font-bold uppercase">
                                                             <CheckCircle2 className="w-3.5 h-3.5" /> Fix Generated
                                                         </div>
-                                                        <div className="bg-black/80 border border-emerald-500/30 rounded p-3 font-mono text-[10px] text-emerald-400 group relative">
-                                                            <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                                <button onClick={() => setRemediationScript(null)} className="text-slate-500 hover:text-white">✕</button>
+                                                        <div className="bg-black/90 border border-emerald-500/30 rounded-lg overflow-hidden group relative">
+                                                            <div className="flex items-center justify-between px-3 py-1.5 bg-white/5 border-b border-white/5">
+                                                                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Remediation Script</span>
+                                                                <div className="flex items-center gap-2">
+                                                                    <button
+                                                                        onClick={() => {
+                                                                            navigator.clipboard.writeText(remediationScript.script);
+                                                                            setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Script copied to clipboard`]);
+                                                                        }}
+                                                                        className="p-1 hover:bg-white/10 rounded transition-colors text-slate-500 hover:text-emerald-500"
+                                                                        title="Copy to Clipboard"
+                                                                    >
+                                                                        <Code className="w-3 h-3" />
+                                                                    </button>
+                                                                    <button onClick={() => setRemediationScript(null)} className="p-1 hover:bg-white/10 rounded transition-colors text-slate-500 hover:text-red-500">
+                                                                        <X className="w-3 h-3" />
+                                                                    </button>
+                                                                </div>
                                                             </div>
-                                                            {remediationScript.script}
+                                                            <div className="p-4 font-mono text-[10px] text-emerald-400 overflow-x-auto custom-scrollbar">
+                                                                <pre className="whitespace-pre-wrap break-all leading-relaxed">
+                                                                    {remediationScript.script}
+                                                                </pre>
+                                                            </div>
                                                         </div>
                                                         <p className="text-[10px] text-slate-400 italic">
                                                             // {remediationScript.explanation}
