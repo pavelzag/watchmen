@@ -3,52 +3,69 @@ import { NextRequest, NextResponse } from "next/server";
 export async function POST(req: NextRequest) {
     try {
         const body = await req.json();
-        const PROCESSOR_URL = process.env.PROCESSOR_URL;
+        const { target_url, data: payloadData, id: requestId } = body;
 
-        // If a real processor URL is provided (e.g., in GKE), call it
-        if (PROCESSOR_URL) {
+        // Priority: target_url from body, then PROCESSOR_URL from env
+        const finalTargetUrl = target_url || process.env.PROCESSOR_URL;
+
+        if (finalTargetUrl) {
             try {
-                const resp = await fetch(`${PROCESSOR_URL}/process`, {
+                const endpoint = finalTargetUrl.endsWith('/process')
+                    ? finalTargetUrl
+                    : `${finalTargetUrl.replace(/\/$/, '')}/process`;
+
+                const resp = await fetch(endpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(body)
                 });
+
                 if (resp.ok) {
-                    return NextResponse.json(await resp.json());
+                    const result = await resp.json();
+                    return NextResponse.json({
+                        ...result,
+                        source: finalTargetUrl,
+                        proxied: true
+                    });
+                } else {
+                    return NextResponse.json({
+                        error: `Target returned ${resp.status}`,
+                        status: resp.status,
+                        source: finalTargetUrl
+                    }, { status: resp.status });
                 }
             } catch (err) {
-                console.error("Failed to contact processor service:", err);
-                // Fallback to mock for better demo experience if service is down
+                console.error("Failed to contact target service:", err);
             }
         }
 
         // For the demo/mock environment (default fallback):
-        const data = body.data || {};
+        const data = payloadData || {};
         const processed = {
             ...data,
             _watchmen_processed: true,
             server_id: "watchmen-processor-7f4b",
             timestamp: new Date().toISOString(),
-            location: "GKE Cluster (us-central1)",
+            location: "Local Mock Service",
             db_status: "committed"
         };
 
         const trace = [
             { component: "API Gateway", action: "Checking Ingress Rules", status: "Success" },
-            { component: "GKE Ingress", action: "Routing to Pod", status: "Success" },
-            { component: "K8s Service Mesh", action: "mTLS Handshake", status: "Success" },
-            { component: "Go Pod", action: "Processing Transformation", status: "Success" },
-            { component: "Cloud SQL Proxy", action: "Secure Tunnel Write", status: "Success" }
+            { component: "Local Proxy", action: "Routing to Mock", status: "Success" },
+            { component: "Mock Service", action: "Processing Transformation", status: "Success" },
+            { component: "Mock DB", action: "Simulated Write", status: "Success" }
         ];
 
         await new Promise(r => setTimeout(r, 800));
 
         return NextResponse.json({
-            request_id: body.id,
+            request_id: requestId,
             original_data: data,
             processed_data: processed,
             trace: trace,
-            message: `Request successfully processed by Watchmen GKE deployment`
+            message: `Request successfully processed by Watchmen Mock logic`,
+            source: "Mock"
         });
     } catch (error) {
         return NextResponse.json({ error: "Invalid request payload" }, { status: 400 });

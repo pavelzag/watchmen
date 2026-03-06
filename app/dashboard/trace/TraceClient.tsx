@@ -13,7 +13,9 @@ import {
     Info,
     Terminal,
     Eye,
-    Code
+    Code,
+    ChevronDown,
+    Globe
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -110,9 +112,16 @@ const NODE_DETAILS: Record<string, NodeDetail> = {
     }
 };
 
+const DEFAULT_ENDPOINTS = [
+    { id: "mock", label: "Local Mock", url: "", provider: "mock", description: "Simulated trace in local environment" },
+];
+
 export default function TraceClient() {
     const [inputJson, setInputJson] = useState(JSON.stringify(DEFAULT_JSON, null, 2));
+    const [endpoints, setEndpoints] = useState<any[]>(DEFAULT_ENDPOINTS);
+    const [targetEndpoint, setTargetEndpoint] = useState(DEFAULT_ENDPOINTS[0]);
     const [isRunning, setIsRunning] = useState(false);
+    const [isLoadingEndpoints, setIsLoadingEndpoints] = useState(true);
     const [isEditorOpen, setIsEditorOpen] = useState(false);
     const [activeNodeIndex, setActiveNodeIndex] = useState(-1);
     const [logs, setLogs] = useState<string[]>([]);
@@ -123,6 +132,27 @@ export default function TraceClient() {
     const addLog = (msg: string) => {
         setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
     };
+
+    useEffect(() => {
+        const fetchEndpoints = async () => {
+            try {
+                const res = await fetch("/api/discovery/endpoints");
+                const data = await res.json();
+                if (data.endpoints) {
+                    setEndpoints(data.endpoints);
+                    // Select first discovered endpoint if mock is fallback
+                    if (data.endpoints.length > 1) {
+                        setTargetEndpoint(data.endpoints[0]);
+                    }
+                }
+            } catch (err) {
+                console.error("Failed to load discovered endpoints:", err);
+            } finally {
+                setIsLoadingEndpoints(false);
+            }
+        };
+        fetchEndpoints();
+    }, []);
 
     useEffect(() => {
         logEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -148,11 +178,15 @@ export default function TraceClient() {
                     const response = await fetch("/api/trace", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        body: inputJson
+                        body: JSON.stringify({
+                            ...JSON.parse(inputJson),
+                            target_url: targetEndpoint.url
+                        })
                     });
                     const data = await response.json();
                     setOutputJson(data);
-                    setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Go Service Signal Received: Record committed`]);
+                    const sourceLabel = data.source === "Mock" ? "Mock" : "Cloud Service";
+                    setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${sourceLabel} Signal Received: Record committed`]);
                 } catch (err) {
                     setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Error: Failed to contact Go Service`]);
                 }
@@ -170,9 +204,33 @@ export default function TraceClient() {
             {/* Left Column: Controls & Logs */}
             <div className="lg:col-span-4 flex flex-col gap-4 min-h-0">
                 <div className="flex items-center justify-between">
-                    <h2 className="text-xs uppercase tracking-widest text-slate-500 font-bold flex items-center gap-2">
-                        <Code className="w-3.5 h-3.5" /> Simulation
-                    </h2>
+                    <div className="flex flex-col gap-1">
+                        <h2 className="text-xs uppercase tracking-widest text-slate-500 font-bold flex items-center gap-2">
+                            <Code className="w-3.5 h-3.5" /> Simulation
+                        </h2>
+                        <div className="relative group/select">
+                            <select
+                                value={targetEndpoint.id}
+                                onChange={(e) => {
+                                    const selected = endpoints.find(ep => ep.id === e.target.value);
+                                    if (selected) setTargetEndpoint(selected);
+                                }}
+                                disabled={isRunning || isLoadingEndpoints}
+                                className="appearance-none bg-transparent text-[10px] text-emerald-500/70 hover:text-emerald-500 font-bold uppercase tracking-widest outline-none pr-6 cursor-pointer disabled:cursor-not-allowed"
+                            >
+                                {isLoadingEndpoints ? (
+                                    <option value="loading">Loading endpoints...</option>
+                                ) : (
+                                    endpoints.map(ep => (
+                                        <option key={ep.id} value={ep.id} className="bg-slate-900">
+                                            {ep.label}
+                                        </option>
+                                    ))
+                                )}
+                            </select>
+                            <ChevronDown className="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-500 pointer-events-none group-hover/select:text-emerald-500 transition-colors" />
+                        </div>
+                    </div>
                     <button
                         onClick={runTrace}
                         disabled={isRunning}
@@ -499,6 +557,6 @@ export default function TraceClient() {
                     </div>
                 )}
             </AnimatePresence>
-        </div>
+        </div >
     );
 }
