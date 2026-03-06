@@ -34,14 +34,14 @@ const DEFAULT_JSON = {
     }
 };
 
-type Node = {
+type InfrastructureNode = {
     id: string;
     label: string;
     icon: any;
     description: string;
 };
 
-const NODES: Node[] = [
+const NODES: InfrastructureNode[] = [
     { id: "gateway", label: "API Gateway", icon: ShieldCheck, description: "Authenticating & Validating" },
     { id: "lb", label: "Load Balancer", icon: Server, description: "Distributing Traffic" },
     { id: "service", label: "Cloud Run (Go)", icon: Cloud, description: "Processing Business Logic" },
@@ -128,10 +128,18 @@ export default function TraceClient() {
     const [outputJson, setOutputJson] = useState<any>(null);
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
     const logEndRef = useRef<HTMLDivElement>(null);
+    const dropdownRef = useRef<HTMLDivElement>(null);
+    const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
-    const addLog = (msg: string) => {
-        setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
-    };
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(event.target as any)) {
+                setIsDropdownOpen(false);
+            }
+        };
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, []);
 
     useEffect(() => {
         const fetchEndpoints = async () => {
@@ -140,13 +148,12 @@ export default function TraceClient() {
                 const data = await res.json();
                 if (data.endpoints) {
                     setEndpoints(data.endpoints);
-                    // Select first discovered endpoint if mock is fallback
                     if (data.endpoints.length > 1) {
                         setTargetEndpoint(data.endpoints[0]);
                     }
                 }
             } catch (err) {
-                console.error("Failed to load discovered endpoints:", err);
+                console.error("Failed to load endpoints:", err);
             } finally {
                 setIsLoadingEndpoints(false);
             }
@@ -160,19 +167,16 @@ export default function TraceClient() {
 
     const runTrace = async () => {
         if (isRunning) return;
-
         setIsRunning(true);
         setActiveNodeIndex(0);
         setLogs([`[${new Date().toLocaleTimeString()}] Initiating trace for payload...`]);
         setOutputJson(null);
 
-        // Node-by-node simulation
         for (let i = 0; i < NODES.length; i++) {
             setActiveNodeIndex(i);
             const node = NODES[i];
             setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Entering ${node.label}: ${node.description}`]);
 
-            // At the service node, we call the actual API
             if (i === 2) {
                 try {
                     const response = await fetch("/api/trace", {
@@ -191,46 +195,72 @@ export default function TraceClient() {
                     setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Error: Failed to contact Go Service`]);
                 }
             }
-
             await new Promise(r => setTimeout(r, 1500));
         }
-
         setIsRunning(false);
         setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Trace complete. 100% Delivery.`]);
     };
 
     return (
         <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-8 overflow-hidden">
-            {/* Left Column: Controls & Logs */}
             <div className="lg:col-span-4 flex flex-col gap-4 min-h-0">
                 <div className="flex items-center justify-between">
-                    <div className="flex flex-col gap-1">
+                    <div className="flex flex-col gap-1" ref={dropdownRef}>
                         <h2 className="text-xs uppercase tracking-widest text-slate-500 font-bold flex items-center gap-2">
                             <Code className="w-3.5 h-3.5" /> Simulation
                         </h2>
-                        <div className="relative group/select">
-                            <select
-                                value={targetEndpoint.id}
-                                onChange={(e) => {
-                                    const selected = endpoints.find(ep => ep.id === e.target.value);
-                                    if (selected) setTargetEndpoint(selected);
-                                }}
+                        <div className="relative">
+                            <button
+                                onClick={() => !isRunning && setIsDropdownOpen(!isDropdownOpen)}
                                 disabled={isRunning || isLoadingEndpoints}
-                                className="appearance-none bg-transparent text-[10px] text-emerald-500/70 hover:text-emerald-500 font-bold uppercase tracking-widest outline-none pr-6 cursor-pointer disabled:cursor-not-allowed"
+                                className="flex items-center gap-2 text-[10px] text-emerald-500/70 hover:text-emerald-500 font-bold uppercase tracking-widest outline-none cursor-pointer disabled:cursor-not-allowed transition-colors"
                             >
-                                {isLoadingEndpoints ? (
-                                    <option value="loading">Loading endpoints...</option>
-                                ) : (
-                                    endpoints.map(ep => (
-                                        <option key={ep.id} value={ep.id} className="bg-slate-900">
-                                            {ep.label}
-                                        </option>
-                                    ))
+                                {isLoadingEndpoints ? "Loading..." : targetEndpoint.label}
+                                <ChevronDown className={cn("w-3 h-3 text-slate-500 transition-transform duration-300", isDropdownOpen && "rotate-180")} />
+                            </button>
+
+                            <AnimatePresence>
+                                {isDropdownOpen && (
+                                    <motion.div
+                                        initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                                        exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                                        className="absolute left-0 top-full mt-2 w-64 bg-slate-900 border border-slate-800 rounded-lg shadow-2xl z-[100] p-1 overflow-hidden"
+                                    >
+                                        <div className="text-[9px] text-slate-500 font-bold uppercase tracking-[0.2em] px-3 py-2 border-b border-slate-800/50 mb-1">
+                                            Select Target
+                                        </div>
+                                        <div className="max-h-60 overflow-y-auto custom-scrollbar">
+                                            {endpoints.map(ep => (
+                                                <button
+                                                    key={ep.id}
+                                                    onClick={() => {
+                                                        setTargetEndpoint(ep);
+                                                        setIsDropdownOpen(false);
+                                                    }}
+                                                    className={cn(
+                                                        "w-full flex flex-col items-start px-3 py-2 rounded-md transition-all text-left group",
+                                                        targetEndpoint.id === ep.id
+                                                            ? "bg-emerald-500/10 text-emerald-500"
+                                                            : "text-slate-400 hover:bg-slate-800 hover:text-white"
+                                                    )}
+                                                >
+                                                    <div className="flex items-center justify-between w-full">
+                                                        <span className="text-[10px] font-bold uppercase tracking-widest">{ep.label}</span>
+                                                        {targetEndpoint.id === ep.id && <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_#10b981]" />}
+                                                    </div>
+                                                    <div className="text-[9px] opacity-50 group-hover:opacity-100 transition-opacity truncate w-full">
+                                                        {ep.description}
+                                                    </div>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </motion.div>
                                 )}
-                            </select>
-                            <ChevronDown className="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-500 pointer-events-none group-hover/select:text-emerald-500 transition-colors" />
+                            </AnimatePresence>
                         </div>
                     </div>
+
                     <button
                         onClick={runTrace}
                         disabled={isRunning}
@@ -246,7 +276,6 @@ export default function TraceClient() {
                     </button>
                 </div>
 
-                {/* Editor Trigger */}
                 <div
                     onClick={() => !isRunning && setIsEditorOpen(true)}
                     className={cn(
@@ -265,13 +294,11 @@ export default function TraceClient() {
                         </div>
                     </div>
                     <div className="absolute top-2 right-2">
-                        <div className="text-[10px] text-slate-600 bg-black/50 px-2 py-0.5 rounded border border-slate-800">
-                            JSON
-                        </div>
+                        <div className="text-[10px] text-slate-600 bg-black/50 px-2 py-0.5 rounded border border-slate-800">JSON</div>
                     </div>
                 </div>
 
-                <div className="h-48 bg-black border border-slate-800 rounded-lg p-3 font-mono text-[10px] overflow-y-auto overflow-x-hidden space-y-1">
+                <div className="h-48 bg-black border border-slate-800 rounded-lg p-3 font-mono text-[10px] overflow-y-auto overflow-x-hidden space-y-1 custom-scrollbar">
                     {logs.map((log, i) => (
                         <div key={i} className="text-slate-400 animate-in fade-in slide-in-from-left-2 duration-300">
                             <span className="text-emerald-500 opacity-50">$</span> {log}
@@ -281,22 +308,15 @@ export default function TraceClient() {
                 </div>
             </div>
 
-            {/* Right Column: Visualization */}
             <div className="lg:col-span-8 flex flex-col gap-6">
                 <h2 className="text-xs uppercase tracking-widest text-slate-500 font-bold">Infrastructure Journey</h2>
-
-                {/* Pipeline SVG */}
                 <div className="relative flex-1 bg-slate-900/30 border border-slate-800/50 rounded-xl flex flex-col items-center justify-center p-8">
-                    {/* Background Grid */}
                     <div className="absolute inset-0 opacity-[0.03] pointer-events-none"
                         style={{ backgroundImage: "radial-gradient(circle, #10b981 1px, transparent 1px)", backgroundSize: "24px 24px" }}
                     />
 
                     <div className="relative w-full max-w-4xl flex items-center justify-between">
-                        {/* Connecting Lines */}
                         <div className="absolute top-1/2 left-0 w-full h-0.5 bg-slate-800 -translate-y-1/2" />
-
-                        {/* Active Path */}
                         {(isRunning || activeNodeIndex >= 0) && (
                             <motion.div
                                 initial={{ width: "0%" }}
@@ -305,7 +325,6 @@ export default function TraceClient() {
                             />
                         )}
 
-                        {/* Nodes */}
                         {NODES.map((node, i) => {
                             const isActive = i === activeNodeIndex;
                             const isCompleted = i < activeNodeIndex;
@@ -326,18 +345,13 @@ export default function TraceClient() {
                                     >
                                         <Icon className={cn(
                                             "w-6 h-6 transition-colors duration-500 group-hover/node:scale-110",
-                                            isActive ? "text-emerald-400" :
-                                                isCompleted ? "text-emerald-500" :
-                                                    "text-slate-600"
+                                            isActive ? "text-emerald-400" : isCompleted ? "text-emerald-500" : "text-slate-600"
                                         )} />
-
                                         <div className="absolute -top-1 -right-1 opacity-0 group-hover/node:opacity-100 transition-opacity">
                                             <div className="bg-emerald-500 rounded-full p-0.5 shadow-lg">
                                                 <Eye className="w-3 h-3 text-black" />
                                             </div>
                                         </div>
-
-                                        {/* Status Ring */}
                                         {isActive && (
                                             <motion.div
                                                 className="absolute inset-0 rounded-xl border-2 border-emerald-500/50"
@@ -347,7 +361,6 @@ export default function TraceClient() {
                                             />
                                         )}
                                     </motion.div>
-
                                     <div className="absolute top-full mt-4 flex flex-col items-center text-center w-32">
                                         <span className={cn(
                                             "text-[10px] uppercase tracking-tighter font-bold",
@@ -355,21 +368,11 @@ export default function TraceClient() {
                                         )}>
                                             {node.label}
                                         </span>
-                                        {isActive && (
-                                            <motion.span
-                                                initial={{ opacity: 0, y: 5 }}
-                                                animate={{ opacity: 1, y: 0 }}
-                                                className="text-[9px] text-slate-500 mt-1 leading-tight"
-                                            >
-                                                {node.description}
-                                            </motion.span>
-                                        )}
                                     </div>
                                 </div>
                             );
                         })}
 
-                        {/* Moving Packet */}
                         <AnimatePresence>
                             {isRunning && activeNodeIndex < NODES.length - 1 && (
                                 <motion.div
@@ -384,7 +387,6 @@ export default function TraceClient() {
                         </AnimatePresence>
                     </div>
 
-                    {/* Transform Details */}
                     <AnimatePresence>
                         {outputJson && (
                             <motion.div
@@ -415,7 +417,6 @@ export default function TraceClient() {
                     </AnimatePresence>
                 </div>
 
-                {/* Theory of Discovery Section */}
                 <div className="mt-8 bg-emerald-500/5 border border-emerald-500/10 rounded-xl p-6">
                     <div className="flex items-center gap-2 mb-3">
                         <Info className="w-4 h-4 text-emerald-500" />
@@ -428,17 +429,16 @@ export default function TraceClient() {
                         </div>
                         <div className="space-y-1">
                             <span className="text-[9px] font-bold uppercase tracking-tighter text-slate-400">2. Runtime Tracing</span>
-                            <p className="text-[10px] text-slate-500 leading-relaxed">Trace context (W3C Traceparent) is injected into headers to track real-time hops via OpenTelemetry.</p>
+                            <p className="text-[10px] text-slate-500 leading-relaxed">Trace context is injected into headers to track real-time hops via OpenTelemetry.</p>
                         </div>
                         <div className="space-y-1">
                             <span className="text-[9px] font-bold uppercase tracking-tighter text-slate-400">3. IAM Simulation</span>
-                            <p className="text-[10px] text-slate-500 leading-relaxed">Reachable paths are calculated by simulating service-account permissions across the network.</p>
+                            <p className="text-[10px] text-slate-500 leading-relaxed">Reachable paths are calculated by simulating service-account permissions.</p>
                         </div>
                     </div>
                 </div>
             </div>
 
-            {/* Modal Overlay */}
             <AnimatePresence>
                 {isEditorOpen && (
                     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
@@ -460,14 +460,10 @@ export default function TraceClient() {
                                     <Code className="w-4 h-4 text-emerald-500" />
                                     <h3 className="text-sm font-bold uppercase tracking-[0.2em] text-white">Edit Request Payload</h3>
                                 </div>
-                                <button
-                                    onClick={() => setIsEditorOpen(false)}
-                                    className="p-2 hover:bg-white/5 rounded-full text-slate-400 hover:text-white transition-colors"
-                                >
+                                <button onClick={() => setIsEditorOpen(false)} className="p-2 hover:bg-white/5 rounded-full text-slate-400 hover:text-white transition-colors">
                                     <AlertCircle className="w-5 h-5 rotate-45" />
                                 </button>
                             </div>
-
                             <div className="flex-1 p-6 overflow-hidden">
                                 <textarea
                                     value={inputJson}
@@ -477,21 +473,14 @@ export default function TraceClient() {
                                     autoFocus
                                 />
                             </div>
-
                             <div className="p-4 border-t border-slate-800 bg-slate-900/30 flex justify-end gap-3">
-                                <button
-                                    onClick={() => setIsEditorOpen(false)}
-                                    className="px-6 py-2 rounded text-xs font-bold uppercase tracking-widest text-slate-400 hover:text-white transition-colors"
-                                >
-                                    Done
-                                </button>
+                                <button onClick={() => setIsEditorOpen(false)} className="px-6 py-2 rounded text-xs font-bold uppercase tracking-widest text-slate-400 hover:text-white transition-colors">Done</button>
                             </div>
                         </motion.div>
                     </div>
                 )}
             </AnimatePresence>
 
-            {/* Node Detail Modal */}
             <AnimatePresence>
                 {selectedNodeId && NODE_DETAILS[selectedNodeId] && (
                     <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
@@ -511,52 +500,32 @@ export default function TraceClient() {
                             <div className="p-6 border-b border-slate-800 bg-slate-900/40">
                                 <div className="flex items-center gap-3 mb-2">
                                     <Terminal className="w-4 h-4 text-emerald-500" />
-                                    <h3 className="text-sm font-bold uppercase tracking-widest text-white">
-                                        {NODE_DETAILS[selectedNodeId].title}
-                                    </h3>
+                                    <h3 className="text-sm font-bold uppercase tracking-widest text-white">{NODE_DETAILS[selectedNodeId].title}</h3>
                                 </div>
                                 <p className="text-xs text-slate-400">{NODE_DETAILS[selectedNodeId].description}</p>
                             </div>
-
                             <div className="p-6 space-y-6">
                                 {NODE_DETAILS[selectedNodeId].details.map((detail, idx) => (
                                     <div key={idx} className="space-y-2">
                                         <div className="flex items-center justify-between">
-                                            <span className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">
-                                                {detail.label}
-                                            </span>
-                                            {detail.type === "status" && (
-                                                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                                            )}
+                                            <span className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">{detail.label}</span>
+                                            {detail.type === "status" && <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />}
                                         </div>
                                         {detail.type === "code" ? (
-                                            <div className="bg-black/50 border border-slate-800 rounded p-3 font-mono text-xs text-emerald-400 leading-relaxed whitespace-pre overflow-x-auto">
-                                                {detail.value}
-                                            </div>
+                                            <div className="bg-black/50 border border-slate-800 rounded p-3 font-mono text-xs text-emerald-400 leading-relaxed whitespace-pre overflow-x-auto">{detail.value}</div>
                                         ) : (
-                                            <p className={cn(
-                                                "text-sm font-medium",
-                                                detail.type === "status" ? "text-emerald-400" : "text-slate-200"
-                                            )}>
-                                                {detail.value}
-                                            </p>
+                                            <p className={cn("text-sm font-medium", detail.type === "status" ? "text-emerald-400" : "text-slate-200")}>{detail.value}</p>
                                         )}
                                     </div>
                                 ))}
                             </div>
-
                             <div className="p-4 bg-slate-900/20 flex justify-end">
-                                <button
-                                    onClick={() => setSelectedNodeId(null)}
-                                    className="px-6 py-2 rounded text-[10px] font-bold uppercase tracking-widest bg-slate-800 text-slate-400 hover:text-white transition-colors"
-                                >
-                                    Dismiss
-                                </button>
+                                <button onClick={() => setSelectedNodeId(null)} className="px-6 py-2 rounded text-[10px] font-bold uppercase tracking-widest bg-slate-800 text-slate-400 hover:text-white transition-colors">Dismiss</button>
                             </div>
                         </motion.div>
                     </div>
                 )}
             </AnimatePresence>
-        </div >
+        </div>
     );
 }

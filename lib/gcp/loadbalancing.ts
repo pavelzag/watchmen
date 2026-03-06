@@ -3,8 +3,22 @@ import { initGoogleAuth, useMockData, logFetchWarning } from "./client";
 import type { GcpLoadBalancer } from "./types";
 
 async function getMockLoadBalancers(): Promise<GcpLoadBalancer[]> {
-    // Return empty for now, can add fixtures later
-    return [];
+    return [
+        {
+            name: "k8s-ingress-watchmen",
+            projectId: "watchmen-demo",
+            ipAddress: "34.120.45.67",
+            type: "EXTERNAL_HTTP_LB",
+            description: "GKE Ingress for watchmen-frontend"
+        },
+        {
+            name: "k8s-service-processor",
+            projectId: "watchmen-demo",
+            ipAddress: "35.244.11.22",
+            type: "EXTERNAL_NETWORK_LB",
+            description: "GKE LoadBalancer Service for watchmen-processor"
+        }
+    ];
 }
 
 async function getRealLoadBalancers(projectIds: string[]): Promise<GcpLoadBalancer[]> {

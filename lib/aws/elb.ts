@@ -3,8 +3,26 @@ import { useMockAwsData, getAwsRegions, logAwsWarning, getAwsClientOptions, type
 import type { AwsLoadBalancer } from "./types";
 
 async function getMockLoadBalancers(): Promise<AwsLoadBalancer[]> {
-    // Return empty for now, can add fixtures later
-    return [];
+    return [
+        {
+            name: "eks-watchmen-alb",
+            accountId: "123456789012",
+            region: "us-east-1",
+            dnsName: "eks-watchmen-alb-123456789.us-east-1.elb.amazonaws.com",
+            type: "application",
+            scheme: "internet-facing",
+            state: "active"
+        },
+        {
+            name: "eks-processor-nlb",
+            accountId: "123456789012",
+            region: "us-west-2",
+            dnsName: "eks-processor-nlb-987654321.us-west-2.elb.amazonaws.com",
+            type: "network",
+            scheme: "internet-facing",
+            state: "active"
+        }
+    ];
 }
 
 async function getRealLoadBalancers(creds?: AwsCredentials): Promise<AwsLoadBalancer[]> {
