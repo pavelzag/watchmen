@@ -7,12 +7,14 @@ import {
     Database,
     Cloud,
     ShieldCheck,
+    ShieldAlert,
     Server,
     CheckCircle2,
     AlertCircle,
     Info,
     Terminal,
     Eye,
+    Loader2,
     Code,
     ChevronDown,
     Globe,
@@ -57,6 +59,14 @@ type InfrastructureNode = {
     label: string;
     icon: any;
     description: string;
+    vulnerability?: {
+        id: string;
+        level: "critical" | "high" | "medium" | "low";
+        title: string;
+        description: string;
+        remediation: string;
+    };
+    lateralPaths?: string[];
 };
 
 // Default nodes for non-scenario endpoints
@@ -89,8 +99,13 @@ export default function TraceClient() {
     const dropdownRef = useRef<HTMLDivElement>(null);
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
+    const [isBreachMode, setIsBreachMode] = useState(false);
+    const [isLiveMode, setIsLiveMode] = useState(false);
+    const [remediationScript, setRemediationScript] = useState<{ script: string; explanation: string } | null>(null);
+    const [isRemediating, setIsRemediating] = useState(false);
+
     // Derived nodes from current endpoint
-    const currentNodes = targetEndpoint?.scenario?.nodes || DEFAULT_NODES;
+    const currentNodes = (targetEndpoint?.scenario?.nodes || DEFAULT_NODES) as InfrastructureNode[];
     const currentNodeDetails = targetEndpoint?.scenario?.nodeDetails || {};
 
     useEffect(() => {
@@ -175,6 +190,44 @@ export default function TraceClient() {
         setIsRunning(false);
         setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Trace complete. 100% Delivery.`]);
     };
+
+    const runRemediation = async (vulnerability: any) => {
+        setIsRemediating(true);
+        setRemediationScript(null);
+        try {
+            const res = await fetch("/api/remediate", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ vulnerability })
+            });
+            const data = await res.json();
+            setRemediationScript(data);
+        } catch (err) {
+            console.error("Remediation failed:", err);
+        } finally {
+            setIsRemediating(false);
+        }
+    };
+
+    // Live Log Streaming Logic
+    useEffect(() => {
+        if (!isLiveMode || !selectedNodeId) return;
+
+        const interval = setInterval(() => {
+            const randomLogs = [
+                "INFO: Handling request segment...",
+                "DEBUG: Buffer flushed to storage.",
+                "WARN: Transient network jitter detected.",
+                "INFO: Metrics exported to Cloud Monitoring.",
+                "DEBUG: Connection pool size: 12",
+                "INFO: Heartbeat sent to control plane."
+            ];
+            const logLine = `[${new Date().toLocaleTimeString()}] ${randomLogs[Math.floor(Math.random() * randomLogs.length)]}`;
+            setLogs(prev => [...prev.slice(-20), logLine]);
+        }, 2000);
+
+        return () => clearInterval(interval);
+    }, [isLiveMode, selectedNodeId]);
 
     const selectedNodeDetail = currentNodeDetails[selectedNodeId || ""] || null;
 
@@ -278,7 +331,33 @@ export default function TraceClient() {
 
             <div className="lg:col-span-8 flex flex-col gap-6">
                 <div className="flex items-center justify-between">
-                    <h2 className="text-xs uppercase tracking-widest text-slate-500 font-bold">Infrastructure Journey</h2>
+                    <h2 className="text-xs uppercase tracking-widest text-slate-500 font-bold flex items-center gap-4">
+                        Infrastructure Journey
+                        <button
+                            onClick={() => setIsBreachMode(!isBreachMode)}
+                            className={cn(
+                                "flex items-center gap-2 px-3 py-1 rounded-full border transition-all text-[9px] font-bold uppercase tracking-widest",
+                                isBreachMode
+                                    ? "bg-red-500/10 border-red-500 text-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]"
+                                    : "bg-slate-800/50 border-slate-700 text-slate-500 hover:text-slate-300"
+                            )}
+                        >
+                            <ShieldAlert className={cn("w-3 h-3", isBreachMode && "animate-pulse")} />
+                            {isBreachMode ? "Breach Mode: ACTIVE" : "Simulate Breach"}
+                        </button>
+                        <button
+                            onClick={() => setIsLiveMode(!isLiveMode)}
+                            className={cn(
+                                "flex items-center gap-2 px-3 py-1 rounded-full border transition-all text-[9px] font-bold uppercase tracking-widest",
+                                isLiveMode
+                                    ? "bg-emerald-500/10 border-emerald-500 text-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.3)]"
+                                    : "bg-slate-800/50 border-slate-700 text-slate-500 hover:text-slate-300"
+                            )}
+                        >
+                            <Wifi className={cn("w-3 h-3", isLiveMode && "animate-pulse")} />
+                            {isLiveMode ? "LIVE: STREAMING" : "Go Live"}
+                        </button>
+                    </h2>
                     <div className="flex items-center gap-3">
                         <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
                             <Activity className="w-3 h-3 text-emerald-500" />
@@ -298,11 +377,38 @@ export default function TraceClient() {
 
                     <div className="relative min-w-[600px] w-full max-w-5xl flex items-center justify-between px-10">
                         <div className="absolute top-1/2 left-10 right-10 h-0.5 bg-slate-800 -translate-y-1/2" />
+
+                        {/* Lateral Movement Channels */}
+                        {isBreachMode && currentNodes.map((node, idx) => (
+                            (node.lateralPaths || []).map(targetId => {
+                                const targetIdx = currentNodes.findIndex(n => n.id === targetId);
+                                if (targetIdx === -1) return null;
+                                const startPos = (idx / (currentNodes.length - 1)) * 100;
+                                const endPos = (targetIdx / (currentNodes.length - 1)) * 100;
+                                return (
+                                    <motion.div
+                                        key={`${node.id}-${targetId}`}
+                                        initial={{ opacity: 0 }}
+                                        animate={{ opacity: 1 }}
+                                        className="absolute top-[40%] h-0.5 border-t border-dashed border-red-500/40 -translate-y-1/2"
+                                        style={{
+                                            left: `calc(40px + ${startPos * 0.85}%)`,
+                                            width: `calc(${(endPos - startPos) * 0.85}%)`,
+                                            borderRadius: "100px"
+                                        }}
+                                    />
+                                );
+                            })
+                        ))}
+
                         {(isRunning || activeNodeIndex >= 0) && (
                             <motion.div
                                 initial={{ width: "0%" }}
                                 animate={{ width: `${(Math.max(0, activeNodeIndex) / (currentNodes.length - 1)) * 85 + 5}%` }}
-                                className="absolute top-1/2 left-10 h-0.5 bg-emerald-500 -translate-y-1/2 shadow-[0_0_8px_#10b981]"
+                                className={cn(
+                                    "absolute top-1/2 left-10 h-0.5 -translate-y-1/2 transition-colors duration-500",
+                                    isBreachMode ? "bg-red-500 shadow-[0_0_8px_#ef4444]" : "bg-emerald-500 shadow-[0_0_8px_#10b981]"
+                                )}
                             />
                         )}
 
@@ -314,26 +420,33 @@ export default function TraceClient() {
                             return (
                                 <div key={node.id} className="relative z-10 flex flex-col items-center">
                                     <motion.div
-                                        animate={isActive ? { scale: [1, 1.1, 1], borderColor: ["#1e293b", "#10b981", "#1e293b"] } : {}}
+                                        animate={isActive ? { scale: [1, 1.1, 1], borderColor: [isBreachMode ? "#ef4444" : "#10b981"] } : {}}
                                         transition={{ repeat: Infinity, duration: 2 }}
                                         onClick={() => {
                                             setSelectedNodeId(node.id);
                                             setModalTab("details");
                                         }}
                                         className={cn(
-                                            "w-12 h-12 rounded-xl border flex items-center justify-center transition-all duration-500 cursor-pointer group/node",
-                                            isActive ? "bg-emerald-500/20 border-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.2)]" :
-                                                isCompleted ? "bg-emerald-500/10 border-emerald-500/50 hover:border-emerald-500" :
+                                            "w-12 h-12 rounded-xl border flex items-center justify-center transition-all duration-500 cursor-pointer group/node relative",
+                                            isActive ? (isBreachMode ? "bg-red-500/20 border-red-500 shadow-[0_0_20px_rgba(239,68,68,0.2)]" : "bg-emerald-500/20 border-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.2)]") :
+                                                isCompleted ? (isBreachMode ? "bg-red-500/10 border-red-500/50 hover:border-red-500" : "bg-emerald-500/10 border-emerald-500/50 hover:border-emerald-500") :
                                                     "bg-slate-900 border-slate-800 hover:border-slate-600"
                                         )}
                                     >
                                         <Icon className={cn(
                                             "w-5 h-5 transition-colors duration-500 group-hover/node:scale-110",
-                                            isActive ? "text-emerald-400" : isCompleted ? "text-emerald-500" : "text-slate-600"
+                                            isActive ? (isBreachMode ? "text-red-400" : "text-emerald-400") :
+                                                isCompleted ? (isBreachMode ? "text-red-500" : "text-emerald-500") : "text-slate-600"
                                         )} />
+
+                                        {/* Vulnerability Indicator */}
+                                        {node.vulnerability && !isCompleted && (
+                                            <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-slate-900 animate-bounce" title="Vulnerability Detected" />
+                                        )}
+
                                         {isActive && (
                                             <motion.div
-                                                className="absolute inset-0 rounded-xl border-2 border-emerald-500/50"
+                                                className={cn("absolute inset-0 rounded-xl border-2", isBreachMode ? "border-red-500/50" : "border-emerald-500/50")}
                                                 initial={{ scale: 0.8, opacity: 1 }}
                                                 animate={{ scale: 1.5, opacity: 0 }}
                                                 transition={{ repeat: Infinity, duration: 1.5 }}
@@ -412,6 +525,59 @@ export default function TraceClient() {
                             <div className="p-6 overflow-y-auto custom-scrollbar flex-1">
                                 {modalTab === "details" && (
                                     <div className="space-y-6">
+                                        {/* Vulnerability Alert Section */}
+                                        {currentNodes.find(n => n.id === selectedNodeId)?.vulnerability && (
+                                            <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 mb-6">
+                                                <div className="flex items-center gap-3 mb-2">
+                                                    <ShieldAlert className="w-4 h-4 text-red-500" />
+                                                    <h4 className="text-[11px] font-bold uppercase tracking-widest text-red-500">Security Breach Risk</h4>
+                                                </div>
+                                                <p className="text-xs text-slate-300 font-medium mb-3">
+                                                    {currentNodes.find(n => n.id === selectedNodeId)?.vulnerability?.title}:
+                                                    <span className="text-slate-500 font-normal"> {currentNodes.find(n => n.id === selectedNodeId)?.vulnerability?.description}</span>
+                                                </p>
+
+                                                {!remediationScript ? (
+                                                    <button
+                                                        onClick={() => runRemediation(currentNodes.find(n => n.id === selectedNodeId)?.vulnerability)}
+                                                        disabled={isRemediating}
+                                                        className="w-full py-2 bg-red-500 hover:bg-red-400 disabled:bg-slate-800 text-black text-[10px] font-bold uppercase tracking-[0.2em] rounded transition-all flex items-center justify-center gap-2"
+                                                    >
+                                                        {isRemediating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5 fill-current" />}
+                                                        {isRemediating ? "Analyzing with Cloud Brain..." : "Remediate with AI"}
+                                                    </button>
+                                                ) : (
+                                                    <motion.div
+                                                        initial={{ opacity: 0, height: 0 }}
+                                                        animate={{ opacity: 1, height: "auto" }}
+                                                        className="space-y-3 pt-2"
+                                                    >
+                                                        <div className="flex items-center gap-2 text-[10px] text-emerald-500 font-bold uppercase">
+                                                            <CheckCircle2 className="w-3.5 h-3.5" /> Fix Generated
+                                                        </div>
+                                                        <div className="bg-black/80 border border-emerald-500/30 rounded p-3 font-mono text-[10px] text-emerald-400 group relative">
+                                                            <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                                <button onClick={() => setRemediationScript(null)} className="text-slate-500 hover:text-white">✕</button>
+                                                            </div>
+                                                            {remediationScript.script}
+                                                        </div>
+                                                        <p className="text-[10px] text-slate-400 italic">
+                                                            // {remediationScript.explanation}
+                                                        </p>
+                                                        <button
+                                                            onClick={() => {
+                                                                setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] AI Remediation applied to ${selectedNodeId}`]);
+                                                                setRemediationScript(null);
+                                                            }}
+                                                            className="w-full py-2 border border-emerald-500/50 text-emerald-500 text-[10px] font-bold uppercase tracking-widest rounded hover:bg-emerald-500/10 transition-all"
+                                                        >
+                                                            Apply Fix to Infrastructure
+                                                        </button>
+                                                    </motion.div>
+                                                )}
+                                            </div>
+                                        )}
+
                                         {(selectedNodeDetail?.details || []).map((detail: any, idx: number) => (
                                             <div key={idx} className="space-y-2">
                                                 <div className="flex items-center justify-between">

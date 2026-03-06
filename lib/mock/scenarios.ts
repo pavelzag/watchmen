@@ -26,6 +26,14 @@ export type InfrastructureNode = {
     icon: any;
     description: string;
     type: "compute" | "network" | "storage" | "security" | "other";
+    vulnerability?: {
+        id: string;
+        level: "critical" | "high" | "medium" | "low";
+        title: string;
+        description: string;
+        remediation: string;
+    };
+    lateralPaths?: string[];
 };
 
 export type PodStatus = "Running" | "Pending" | "Error" | "Terminated";
@@ -67,10 +75,49 @@ export const SCENARIOS: Scenario[] = [
         description: "Standard GKE production setup with Ingress and multi-pod backend.",
         provider: "gcp",
         nodes: [
-            { id: "ingress", label: "Cloud Ingress", icon: "Globe", description: "L7 Load Balancing", type: "network" },
-            { id: "service", label: "K8s Service", icon: "Layers", description: "Internal Cluster Routing", type: "network" },
-            { id: "pods", label: "GKE Pods (Go)", icon: "Cloud", description: "Compute Workload", type: "compute" },
-            { id: "db", label: "Cloud SQL", icon: "Database", description: "HA Postgres Instance", type: "storage" },
+            {
+                id: "ingress",
+                label: "Cloud Ingress",
+                icon: "Globe",
+                description: "L7 Load Balancing",
+                type: "network"
+            },
+            {
+                id: "service",
+                label: "K8s Service",
+                icon: "Layers",
+                description: "Internal Cluster Routing",
+                type: "network"
+            },
+            {
+                id: "pods",
+                label: "GKE Pods (Go)",
+                icon: "Cloud",
+                description: "Compute Workload",
+                type: "compute",
+                vulnerability: {
+                    id: "VULN-990-CVE",
+                    level: "critical",
+                    title: "RCE in Backend Service",
+                    description: "Unauthenticated Remote Code Execution via log4j wrapper.",
+                    remediation: "Patch image to v2.1.0 and enable Cloud Armor WAF rules."
+                },
+                lateralPaths: ["db"]
+            },
+            {
+                id: "db",
+                label: "Cloud SQL",
+                icon: "Database",
+                description: "HA Postgres Instance",
+                type: "storage",
+                vulnerability: {
+                    id: "MISCONF-SQL-01",
+                    level: "high",
+                    title: "Publicly Accessible Instance",
+                    description: "Instance has 0.0.0.0/0 authorized network.",
+                    remediation: "Remove public IP and enable Cloud SQL Auth Proxy."
+                }
+            },
             { id: "complete", label: "Success", icon: "CheckCircle2", description: "Transaction Committed", type: "other" }
         ],
         nodeDetails: {
@@ -167,7 +214,21 @@ export const SCENARIOS: Scenario[] = [
         provider: "aws",
         nodes: [
             { id: "alb", label: "Application LB", icon: "Globe", description: "AWS ELB v2", type: "network" },
-            { id: "eks", label: "EKS Fargate", icon: "Layers", description: "Managed Kubernetes", type: "compute" },
+            {
+                id: "eks",
+                label: "EKS Fargate",
+                icon: "Layers",
+                description: "Managed Kubernetes",
+                type: "compute",
+                vulnerability: {
+                    id: "AWS-IAM-01",
+                    level: "high",
+                    title: "Over-privileged Pod Role",
+                    description: "Pod IAM role allows full S3 access.",
+                    remediation: "Scope IRSA policy to specific bucket only."
+                },
+                lateralPaths: ["sqs", "lambda"]
+            },
             { id: "sqs", label: "SQS Queue", icon: "MessageSquare", description: "Durability Layer", type: "network" },
             { id: "lambda", label: "AWS Lambda", icon: "Zap", description: "Worker Node", type: "compute" },
             { id: "ddb", label: "DynamoDB", icon: "Database", description: "Key-Value Store", type: "storage" }
@@ -202,7 +263,20 @@ export const SCENARIOS: Scenario[] = [
         provider: "gcp",
         nodes: [
             { id: "global", label: "Global LB", icon: "Globe", description: "Anycast Frontend", type: "network" },
-            { id: "armor", label: "Cloud Armor", icon: "ShieldCheck", description: "DDoS & WAF Protection", type: "security" },
+            {
+                id: "armor",
+                label: "Cloud Armor",
+                icon: "ShieldCheck",
+                description: "DDoS & WAF Protection",
+                type: "security",
+                vulnerability: {
+                    id: "WAF-BYPASS-02",
+                    level: "medium",
+                    title: "WAF Rule in Preview Mode",
+                    description: "SQLi protection is logged but not blocked.",
+                    remediation: "Switch Cloud Armor rule action from 'throttle' to 'deny'."
+                }
+            },
             { id: "gateway", label: "API Gateway", icon: "Lock", description: "Config Management", type: "security" },
             { id: "run", label: "Cloud Run", icon: "Cloud", description: "Private Backend", type: "compute" },
             { id: "secret", label: "Secret Manager", icon: "Lock", description: "Credential Access", type: "security" }
