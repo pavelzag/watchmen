@@ -12,7 +12,8 @@ import {
     AlertCircle,
     Info,
     Terminal,
-    Eye
+    Eye,
+    Code
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 

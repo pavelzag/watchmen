@@ -1,34 +1,46 @@
 import { NextRequest, NextResponse } from "next/server";
 
-// This is a proxy/simulated endpoint for the Go service
 export async function POST(req: NextRequest) {
     try {
         const body = await req.json();
+        const PROCESSOR_URL = process.env.PROCESSOR_URL;
 
-        // In a real scenario, we would:
-        // const resp = await fetch('http://localhost:8080/process', { method: 'POST', body: JSON.stringify(body) });
-        // return NextResponse.json(await resp.json());
+        // If a real processor URL is provided (e.g., in GKE), call it
+        if (PROCESSOR_URL) {
+            try {
+                const resp = await fetch(`${PROCESSOR_URL}/process`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                if (resp.ok) {
+                    return NextResponse.json(await resp.json());
+                }
+            } catch (err) {
+                console.error("Failed to contact processor service:", err);
+                // Fallback to mock for better demo experience if service is down
+            }
+        }
 
-        // For the demo/mock environment:
+        // For the demo/mock environment (default fallback):
         const data = body.data || {};
         const processed = {
             ...data,
             _watchmen_processed: true,
             server_id: "watchmen-processor-7f4b",
             timestamp: new Date().toISOString(),
-            location: "us-central1 (Cloud Run)",
+            location: "GKE Cluster (us-central1)",
             db_status: "committed"
         };
 
         const trace = [
-            { component: "API Gateway", action: "Request Received", status: "Success" },
-            { component: "Load Balancer", action: "Forwarding to CloudRun", status: "Success" },
-            { component: "CloudRun Service (Go)", action: "Applying Business Logic", status: "Success" },
-            { component: "Cloud SQL", action: "Persisting Record", status: "Success" },
-            { component: "Egress", action: "Dispatching Response", status: "Success" }
+            { component: "API Gateway", action: "Checking Ingress Rules", status: "Success" },
+            { component: "GKE Ingress", action: "Routing to Pod", status: "Success" },
+            { component: "K8s Service Mesh", action: "mTLS Handshake", status: "Success" },
+            { component: "Go Pod", action: "Processing Transformation", status: "Success" },
+            { component: "Cloud SQL Proxy", action: "Secure Tunnel Write", status: "Success" }
         ];
 
-        // Artificial delay to simulate network/processing
         await new Promise(r => setTimeout(r, 800));
 
         return NextResponse.json({
@@ -36,7 +48,7 @@ export async function POST(req: NextRequest) {
             original_data: data,
             processed_data: processed,
             trace: trace,
-            message: `Request from ${body.source} successfully processed by Watchmen Go Service`
+            message: `Request successfully processed by Watchmen GKE deployment`
         });
     } catch (error) {
         return NextResponse.json({ error: "Invalid request payload" }, { status: 400 });

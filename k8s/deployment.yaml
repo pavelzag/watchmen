@@ -7,15 +7,12 @@ metadata:
     app.kubernetes.io/name: watchmen
     app.kubernetes.io/version: latest
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: watchmen
   strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxUnavailable: 0   # zero-downtime rolling updates
-      maxSurge: 1
+    type: Recreate
   template:
     metadata:
       labels:
@@ -38,7 +35,7 @@ spec:
         - name: watchmen
           # Update this image tag after the GitHub Action pushes a new build.
           # Use a pinned SHA in production instead of :main.
-          image: ghcr.io/YOUR_GITHUB_ORG/watchmen:main
+          image: gcr.io/watchmen-test-488807/watchmen:latest
           imagePullPolicy: Always
 
           ports:
@@ -47,6 +44,9 @@ spec:
               protocol: TCP
 
           # ── Environment — pulled entirely from the Secret ────────────────
+          env:
+            - name: PROCESSOR_URL
+              value: "http://watchmen-processor"
           envFrom:
             - secretRef:
                 name: watchmen-env
@@ -71,8 +71,8 @@ spec:
           # ── Resources ────────────────────────────────────────────────────
           resources:
             requests:
-              cpu: 100m
-              memory: 256Mi
+              cpu: 50m
+              memory: 128Mi
             limits:
               cpu: 500m
               memory: 512Mi

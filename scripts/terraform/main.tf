@@ -104,6 +104,24 @@ resource "google_container_cluster" "test" {
   deletion_protection = false
 }
 
+resource "google_container_node_pool" "primary_nodes" {
+  name       = "wm-test-node-pool"
+  location   = var.zone
+  cluster    = google_container_cluster.test.name
+  node_count = 1
+
+  node_config {
+    preemptible  = true
+    machine_type = "e2-small"
+
+    # Google recommends custom service accounts that have cloud-platform scope and permissions granted via IAM Roles.
+    service_account = google_service_account.cicd.email
+    oauth_scopes    = [
+      "https://www.googleapis.com/auth/cloud-platform"
+    ]
+  }
+}
+
 
 # ── VM ────────────────────────────────────────────────────────────────────────
 # Cost: ~$0.005/hr spot e2-micro (~$3.5/month worst case; free-tier eligible in us-central1)

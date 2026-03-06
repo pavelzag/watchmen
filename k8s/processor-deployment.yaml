@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: watchmen-processor
+  namespace: watchmen
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: watchmen-processor
+  template:
+    metadata:
+      labels:
+        app: watchmen-processor
+    spec:
+      containers:
+        - name: processor
+          image: gcr.io/watchmen-test-488807/watchmen-processor:latest
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          ports:
+            - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: watchmen-processor
+  namespace: watchmen
+spec:
+  selector:
+    app: watchmen-processor
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
