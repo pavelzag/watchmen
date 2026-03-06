@@ -32,6 +32,24 @@ export async function GET(req: NextRequest) {
     ];
 
     try {
+        const useMock = process.env.USE_MOCK_DATA === "true" || session.user?.email === "demo@watchmen.dev";
+
+        if (useMock) {
+            const { SCENARIOS } = await import("@/lib/mock/scenarios");
+            SCENARIOS.forEach(s => {
+                endpoints.push({
+                    id: `scenario-${s.id}`,
+                    label: `Scenario: ${s.label}`,
+                    url: "", // Scenarios are purely for simulation
+                    provider: s.provider as any,
+                    type: "Scenario",
+                    description: s.description,
+                    // We'll pass the scenario data in the response for the frontend to use
+                    mode: "simulation",
+                    scenario: s
+                } as any);
+            });
+        }
         // 1. Fetch GCP Endpoints
         await ensureGcpSnapshotTable();
         const gcpResult = await sql`

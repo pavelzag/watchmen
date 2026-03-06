@@ -15,9 +15,27 @@ import {
     Eye,
     Code,
     ChevronDown,
-    Globe
+    Globe,
+    Layers,
+    Activity,
+    Brain,
+    Lock,
+    Zap,
+    MessageSquare,
+    Search,
+    Layout,
+    Wifi,
+    HardDrive,
+    Bell
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+// Map icon names from strings to components
+const ICON_MAP: Record<string, any> = {
+    ShieldCheck, Database, Cloud, Server, CheckCircle2, Globe, Layers,
+    Activity, Brain, Lock, Zap, MessageSquare, Search, Layout, Wifi,
+    HardDrive, Bell, Code
+};
 
 const DEFAULT_JSON = {
     "id": "req-9981-ax",
@@ -41,76 +59,14 @@ type InfrastructureNode = {
     description: string;
 };
 
-const NODES: InfrastructureNode[] = [
+// Default nodes for non-scenario endpoints
+const DEFAULT_NODES: InfrastructureNode[] = [
     { id: "gateway", label: "API Gateway", icon: ShieldCheck, description: "Authenticating & Validating" },
     { id: "lb", label: "Load Balancer", icon: Server, description: "Distributing Traffic" },
     { id: "service", label: "Cloud Run (Go)", icon: Cloud, description: "Processing Business Logic" },
     { id: "db", label: "Cloud SQL", icon: Database, description: "Persisting Record" },
     { id: "response", label: "Final Response", icon: CheckCircle2, description: "Success 200 OK" },
 ];
-
-type NodeDetail = {
-    title: string;
-    description: string;
-    details: {
-        label: string;
-        value: string;
-        type?: "code" | "text" | "status";
-    }[];
-};
-
-const NODE_DETAILS: Record<string, NodeDetail> = {
-    gateway: {
-        title: "API Gateway Inspection",
-        description: "Edge validation and authentication layer.",
-        details: [
-            { label: "Auth Protocol", value: "OAuth 2.0 / JWT", type: "text" },
-            { label: "Rate Limiting", value: "500 req/sec (Active)", type: "status" },
-            { label: "IP Filtering", value: "Allowed: 192.168.1.0/24", type: "text" },
-            { label: "Validated Headers", value: '{\n  "Authorization": "Bearer ...",\n  "X-Request-ID": "req-9981-ax"\n}', type: "code" }
-        ]
-    },
-    lb: {
-        title: "Load Balancer Analysis",
-        description: "Traffic distribution and SSL termination.",
-        details: [
-            { label: "SSL Status", value: "Handshake Complete (TLS 1.3)", type: "status" },
-            { label: "Algorithm", value: "Round Robin", type: "text" },
-            { label: "Backend Target", value: "cloud-run-mesh-01", type: "text" },
-            { label: "Forwarded Protocol", value: "HTTP/2", type: "text" }
-        ]
-    },
-    service: {
-        title: "Cloud Run (Go) Trace",
-        description: "Execution details for the request-processor service.",
-        details: [
-            { label: "Runtime", value: "Go 1.21 on Cloud Run", type: "text" },
-            { label: "Morphic Logic", value: 'func process(req Request) {\n  req.Processed = true\n  req.ServerID = "watchmen-7f4b"\n}', type: "code" },
-            { label: "Env Vars", value: "DB_CONN, TRACE_ENABLED=true", type: "text" },
-            { label: "Execution Time", value: "42ms", type: "status" }
-        ]
-    },
-    db: {
-        title: "Cloud SQL Interaction",
-        description: "Persistence event for current transaction.",
-        details: [
-            { label: "Database", value: "PostgreSQL 15 (Managed)", type: "text" },
-            { label: "Executed Query", value: "INSERT INTO audit_logs (id, payload) VALUES ($1, $2)", type: "code" },
-            { label: "Query Time", value: "12ms", type: "status" },
-            { label: "Consistency", value: "Strong (Committed)", type: "text" }
-        ]
-    },
-    response: {
-        title: "Final Response Assembly",
-        description: "Egress formatting and client dispatch.",
-        details: [
-            { label: "Status Code", value: "200 OK", type: "status" },
-            { label: "Content Type", value: "application/json", type: "text" },
-            { label: "Compression", value: "gzip (92% reduction)", type: "text" },
-            { label: "Packet Size", value: "1.2KB", type: "text" }
-        ]
-    }
-};
 
 const DEFAULT_ENDPOINTS = [
     { id: "mock", label: "Local Mock", url: "", provider: "mock", description: "Simulated trace in local environment" },
@@ -119,7 +75,7 @@ const DEFAULT_ENDPOINTS = [
 export default function TraceClient() {
     const [inputJson, setInputJson] = useState(JSON.stringify(DEFAULT_JSON, null, 2));
     const [endpoints, setEndpoints] = useState<any[]>(DEFAULT_ENDPOINTS);
-    const [targetEndpoint, setTargetEndpoint] = useState(DEFAULT_ENDPOINTS[0]);
+    const [targetEndpoint, setTargetEndpoint] = useState<any>(DEFAULT_ENDPOINTS[0]);
     const [isRunning, setIsRunning] = useState(false);
     const [isLoadingEndpoints, setIsLoadingEndpoints] = useState(true);
     const [isEditorOpen, setIsEditorOpen] = useState(false);
@@ -127,9 +83,15 @@ export default function TraceClient() {
     const [logs, setLogs] = useState<string[]>([]);
     const [outputJson, setOutputJson] = useState<any>(null);
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+    const [modalTab, setModalTab] = useState<"details" | "pods" | "logs">("details");
+    const [selectedPodName, setSelectedPodName] = useState<string | null>(null);
     const logEndRef = useRef<HTMLDivElement>(null);
     const dropdownRef = useRef<HTMLDivElement>(null);
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+
+    // Derived nodes from current endpoint
+    const currentNodes = targetEndpoint?.scenario?.nodes || DEFAULT_NODES;
+    const currentNodeDetails = targetEndpoint?.scenario?.nodeDetails || {};
 
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
@@ -172,12 +134,13 @@ export default function TraceClient() {
         setLogs([`[${new Date().toLocaleTimeString()}] Initiating trace for payload...`]);
         setOutputJson(null);
 
-        for (let i = 0; i < NODES.length; i++) {
+        for (let i = 0; i < currentNodes.length; i++) {
             setActiveNodeIndex(i);
-            const node = NODES[i];
+            const node = currentNodes[i];
             setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Entering ${node.label}: ${node.description}`]);
 
-            if (i === 2) {
+            // Logic for API call simulation
+            if (node.id === "service" || node.id === "pods" || node.id === "run" || node.id === "eks") {
                 try {
                     const response = await fetch("/api/trace", {
                         method: "POST",
@@ -192,14 +155,16 @@ export default function TraceClient() {
                     const sourceLabel = data.source === "Mock" ? "Mock" : "Cloud Service";
                     setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${sourceLabel} Signal Received: Record committed`]);
                 } catch (err) {
-                    setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Error: Failed to contact Go Service`]);
+                    setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Error: Failed to contact upstream`]);
                 }
             }
-            await new Promise(r => setTimeout(r, 1500));
+            await new Promise(r => setTimeout(r, 1200));
         }
         setIsRunning(false);
         setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Trace complete. 100% Delivery.`]);
     };
+
+    const selectedNodeDetail = currentNodeDetails[selectedNodeId || ""] || null;
 
     return (
         <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-8 overflow-hidden">
@@ -225,12 +190,12 @@ export default function TraceClient() {
                                         initial={{ opacity: 0, y: 10, scale: 0.95 }}
                                         animate={{ opacity: 1, y: 0, scale: 1 }}
                                         exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                                        className="absolute left-0 top-full mt-2 w-64 bg-slate-900 border border-slate-800 rounded-lg shadow-2xl z-[100] p-1 overflow-hidden"
+                                        className="absolute left-0 top-full mt-2 w-72 bg-slate-900 border border-slate-800 rounded-lg shadow-2xl z-[100] p-1 overflow-hidden"
                                     >
                                         <div className="text-[9px] text-slate-500 font-bold uppercase tracking-[0.2em] px-3 py-2 border-b border-slate-800/50 mb-1">
-                                            Select Target
+                                            Select Scenario/Target
                                         </div>
-                                        <div className="max-h-60 overflow-y-auto custom-scrollbar">
+                                        <div className="max-h-80 overflow-y-auto custom-scrollbar">
                                             {endpoints.map(ep => (
                                                 <button
                                                     key={ep.id}
@@ -283,24 +248,15 @@ export default function TraceClient() {
                         isRunning && "opacity-50 cursor-not-allowed"
                     )}
                 >
-                    <div className="text-emerald-500/70 overflow-hidden whitespace-pre pointer-events-none select-none">
-                        {inputJson.split('\n').slice(0, 12).join('\n')}
-                        {inputJson.split('\n').length > 12 && "\n..."}
-                    </div>
-                    <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-slate-950/80 rounded-lg" />
-                    <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                        <div className="bg-emerald-500 text-black text-[10px] font-bold px-3 py-1.5 rounded uppercase tracking-widest shadow-lg">
-                            Edit Payload
-                        </div>
-                    </div>
-                    <div className="absolute top-2 right-2">
-                        <div className="text-[10px] text-slate-600 bg-black/50 px-2 py-0.5 rounded border border-slate-800">JSON</div>
+                    <div className="text-emerald-500/70 overflow-hidden whitespace-pre pointer-events-none select-none text-xs">
+                        {inputJson.split('\n').slice(0, 10).join('\n')}
+                        {inputJson.split('\n').length > 10 && "\n..."}
                     </div>
                 </div>
 
                 <div className="h-48 bg-black border border-slate-800 rounded-lg p-3 font-mono text-[10px] overflow-y-auto overflow-x-hidden space-y-1 custom-scrollbar">
                     {logs.map((log, i) => (
-                        <div key={i} className="text-slate-400 animate-in fade-in slide-in-from-left-2 duration-300">
+                        <div key={i} className="text-slate-400">
                             <span className="text-emerald-500 opacity-50">$</span> {log}
                         </div>
                     ))}
@@ -310,48 +266,46 @@ export default function TraceClient() {
 
             <div className="lg:col-span-8 flex flex-col gap-6">
                 <h2 className="text-xs uppercase tracking-widest text-slate-500 font-bold">Infrastructure Journey</h2>
-                <div className="relative flex-1 bg-slate-900/30 border border-slate-800/50 rounded-xl flex flex-col items-center justify-center p-8">
+                <div className="relative flex-1 bg-slate-900/30 border border-slate-800/50 rounded-xl flex flex-col items-center justify-center p-8 overflow-x-auto custom-scrollbar">
                     <div className="absolute inset-0 opacity-[0.03] pointer-events-none"
                         style={{ backgroundImage: "radial-gradient(circle, #10b981 1px, transparent 1px)", backgroundSize: "24px 24px" }}
                     />
 
-                    <div className="relative w-full max-w-4xl flex items-center justify-between">
-                        <div className="absolute top-1/2 left-0 w-full h-0.5 bg-slate-800 -translate-y-1/2" />
+                    <div className="relative min-w-[600px] w-full max-w-5xl flex items-center justify-between px-10">
+                        <div className="absolute top-1/2 left-10 right-10 h-0.5 bg-slate-800 -translate-y-1/2" />
                         {(isRunning || activeNodeIndex >= 0) && (
                             <motion.div
                                 initial={{ width: "0%" }}
-                                animate={{ width: `${(Math.max(0, activeNodeIndex) / (NODES.length - 1)) * 100}%` }}
-                                className="absolute top-1/2 left-0 h-0.5 bg-emerald-500 -translate-y-1/2 shadow-[0_0_8px_#10b981]"
+                                animate={{ width: `${(Math.max(0, activeNodeIndex) / (currentNodes.length - 1)) * 85 + 5}%` }}
+                                className="absolute top-1/2 left-10 h-0.5 bg-emerald-500 -translate-y-1/2 shadow-[0_0_8px_#10b981]"
                             />
                         )}
 
-                        {NODES.map((node, i) => {
+                        {currentNodes.map((node: any, i: number) => {
                             const isActive = i === activeNodeIndex;
                             const isCompleted = i < activeNodeIndex;
-                            const Icon = node.icon;
+                            const Icon = typeof node.icon === "string" ? (ICON_MAP[node.icon] || Code) : node.icon;
 
                             return (
                                 <div key={node.id} className="relative z-10 flex flex-col items-center">
                                     <motion.div
                                         animate={isActive ? { scale: [1, 1.1, 1], borderColor: ["#1e293b", "#10b981", "#1e293b"] } : {}}
                                         transition={{ repeat: Infinity, duration: 2 }}
-                                        onClick={() => setSelectedNodeId(node.id)}
+                                        onClick={() => {
+                                            setSelectedNodeId(node.id);
+                                            setModalTab("details");
+                                        }}
                                         className={cn(
-                                            "w-14 h-14 rounded-xl border flex items-center justify-center transition-all duration-500 cursor-pointer group/node",
+                                            "w-12 h-12 rounded-xl border flex items-center justify-center transition-all duration-500 cursor-pointer group/node",
                                             isActive ? "bg-emerald-500/20 border-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.2)]" :
                                                 isCompleted ? "bg-emerald-500/10 border-emerald-500/50 hover:border-emerald-500" :
                                                     "bg-slate-900 border-slate-800 hover:border-slate-600"
                                         )}
                                     >
                                         <Icon className={cn(
-                                            "w-6 h-6 transition-colors duration-500 group-hover/node:scale-110",
+                                            "w-5 h-5 transition-colors duration-500 group-hover/node:scale-110",
                                             isActive ? "text-emerald-400" : isCompleted ? "text-emerald-500" : "text-slate-600"
                                         )} />
-                                        <div className="absolute -top-1 -right-1 opacity-0 group-hover/node:opacity-100 transition-opacity">
-                                            <div className="bg-emerald-500 rounded-full p-0.5 shadow-lg">
-                                                <Eye className="w-3 h-3 text-black" />
-                                            </div>
-                                        </div>
                                         {isActive && (
                                             <motion.div
                                                 className="absolute inset-0 rounded-xl border-2 border-emerald-500/50"
@@ -372,155 +326,165 @@ export default function TraceClient() {
                                 </div>
                             );
                         })}
-
-                        <AnimatePresence>
-                            {isRunning && activeNodeIndex < NODES.length - 1 && (
-                                <motion.div
-                                    key="packet"
-                                    initial={{ left: `${(activeNodeIndex / (NODES.length - 1)) * 100}%` }}
-                                    animate={{ left: `${((activeNodeIndex + 1) / (NODES.length - 1)) * 100}%` }}
-                                    exit={{ opacity: 0 }}
-                                    transition={{ duration: 1.2, ease: "linear" }}
-                                    className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-emerald-400 shadow-[0_0_10px_#10b981] z-20"
-                                />
-                            )}
-                        </AnimatePresence>
                     </div>
-
-                    <AnimatePresence>
-                        {outputJson && (
-                            <motion.div
-                                initial={{ opacity: 0, scale: 0.95 }}
-                                animate={{ opacity: 1, scale: 1 }}
-                                className="mt-24 w-full max-w-2xl bg-black/40 border border-slate-800 rounded-xl p-6 backdrop-blur-sm"
-                            >
-                                <div className="flex items-center gap-2 mb-4">
-                                    <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                                    <h3 className="text-xs font-bold uppercase tracking-widest text-slate-300">Transformation Result</h3>
-                                </div>
-                                <div className="grid grid-cols-2 gap-6">
-                                    <div className="space-y-2">
-                                        <label className="text-[9px] uppercase tracking-widest text-slate-500">Inputs</label>
-                                        <div className="bg-slate-900/50 rounded p-2 text-[10px] font-mono text-emerald-700">
-                                            {JSON.stringify(JSON.parse(inputJson).data, null, 1)}
-                                        </div>
-                                    </div>
-                                    <div className="space-y-2">
-                                        <label className="text-[9px] uppercase tracking-widest text-slate-500">Outputs (Morphed)</label>
-                                        <div className="bg-emerald-500/5 rounded p-2 text-[10px] font-mono text-emerald-400">
-                                            {JSON.stringify(outputJson.processed_data, null, 1)}
-                                        </div>
-                                    </div>
-                                </div>
-                            </motion.div>
-                        )}
-                    </AnimatePresence>
                 </div>
 
-                <div className="mt-8 bg-emerald-500/5 border border-emerald-500/10 rounded-xl p-6">
-                    <div className="flex items-center gap-2 mb-3">
-                        <Info className="w-4 h-4 text-emerald-500" />
-                        <h3 className="text-[10px] font-bold uppercase tracking-widest text-emerald-500">Theory of Discovery</h3>
+                <div className="mt-4 bg-emerald-500/5 border border-emerald-500/10 rounded-xl p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                        <Info className="w-3.5 h-3.5 text-emerald-500" />
+                        <h3 className="text-[10px] font-bold uppercase tracking-widest text-emerald-500">Infrastructure Context</h3>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        <div className="space-y-1">
-                            <span className="text-[9px] font-bold uppercase tracking-tighter text-slate-400">1. Cloud Graphing</span>
-                            <p className="text-[10px] text-slate-500 leading-relaxed">System queries Resource Manager APIs to map relationships between LBs, Services, and DBs.</p>
-                        </div>
-                        <div className="space-y-1">
-                            <span className="text-[9px] font-bold uppercase tracking-tighter text-slate-400">2. Runtime Tracing</span>
-                            <p className="text-[10px] text-slate-500 leading-relaxed">Trace context is injected into headers to track real-time hops via OpenTelemetry.</p>
-                        </div>
-                        <div className="space-y-1">
-                            <span className="text-[9px] font-bold uppercase tracking-tighter text-slate-400">3. IAM Simulation</span>
-                            <p className="text-[10px] text-slate-500 leading-relaxed">Reachable paths are calculated by simulating service-account permissions.</p>
-                        </div>
-                    </div>
+                    <p className="text-[10px] text-slate-500 leading-relaxed">
+                        {targetEndpoint.description || "Simulating data flow across discovered architectural nodes."}
+                    </p>
                 </div>
             </div>
 
+            {/* Node Detail Modal */}
             <AnimatePresence>
-                {isEditorOpen && (
-                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+                {selectedNodeId && (
+                    <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
                         <motion.div
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1 }}
-                            exit={{ opacity: 0 }}
-                            onClick={() => setIsEditorOpen(false)}
-                            className="absolute inset-0 bg-black/80 backdrop-blur-md"
+                            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                            onClick={() => setSelectedNodeId(null)}
+                            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
                         />
                         <motion.div
-                            initial={{ scale: 0.9, opacity: 0, y: 20 }}
-                            animate={{ scale: 1, opacity: 1, y: 0 }}
-                            exit={{ scale: 0.9, opacity: 0, y: 20 }}
-                            className="relative w-full max-w-3xl h-[80vh] bg-[#0d1117] border border-slate-800 rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+                            initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
+                            className="relative w-full max-w-2xl bg-[#141921] border border-slate-800 rounded-2xl shadow-3xl flex flex-col overflow-hidden max-h-[80vh]"
                         >
-                            <div className="flex items-center justify-between p-4 border-b border-slate-800 bg-slate-900/50">
-                                <div className="flex items-center gap-3">
-                                    <Code className="w-4 h-4 text-emerald-500" />
-                                    <h3 className="text-sm font-bold uppercase tracking-[0.2em] text-white">Edit Request Payload</h3>
+                            <div className="p-6 border-b border-slate-800 bg-slate-900/40">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-3">
+                                        <Terminal className="w-4 h-4 text-emerald-500" />
+                                        <h3 className="text-sm font-bold uppercase tracking-widest text-white">
+                                            {selectedNodeDetail?.title || "Node Inspection"}
+                                        </h3>
+                                    </div>
+                                    <button onClick={() => setSelectedNodeId(null)} className="p-1 hover:bg-white/5 rounded-full transition-colors">
+                                        <AlertCircle className="w-5 h-5 text-slate-500 rotate-45" />
+                                    </button>
                                 </div>
-                                <button onClick={() => setIsEditorOpen(false)} className="p-2 hover:bg-white/5 rounded-full text-slate-400 hover:text-white transition-colors">
-                                    <AlertCircle className="w-5 h-5 rotate-45" />
-                                </button>
+                                <p className="text-xs text-slate-400 mt-2">{selectedNodeDetail?.description}</p>
+
+                                {/* Tabs */}
+                                <div className="flex gap-4 mt-6">
+                                    {["details", "pods", "logs"].map((tab) => (
+                                        <button
+                                            key={tab}
+                                            onClick={() => setModalTab(tab as any)}
+                                            className={cn(
+                                                "text-[10px] uppercase tracking-widest font-bold pb-2 transition-all border-b-2",
+                                                modalTab === tab ? "text-emerald-500 border-emerald-500" : "text-slate-500 border-transparent hover:text-slate-300"
+                                            )}
+                                        >
+                                            {tab}
+                                        </button>
+                                    ))}
+                                </div>
                             </div>
-                            <div className="flex-1 p-6 overflow-hidden">
-                                <textarea
-                                    value={inputJson}
-                                    onChange={(e) => setInputJson(e.target.value)}
-                                    className="w-full h-full bg-transparent outline-none text-emerald-500/90 font-mono text-base resize-none overflow-y-auto custom-scrollbar"
-                                    spellCheck={false}
-                                    autoFocus
-                                />
-                            </div>
-                            <div className="p-4 border-t border-slate-800 bg-slate-900/30 flex justify-end gap-3">
-                                <button onClick={() => setIsEditorOpen(false)} className="px-6 py-2 rounded text-xs font-bold uppercase tracking-widest text-slate-400 hover:text-white transition-colors">Done</button>
+
+                            <div className="p-6 overflow-y-auto custom-scrollbar flex-1">
+                                {modalTab === "details" && (
+                                    <div className="space-y-6">
+                                        {(selectedNodeDetail?.details || []).map((detail: any, idx: number) => (
+                                            <div key={idx} className="space-y-2">
+                                                <div className="flex items-center justify-between">
+                                                    <span className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">{detail.label}</span>
+                                                    {detail.type === "status" && <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />}
+                                                </div>
+                                                {detail.type === "code" ? (
+                                                    <div className="bg-black/50 border border-slate-800 rounded p-3 font-mono text-xs text-emerald-400 leading-relaxed whitespace-pre overflow-x-auto">{detail.value}</div>
+                                                ) : (
+                                                    <p className={cn("text-sm font-medium", detail.type === "status" ? "text-emerald-400" : "text-slate-200")}>{detail.value}</p>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {modalTab === "pods" && (
+                                    <div className="space-y-4">
+                                        {!selectedNodeDetail?.pods ? (
+                                            <div className="text-center py-10 text-slate-600 text-[10px] uppercase tracking-widest">No pods identified in this node type</div>
+                                        ) : (
+                                            <div className="grid gap-2">
+                                                {selectedNodeDetail.pods.map((pod: any) => (
+                                                    <div key={pod.name} className="bg-slate-900/50 border border-slate-800 p-3 rounded-lg flex items-center justify-between group">
+                                                        <div className="flex items-center gap-3">
+                                                            <div className={cn("w-2 h-2 rounded-full", pod.status === "Running" ? "bg-emerald-500" : "bg-amber-500")} />
+                                                            <div className="flex flex-col">
+                                                                <span className="text-xs font-bold text-slate-200">{pod.name}</span>
+                                                                <span className="text-[10px] text-slate-500">Age: {pod.age} • Restarts: {pod.restarts}</span>
+                                                            </div>
+                                                        </div>
+                                                        <div className="flex items-center gap-4">
+                                                            <div className="text-[9px] text-slate-500 text-right">
+                                                                <div>CPU: {pod.cpu}</div>
+                                                                <div>MEM: {pod.memory}</div>
+                                                            </div>
+                                                            <button
+                                                                onClick={() => {
+                                                                    setSelectedPodName(pod.name);
+                                                                    setModalTab("logs");
+                                                                }}
+                                                                className="opacity-0 group-hover:opacity-100 transition-opacity p-2 hover:bg-emerald-500/10 rounded-md text-emerald-500"
+                                                            >
+                                                                <Terminal className="w-3.5 h-3.5" />
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                {modalTab === "logs" && (
+                                    <div className="bg-black border border-slate-800 rounded-lg p-4 font-mono text-[11px] h-64 overflow-y-auto custom-scrollbar">
+                                        {!selectedNodeDetail?.pods ? (
+                                            <div className="text-slate-600 italic">Logs currently unavailable for this resource.</div>
+                                        ) : (
+                                            (selectedNodeDetail.pods.find((p: any) => p.name === (selectedPodName || selectedNodeDetail.pods[0].name))?.logs || []).map((line: string, i: number) => (
+                                                <div key={i} className="text-slate-300 mb-1">
+                                                    <span className="text-emerald-500/50 mr-2">{">"}</span>
+                                                    {line}
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
+                                )}
                             </div>
                         </motion.div>
                     </div>
                 )}
             </AnimatePresence>
 
+            {/* Request Editor Modal */}
             <AnimatePresence>
-                {selectedNodeId && NODE_DETAILS[selectedNodeId] && (
-                    <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
-                        <motion.div
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1 }}
-                            exit={{ opacity: 0 }}
-                            onClick={() => setSelectedNodeId(null)}
-                            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+                {isEditorOpen && (
+                    <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+                        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                            onClick={() => setIsEditorOpen(false)}
+                            className="absolute inset-0 bg-black/80 backdrop-blur-md"
                         />
-                        <motion.div
-                            initial={{ scale: 0.95, opacity: 0 }}
-                            animate={{ scale: 1, opacity: 1 }}
-                            exit={{ scale: 0.95, opacity: 0 }}
-                            className="relative w-full max-w-lg bg-[#141921] border border-slate-800 rounded-2xl shadow-3xl flex flex-col overflow-hidden"
+                        <motion.div initial={{ scale: 0.9, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.9, opacity: 0, y: 20 }}
+                            className="relative w-full max-w-3xl h-[80vh] bg-[#0d1117] border border-slate-800 rounded-2xl shadow-2xl flex flex-col overflow-hidden"
                         >
-                            <div className="p-6 border-b border-slate-800 bg-slate-900/40">
-                                <div className="flex items-center gap-3 mb-2">
-                                    <Terminal className="w-4 h-4 text-emerald-500" />
-                                    <h3 className="text-sm font-bold uppercase tracking-widest text-white">{NODE_DETAILS[selectedNodeId].title}</h3>
-                                </div>
-                                <p className="text-xs text-slate-400">{NODE_DETAILS[selectedNodeId].description}</p>
+                            <div className="flex items-center justify-between p-4 border-b border-slate-800 bg-slate-900/50">
+                                <h3 className="text-sm font-bold uppercase tracking-[0.2em] text-white">Edit Request Payload</h3>
+                                <button onClick={() => setIsEditorOpen(false)} className="p-2 hover:bg-white/5 rounded-full text-slate-500 transition-colors">
+                                    <AlertCircle className="w-5 h-5 rotate-45" />
+                                </button>
                             </div>
-                            <div className="p-6 space-y-6">
-                                {NODE_DETAILS[selectedNodeId].details.map((detail, idx) => (
-                                    <div key={idx} className="space-y-2">
-                                        <div className="flex items-center justify-between">
-                                            <span className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">{detail.label}</span>
-                                            {detail.type === "status" && <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />}
-                                        </div>
-                                        {detail.type === "code" ? (
-                                            <div className="bg-black/50 border border-slate-800 rounded p-3 font-mono text-xs text-emerald-400 leading-relaxed whitespace-pre overflow-x-auto">{detail.value}</div>
-                                        ) : (
-                                            <p className={cn("text-sm font-medium", detail.type === "status" ? "text-emerald-400" : "text-slate-200")}>{detail.value}</p>
-                                        )}
-                                    </div>
-                                ))}
-                            </div>
-                            <div className="p-4 bg-slate-900/20 flex justify-end">
-                                <button onClick={() => setSelectedNodeId(null)} className="px-6 py-2 rounded text-[10px] font-bold uppercase tracking-widest bg-slate-800 text-slate-400 hover:text-white transition-colors">Dismiss</button>
+                            <textarea
+                                value={inputJson}
+                                onChange={(e) => setInputJson(e.target.value)}
+                                className="flex-1 bg-transparent p-6 outline-none text-emerald-500/90 font-mono text-base resize-none overflow-y-auto custom-scrollbar"
+                                spellCheck={false}
+                            />
+                            <div className="p-4 bg-slate-900/30 flex justify-end">
+                                <button onClick={() => setIsEditorOpen(false)} className="px-6 py-2 bg-emerald-500 text-black rounded text-xs font-bold uppercase tracking-widest shadow-lg active:scale-95 transition-all">Apply Changes</button>
                             </div>
                         </motion.div>
                     </div>
