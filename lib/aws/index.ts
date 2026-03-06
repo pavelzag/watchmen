@@ -9,6 +9,7 @@ import { getRedshiftClusters } from "./redshift";
 import { getSnsTopics } from "./sns";
 import { getSecrets } from "./secretsmanager";
 import { getSecurityGroups } from "./securitygroups";
+import { getLoadBalancers } from "./elb";
 import type { AwsSnapshot } from "./types";
 
 export * from "./types";
@@ -33,6 +34,7 @@ export async function fetchAwsSnapshot(options?: AwsCredentials & { forceMock?: 
     snsTopics,
     secrets,
     securityGroups,
+    loadBalancers,
   ] = await Promise.all([
     getIamUsers(creds, mock),
     getIamRoles(creds, mock),
@@ -45,6 +47,7 @@ export async function fetchAwsSnapshot(options?: AwsCredentials & { forceMock?: 
     getSnsTopics(creds, mock),
     getSecrets(creds, mock),
     getSecurityGroups(creds, mock),
+    getLoadBalancers(creds, mock),
   ]);
 
   const accounts = [...new Set([
@@ -85,6 +88,7 @@ export async function fetchAwsSnapshot(options?: AwsCredentials & { forceMock?: 
     snsTopics,
     secrets,
     securityGroups,
+    loadBalancers,
     fetchedAt: new Date().toISOString(),
   };
 }

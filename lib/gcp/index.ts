@@ -9,6 +9,7 @@ import { getBigQueryDatasets } from "./bigquery";
 import { getPubSubTopics } from "./pubsub";
 import { getSecrets } from "./secretmanager";
 import { getFirewallRules } from "./firewall";
+import { getLoadBalancers } from "./loadbalancing";
 import type { GcpSnapshot } from "./types";
 
 export * from "./types";
@@ -53,6 +54,7 @@ export async function fetchGcpSnapshot(options?: { accessToken?: string; service
     pubsubTopics,
     secrets,
     firewallRules,
+    loadBalancers,
   ] = await Promise.all([
     getProjectPolicies(projectIds, mock),
     getServiceAccounts(projectIds, mock),
@@ -65,6 +67,7 @@ export async function fetchGcpSnapshot(options?: { accessToken?: string; service
     getPubSubTopics(projectIds, mock),
     getSecrets(projectIds, mock),
     getFirewallRules(projectIds, mock),
+    getLoadBalancers(projectIds, mock),
   ]);
 
   return {
@@ -80,6 +83,7 @@ export async function fetchGcpSnapshot(options?: { accessToken?: string; service
     pubsubTopics,
     secrets,
     firewallRules,
+    loadBalancers,
     fetchedAt: new Date().toISOString(),
   };
 }

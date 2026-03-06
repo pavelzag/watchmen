@@ -137,6 +137,15 @@ export interface SecurityFinding {
   remediationHint?: string;
 }
 
+export interface GcpLoadBalancer {
+  name: string;
+  projectId: string;
+  region?: string;
+  ipAddress?: string;
+  type: string;
+  description?: string;
+}
+
 export interface GcpSnapshot {
   snapshotId: string;
   projects: ProjectIamPolicy[];
@@ -150,5 +159,6 @@ export interface GcpSnapshot {
   pubsubTopics: PubSubTopic[];
   secrets: Secret[];
   firewallRules: FirewallRule[];
+  loadBalancers: GcpLoadBalancer[];
   fetchedAt: string;
 }

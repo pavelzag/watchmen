@@ -242,6 +242,16 @@ export interface AwsSecurityFinding {
 
 // ── Snapshot ──────────────────────────────────────────────────────────────
 
+export interface AwsLoadBalancer {
+  name: string;
+  accountId: string;
+  region: string;
+  dnsName: string;
+  type: "application" | "network" | "classic" | string;
+  scheme: "internal" | "internet-facing";
+  state: string;
+}
+
 export interface AwsSnapshot {
   snapshotId: string;
   accounts: string[];
@@ -257,5 +267,6 @@ export interface AwsSnapshot {
   snsTopics: AwsSnsTopic[];
   secrets: AwsSecret[];
   securityGroups: AwsSecurityGroup[];
+  loadBalancers: AwsLoadBalancer[];
   fetchedAt: string;
 }
