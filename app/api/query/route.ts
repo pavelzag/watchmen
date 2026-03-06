@@ -85,6 +85,19 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Inject Scenario data for the AI to "know" about the trace options
+    let scenarioContext = null;
+    if (session.isDemoUser || process.env.USE_MOCK_DATA === "true") {
+      const { SCENARIOS } = await import("@/lib/mock/scenarios");
+      scenarioContext = SCENARIOS.map(s => ({
+        id: s.id,
+        label: s.label,
+        description: s.description,
+        provider: s.provider,
+        nodes: s.nodes.map(n => n.label).join(" -> ")
+      }));
+    }
+
     if (!gcpSnapshot && !awsSnapshot) {
       return NextResponse.json(
         { error: "No snapshots yet. Please wait for the initial scan." },
@@ -93,8 +106,11 @@ export async function POST(req: NextRequest) {
     }
 
     const intent = await extractIntent(query, provider, apiKey);
+    const combinedSnapshot: any = { gcp: gcpSnapshot, aws: awsSnapshot };
+    if (scenarioContext) combinedSnapshot.trace_scenarios = scenarioContext;
+
     const [answer, resources] = await Promise.all([
-      generateAnswer(query, intent, { gcp: gcpSnapshot, aws: awsSnapshot }, provider, apiKey),
+      generateAnswer(query, intent, combinedSnapshot, provider, apiKey),
       Promise.resolve(extractResources(intent, { gcp: gcpSnapshot, aws: awsSnapshot })),
     ]);
 

@@ -94,6 +94,18 @@ export default function TraceClient() {
     const currentNodeDetails = targetEndpoint?.scenario?.nodeDetails || {};
 
     useEffect(() => {
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key === "Escape") {
+                setSelectedNodeId(null);
+                setIsEditorOpen(false);
+                setIsDropdownOpen(false);
+            }
+        };
+        document.addEventListener("keydown", handleKeyDown);
+        return () => document.removeEventListener("keydown", handleKeyDown);
+    }, []);
+
+    useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
             if (dropdownRef.current && !dropdownRef.current.contains(event.target as any)) {
                 setIsDropdownOpen(false);
@@ -265,7 +277,20 @@ export default function TraceClient() {
             </div>
 
             <div className="lg:col-span-8 flex flex-col gap-6">
-                <h2 className="text-xs uppercase tracking-widest text-slate-500 font-bold">Infrastructure Journey</h2>
+                <div className="flex items-center justify-between">
+                    <h2 className="text-xs uppercase tracking-widest text-slate-500 font-bold">Infrastructure Journey</h2>
+                    <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+                            <Activity className="w-3 h-3 text-emerald-500" />
+                            <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-tight">
+                                {currentNodes.length} Active Nodes
+                            </span>
+                        </div>
+                        <div className="text-[10px] text-slate-600 font-medium uppercase tracking-tighter">
+                            // {targetEndpoint.type === "Scenario" ? targetEndpoint.label : "Custom Trace"}
+                        </div>
+                    </div>
+                </div>
                 <div className="relative flex-1 bg-slate-900/30 border border-slate-800/50 rounded-xl flex flex-col items-center justify-center p-8 overflow-x-auto custom-scrollbar">
                     <div className="absolute inset-0 opacity-[0.03] pointer-events-none"
                         style={{ backgroundImage: "radial-gradient(circle, #10b981 1px, transparent 1px)", backgroundSize: "24px 24px" }}
