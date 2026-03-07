@@ -36,6 +36,7 @@ import { cn } from "@/lib/utils";
 import { getDemoCredentials, getDemoGcpSnapshot, getDemoAwsSnapshot, setDemoGcpSnapshot } from "@/lib/demo-credentials";
 import type { GcpSnapshot } from "@/lib/gcp/types";
 import type { AwsSnapshot } from "@/lib/aws/types";
+import { getGcpLbScenario, getGcpRunScenario, getGcpVmScenario } from "@/lib/mock/scenarios";
 
 // Map icon names from strings to components
 const ICON_MAP: Record<string, any> = {
@@ -143,7 +144,19 @@ export default function TraceClient() {
         try {
             const res = await fetch("/api/discovery/endpoints");
             const data = await res.json();
-            const discoveryEndpoints = data.endpoints || [];
+            const rawEndpoints = data.endpoints || [];
+
+            // Assign dynamic scenarios to discovered endpoints from the API
+            const discoveryEndpoints = rawEndpoints.map((ep: any) => {
+                if (ep.type === "Load Balancer" && !ep.scenario) {
+                    return { ...ep, scenario: getGcpLbScenario(ep.id.replace("gcp-lb-", ""), ep.url.replace("http://", "")) };
+                } else if (ep.type === "Cloud Run" && !ep.scenario) {
+                    return { ...ep, scenario: getGcpRunScenario(ep.id.replace("gcp-run-", ""), ep.url) };
+                } else if (ep.type === "Compute Engine" && !ep.scenario) {
+                    return { ...ep, scenario: getGcpVmScenario(ep.id.replace("gcp-vm-", ""), ep.url.replace("http://", "")) };
+                }
+                return ep;
+            });
 
             // 2. Add endpoints from sessionStorage (for Demo Users who run Real Scans)
             const sessionEndpoints: any[] = [];
@@ -159,7 +172,8 @@ export default function TraceClient() {
                             url: `http://${lb.ipAddress}`,
                             provider: "gcp",
                             type: "Load Balancer",
-                            description: `Discovered in current session via Real Scan`
+                            description: `Discovered in current session via Real Scan`,
+                            scenario: getGcpLbScenario(lb.name, lb.ipAddress)
                         });
                     }
                 });
@@ -174,7 +188,8 @@ export default function TraceClient() {
                             url: svc.url,
                             provider: "gcp",
                             type: "Cloud Run",
-                            description: `Discovered in current session via Real Scan`
+                            description: `Discovered in current session via Real Scan`,
+                            scenario: getGcpRunScenario(svc.name, svc.url)
                         });
                     }
                 });
@@ -189,7 +204,8 @@ export default function TraceClient() {
                             url: `http://${vm.externalIp}`,
                             provider: "gcp",
                             type: "Compute Engine",
-                            description: `Discovered in current session via Real Scan`
+                            description: `Discovered in current session via Real Scan`,
+                            scenario: getGcpVmScenario(vm.name, vm.externalIp!)
                         });
                     }
                 });
@@ -262,7 +278,6 @@ export default function TraceClient() {
             if (data.snapshot) {
                 setDemoGcpSnapshot(data.snapshot);
             }
-            // After successful scan, re-fetch endpoints and try to keep current selection
             await fetchEndpoints(targetEndpoint?.id);
         } catch (err) {
             console.error("Sync failed:", err);
@@ -292,23 +307,39 @@ export default function TraceClient() {
             const node = currentNodes[i];
             setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Entering ${node.label}: ${node.description}`]);
 
-            // Logic for API call simulation
-            if (node.id === "service" || node.id === "pods" || node.id === "run" || node.id === "eks" || targetEndpoint.id === "custom") {
+            // Enhanced Logging and Logic for API call simulation
+            if (i === currentNodes.length - 2 && targetEndpoint.url) {
                 try {
-                    const response = await fetch("/api/trace", {
+                    const startTime = Date.now();
+                    const payload = JSON.parse(inputJson);
+                    const targetUrl = targetEndpoint.id === "custom" ? customUrl : targetEndpoint.url;
+
+                    setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Fetch: POST ${targetUrl}...`]);
+
+                    const response = await fetch("/api/proxy", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
-                            ...JSON.parse(inputJson),
-                            target_url: targetEndpoint.id === "custom" ? customUrl : targetEndpoint.url
+                            ...payload,
+                            target_url: targetUrl
                         })
                     });
+
+                    const duration = Date.now() - startTime;
                     const data = await response.json();
                     setOutputJson(data);
-                    const sourceLabel = data.source === "Mock" ? "Mock" : "Cloud Service";
-                    setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${sourceLabel} Signal Received: Record committed`]);
+
+                    const status = response.status;
+                    const statusColor = status >= 200 && status < 300 ? "SUCCESS" : "ERROR";
+
+                    setLogs(prev => [
+                        ...prev,
+                        `[${new Date().toLocaleTimeString()}] ${statusColor} ${status} (${duration}ms) | Size: ${JSON.stringify(data).length} bytes`,
+                        `[${new Date().toLocaleTimeString()}] Remote Trace ID: ${response.headers.get("x-trace-id") || "N/A"}`,
+                        `[${new Date().toLocaleTimeString()}] Payload committed to backend.`
+                    ]);
                 } catch (err) {
-                    setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Error: Failed to contact upstream`]);
+                    setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Network Error: Failed to reach backend`]);
                 }
             }
             await new Promise(r => setTimeout(r, 1200));
@@ -535,9 +566,6 @@ export default function TraceClient() {
                             <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-tight">
                                 {currentNodes.length} Active Nodes
                             </span>
-                        </div>
-                        <div className="text-[10px] text-slate-600 font-medium uppercase tracking-tighter">
-                            // {targetEndpoint.type === "Scenario" ? targetEndpoint.label : "Custom Trace"}
                         </div>
                     </div>
                 </div>
@@ -793,7 +821,7 @@ export default function TraceClient() {
                                                             </div>
                                                         </div>
                                                         <p className="text-[10px] text-slate-400 italic">
-                                                            // {remediationScript.explanation}
+                                                            {remediationScript.explanation}
                                                         </p>
                                                         <button
                                                             onClick={() => {

@@ -65,7 +65,7 @@ export async function GET(req: NextRequest) {
                     if (svc.url) {
                         endpoints.push({
                             id: `gcp-run-${svc.name}`,
-                            label: `CR: ${svc.name}`,
+                            label: `[Managed] CR: ${svc.name}`,
                             url: svc.url,
                             provider: "gcp",
                             type: "Cloud Run",
@@ -81,11 +81,11 @@ export async function GET(req: NextRequest) {
                     if (vm.externalIp) {
                         endpoints.push({
                             id: `gcp-vm-${vm.name}`,
-                            label: `VM: ${vm.name}`,
+                            label: `[Managed] VM: ${vm.name.length > 20 ? vm.name.substring(0, 18) + ".." : vm.name}`,
                             url: `http://${vm.externalIp}`,
                             provider: "gcp",
                             type: "Compute Engine",
-                            description: `External VM endpoint in ${vm.zone}`
+                            description: `External VM endpoint | Name: ${vm.name}`
                         });
                     }
                 });
@@ -97,11 +97,11 @@ export async function GET(req: NextRequest) {
                     if (lb.ipAddress) {
                         endpoints.push({
                             id: `gcp-lb-${lb.name}`,
-                            label: `LB: ${lb.name}`,
+                            label: `[Managed] LB: ${lb.name.startsWith("a") && lb.name.length > 20 ? "GKE Ingress (" + lb.name.substring(0, 8) + ")" : lb.name}`,
                             url: `http://${lb.ipAddress}`,
                             provider: "gcp",
                             type: "Load Balancer",
-                            description: `GCP ${lb.type} Load Balancer (often K8s Ingress)`
+                            description: `GCP ${lb.type} Load Balancer (Internal Reference: ${lb.name})`
                         });
                     }
                 });

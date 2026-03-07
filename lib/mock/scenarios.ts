@@ -430,3 +430,87 @@ export const SCENARIOS: Scenario[] = [
         }
     }
 ];
+
+export const getGcpLbScenario = (name: string, ip: string): Scenario => ({
+    id: `gcp-lb-scen-${name}`,
+    label: `LB: ${name}`,
+    description: `Infrastructure journey for Load Balancer at ${ip}`,
+    provider: "gcp",
+    nodes: [
+        { id: "internet", label: "Internet", icon: "Globe", description: "Public Traffic", type: "network" },
+        { id: "gcp-lb", label: "GCP Load Balancer", icon: "Layers", description: `IP: ${ip}`, type: "network" },
+        { id: "gke-pods", label: "GKE Pods", icon: "Cloud", description: "Backend Service", type: "compute" },
+        { id: "storage", label: "Cloud SQL", icon: "Database", description: "Storage Layer", type: "storage" },
+        { id: "complete", label: "Success", icon: "CheckCircle2", description: "Response Sent", type: "other" }
+    ],
+    nodeDetails: {
+        "gcp-lb": {
+            title: "GCP Load Balancer",
+            description: `Auto-discovered Load Balancer at ${ip}`,
+            details: [
+                { label: "Internal Name", value: name, type: "text" },
+                { label: "External IP", value: ip, type: "text" },
+                { label: "Forwarding Rule", value: "Established", type: "status" }
+            ]
+        },
+        "gke-pods": {
+            title: "Discovered GKE Workload",
+            description: "Pods associated with the Load Balancer backend.",
+            details: [
+                { label: "ReplicaCount", value: "3", type: "text" },
+                { label: "Status", value: "Healthy", type: "status" }
+            ],
+            pods: [
+                { name: `${name.substring(0, 8)}-pod-1`, status: "Running", restarts: 0, age: "12h", cpu: "45m", memory: "128Mi", logs: ["Incoming request...", "Forwarding to service..."] }
+            ]
+        }
+    }
+});
+
+export const getGcpRunScenario = (name: string, url: string): Scenario => ({
+    id: `gcp-run-scen-${name}`,
+    label: `CR: ${name}`,
+    description: `Infrastructure journey for Cloud Run at ${url}`,
+    provider: "gcp",
+    nodes: [
+        { id: "internet", label: "Internet", icon: "Globe", description: "Public Traffic", type: "network" },
+        { id: "cloud-run", label: "Cloud Run", icon: "Zap", description: name, type: "compute" },
+        { id: "pubsub", label: "Internal Pub/Sub", icon: "MessageSquare", description: "Event Bus", type: "network" },
+        { id: "storage", label: "Cloud SQL", icon: "Database", description: "Storage Layer", type: "storage" },
+        { id: "complete", label: "Success", icon: "CheckCircle2", description: "Response Sent", type: "other" }
+    ],
+    nodeDetails: {
+        "cloud-run": {
+            title: `Cloud Run: ${name}`,
+            description: `Serverless container at ${url}`,
+            details: [
+                { label: "Service URL", value: url, type: "text" },
+                { label: "Traffic Split", value: "100% Latest", type: "status" }
+            ]
+        }
+    }
+});
+
+export const getGcpVmScenario = (name: string, ip: string): Scenario => ({
+    id: `gcp-vm-scen-${name}`,
+    label: `VM: ${name}`,
+    description: `Infrastructure journey for Compute Engine at ${ip}`,
+    provider: "gcp",
+    nodes: [
+        { id: "internet", label: "Internet", icon: "Globe", description: "Public Traffic", type: "network" },
+        { id: "external-ip", label: "External IP", icon: "Wifi", description: ip, type: "network" },
+        { id: "gcp-vm", label: "Compute Engine", icon: "Server", description: name, type: "compute" },
+        { id: "complete", label: "Success", icon: "CheckCircle2", description: "Response Sent", type: "other" }
+    ],
+    nodeDetails: {
+        "gcp-vm": {
+            title: `Compute Engine: ${name}`,
+            description: `Linux VM instance at ${ip}`,
+            details: [
+                { label: "Internal Name", value: name, type: "text" },
+                { label: "External IP", value: ip, type: "text" },
+                { label: "Machine Type", value: "e2-medium", type: "text" }
+            ]
+        }
+    }
+});
