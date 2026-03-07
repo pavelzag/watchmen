@@ -316,7 +316,7 @@ export default function TraceClient() {
 
                     setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Fetch: POST ${targetUrl}...`]);
 
-                    const response = await fetch("/api/proxy", {
+                    const response = await fetch("/api/trace", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
