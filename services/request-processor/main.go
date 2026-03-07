@@ -59,8 +59,10 @@ func processHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Processing request %s from source %s", req.ID, req.Source)
 
 	trace := []TraceStep{
-		{Component: "API Gateway", Action: "Request Received", Time: time.Now(), Status: "Success"},
-		{Component: "Load Balancer", Action: "Forwarding to CloudRun", Time: time.Now().Add(50 * time.Millisecond), Status: "Success"},
+		{Component: "GCP Cloud Armor", Action: "WAF Rule Validation: CLEAN", Time: time.Now(), Status: "Success"},
+		{Component: "API Gateway", Action: "JWT Signature Verified", Time: time.Now().Add(25 * time.Millisecond), Status: "Success"},
+		{Component: "API Gateway", Action: "Rate Limit Quota: OK", Time: time.Now().Add(40 * time.Millisecond), Status: "Success"},
+		{Component: "Load Balancer", Action: "Round-Robin: Pod-Selected", Time: time.Now().Add(60 * time.Millisecond), Status: "Success"},
 	}
 
 	// Transform data
@@ -71,10 +73,10 @@ func processHandler(w http.ResponseWriter, r *http.Request) {
 	processed["_watchmen_processed"] = true
 	processed["server_id"] = "watchmen-processor-7f4b"
 
-	trace = append(trace, TraceStep{Component: "CloudRun Service", Action: "Applying Business Logic", Time: time.Now().Add(150 * time.Millisecond), Status: "Success"})
+	trace = append(trace, TraceStep{Component: "GKE Pod", Action: "Business Logic Applied", Time: time.Now().Add(150 * time.Millisecond), Status: "Success"})
 
 	// Simulate DB write
-	trace = append(trace, TraceStep{Component: "Cloud SQL", Action: "Persisting Record", Time: time.Now().Add(250 * time.Millisecond), Status: "Success"})
+	trace = append(trace, TraceStep{Component: "Cloud SQL", Action: "Transaction Committed", Time: time.Now().Add(250 * time.Millisecond), Status: "Success"})
 
 	resp := ResponsePayload{
 		RequestID: req.ID,

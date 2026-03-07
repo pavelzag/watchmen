@@ -895,12 +895,41 @@ export default function TraceClient() {
                                         {!selectedNodeDetail?.pods ? (
                                             <div className="text-slate-600 italic">Logs currently unavailable for this resource.</div>
                                         ) : (
-                                            (selectedNodeDetail.pods.find((p: any) => p.name === (selectedPodName || selectedNodeDetail.pods[0].name))?.logs || []).map((line: string, i: number) => (
-                                                <div key={i} className="text-slate-300 mb-1">
-                                                    <span className="text-emerald-500/50 mr-2">{">"}</span>
-                                                    {line}
-                                                </div>
-                                            ))
+                                            <div className="space-y-1">
+                                                {/* Initial Pod Boot/Status Logs */}
+                                                {(selectedNodeDetail.pods.find((p: any) => p.name === (selectedPodName || selectedNodeDetail.pods[0].name))?.logs || []).map((line: string, i: number) => (
+                                                    <div key={`init-${i}`} className="text-slate-500 opacity-60">
+                                                        <span className="text-slate-700 mr-2">{"#"}</span>
+                                                        {line}
+                                                    </div>
+                                                ))}
+
+                                                {/* Dynamic Trace Logs from Backend */}
+                                                {outputJson?.trace?.filter((t: any) =>
+                                                    t.component.toLowerCase().includes(selectedNodeId?.toLowerCase() || "") ||
+                                                    (selectedNodeId === "gke-pods" && t.component === "GKE Pod") ||
+                                                    (selectedNodeId === "gcp-lb" && t.component === "Load Balancer") ||
+                                                    (selectedNodeId === "gateway" && t.component === "API Gateway") ||
+                                                    (selectedNodeId === "storage" && t.component === "Cloud SQL")
+                                                ).map((step: any, i: number) => (
+                                                    <div key={`trace-${i}`} className="text-emerald-400 border-l-2 border-emerald-500/30 pl-3 py-1 my-2 bg-emerald-500/5">
+                                                        <div className="flex items-center gap-2 mb-0.5">
+                                                            <span className="text-[9px] text-emerald-600 font-bold">[{new Date(step.time).toLocaleTimeString()}]</span>
+                                                            <span className="text-[9px] uppercase tracking-widest px-1 bg-emerald-500/20 rounded text-emerald-400">{step.status}</span>
+                                                        </div>
+                                                        <div className="text-[10px] font-bold">
+                                                            {step.component}: <span className="text-slate-200 font-normal">{step.action}</span>
+                                                        </div>
+                                                    </div>
+                                                ))}
+
+                                                {isRunning && activeNodeIndex === currentNodes.findIndex(n => n.id === selectedNodeId) && (
+                                                    <div className="flex items-center gap-2 text-emerald-500 animate-pulse pt-2">
+                                                        <Loader2 className="w-3 h-3 animate-spin" />
+                                                        <span className="text-[10px] font-bold uppercase tracking-widest">Processing Layer...</span>
+                                                    </div>
+                                                )}
+                                            </div>
                                         )}
                                     </div>
                                 )}

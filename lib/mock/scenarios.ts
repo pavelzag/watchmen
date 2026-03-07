@@ -461,7 +461,22 @@ export const getGcpLbScenario = (name: string, ip: string): Scenario => ({
                 { label: "Status", value: "Healthy", type: "status" }
             ],
             pods: [
-                { name: `${name.substring(0, 8)}-pod-1`, status: "Running", restarts: 0, age: "12h", cpu: "45m", memory: "128Mi", logs: ["Incoming request...", "Forwarding to service..."] }
+                {
+                    name: `${name.substring(0, 8)}-pod-1`,
+                    status: "Running",
+                    restarts: 0,
+                    age: "12h",
+                    cpu: "45m",
+                    memory: "128Mi",
+                    logs: [
+                        `[${new Date().toISOString()}] INFO: Node.js 20.x runtime initialized`,
+                        `[${new Date().toISOString()}] DEBUG: Listening on port 8080`,
+                        `[${new Date().toISOString()}] INFO: Connected to Cloud SQL (primary-db)`,
+                        `[${new Date().toISOString()}] INFO: Server ready to accept traffic`,
+                        `[${new Date().toISOString()}] INFO: Received GET /healthz (User-Agent: GoogleHC/1.0)`,
+                        `[${new Date().toISOString()}] DEBUG: Health check passed. Status: 200 OK`
+                    ]
+                }
             ]
         }
     }

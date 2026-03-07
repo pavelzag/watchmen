@@ -1,0 +1,30 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Next.js: Debug Server-side",
+            "type": "node-terminal",
+            "request": "launch",
+            "command": "npm run dev"
+        },
+        {
+            "name": "Go: Debug Request Processor",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/services/request-processor/main.go",
+            "env": {
+                "PORT": "8080"
+            }
+        }
+    ],
+    "compounds": [
+        {
+            "name": "Full Stack (Next.js + Go)",
+            "configurations": [
+                "Next.js: Debug Server-side",
+                "Go: Debug Request Processor"
+            ]
+        }
+    ]
+}
