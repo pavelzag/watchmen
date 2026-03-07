@@ -44,7 +44,8 @@ export async function POST(req: NextRequest) {
   }
 
   // Mock mode: skip DB, return fixture data
-  if (useMockData() || session.isDemoUser) {
+  const isDemo = session.isDemoUser || session.user?.email === "demo@watchmen.dev";
+  if (useMockData() || isDemo) {
     try {
       const snapshot = await fetchGcpSnapshot({ forceMock: true });
       return NextResponse.json({ ok: true, fetchedAt: snapshot.fetchedAt });

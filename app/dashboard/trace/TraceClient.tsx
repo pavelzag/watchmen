@@ -110,6 +110,7 @@ export default function TraceClient() {
     const [isRemediating, setIsRemediating] = useState(false);
     const [customUrl, setCustomUrl] = useState("");
     const [isSyncing, setIsSyncing] = useState(false);
+    const [syncError, setSyncError] = useState<string | null>(null);
 
     // Derived nodes from current endpoint
     const currentNodes = (targetEndpoint?.scenario?.nodes || DEFAULT_NODES) as InfrastructureNode[];
@@ -137,7 +138,7 @@ export default function TraceClient() {
         return () => document.removeEventListener("mousedown", handleClickOutside);
     }, []);
 
-    const fetchEndpoints = useCallback(async () => {
+    const fetchEndpoints = useCallback(async (preserveId?: string) => {
         setIsLoadingEndpoints(true);
         try {
             const res = await fetch("/api/discovery/endpoints");
@@ -224,7 +225,11 @@ export default function TraceClient() {
             ];
 
             setEndpoints(finalEndpoints);
-            if (finalEndpoints.length > 0) {
+
+            if (preserveId) {
+                const found = finalEndpoints.find(e => e.id === preserveId);
+                if (found) setTargetEndpoint(found);
+            } else if (finalEndpoints.length > 0 && !targetEndpoint?.id) {
                 setTargetEndpoint(finalEndpoints[0]);
             }
         } catch (err) {
@@ -232,10 +237,11 @@ export default function TraceClient() {
         } finally {
             setIsLoadingEndpoints(false);
         }
-    }, []);
+    }, [targetEndpoint?.id]);
 
     const triggerScan = async () => {
         setIsSyncing(true);
+        setSyncError(null);
         try {
             const demoCreds = getDemoCredentials();
             const body = demoCreds.gcp ? { demoCredentials: { gcp: demoCreds.gcp } } : {};
@@ -244,14 +250,23 @@ export default function TraceClient() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(body),
             });
-            const data = await res.json().catch(() => ({})) as { snapshot?: object };
+
+            const data = await res.json().catch(() => ({})) as { error?: string; credentialsRequired?: boolean; snapshot?: object };
+
+            if (!res.ok) {
+                const errorMsg = data.error || (res.status === 422 ? "GCP Credentials Required in Settings" : "Sync Failed");
+                setSyncError(errorMsg);
+                return;
+            }
+
             if (data.snapshot) {
                 setDemoGcpSnapshot(data.snapshot);
             }
-            // After successful scan, re-fetch endpoints
-            await fetchEndpoints();
+            // After successful scan, re-fetch endpoints and try to keep current selection
+            await fetchEndpoints(targetEndpoint?.id);
         } catch (err) {
             console.error("Sync failed:", err);
+            setSyncError("Network Error: Failed to reach scan API");
         } finally {
             setIsSyncing(false);
         }
@@ -361,7 +376,22 @@ export default function TraceClient() {
                                 {isSyncing ? "[SYNCING...]" : "[SYNC GCP]"}
                             </button>
                         </div>
-                        <div className="relative">
+
+                        <AnimatePresence>
+                            {syncError && (
+                                <motion.div
+                                    initial={{ opacity: 0, y: -5 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    exit={{ opacity: 0, y: -5 }}
+                                    className="flex items-center gap-2 px-2 py-1 bg-red-500/10 border border-red-500/30 rounded text-[9px] text-red-400 font-bold uppercase tracking-widest mt-1"
+                                >
+                                    <AlertCircle className="w-2.5 h-2.5" />
+                                    <span>{syncError}</span>
+                                </motion.div>
+                            )}
+                        </AnimatePresence>
+
+                        <div className="relative mt-1">
                             <button
                                 onClick={() => !isRunning && setIsDropdownOpen(!isDropdownOpen)}
                                 disabled={isRunning || isLoadingEndpoints}
