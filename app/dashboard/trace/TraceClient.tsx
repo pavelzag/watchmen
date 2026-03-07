@@ -115,7 +115,11 @@ export default function TraceClient() {
 
     // Derived nodes from current endpoint
     const currentNodes = (targetEndpoint?.scenario?.nodes || DEFAULT_NODES) as InfrastructureNode[];
-    const currentNodeDetails = targetEndpoint?.scenario?.nodeDetails || {};
+    const [currentNodeDetails, setCurrentNodeDetails] = useState<Record<string, any>>({});
+
+    useEffect(() => {
+        setCurrentNodeDetails(targetEndpoint?.scenario?.nodeDetails || {});
+    }, [targetEndpoint]);
 
     useEffect(() => {
         const handleKeyDown = (event: KeyboardEvent) => {
@@ -330,6 +334,49 @@ export default function TraceClient() {
                     setOutputJson(data);
 
                     const status = response.status;
+                    const isAuthError = status === 401 || status === 403 || (data?.message?.includes("not authenticated") || data?.error?.includes("unauthorized"));
+
+                    if (isAuthError) {
+                        setLogs(prev => [
+                            ...prev,
+                            `[${new Date().toLocaleTimeString()}] 🔴 AUTH BLOCKER: ${status} Unauthorized`,
+                            `[${new Date().toLocaleTimeString()}] 🛡️ IAM POLICY: Cloud Run requires authentication.`,
+                            `[${new Date().toLocaleTimeString()}] 💡 TIP: Allow unauthenticated invocations or add Authorization header.`
+                        ]);
+
+                        // Dynamically update the node detail with a vulnerability in the targetEndpoint state
+                        const runNodeIndex = currentNodes.findIndex(n => n.id === "gcp-run" || n.label.includes("RUN") || n.label.includes("Cloud Run") || n.id === "service");
+                        if (runNodeIndex !== -1) {
+                            const nodeId = currentNodes[runNodeIndex].id;
+                            setTargetEndpoint((prev: any) => ({
+                                ...prev,
+                                scenario: {
+                                    ...prev.scenario,
+                                    nodeDetails: {
+                                        ...prev.scenario?.nodeDetails,
+                                        [nodeId]: {
+                                            ...(prev.scenario?.nodeDetails?.[nodeId] || {}),
+                                            vulnerabilities: [
+                                                {
+                                                    id: "iam-unauthorized",
+                                                    title: "IAM Policy Blocked: Unauthenticated Access Prohibited",
+                                                    severity: "high",
+                                                    description: "The Cloud Run service is configured to require authentication, but the request was sent anonymously. This is a common IAM misconfiguration for public-facing services.",
+                                                    insight: "Run: gcloud run services add-iam-policy-binding --member='allUsers' --role='roles/run.invoker' to allow public access."
+                                                }
+                                            ]
+                                        }
+                                    }
+                                }
+                            }));
+                            setIsBreachMode(true); // Turn trace red for visibility
+                        }
+
+                        // Stop the simulation loop
+                        setIsRunning(false);
+                        break;
+                    }
+
                     const statusColor = status >= 200 && status < 300 ? "SUCCESS" : "ERROR";
 
                     setLogs(prev => [
