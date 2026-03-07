@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(req: NextRequest) {
     try {
-        const processorUrl = process.env.PROCESSOR_URL || "http://localhost:8080";
+        const processorUrl = process.env['PROCESSOR_URL'] || "http://localhost:8080";
         // Ensure we don't have double slashes and handle internal k8s DNS correctly
         const baseUrl = processorUrl.replace(/\/$/, '');
         const historyUrl = `${baseUrl}/api/history`;
@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({
             error: "Processor unreachable",
             message: error.message,
-            target: process.env.PROCESSOR_URL
+            target: process.env['PROCESSOR_URL']
         }, { status: 503 });
     }
 }

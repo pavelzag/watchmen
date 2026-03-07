@@ -6,7 +6,7 @@ export async function POST(req: NextRequest) {
         const { target_url, data: payloadData, id: requestId } = body;
 
         // Priority: target_url from body, then PROCESSOR_URL from env
-        const finalTargetUrl = target_url || process.env.PROCESSOR_URL;
+        const finalTargetUrl = target_url || process.env['PROCESSOR_URL'];
 
         if (finalTargetUrl) {
             try {

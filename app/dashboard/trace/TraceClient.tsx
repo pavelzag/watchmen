@@ -435,7 +435,7 @@ export default function TraceClient() {
                             setLogs(prev => [
                                 ...prev.slice(-10),
                                 `[${new Date().toLocaleTimeString()}] 🟢 MIRROR: Captured incoming request ${latest.request_id.substring(0, 8)}`,
-                                `[${new Date().toLocaleTimeString()}] 📡 SOURCE: ${latest.original_data?.source || "Unknown"}`,
+                                `[${new Date().toLocaleTimeString()}] 📡 SOURCE: ${latest.source || latest.original_data?.source || "Unknown"}`,
                                 `[${new Date().toLocaleTimeString()}] 🚀 AUTO-TRACE: Analyzing infrastructure journey...`
                             ]);
 

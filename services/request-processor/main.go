@@ -25,6 +25,7 @@ type TraceStep struct {
 
 type ResponsePayload struct {
 	RequestID string                 `json:"request_id"`
+	Source    string                 `json:"source,omitempty"`
 	Original  map[string]interface{} `json:"original_data"`
 	Processed map[string]interface{} `json:"processed_data"`
 	Trace     []TraceStep            `json:"trace"`
@@ -95,6 +96,7 @@ func processHandler(w http.ResponseWriter, r *http.Request) {
 
 	resp := ResponsePayload{
 		RequestID: req.ID,
+		Source:    req.Source,
 		Original:  req.Data,
 		Processed: processed,
 		Trace:     trace,
