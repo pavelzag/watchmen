@@ -366,35 +366,68 @@ export default function TraceClient() {
         }
     };
 
-    // Live Log Streaming Logic
+    // Real-time Request Mirroring Logic
+    const lastRequestRef = useRef<string | null>(null);
     useEffect(() => {
-        if (!isLiveMode || !selectedNodeId) return;
+        if (!isLiveMode) return;
 
-        const interval = setInterval(() => {
-            const randomLogs = [
-                "INFO: Handling request segment...",
-                "DEBUG: Buffer flushed to storage.",
-                "WARN: Transient network jitter detected.",
-                "INFO: Metrics exported to Cloud Monitoring.",
-                "DEBUG: Connection pool size: 12",
-                "INFO: Heartbeat sent to control plane."
-            ];
-            const logLine = `[${new Date().toLocaleTimeString()}] ${randomLogs[Math.floor(Math.random() * randomLogs.length)]}`;
-            setLogs(prev => [...prev.slice(-20), logLine]);
-        }, 2000);
+        const pollHistory = async () => {
+            try {
+                const res = await fetch("/api/trace/history");
+                if (res.ok) {
+                    const history = await res.json();
+                    if (history && history.length > 0) {
+                        const latest = history[0];
 
+                        // Check if this is a new request we haven't seen yet
+                        if (latest.request_id !== lastRequestRef.current) {
+                            lastRequestRef.current = latest.request_id;
+
+                            // Auto-trigger visualization for the new request
+                            setOutputJson(latest);
+                            setLogs(prev => [
+                                ...prev.slice(-10),
+                                `[${new Date().toLocaleTimeString()}] 🟢 MIRROR: Captured incoming request ${latest.request_id.substring(0, 8)}`,
+                                `[${new Date().toLocaleTimeString()}] 📡 SOURCE: ${latest.original_data?.source || "Unknown"}`,
+                                `[${new Date().toLocaleTimeString()}] 🚀 AUTO-TRACE: Analyzing infrastructure journey...`
+                            ]);
+
+                            // Start the visualization animation
+                            setIsRunning(true);
+                            setActiveNodeIndex(0);
+
+                            // Simulate progressive visualization steps for the mirrored request
+                            let step = 0;
+                            const steps = currentNodes.length;
+                            const stepInterval = setInterval(() => {
+                                step++;
+                                setActiveNodeIndex(prev => prev + 1);
+                                if (step >= steps) {
+                                    clearInterval(stepInterval);
+                                    setIsRunning(false);
+                                }
+                            }, 800);
+                        }
+                    }
+                }
+            } catch (err) {
+                console.error("History polling failed:", err);
+            }
+        };
+
+        const interval = setInterval(pollHistory, 3000);
         return () => clearInterval(interval);
-    }, [isLiveMode, selectedNodeId]);
+    }, [isLiveMode, currentNodes.length]);
 
     const selectedNodeDetail = currentNodeDetails[selectedNodeId || ""] || null;
 
     return (
         <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-8 overflow-hidden">
             <div className="lg:col-span-4 flex flex-col gap-4 min-h-0">
-                <div className="flex items-center justify-between">
-                    <div className="flex flex-col gap-1" ref={dropdownRef}>
-                        <div className="flex items-center justify-between gap-4">
-                            <h2 className="text-xs uppercase tracking-widest text-slate-500 font-bold flex items-center gap-2">
+                <div className="flex items-start justify-between gap-4 pb-2">
+                    <div className="flex-1 min-w-0 flex flex-col gap-1.5" ref={dropdownRef}>
+                        <div className="flex items-center gap-4">
+                            <h2 className="text-[10px] uppercase tracking-[0.2em] text-slate-500 font-bold flex items-center gap-2">
                                 <Code className="w-3.5 h-3.5" /> Simulation
                             </h2>
                             <button
@@ -422,14 +455,16 @@ export default function TraceClient() {
                             )}
                         </AnimatePresence>
 
-                        <div className="relative mt-1">
+                        <div className="relative">
                             <button
                                 onClick={() => !isRunning && setIsDropdownOpen(!isDropdownOpen)}
                                 disabled={isRunning || isLoadingEndpoints}
-                                className="flex items-center gap-2 text-[10px] text-emerald-500/70 hover:text-emerald-500 font-bold uppercase tracking-widest outline-none cursor-pointer disabled:cursor-not-allowed transition-colors"
+                                className="flex items-center gap-2 text-[11px] text-emerald-500/80 hover:text-emerald-500 font-bold uppercase tracking-wider outline-none cursor-pointer disabled:cursor-not-allowed transition-colors text-left group"
                             >
-                                {isLoadingEndpoints ? "Loading..." : targetEndpoint.label}
-                                <ChevronDown className={cn("w-3 h-3 text-slate-500 transition-transform duration-300", isDropdownOpen && "rotate-180")} />
+                                <span className="truncate max-w-[200px] lg:max-w-[300px]">
+                                    {isLoadingEndpoints ? "Loading..." : targetEndpoint.label}
+                                </span>
+                                <ChevronDown className={cn("w-3.5 h-3.5 text-slate-500 transition-transform duration-300", isDropdownOpen && "rotate-180")} />
                             </button>
 
                             {/* Custom URL Input (Conditional) */}
@@ -478,7 +513,7 @@ export default function TraceClient() {
                                                     )}
                                                 >
                                                     <div className="flex items-center justify-between w-full">
-                                                        <span className="text-[10px] font-bold uppercase tracking-widest">{ep.label}</span>
+                                                        <span className="text-[10px] font-bold uppercase tracking-widest truncate mr-2">{ep.label}</span>
                                                         {targetEndpoint.id === ep.id && <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_#10b981]" />}
                                                     </div>
                                                     <div className="text-[9px] opacity-50 group-hover:opacity-100 transition-opacity truncate w-full">
@@ -497,14 +532,17 @@ export default function TraceClient() {
                         onClick={runTrace}
                         disabled={isRunning}
                         className={cn(
-                            "flex items-center gap-2 px-4 py-2 rounded text-xs font-bold uppercase tracking-widest transition-all",
+                            "flex-shrink-0 flex items-center gap-3 px-6 h-12 rounded-lg text-xs font-black uppercase tracking-[0.15em] transition-all relative overflow-hidden group/btn",
                             isRunning
                                 ? "bg-slate-800 text-slate-500 cursor-not-allowed"
-                                : "bg-emerald-500 text-black hover:bg-emerald-400 active:scale-95 shadow-[0_0_15px_rgba(16,185,129,0.3)]"
+                                : "bg-emerald-500 text-black hover:bg-emerald-400 active:scale-95 shadow-[0_0_20px_rgba(16,185,129,0.4)]"
                         )}
                     >
-                        <Play className={cn("w-3 h-3 fill-current", isRunning && "animate-pulse")} />
-                        {isRunning ? "Tracing..." : "Run Trace"}
+                        {!isRunning && (
+                            <div className="absolute inset-0 opacity-10 pointer-events-none bg-[repeating-linear-gradient(0deg,transparent,transparent_2px,rgba(0,0,0,0.5)_2px,rgba(0,0,0,0.5)_4px)]" />
+                        )}
+                        <Play className={cn("w-4 h-4 fill-current", isRunning && "animate-pulse")} />
+                        <span>{isRunning ? "Tracing..." : "Run Trace"}</span>
                     </button>
                 </div>
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -28,7 +29,14 @@ type ResponsePayload struct {
 	Processed map[string]interface{} `json:"processed_data"`
 	Trace     []TraceStep            `json:"trace"`
 	Message   string                 `json:"message"`
+	TargetURL string                 `json:"target_url,omitempty"`
 }
+
+var (
+	history      []ResponsePayload
+	historyMutex sync.Mutex
+	maxHistory   = 10
+)
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[%s] Health check from %s", time.Now().Format(time.RFC3339), r.RemoteAddr)
@@ -39,6 +47,13 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 		"service":   "watchmen-processor",
 		"timestamp": time.Now().Format(time.RFC3339),
 	})
+}
+
+func historyHandler(w http.ResponseWriter, r *http.Request) {
+	historyMutex.Lock()
+	defer historyMutex.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(history)
 }
 
 func processHandler(w http.ResponseWriter, r *http.Request) {
@@ -84,7 +99,16 @@ func processHandler(w http.ResponseWriter, r *http.Request) {
 		Processed: processed,
 		Trace:     trace,
 		Message:   fmt.Sprintf("Request from %s successfully processed by Watchmen", req.Source),
+		TargetURL: fmt.Sprintf("http://%s%s", r.Host, r.URL.Path),
 	}
+
+	// Update History
+	historyMutex.Lock()
+	history = append([]ResponsePayload{resp}, history...)
+	if len(history) > maxHistory {
+		history = history[:maxHistory]
+	}
+	historyMutex.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
@@ -92,6 +116,7 @@ func processHandler(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	http.HandleFunc("/process", processHandler)
+	http.HandleFunc("/api/history", historyHandler)
 	http.HandleFunc("/api/health", healthHandler)
 	http.HandleFunc("/health", healthHandler)
 
