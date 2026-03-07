@@ -371,6 +371,47 @@ export default function TraceClient() {
                         </div>
                     </div>
                 </div>
+                <div className="flex flex-col gap-4">
+                    <AnimatePresence>
+                        {isBreachMode && (
+                            <motion.div
+                                initial={{ opacity: 0, height: 0 }}
+                                animate={{ opacity: 1, height: "auto" }}
+                                exit={{ opacity: 0, height: 0 }}
+                                className="bg-red-500/10 border border-red-500/20 rounded-xl p-3 overflow-hidden"
+                            >
+                                <div className="flex items-center gap-2 mb-1">
+                                    <ShieldAlert className="w-3.5 h-3.5 text-red-500" />
+                                    <span className="text-[10px] font-bold text-red-500 uppercase tracking-widest">Breach Simulation Active</span>
+                                </div>
+                                <p className="text-[10px] text-slate-400 leading-relaxed">
+                                    Visualizing potential <span className="text-red-400 font-bold">Attack Paths</span>. This mode highlights how vulnerabilities in one component
+                                    (e.g., GKE Pods) can be exploited for <span className="text-red-400 font-bold">Lateral Movement</span> into sensitive downstream resources.
+                                    Red dashed lines indicate compromised communication channels.
+                                </p>
+                            </motion.div>
+                        )}
+                        {isLiveMode && (
+                            <motion.div
+                                initial={{ opacity: 0, height: 0 }}
+                                animate={{ opacity: 1, height: "auto" }}
+                                exit={{ opacity: 0, height: 0 }}
+                                className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-3 overflow-hidden"
+                            >
+                                <div className="flex items-center gap-2 mb-1">
+                                    <Wifi className="w-3.5 h-3.5 text-emerald-500 animate-pulse" />
+                                    <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">Real-time Observability Mode</span>
+                                </div>
+                                <p className="text-[10px] text-slate-400 leading-relaxed">
+                                    Streaming <span className="text-emerald-400 font-bold">Live production-like metrics</span>. Simulating real-time log ingestion, heartbeats,
+                                    and service health signals. Workload health and log streams are updated dynamically to reflect the
+                                    active state of your infrastructure.
+                                </p>
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
+                </div>
+
                 <div className="relative flex-1 bg-slate-900/30 border border-slate-800/50 rounded-xl flex flex-col items-center justify-center p-8 overflow-x-auto custom-scrollbar">
                     <div className="absolute inset-0 opacity-[0.03] pointer-events-none"
                         style={{ backgroundImage: "radial-gradient(circle, #10b981 1px, transparent 1px)", backgroundSize: "24px 24px" }}
