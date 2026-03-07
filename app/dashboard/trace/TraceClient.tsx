@@ -104,6 +104,7 @@ export default function TraceClient() {
     const [isLiveMode, setIsLiveMode] = useState(false);
     const [remediationScript, setRemediationScript] = useState<{ script: string; explanation: string } | null>(null);
     const [isRemediating, setIsRemediating] = useState(false);
+    const [customUrl, setCustomUrl] = useState("");
 
     // Derived nodes from current endpoint
     const currentNodes = (targetEndpoint?.scenario?.nodes || DEFAULT_NODES) as InfrastructureNode[];
@@ -136,11 +137,24 @@ export default function TraceClient() {
             try {
                 const res = await fetch("/api/discovery/endpoints");
                 const data = await res.json();
-                if (data.endpoints) {
-                    setEndpoints(data.endpoints);
-                    if (data.endpoints.length > 1) {
-                        setTargetEndpoint(data.endpoints[0]);
+                const discoveryEndpoints = data.endpoints || [];
+
+                // Always add a "Custom" option for manual entry
+                const finalEndpoints = [
+                    ...discoveryEndpoints,
+                    {
+                        id: "custom",
+                        label: "Manual Entry (Custom URL)",
+                        url: "",
+                        provider: "other",
+                        type: "External",
+                        description: "Send requests to any accessible IP or domain"
                     }
+                ];
+
+                setEndpoints(finalEndpoints);
+                if (finalEndpoints.length > 0) {
+                    setTargetEndpoint(finalEndpoints[0]);
                 }
             } catch (err) {
                 console.error("Failed to load endpoints:", err);
@@ -168,14 +182,14 @@ export default function TraceClient() {
             setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Entering ${node.label}: ${node.description}`]);
 
             // Logic for API call simulation
-            if (node.id === "service" || node.id === "pods" || node.id === "run" || node.id === "eks") {
+            if (node.id === "service" || node.id === "pods" || node.id === "run" || node.id === "eks" || targetEndpoint.id === "custom") {
                 try {
                     const response = await fetch("/api/trace", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
                             ...JSON.parse(inputJson),
-                            target_url: targetEndpoint.url
+                            target_url: targetEndpoint.id === "custom" ? customUrl : targetEndpoint.url
                         })
                     });
                     const data = await response.json();
@@ -249,6 +263,25 @@ export default function TraceClient() {
                                 {isLoadingEndpoints ? "Loading..." : targetEndpoint.label}
                                 <ChevronDown className={cn("w-3 h-3 text-slate-500 transition-transform duration-300", isDropdownOpen && "rotate-180")} />
                             </button>
+
+                            {/* Custom URL Input (Conditional) */}
+                            <AnimatePresence>
+                                {targetEndpoint.id === "custom" && !isDropdownOpen && (
+                                    <motion.div
+                                        initial={{ opacity: 0, scale: 0.98 }}
+                                        animate={{ opacity: 1, scale: 1 }}
+                                        className="mt-2"
+                                    >
+                                        <input
+                                            type="text"
+                                            value={customUrl}
+                                            onChange={(e) => setCustomUrl(e.target.value)}
+                                            placeholder="Paste Cluster IP or Domain (e.g. http://136.113.99.70)"
+                                            className="w-full px-3 py-1.5 bg-black border border-emerald-500/30 rounded text-[10px] text-emerald-400 font-mono shadow-[0_0_10px_rgba(16,185,129,0.1)] outline-none focus:border-emerald-500 transition-all placeholder:text-slate-700"
+                                        />
+                                    </motion.div>
+                                )}
+                            </AnimatePresence>
 
                             <AnimatePresence>
                                 {isDropdownOpen && (
