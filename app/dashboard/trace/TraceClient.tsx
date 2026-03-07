@@ -575,22 +575,30 @@ export default function TraceClient() {
                         </div>
                     </div>
 
-                    <button
-                        onClick={runTrace}
-                        disabled={isRunning}
-                        className={cn(
-                            "flex-shrink-0 flex items-center gap-3 px-6 h-12 rounded-lg text-xs font-black uppercase tracking-[0.15em] transition-all relative overflow-hidden group/btn",
-                            isRunning
-                                ? "bg-slate-800 text-slate-500 cursor-not-allowed"
-                                : "bg-emerald-500 text-black hover:bg-emerald-400 active:scale-95 shadow-[0_0_20px_rgba(16,185,129,0.4)]"
+                    <div className="flex flex-col gap-2">
+                        <button
+                            onClick={runTrace}
+                            disabled={isRunning}
+                            className={cn(
+                                "flex-shrink-0 flex items-center gap-3 px-6 h-12 rounded-lg text-xs font-black uppercase tracking-[0.15em] transition-all relative overflow-hidden group/btn",
+                                isRunning
+                                    ? "bg-slate-800 text-slate-500 cursor-not-allowed"
+                                    : "bg-emerald-500 text-black hover:bg-emerald-400 active:scale-95 shadow-[0_0_20px_rgba(16,185,129,0.4)]"
+                            )}
+                        >
+                            {!isRunning && (
+                                <div className="absolute inset-0 opacity-10 pointer-events-none bg-[repeating-linear-gradient(0deg,transparent,transparent_2px,rgba(0,0,0,0.5)_2px,rgba(0,0,0,0.5)_4px)]" />
+                            )}
+                            <Play className={cn("w-4 h-4 fill-current", isRunning && "animate-pulse")} />
+                            <span>{isRunning ? "Tracing..." : "Run Trace"}</span>
+                        </button>
+
+                        {!isLiveMode && (
+                            <div className="text-[9px] text-slate-500 font-bold uppercase tracking-widest text-center animate-pulse">
+                                Click "Go Live" to see external curls →
+                            </div>
                         )}
-                    >
-                        {!isRunning && (
-                            <div className="absolute inset-0 opacity-10 pointer-events-none bg-[repeating-linear-gradient(0deg,transparent,transparent_2px,rgba(0,0,0,0.5)_2px,rgba(0,0,0,0.5)_4px)]" />
-                        )}
-                        <Play className={cn("w-4 h-4 fill-current", isRunning && "animate-pulse")} />
-                        <span>{isRunning ? "Tracing..." : "Run Trace"}</span>
-                    </button>
+                    </div>
                 </div>
 
                 <div
