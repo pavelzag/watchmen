@@ -56,10 +56,12 @@ export async function POST(req: NextRequest) {
   }
 
   const gcpCreds = await getUserCloudCredentials(email, "gcp");
-  if (!gcpCreds) {
+  const accessToken = session.accessToken;
+
+  if (!gcpCreds && !accessToken) {
     return NextResponse.json(
       {
-        error: "No GCP credentials configured. Go to Settings → Cloud Credentials.",
+        error: "No GCP credentials configured (Service Account or Session Login Required).",
         credentialsRequired: true,
       },
       { status: 422 }
@@ -67,7 +69,10 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const snapshot = await fetchGcpSnapshot({ serviceAccountKey: gcpCreds.serviceAccountKey });
+    const snapshot = await fetchGcpSnapshot({
+      serviceAccountKey: gcpCreds?.serviceAccountKey as string | undefined,
+      accessToken: !gcpCreds ? (accessToken as string | undefined) : undefined,
+    });
 
     await ensureGcpSnapshotTable();
     await sql`

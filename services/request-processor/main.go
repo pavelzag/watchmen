@@ -34,7 +34,11 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[%s] Health check from %s", time.Now().Format(time.RFC3339), r.RemoteAddr)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "UP", "service": "watchmen-processor"})
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":    "UP",
+		"service":   "watchmen-processor",
+		"timestamp": time.Now().Format(time.RFC3339),
+	})
 }
 
 func processHandler(w http.ResponseWriter, r *http.Request) {
