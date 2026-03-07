@@ -32,6 +32,9 @@ import {
     X
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getDemoGcpSnapshot, getDemoAwsSnapshot } from "@/lib/demo-credentials";
+import type { GcpSnapshot } from "@/lib/gcp/types";
+import type { AwsSnapshot } from "@/lib/aws/types";
 
 // Map icon names from strings to components
 const ICON_MAP: Record<string, any> = {
@@ -139,9 +142,75 @@ export default function TraceClient() {
                 const data = await res.json();
                 const discoveryEndpoints = data.endpoints || [];
 
-                // Always add a "Custom" option for manual entry
+                // 2. Add endpoints from sessionStorage (for Demo Users who run Real Scans)
+                const sessionEndpoints: any[] = [];
+                const gcpSnap = getDemoGcpSnapshot() as GcpSnapshot;
+                const awsSnap = getDemoAwsSnapshot() as AwsSnapshot;
+
+                if (gcpSnap?.loadBalancers) {
+                    gcpSnap.loadBalancers.forEach(lb => {
+                        if (lb.ipAddress && !discoveryEndpoints.find((e: any) => e.url.includes(lb.ipAddress!))) {
+                            sessionEndpoints.push({
+                                id: `session-gcp-lb-${lb.name}`,
+                                label: `[Discovered] LB: ${lb.name}`,
+                                url: `http://${lb.ipAddress}`,
+                                provider: "gcp",
+                                type: "Load Balancer",
+                                description: `Discovered in current session via Real Scan`
+                            });
+                        }
+                    });
+                }
+
+                if (gcpSnap?.cloudRunServices) {
+                    gcpSnap.cloudRunServices.forEach(svc => {
+                        if (svc.url && !discoveryEndpoints.find((e: any) => e.url === svc.url)) {
+                            sessionEndpoints.push({
+                                id: `session-gcp-run-${svc.name}`,
+                                label: `[Discovered] CR: ${svc.name}`,
+                                url: svc.url,
+                                provider: "gcp",
+                                type: "Cloud Run",
+                                description: `Discovered in current session via Real Scan`
+                            });
+                        }
+                    });
+                }
+
+                if (gcpSnap?.vms) {
+                    gcpSnap.vms.forEach(vm => {
+                        if (vm.externalIp && !discoveryEndpoints.find((e: any) => e.url.includes(vm.externalIp!))) {
+                            sessionEndpoints.push({
+                                id: `session-gcp-vm-${vm.name}`,
+                                label: `[Discovered] VM: ${vm.name}`,
+                                url: `http://${vm.externalIp}`,
+                                provider: "gcp",
+                                type: "Compute Engine",
+                                description: `Discovered in current session via Real Scan`
+                            });
+                        }
+                    });
+                }
+
+                if (awsSnap?.loadBalancers) {
+                    awsSnap.loadBalancers.forEach(lb => {
+                        if (lb.dnsName && !discoveryEndpoints.find((e: any) => e.url.includes(lb.dnsName!))) {
+                            sessionEndpoints.push({
+                                id: `session-aws-lb-${lb.name}`,
+                                label: `[Discovered] ELB: ${lb.name}`,
+                                url: `http://${lb.dnsName}`,
+                                provider: "aws",
+                                type: "Elastic Load Balancer",
+                                description: `Discovered in current session via Real Scan`
+                            });
+                        }
+                    });
+                }
+
+                // Merge and add a "Custom" option for manual entry
                 const finalEndpoints = [
                     ...discoveryEndpoints,
+                    ...sessionEndpoints,
                     {
                         id: "custom",
                         label: "Manual Entry (Custom URL)",
