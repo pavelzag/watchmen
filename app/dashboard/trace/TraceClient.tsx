@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
     Play,
@@ -29,10 +29,11 @@ import {
     Wifi,
     HardDrive,
     Bell,
-    X
+    X,
+    RefreshCw
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { getDemoGcpSnapshot, getDemoAwsSnapshot } from "@/lib/demo-credentials";
+import { getDemoCredentials, getDemoGcpSnapshot, getDemoAwsSnapshot, setDemoGcpSnapshot } from "@/lib/demo-credentials";
 import type { GcpSnapshot } from "@/lib/gcp/types";
 import type { AwsSnapshot } from "@/lib/aws/types";
 
@@ -108,6 +109,7 @@ export default function TraceClient() {
     const [remediationScript, setRemediationScript] = useState<{ script: string; explanation: string } | null>(null);
     const [isRemediating, setIsRemediating] = useState(false);
     const [customUrl, setCustomUrl] = useState("");
+    const [isSyncing, setIsSyncing] = useState(false);
 
     // Derived nodes from current endpoint
     const currentNodes = (targetEndpoint?.scenario?.nodes || DEFAULT_NODES) as InfrastructureNode[];
@@ -135,104 +137,129 @@ export default function TraceClient() {
         return () => document.removeEventListener("mousedown", handleClickOutside);
     }, []);
 
-    useEffect(() => {
-        const fetchEndpoints = async () => {
-            try {
-                const res = await fetch("/api/discovery/endpoints");
-                const data = await res.json();
-                const discoveryEndpoints = data.endpoints || [];
+    const fetchEndpoints = useCallback(async () => {
+        setIsLoadingEndpoints(true);
+        try {
+            const res = await fetch("/api/discovery/endpoints");
+            const data = await res.json();
+            const discoveryEndpoints = data.endpoints || [];
 
-                // 2. Add endpoints from sessionStorage (for Demo Users who run Real Scans)
-                const sessionEndpoints: any[] = [];
-                const gcpSnap = getDemoGcpSnapshot() as GcpSnapshot;
-                const awsSnap = getDemoAwsSnapshot() as AwsSnapshot;
+            // 2. Add endpoints from sessionStorage (for Demo Users who run Real Scans)
+            const sessionEndpoints: any[] = [];
+            const gcpSnap = getDemoGcpSnapshot() as GcpSnapshot;
+            const awsSnap = getDemoAwsSnapshot() as AwsSnapshot;
 
-                if (gcpSnap?.loadBalancers) {
-                    gcpSnap.loadBalancers.forEach(lb => {
-                        if (lb.ipAddress && !discoveryEndpoints.find((e: any) => e.url.includes(lb.ipAddress!))) {
-                            sessionEndpoints.push({
-                                id: `session-gcp-lb-${lb.name}`,
-                                label: `[Discovered] LB: ${lb.name}`,
-                                url: `http://${lb.ipAddress}`,
-                                provider: "gcp",
-                                type: "Load Balancer",
-                                description: `Discovered in current session via Real Scan`
-                            });
-                        }
-                    });
-                }
-
-                if (gcpSnap?.cloudRunServices) {
-                    gcpSnap.cloudRunServices.forEach(svc => {
-                        if (svc.url && !discoveryEndpoints.find((e: any) => e.url === svc.url)) {
-                            sessionEndpoints.push({
-                                id: `session-gcp-run-${svc.name}`,
-                                label: `[Discovered] CR: ${svc.name}`,
-                                url: svc.url,
-                                provider: "gcp",
-                                type: "Cloud Run",
-                                description: `Discovered in current session via Real Scan`
-                            });
-                        }
-                    });
-                }
-
-                if (gcpSnap?.vms) {
-                    gcpSnap.vms.forEach(vm => {
-                        if (vm.externalIp && !discoveryEndpoints.find((e: any) => e.url.includes(vm.externalIp!))) {
-                            sessionEndpoints.push({
-                                id: `session-gcp-vm-${vm.name}`,
-                                label: `[Discovered] VM: ${vm.name}`,
-                                url: `http://${vm.externalIp}`,
-                                provider: "gcp",
-                                type: "Compute Engine",
-                                description: `Discovered in current session via Real Scan`
-                            });
-                        }
-                    });
-                }
-
-                if (awsSnap?.loadBalancers) {
-                    awsSnap.loadBalancers.forEach(lb => {
-                        if (lb.dnsName && !discoveryEndpoints.find((e: any) => e.url.includes(lb.dnsName!))) {
-                            sessionEndpoints.push({
-                                id: `session-aws-lb-${lb.name}`,
-                                label: `[Discovered] ELB: ${lb.name}`,
-                                url: `http://${lb.dnsName}`,
-                                provider: "aws",
-                                type: "Elastic Load Balancer",
-                                description: `Discovered in current session via Real Scan`
-                            });
-                        }
-                    });
-                }
-
-                // Merge and add a "Custom" option for manual entry
-                const finalEndpoints = [
-                    ...discoveryEndpoints,
-                    ...sessionEndpoints,
-                    {
-                        id: "custom",
-                        label: "Manual Entry (Custom URL)",
-                        url: "",
-                        provider: "other",
-                        type: "External",
-                        description: "Send requests to any accessible IP or domain"
+            if (gcpSnap?.loadBalancers) {
+                gcpSnap.loadBalancers.forEach(lb => {
+                    if (lb.ipAddress && !discoveryEndpoints.find((e: any) => e.url.includes(lb.ipAddress!))) {
+                        sessionEndpoints.push({
+                            id: `session-gcp-lb-${lb.name}`,
+                            label: `[Discovered] LB: ${lb.name}`,
+                            url: `http://${lb.ipAddress}`,
+                            provider: "gcp",
+                            type: "Load Balancer",
+                            description: `Discovered in current session via Real Scan`
+                        });
                     }
-                ];
-
-                setEndpoints(finalEndpoints);
-                if (finalEndpoints.length > 0) {
-                    setTargetEndpoint(finalEndpoints[0]);
-                }
-            } catch (err) {
-                console.error("Failed to load endpoints:", err);
-            } finally {
-                setIsLoadingEndpoints(false);
+                });
             }
-        };
-        fetchEndpoints();
+
+            if (gcpSnap?.cloudRunServices) {
+                gcpSnap.cloudRunServices.forEach(svc => {
+                    if (svc.url && !discoveryEndpoints.find((e: any) => e.url === svc.url)) {
+                        sessionEndpoints.push({
+                            id: `session-gcp-run-${svc.name}`,
+                            label: `[Discovered] CR: ${svc.name}`,
+                            url: svc.url,
+                            provider: "gcp",
+                            type: "Cloud Run",
+                            description: `Discovered in current session via Real Scan`
+                        });
+                    }
+                });
+            }
+
+            if (gcpSnap?.vms) {
+                gcpSnap.vms.forEach(vm => {
+                    if (vm.externalIp && !discoveryEndpoints.find((e: any) => e.url.includes(vm.externalIp!))) {
+                        sessionEndpoints.push({
+                            id: `session-gcp-vm-${vm.name}`,
+                            label: `[Discovered] VM: ${vm.name}`,
+                            url: `http://${vm.externalIp}`,
+                            provider: "gcp",
+                            type: "Compute Engine",
+                            description: `Discovered in current session via Real Scan`
+                        });
+                    }
+                });
+            }
+
+            if (awsSnap?.loadBalancers) {
+                awsSnap.loadBalancers.forEach(lb => {
+                    if (lb.dnsName && !discoveryEndpoints.find((e: any) => e.url.includes(lb.dnsName!))) {
+                        sessionEndpoints.push({
+                            id: `session-aws-lb-${lb.name}`,
+                            label: `[Discovered] ELB: ${lb.name}`,
+                            url: `http://${lb.dnsName}`,
+                            provider: "aws",
+                            type: "Elastic Load Balancer",
+                            description: `Discovered in current session via Real Scan`
+                        });
+                    }
+                });
+            }
+
+            // Merge and add a "Custom" option for manual entry
+            const finalEndpoints = [
+                ...discoveryEndpoints,
+                ...sessionEndpoints,
+                {
+                    id: "custom",
+                    label: "Manual Entry (Custom URL)",
+                    url: "",
+                    provider: "other",
+                    type: "External",
+                    description: "Send requests to any accessible IP or domain"
+                }
+            ];
+
+            setEndpoints(finalEndpoints);
+            if (finalEndpoints.length > 0) {
+                setTargetEndpoint(finalEndpoints[0]);
+            }
+        } catch (err) {
+            console.error("Failed to load endpoints:", err);
+        } finally {
+            setIsLoadingEndpoints(false);
+        }
     }, []);
+
+    const triggerScan = async () => {
+        setIsSyncing(true);
+        try {
+            const demoCreds = getDemoCredentials();
+            const body = demoCreds.gcp ? { demoCredentials: { gcp: demoCreds.gcp } } : {};
+            const res = await fetch("/api/scan", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+            });
+            const data = await res.json().catch(() => ({})) as { snapshot?: object };
+            if (data.snapshot) {
+                setDemoGcpSnapshot(data.snapshot);
+            }
+            // After successful scan, re-fetch endpoints
+            await fetchEndpoints();
+        } catch (err) {
+            console.error("Sync failed:", err);
+        } finally {
+            setIsSyncing(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchEndpoints();
+    }, [fetchEndpoints]);
 
     useEffect(() => {
         logEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -320,9 +347,20 @@ export default function TraceClient() {
             <div className="lg:col-span-4 flex flex-col gap-4 min-h-0">
                 <div className="flex items-center justify-between">
                     <div className="flex flex-col gap-1" ref={dropdownRef}>
-                        <h2 className="text-xs uppercase tracking-widest text-slate-500 font-bold flex items-center gap-2">
-                            <Code className="w-3.5 h-3.5" /> Simulation
-                        </h2>
+                        <div className="flex items-center justify-between gap-4">
+                            <h2 className="text-xs uppercase tracking-widest text-slate-500 font-bold flex items-center gap-2">
+                                <Code className="w-3.5 h-3.5" /> Simulation
+                            </h2>
+                            <button
+                                onClick={triggerScan}
+                                disabled={isSyncing}
+                                className="flex items-center gap-1 text-[9px] uppercase tracking-widest transition-colors hover:text-emerald-500 disabled:opacity-50"
+                                style={{ color: isSyncing ? "#ffaa00" : "#00aa2b" }}
+                            >
+                                <RefreshCw className={cn("w-2.5 h-2.5", isSyncing && "animate-spin")} />
+                                {isSyncing ? "[SYNCING...]" : "[SYNC GCP]"}
+                            </button>
+                        </div>
                         <div className="relative">
                             <button
                                 onClick={() => !isRunning && setIsDropdownOpen(!isDropdownOpen)}
