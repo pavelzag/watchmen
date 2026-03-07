@@ -16,6 +16,19 @@ spec:
       containers:
         - name: processor
           image: gcr.io/watchmen-test-488807/watchmen-processor:latest
+          imagePullPolicy: Always
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 10
           resources:
             requests:
               cpu: 50m
