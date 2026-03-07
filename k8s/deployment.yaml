@@ -46,7 +46,7 @@ spec:
           # ── Environment — pulled entirely from the Secret ────────────────
           env:
             - name: PROCESSOR_URL
-              value: "http://watchmen-processor"
+              value: "http://watchmen-processor.watchmen.svc.cluster.local"
           envFrom:
             - secretRef:
                 name: watchmen-env
