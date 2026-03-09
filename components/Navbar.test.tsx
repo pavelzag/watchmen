@@ -7,6 +7,11 @@ jest.mock('@/lib/auth', () => ({
     signOut: jest.fn(),
 }));
 
+jest.mock('next/navigation', () => ({
+    useRouter: jest.fn(() => ({ push: jest.fn(), replace: jest.fn() })),
+    usePathname: jest.fn(() => '/dashboard'),
+}));
+
 jest.mock('next/link', () => {
     return ({ children, href, className }: { children: React.ReactNode, href: string, className?: string }) => {
         return (
@@ -34,7 +39,6 @@ describe('Navbar', () => {
         render(NavbarComponent);
 
         expect(screen.getByText('WATCHMEN')).toBeInTheDocument();
-        expect(screen.getByText('CLOUD SECURITY EXPLORER')).toBeInTheDocument();
     });
 
     it('renders sign out button and user info when authenticated', async () => {

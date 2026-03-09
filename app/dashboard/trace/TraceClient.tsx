@@ -84,14 +84,11 @@ const DEFAULT_NODES: InfrastructureNode[] = [
     { id: "response", label: "Final Response", icon: CheckCircle2, description: "Success 200 OK" },
 ];
 
-const DEFAULT_ENDPOINTS = [
-    { id: "mock", label: "Local Mock", url: "", provider: "mock", description: "Simulated trace in local environment" },
-];
 
 export default function TraceClient() {
     const [inputJson, setInputJson] = useState(JSON.stringify(DEFAULT_JSON, null, 2));
-    const [endpoints, setEndpoints] = useState<any[]>(DEFAULT_ENDPOINTS);
-    const [targetEndpoint, setTargetEndpoint] = useState<any>(DEFAULT_ENDPOINTS[0]);
+    const [endpoints, setEndpoints] = useState<any[]>([]);
+    const [targetEndpoint, setTargetEndpoint] = useState<any>(null);
     const [isRunning, setIsRunning] = useState(false);
     const [isLoadingEndpoints, setIsLoadingEndpoints] = useState(true);
     const [isEditorOpen, setIsEditorOpen] = useState(false);
@@ -312,11 +309,11 @@ export default function TraceClient() {
             setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Entering ${node.label}: ${node.description}`]);
 
             // Enhanced Logging and Logic for API call simulation
-            if (i === currentNodes.length - 2 && targetEndpoint.url) {
+            if (i === currentNodes.length - 2 && targetEndpoint?.url) {
                 try {
                     const startTime = Date.now();
                     const payload = JSON.parse(inputJson);
-                    const targetUrl = targetEndpoint.id === "custom" ? customUrl : targetEndpoint.url;
+                    const targetUrl = targetEndpoint?.id === "custom" ? customUrl : targetEndpoint?.url;
 
                     setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Fetch: POST ${targetUrl}...`]);
 
@@ -509,14 +506,14 @@ export default function TraceClient() {
                                 className="flex items-center gap-2 text-[11px] text-emerald-500/80 hover:text-emerald-500 font-bold uppercase tracking-wider outline-none cursor-pointer disabled:cursor-not-allowed transition-colors text-left group"
                             >
                                 <span className="truncate max-w-[200px] lg:max-w-[300px]">
-                                    {isLoadingEndpoints ? "Loading..." : targetEndpoint.label}
+                                    {isLoadingEndpoints ? "Loading..." : (targetEndpoint?.label ?? "Select target…")}
                                 </span>
                                 <ChevronDown className={cn("w-3.5 h-3.5 text-slate-500 transition-transform duration-300", isDropdownOpen && "rotate-180")} />
                             </button>
 
                             {/* Custom URL Input (Conditional) */}
                             <AnimatePresence>
-                                {targetEndpoint.id === "custom" && !isDropdownOpen && (
+                                {targetEndpoint?.id === "custom" && !isDropdownOpen && (
                                     <motion.div
                                         initial={{ opacity: 0, scale: 0.98 }}
                                         animate={{ opacity: 1, scale: 1 }}
@@ -554,14 +551,14 @@ export default function TraceClient() {
                                                     }}
                                                     className={cn(
                                                         "w-full flex flex-col items-start px-3 py-2 rounded-md transition-all text-left group",
-                                                        targetEndpoint.id === ep.id
+                                                        targetEndpoint?.id === ep.id
                                                             ? "bg-emerald-500/10 text-emerald-500"
                                                             : "text-slate-400 hover:bg-slate-800 hover:text-white"
                                                     )}
                                                 >
                                                     <div className="flex items-center justify-between w-full">
                                                         <span className="text-[10px] font-bold uppercase tracking-widest truncate mr-2">{ep.label}</span>
-                                                        {targetEndpoint.id === ep.id && <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_#10b981]" />}
+                                                        {targetEndpoint?.id === ep.id && <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_#10b981]" />}
                                                     </div>
                                                     <div className="text-[9px] opacity-50 group-hover:opacity-100 transition-opacity truncate w-full">
                                                         {ep.description}
@@ -806,7 +803,7 @@ export default function TraceClient() {
                         <h3 className="text-[10px] font-bold uppercase tracking-widest text-emerald-500">Infrastructure Context</h3>
                     </div>
                     <p className="text-[10px] text-slate-500 leading-relaxed">
-                        {targetEndpoint.description || "Simulating data flow across discovered architectural nodes."}
+                        {targetEndpoint?.description || "Simulating data flow across discovered architectural nodes."}
                     </p>
                 </div>
             </div>
