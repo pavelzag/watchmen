@@ -1,0 +1,680 @@
+[
+  {
+    "traceId": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",
+    "projectId": "watchmen-prod",
+    "displayName": "POST /api/checkout",
+    "startTime": "2026-03-09T10:04:32.123Z",
+    "endTime": "2026-03-09T10:04:32.289Z",
+    "durationMs": 166,
+    "httpMethod": "POST",
+    "httpUrl": "/api/checkout",
+    "httpStatusCode": 200,
+    "spans": [
+      {
+        "spanId": "sp-001-root",
+        "displayName": "POST /api/checkout",
+        "startTime": "2026-03-09T10:04:32.123Z",
+        "endTime": "2026-03-09T10:04:32.289Z",
+        "durationMs": 166,
+        "httpMethod": "POST",
+        "httpStatusCode": 200,
+        "attributes": { "http.method": "POST", "http.url": "/api/checkout", "http.status_code": "200" }
+      },
+      {
+        "spanId": "sp-001-auth",
+        "parentSpanId": "sp-001-root",
+        "displayName": "auth.validateToken",
+        "startTime": "2026-03-09T10:04:32.125Z",
+        "endTime": "2026-03-09T10:04:32.137Z",
+        "durationMs": 12,
+        "attributes": {}
+      },
+      {
+        "spanId": "sp-001-db1",
+        "parentSpanId": "sp-001-root",
+        "displayName": "Firestore.read (cart)",
+        "startTime": "2026-03-09T10:04:32.139Z",
+        "endTime": "2026-03-09T10:04:32.184Z",
+        "durationMs": 45,
+        "attributes": { "db.type": "firestore", "db.operation": "read" }
+      },
+      {
+        "spanId": "sp-001-logic",
+        "parentSpanId": "sp-001-root",
+        "displayName": "checkout.processOrder",
+        "startTime": "2026-03-09T10:04:32.186Z",
+        "endTime": "2026-03-09T10:04:32.262Z",
+        "durationMs": 76,
+        "attributes": {}
+      },
+      {
+        "spanId": "sp-001-price",
+        "parentSpanId": "sp-001-logic",
+        "displayName": "pricing.calculate",
+        "startTime": "2026-03-09T10:04:32.188Z",
+        "endTime": "2026-03-09T10:04:32.222Z",
+        "durationMs": 34,
+        "attributes": {}
+      },
+      {
+        "spanId": "sp-001-db2",
+        "parentSpanId": "sp-001-root",
+        "displayName": "Firestore.write (order)",
+        "startTime": "2026-03-09T10:04:32.264Z",
+        "endTime": "2026-03-09T10:04:32.282Z",
+        "durationMs": 18,
+        "attributes": { "db.type": "firestore", "db.operation": "write" }
+      }
+    ]
+  },
+  {
+    "traceId": "b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7",
+    "projectId": "watchmen-prod",
+    "displayName": "GET /api/users/me",
+    "startTime": "2026-03-09T10:04:28.441Z",
+    "endTime": "2026-03-09T10:04:28.486Z",
+    "durationMs": 45,
+    "httpMethod": "GET",
+    "httpUrl": "/api/users/me",
+    "httpStatusCode": 200,
+    "spans": [
+      {
+        "spanId": "sp-002-root",
+        "displayName": "GET /api/users/me",
+        "startTime": "2026-03-09T10:04:28.441Z",
+        "endTime": "2026-03-09T10:04:28.486Z",
+        "durationMs": 45,
+        "httpMethod": "GET",
+        "httpStatusCode": 200,
+        "attributes": { "http.method": "GET", "http.url": "/api/users/me", "http.status_code": "200" }
+      },
+      {
+        "spanId": "sp-002-auth",
+        "parentSpanId": "sp-002-root",
+        "displayName": "auth.validateToken",
+        "startTime": "2026-03-09T10:04:28.443Z",
+        "endTime": "2026-03-09T10:04:28.451Z",
+        "durationMs": 8,
+        "attributes": {}
+      },
+      {
+        "spanId": "sp-002-db",
+        "parentSpanId": "sp-002-root",
+        "displayName": "CloudSQL.query (users)",
+        "startTime": "2026-03-09T10:04:28.453Z",
+        "endTime": "2026-03-09T10:04:28.480Z",
+        "durationMs": 27,
+        "attributes": { "db.type": "postgresql", "db.statement": "SELECT * FROM users WHERE id = $1" }
+      }
+    ]
+  },
+  {
+    "traceId": "c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8",
+    "projectId": "watchmen-dev",
+    "displayName": "POST /auth/login",
+    "startTime": "2026-03-09T10:04:15.002Z",
+    "endTime": "2026-03-09T10:04:15.822Z",
+    "durationMs": 820,
+    "httpMethod": "POST",
+    "httpUrl": "/auth/login",
+    "httpStatusCode": 200,
+    "spans": [
+      {
+        "spanId": "sp-003-root",
+        "displayName": "POST /auth/login",
+        "startTime": "2026-03-09T10:04:15.002Z",
+        "endTime": "2026-03-09T10:04:15.822Z",
+        "durationMs": 820,
+        "httpMethod": "POST",
+        "httpStatusCode": 200,
+        "attributes": { "http.method": "POST", "http.url": "/auth/login", "http.status_code": "200" }
+      },
+      {
+        "spanId": "sp-003-lookup",
+        "parentSpanId": "sp-003-root",
+        "displayName": "CloudSQL.query (users)",
+        "startTime": "2026-03-09T10:04:15.010Z",
+        "endTime": "2026-03-09T10:04:15.055Z",
+        "durationMs": 45,
+        "attributes": { "db.type": "postgresql" }
+      },
+      {
+        "spanId": "sp-003-bcrypt",
+        "parentSpanId": "sp-003-root",
+        "displayName": "bcrypt.compare",
+        "startTime": "2026-03-09T10:04:15.058Z",
+        "endTime": "2026-03-09T10:04:15.808Z",
+        "durationMs": 750,
+        "attributes": {}
+      },
+      {
+        "spanId": "sp-003-jwt",
+        "parentSpanId": "sp-003-root",
+        "displayName": "jwt.sign",
+        "startTime": "2026-03-09T10:04:15.810Z",
+        "endTime": "2026-03-09T10:04:15.816Z",
+        "durationMs": 6,
+        "attributes": {}
+      }
+    ]
+  },
+  {
+    "traceId": "d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9",
+    "projectId": "watchmen-prod",
+    "displayName": "GET /health",
+    "startTime": "2026-03-09T10:03:59.781Z",
+    "endTime": "2026-03-09T10:03:59.789Z",
+    "durationMs": 8,
+    "httpMethod": "GET",
+    "httpUrl": "/health",
+    "httpStatusCode": 200,
+    "spans": [
+      {
+        "spanId": "sp-004-root",
+        "displayName": "GET /health",
+        "startTime": "2026-03-09T10:03:59.781Z",
+        "endTime": "2026-03-09T10:03:59.789Z",
+        "durationMs": 8,
+        "httpMethod": "GET",
+        "httpStatusCode": 200,
+        "attributes": { "http.method": "GET", "http.url": "/health", "http.status_code": "200" }
+      }
+    ]
+  },
+  {
+    "traceId": "e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+    "projectId": "watchmen-prod",
+    "displayName": "PUT /api/orders/7823",
+    "startTime": "2026-03-09T10:03:44.310Z",
+    "endTime": "2026-03-09T10:03:44.544Z",
+    "durationMs": 234,
+    "httpMethod": "PUT",
+    "httpUrl": "/api/orders/7823",
+    "httpStatusCode": 500,
+    "spans": [
+      {
+        "spanId": "sp-005-root",
+        "displayName": "PUT /api/orders/7823",
+        "startTime": "2026-03-09T10:03:44.310Z",
+        "endTime": "2026-03-09T10:03:44.544Z",
+        "durationMs": 234,
+        "httpMethod": "PUT",
+        "httpStatusCode": 500,
+        "attributes": { "http.method": "PUT", "http.url": "/api/orders/7823", "http.status_code": "500" }
+      },
+      {
+        "spanId": "sp-005-auth",
+        "parentSpanId": "sp-005-root",
+        "displayName": "auth.validateToken",
+        "startTime": "2026-03-09T10:03:44.312Z",
+        "endTime": "2026-03-09T10:03:44.330Z",
+        "durationMs": 18,
+        "attributes": {}
+      },
+      {
+        "spanId": "sp-005-fetch",
+        "parentSpanId": "sp-005-root",
+        "displayName": "CloudSQL.query (fetch order)",
+        "startTime": "2026-03-09T10:03:44.332Z",
+        "endTime": "2026-03-09T10:03:44.374Z",
+        "durationMs": 42,
+        "attributes": { "db.type": "postgresql" }
+      },
+      {
+        "spanId": "sp-005-validate",
+        "parentSpanId": "sp-005-root",
+        "displayName": "validation.run",
+        "startTime": "2026-03-09T10:03:44.376Z",
+        "endTime": "2026-03-09T10:03:44.384Z",
+        "durationMs": 8,
+        "attributes": {}
+      },
+      {
+        "spanId": "sp-005-update",
+        "parentSpanId": "sp-005-root",
+        "displayName": "CloudSQL.update (order) — timeout",
+        "startTime": "2026-03-09T10:03:44.386Z",
+        "endTime": "2026-03-09T10:03:44.542Z",
+        "durationMs": 156,
+        "attributes": { "db.type": "postgresql", "error": "true" }
+      }
+    ]
+  },
+  {
+    "traceId": "f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1",
+    "projectId": "watchmen-prod",
+    "displayName": "GET /api/products",
+    "startTime": "2026-03-09T10:03:31.002Z",
+    "endTime": "2026-03-09T10:03:31.114Z",
+    "durationMs": 112,
+    "httpMethod": "GET",
+    "httpUrl": "/api/products",
+    "httpStatusCode": 200,
+    "spans": [
+      {
+        "spanId": "sp-006-root",
+        "displayName": "GET /api/products",
+        "startTime": "2026-03-09T10:03:31.002Z",
+        "endTime": "2026-03-09T10:03:31.114Z",
+        "durationMs": 112,
+        "httpMethod": "GET",
+        "httpStatusCode": 200,
+        "attributes": { "http.method": "GET", "http.url": "/api/products", "http.status_code": "200" }
+      },
+      {
+        "spanId": "sp-006-cache",
+        "parentSpanId": "sp-006-root",
+        "displayName": "Redis.get (products)",
+        "startTime": "2026-03-09T10:03:31.005Z",
+        "endTime": "2026-03-09T10:03:31.010Z",
+        "durationMs": 5,
+        "attributes": { "cache.hit": "false" }
+      },
+      {
+        "spanId": "sp-006-db",
+        "parentSpanId": "sp-006-root",
+        "displayName": "CloudSQL.query (products)",
+        "startTime": "2026-03-09T10:03:31.012Z",
+        "endTime": "2026-03-09T10:03:31.100Z",
+        "durationMs": 88,
+        "attributes": { "db.type": "postgresql", "db.rows_returned": "247" }
+      },
+      {
+        "spanId": "sp-006-cache-set",
+        "parentSpanId": "sp-006-root",
+        "displayName": "Redis.set (products)",
+        "startTime": "2026-03-09T10:03:31.102Z",
+        "endTime": "2026-03-09T10:03:31.110Z",
+        "durationMs": 8,
+        "attributes": { "cache.ttl": "300" }
+      }
+    ]
+  },
+  {
+    "traceId": "a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2",
+    "projectId": "watchmen-dev",
+    "displayName": "DELETE /api/sessions/abc",
+    "startTime": "2026-03-09T10:03:18.551Z",
+    "endTime": "2026-03-09T10:03:18.574Z",
+    "durationMs": 23,
+    "httpMethod": "DELETE",
+    "httpUrl": "/api/sessions/abc",
+    "httpStatusCode": 204,
+    "spans": [
+      {
+        "spanId": "sp-007-root",
+        "displayName": "DELETE /api/sessions/abc",
+        "startTime": "2026-03-09T10:03:18.551Z",
+        "endTime": "2026-03-09T10:03:18.574Z",
+        "durationMs": 23,
+        "httpMethod": "DELETE",
+        "httpStatusCode": 204,
+        "attributes": { "http.method": "DELETE", "http.url": "/api/sessions/abc", "http.status_code": "204" }
+      },
+      {
+        "spanId": "sp-007-auth",
+        "parentSpanId": "sp-007-root",
+        "displayName": "auth.validateToken",
+        "startTime": "2026-03-09T10:03:18.553Z",
+        "endTime": "2026-03-09T10:03:18.561Z",
+        "durationMs": 8,
+        "attributes": {}
+      },
+      {
+        "spanId": "sp-007-del",
+        "parentSpanId": "sp-007-root",
+        "displayName": "Redis.del (session)",
+        "startTime": "2026-03-09T10:03:18.563Z",
+        "endTime": "2026-03-09T10:03:18.572Z",
+        "durationMs": 9,
+        "attributes": {}
+      }
+    ]
+  },
+  {
+    "traceId": "b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3",
+    "projectId": "watchmen-prod",
+    "displayName": "POST /api/payments",
+    "startTime": "2026-03-09T10:03:05.100Z",
+    "endTime": "2026-03-09T10:03:07.441Z",
+    "durationMs": 2341,
+    "httpMethod": "POST",
+    "httpUrl": "/api/payments",
+    "httpStatusCode": 200,
+    "spans": [
+      {
+        "spanId": "sp-008-root",
+        "displayName": "POST /api/payments",
+        "startTime": "2026-03-09T10:03:05.100Z",
+        "endTime": "2026-03-09T10:03:07.441Z",
+        "durationMs": 2341,
+        "httpMethod": "POST",
+        "httpStatusCode": 200,
+        "attributes": { "http.method": "POST", "http.url": "/api/payments", "http.status_code": "200" }
+      },
+      {
+        "spanId": "sp-008-auth",
+        "parentSpanId": "sp-008-root",
+        "displayName": "auth.validateToken",
+        "startTime": "2026-03-09T10:03:05.105Z",
+        "endTime": "2026-03-09T10:03:05.117Z",
+        "durationMs": 12,
+        "attributes": {}
+      },
+      {
+        "spanId": "sp-008-stripe",
+        "parentSpanId": "sp-008-root",
+        "displayName": "stripe.charges.create (external)",
+        "startTime": "2026-03-09T10:03:05.120Z",
+        "endTime": "2026-03-09T10:03:07.390Z",
+        "durationMs": 2270,
+        "attributes": { "peer.service": "stripe.com", "span.kind": "client" }
+      },
+      {
+        "spanId": "sp-008-db",
+        "parentSpanId": "sp-008-root",
+        "displayName": "CloudSQL.insert (payment)",
+        "startTime": "2026-03-09T10:03:07.392Z",
+        "endTime": "2026-03-09T10:03:07.430Z",
+        "durationMs": 38,
+        "attributes": { "db.type": "postgresql" }
+      }
+    ]
+  },
+  {
+    "traceId": "c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4",
+    "projectId": "watchmen-prod",
+    "displayName": "GET /api/users",
+    "startTime": "2026-03-09T10:02:52.007Z",
+    "endTime": "2026-03-09T10:02:52.095Z",
+    "durationMs": 88,
+    "httpMethod": "GET",
+    "httpUrl": "/api/users",
+    "httpStatusCode": 200,
+    "spans": [
+      {
+        "spanId": "sp-009-root",
+        "displayName": "GET /api/users",
+        "startTime": "2026-03-09T10:02:52.007Z",
+        "endTime": "2026-03-09T10:02:52.095Z",
+        "durationMs": 88,
+        "httpMethod": "GET",
+        "httpStatusCode": 200,
+        "attributes": { "http.method": "GET", "http.url": "/api/users", "http.status_code": "200" }
+      },
+      {
+        "spanId": "sp-009-auth",
+        "parentSpanId": "sp-009-root",
+        "displayName": "auth.validateToken",
+        "startTime": "2026-03-09T10:02:52.009Z",
+        "endTime": "2026-03-09T10:02:52.019Z",
+        "durationMs": 10,
+        "attributes": {}
+      },
+      {
+        "spanId": "sp-009-db",
+        "parentSpanId": "sp-009-root",
+        "displayName": "CloudSQL.query (users list)",
+        "startTime": "2026-03-09T10:02:52.022Z",
+        "endTime": "2026-03-09T10:02:52.088Z",
+        "durationMs": 66,
+        "attributes": { "db.type": "postgresql", "db.rows_returned": "52" }
+      }
+    ]
+  },
+  {
+    "traceId": "d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5",
+    "projectId": "watchmen-analytics",
+    "displayName": "GET /api/search",
+    "startTime": "2026-03-09T10:02:40.300Z",
+    "endTime": "2026-03-09T10:02:40.745Z",
+    "durationMs": 445,
+    "httpMethod": "GET",
+    "httpUrl": "/api/search",
+    "httpStatusCode": 200,
+    "spans": [
+      {
+        "spanId": "sp-010-root",
+        "displayName": "GET /api/search",
+        "startTime": "2026-03-09T10:02:40.300Z",
+        "endTime": "2026-03-09T10:02:40.745Z",
+        "durationMs": 445,
+        "httpMethod": "GET",
+        "httpStatusCode": 200,
+        "attributes": { "http.method": "GET", "http.url": "/api/search", "http.status_code": "200" }
+      },
+      {
+        "spanId": "sp-010-parse",
+        "parentSpanId": "sp-010-root",
+        "displayName": "query.parse",
+        "startTime": "2026-03-09T10:02:40.303Z",
+        "endTime": "2026-03-09T10:02:40.308Z",
+        "durationMs": 5,
+        "attributes": {}
+      },
+      {
+        "spanId": "sp-010-es",
+        "parentSpanId": "sp-010-root",
+        "displayName": "Elasticsearch.search",
+        "startTime": "2026-03-09T10:02:40.310Z",
+        "endTime": "2026-03-09T10:02:40.710Z",
+        "durationMs": 400,
+        "attributes": { "peer.service": "elasticsearch", "db.statement": "multi-match query" }
+      },
+      {
+        "spanId": "sp-010-rank",
+        "parentSpanId": "sp-010-root",
+        "displayName": "results.rank",
+        "startTime": "2026-03-09T10:02:40.712Z",
+        "endTime": "2026-03-09T10:02:40.742Z",
+        "durationMs": 30,
+        "attributes": {}
+      }
+    ]
+  },
+  {
+    "traceId": "e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6",
+    "projectId": "watchmen-prod",
+    "displayName": "POST /api/notifications",
+    "startTime": "2026-03-09T10:02:28.881Z",
+    "endTime": "2026-03-09T10:02:28.948Z",
+    "durationMs": 67,
+    "httpMethod": "POST",
+    "httpUrl": "/api/notifications",
+    "httpStatusCode": 200,
+    "spans": [
+      {
+        "spanId": "sp-011-root",
+        "displayName": "POST /api/notifications",
+        "startTime": "2026-03-09T10:02:28.881Z",
+        "endTime": "2026-03-09T10:02:28.948Z",
+        "durationMs": 67,
+        "httpMethod": "POST",
+        "httpStatusCode": 200,
+        "attributes": { "http.method": "POST", "http.url": "/api/notifications", "http.status_code": "200" }
+      },
+      {
+        "spanId": "sp-011-auth",
+        "parentSpanId": "sp-011-root",
+        "displayName": "auth.validateToken",
+        "startTime": "2026-03-09T10:02:28.883Z",
+        "endTime": "2026-03-09T10:02:28.892Z",
+        "durationMs": 9,
+        "attributes": {}
+      },
+      {
+        "spanId": "sp-011-pubsub",
+        "parentSpanId": "sp-011-root",
+        "displayName": "PubSub.publish (notifications)",
+        "startTime": "2026-03-09T10:02:28.895Z",
+        "endTime": "2026-03-09T10:02:28.943Z",
+        "durationMs": 48,
+        "attributes": { "messaging.system": "pubsub", "messaging.destination": "notifications-topic" }
+      }
+    ]
+  },
+  {
+    "traceId": "f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7",
+    "projectId": "watchmen-analytics",
+    "displayName": "GET /api/reports/monthly",
+    "startTime": "2026-03-09T10:01:55.001Z",
+    "endTime": "2026-03-09T10:01:56.251Z",
+    "durationMs": 1250,
+    "httpMethod": "GET",
+    "httpUrl": "/api/reports/monthly",
+    "httpStatusCode": 200,
+    "spans": [
+      {
+        "spanId": "sp-012-root",
+        "displayName": "GET /api/reports/monthly",
+        "startTime": "2026-03-09T10:01:55.001Z",
+        "endTime": "2026-03-09T10:01:56.251Z",
+        "durationMs": 1250,
+        "httpMethod": "GET",
+        "httpStatusCode": 200,
+        "attributes": { "http.method": "GET", "http.url": "/api/reports/monthly", "http.status_code": "200" }
+      },
+      {
+        "spanId": "sp-012-bq",
+        "parentSpanId": "sp-012-root",
+        "displayName": "BigQuery.query (monthly_revenue)",
+        "startTime": "2026-03-09T10:01:55.010Z",
+        "endTime": "2026-03-09T10:01:56.180Z",
+        "durationMs": 1170,
+        "attributes": { "db.type": "bigquery", "db.rows_returned": "10000" }
+      },
+      {
+        "spanId": "sp-012-agg",
+        "parentSpanId": "sp-012-root",
+        "displayName": "report.aggregate",
+        "startTime": "2026-03-09T10:01:56.183Z",
+        "endTime": "2026-03-09T10:01:56.243Z",
+        "durationMs": 60,
+        "attributes": {}
+      }
+    ]
+  },
+  {
+    "traceId": "a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8",
+    "projectId": "watchmen-dev",
+    "displayName": "PUT /api/config",
+    "startTime": "2026-03-09T10:01:33.220Z",
+    "endTime": "2026-03-09T10:01:33.235Z",
+    "durationMs": 15,
+    "httpMethod": "PUT",
+    "httpUrl": "/api/config",
+    "httpStatusCode": 403,
+    "spans": [
+      {
+        "spanId": "sp-013-root",
+        "displayName": "PUT /api/config",
+        "startTime": "2026-03-09T10:01:33.220Z",
+        "endTime": "2026-03-09T10:01:33.235Z",
+        "durationMs": 15,
+        "httpMethod": "PUT",
+        "httpStatusCode": 403,
+        "attributes": { "http.method": "PUT", "http.url": "/api/config", "http.status_code": "403" }
+      },
+      {
+        "spanId": "sp-013-auth",
+        "parentSpanId": "sp-013-root",
+        "displayName": "auth.checkPermissions — DENIED",
+        "startTime": "2026-03-09T10:01:33.222Z",
+        "endTime": "2026-03-09T10:01:33.233Z",
+        "durationMs": 11,
+        "attributes": { "error": "true", "error.message": "Insufficient permissions" }
+      }
+    ]
+  },
+  {
+    "traceId": "b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9",
+    "projectId": "watchmen-analytics",
+    "displayName": "GET /api/metrics",
+    "startTime": "2026-03-09T10:01:11.400Z",
+    "endTime": "2026-03-09T10:01:11.722Z",
+    "durationMs": 322,
+    "httpMethod": "GET",
+    "httpUrl": "/api/metrics",
+    "httpStatusCode": 200,
+    "spans": [
+      {
+        "spanId": "sp-014-root",
+        "displayName": "GET /api/metrics",
+        "startTime": "2026-03-09T10:01:11.400Z",
+        "endTime": "2026-03-09T10:01:11.722Z",
+        "durationMs": 322,
+        "httpMethod": "GET",
+        "httpStatusCode": 200,
+        "attributes": { "http.method": "GET", "http.url": "/api/metrics", "http.status_code": "200" }
+      },
+      {
+        "spanId": "sp-014-bq",
+        "parentSpanId": "sp-014-root",
+        "displayName": "BigQuery.query (realtime_metrics)",
+        "startTime": "2026-03-09T10:01:11.405Z",
+        "endTime": "2026-03-09T10:01:11.695Z",
+        "durationMs": 290,
+        "attributes": { "db.type": "bigquery" }
+      },
+      {
+        "spanId": "sp-014-fmt",
+        "parentSpanId": "sp-014-root",
+        "displayName": "metrics.format",
+        "startTime": "2026-03-09T10:01:11.697Z",
+        "endTime": "2026-03-09T10:01:11.720Z",
+        "durationMs": 23,
+        "attributes": {}
+      }
+    ]
+  },
+  {
+    "traceId": "c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0",
+    "projectId": "watchmen-prod",
+    "displayName": "POST /api/events",
+    "startTime": "2026-03-09T10:00:49.553Z",
+    "endTime": "2026-03-09T10:00:49.644Z",
+    "durationMs": 91,
+    "httpMethod": "POST",
+    "httpUrl": "/api/events",
+    "httpStatusCode": 200,
+    "spans": [
+      {
+        "spanId": "sp-015-root",
+        "displayName": "POST /api/events",
+        "startTime": "2026-03-09T10:00:49.553Z",
+        "endTime": "2026-03-09T10:00:49.644Z",
+        "durationMs": 91,
+        "httpMethod": "POST",
+        "httpStatusCode": 200,
+        "attributes": { "http.method": "POST", "http.url": "/api/events", "http.status_code": "200" }
+      },
+      {
+        "spanId": "sp-015-auth",
+        "parentSpanId": "sp-015-root",
+        "displayName": "auth.validateToken",
+        "startTime": "2026-03-09T10:00:49.555Z",
+        "endTime": "2026-03-09T10:00:49.565Z",
+        "durationMs": 10,
+        "attributes": {}
+      },
+      {
+        "spanId": "sp-015-validate",
+        "parentSpanId": "sp-015-root",
+        "displayName": "event.validate",
+        "startTime": "2026-03-09T10:00:49.567Z",
+        "endTime": "2026-03-09T10:00:49.575Z",
+        "durationMs": 8,
+        "attributes": {}
+      },
+      {
+        "spanId": "sp-015-pubsub",
+        "parentSpanId": "sp-015-root",
+        "displayName": "PubSub.publish (events)",
+        "startTime": "2026-03-09T10:00:49.577Z",
+        "endTime": "2026-03-09T10:00:49.640Z",
+        "durationMs": 63,
+        "attributes": { "messaging.system": "pubsub", "messaging.destination": "events-topic" }
+      }
+    ]
+  }
+]

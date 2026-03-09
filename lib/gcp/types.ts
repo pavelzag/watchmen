@@ -146,6 +146,31 @@ export interface GcpLoadBalancer {
   description?: string;
 }
 
+export interface TraceSpan {
+  spanId: string;
+  parentSpanId?: string;
+  displayName: string;
+  startTime: string;
+  endTime: string;
+  durationMs: number;
+  httpMethod?: string;
+  httpStatusCode?: number;
+  attributes: Record<string, string>;
+}
+
+export interface CloudTrace {
+  traceId: string;
+  projectId: string;
+  displayName: string;
+  startTime: string;
+  endTime: string;
+  durationMs: number;
+  httpMethod?: string;
+  httpUrl?: string;
+  httpStatusCode?: number;
+  spans: TraceSpan[];
+}
+
 export interface GcpSnapshot {
   snapshotId: string;
   projects: ProjectIamPolicy[];
