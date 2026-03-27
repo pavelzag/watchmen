@@ -1,4 +1,4 @@
-import TraceClient from "./TraceClient";
+import RequestTracer from "./RequestTracer";
 import LiveTraces from "./LiveTraces";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
@@ -24,18 +24,13 @@ export default async function TracePage({
             <p className="text-slate-400 text-sm mt-1">
               {tab === "live"
                 ? "Incoming requests from GCP Cloud Trace — last 1 hour"
-                : "Visualize data transformation across your cloud infrastructure"}
+                : "Send a request and watch it flow through your real GCP infrastructure"}
             </p>
           </div>
 
           {tab === "tracer" && (
-            <div className="flex items-center gap-4">
-              <div className="px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 rounded text-[10px] uppercase tracking-widest text-emerald-400">
-                Go Service: ACTIVE
-              </div>
-              <div className="px-3 py-1 bg-sky-500/10 border border-sky-500/20 rounded text-[10px] uppercase tracking-widest text-sky-400">
-                Nodes: 5
-              </div>
+            <div className="px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 text-[10px] uppercase tracking-widest text-emerald-400">
+              Live Topology
             </div>
           )}
         </div>
@@ -66,7 +61,7 @@ export default async function TracePage({
           </Link>
         </div>
 
-        {tab === "live" ? <LiveTraces /> : <TraceClient />}
+        {tab === "live" ? <LiveTraces /> : <RequestTracer />}
       </div>
     </div>
   );

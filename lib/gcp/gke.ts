@@ -42,6 +42,7 @@ async function getRealClusters(projectIds: string[]): Promise<GkeCluster[]> {
           iamPolicy: { bindings: containerBindings },
           workloadIdentityEnabled: !!cluster.workloadIdentityConfig?.workloadPool,
           privateCluster: !!cluster.privateClusterConfig?.enablePrivateNodes,
+          endpoint: cluster.endpoint ?? undefined,
         };
       });
     })

@@ -49,6 +49,20 @@ export interface GkeCluster {
   iamPolicy: { bindings: IamBinding[] };
   workloadIdentityEnabled: boolean;
   privateCluster: boolean;
+  endpoint?: string; // Public master API IP (empty for fully private clusters)
+}
+
+export type GkeEntryPointType = "master-api" | "lb-service" | "ingress";
+
+export interface GkeEntryPoint {
+  clusterName: string;
+  projectId: string;
+  type: GkeEntryPointType;
+  ip?: string;
+  lbName?: string;
+  /** Kubernetes "namespace/service-name" if determinable from GCP metadata */
+  k8sService?: string;
+  isPublic: boolean;
 }
 
 export interface VM {

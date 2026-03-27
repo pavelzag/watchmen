@@ -6,6 +6,7 @@ import DetailDrawer, { DrawerSection, DrawerField, StatusBadge } from "@/compone
 import { cn } from "@/lib/utils";
 import { ChevronUp, ChevronDown } from "lucide-react";
 import type { GkeCluster } from "@/lib/gcp/types";
+import EntryPointsPanel from "./EntryPointsPanel";
 
 type SortDir = "asc" | "desc";
 
@@ -75,6 +76,10 @@ export default function ClustersPage() {
       <div>
         <DetailPageHeader title="GKE Clusters" count={loading ? null : filtered.length} search={search} onSearch={setSearch} projects={projectOptions} projectFilter={projectFilter} onProjectFilter={setProjectFilter} />
         {error && <p className="text-sm text-red-400 mb-4">{error}</p>}
+
+        <div className="mb-6">
+          <EntryPointsPanel />
+        </div>
 
         <div className="glass rounded-2xl overflow-hidden">
           <table className="w-full text-sm">
