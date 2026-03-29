@@ -1,0 +1,15 @@
+# Enable automatic Envoy sidecar injection for the watchmen namespace.
+# Apply AFTER: istioctl install --set profile=minimal
+#
+#   kubectl apply -f k8s/istio/namespace-label.yaml
+#   kubectl rollout restart deployment -n watchmen
+#
+# After restart, every pod gains an istio-proxy (Envoy) sidecar container.
+# Its access logs will appear in Cloud Logging under container_name=istio-proxy.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: watchmen
+  labels:
+    istio-injection: enabled

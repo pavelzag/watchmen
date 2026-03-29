@@ -1,0 +1,15 @@
+# Enable Envoy access logging for all workloads in the watchmen namespace.
+# Logs are written to stdout in JSON format → collected by Cloud Logging
+# under resource.labels.container_name="istio-proxy".
+#
+# Each log entry contains: method, path, status, duration, upstream, source IP.
+
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: access-log
+  namespace: watchmen
+spec:
+  accessLogging:
+    - providers:
+        - name: envoy

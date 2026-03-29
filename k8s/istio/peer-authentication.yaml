@@ -1,0 +1,12 @@
+# Enforce mutual TLS (mTLS) for all services in the watchmen namespace.
+# Pods without sidecars (before injection) use PERMISSIVE mode to avoid
+# blocking traffic during rollout. Switch to STRICT once all pods are injected.
+
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: watchmen
+spec:
+  mtls:
+    mode: PERMISSIVE   # change to STRICT after all pods have sidecars

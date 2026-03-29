@@ -16,4 +16,4 @@ spec:
     - name: http
       protocol: TCP
       port: 80
-      targetPort: 8080
+      targetPort: 80   # nginx sidecar (was 8080 / echo direct)

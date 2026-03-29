@@ -49,17 +49,41 @@ export async function GET(req: NextRequest) {
     }
 
     const logging = google.logging("v2");
+
+    // ── Container listing mode ──────────────────────────────────────────────
+    if (searchParams.get("mode") === "containers") {
+      const namespace = searchParams.get("namespace") ?? "watchmen";
+      const res = await logging.entries.list({
+        requestBody: {
+          resourceNames: [`projects/${projectId}`],
+          filter: [
+            `resource.type="k8s_container"`,
+            `resource.labels.project_id="${projectId}"`,
+            `resource.labels.namespace_name="${namespace}"`,
+          ].join("\n"),
+          orderBy: "timestamp desc",
+          pageSize: 100,
+        },
+      });
+      const containers = [...new Set(
+        (res.data.entries ?? [])
+          .map(e => (e.resource?.labels as any)?.container_name ?? "")
+          .filter(Boolean)
+      )].sort();
+      return NextResponse.json({ containers });
+    }
+
     const filters: string[] = [`resource.type="${resourceType}"`];
 
     if (resourceType === "k8s_container") {
-      const namespace  = searchParams.get("namespace") ?? "watchmen";
-      const container  = searchParams.get("container") ?? "";
-      const reqOnly    = searchParams.get("reqOnly") === "1";
+      const namespace        = searchParams.get("namespace") ?? "watchmen";
+      const container        = searchParams.get("container") ?? "";
+      const excludeContainer = searchParams.get("excludeContainer") ?? "";
       filters.push(`resource.labels.project_id="${projectId}"`);
       filters.push(`resource.labels.namespace_name="${namespace}"`);
-      if (container) filters.push(`resource.labels.container_name="${container}"`);
-      if (reqOnly)   filters.push(`textPayload:"[req]"`);
-      filters.push(`(severity="INFO" OR severity="DEFAULT" OR severity="NOTICE" OR severity="WARNING")`);
+      if (container)        filters.push(`resource.labels.container_name="${container}"`);
+      if (excludeContainer) filters.push(`NOT resource.labels.container_name="${excludeContainer}"`);
+      filters.push(`(severity="INFO" OR severity="DEFAULT" OR severity="NOTICE" OR severity="WARNING" OR severity="ERROR")`);
 
     } else if (resourceType === "cloud_run_revision") {
       const service = searchParams.get("service") ?? "";
@@ -77,15 +101,19 @@ export async function GET(req: NextRequest) {
       filters.push(`(severity="INFO" OR severity="DEFAULT" OR severity="NOTICE" OR severity="WARNING" OR severity="ERROR")`);
     }
 
+    const filterStr = filters.join("\n");
+    console.log("[api/gcp/logs] filter:", filterStr);
+
     const res = await logging.entries.list({
       requestBody: {
         resourceNames: [`projects/${projectId}`],
-        filter: filters.join("\n"),
+        filter: filterStr,
         orderBy: "timestamp desc",
         pageSize: limit,
       },
     });
 
+    console.log("[api/gcp/logs] entries returned:", res.data.entries?.length ?? 0);
     const entries = (res.data.entries ?? []).map((e) => {
       // Structured httpRequest field — present on Cloud Run request logs and GCE nginx/apache logs
       const hr = e.httpRequest as any;
@@ -118,7 +146,7 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    return NextResponse.json({ entries, count: entries.length });
+    return NextResponse.json({ entries, count: entries.length, _filter: filterStr });
   } catch (err: any) {
     console.error("[api/gcp/logs]", err);
     return NextResponse.json({ error: err.message ?? "Failed to fetch logs" }, { status: 500 });

@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Globe, Server, Box, Database, Play, Loader2,
   Cloud, CheckCircle2, XCircle, ChevronDown, RefreshCw,
-  ZoomIn, ZoomOut, Maximize2, Minimize2, X, Info, Cpu,
+  ZoomIn, ZoomOut, Maximize2, Minimize2, X, Info, Cpu, Copy, Search,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { GcpSnapshot, GkeEntryPoint } from "@/lib/gcp/types";
@@ -447,6 +447,31 @@ function parseReqLog(msg: string): { ip: string; method: string; path: string; s
   return { ip: m[1], method: m[2], path: m[3], status: Number(m[4]), latencyMs: Number(m[5]), body: m[6] };
 }
 
+// Parse Istio/Envoy access log text format:
+// [2026-03-29T...] "GET /path HTTP/1.1" 200 - 0 1234 5 3 "1.2.3.4" "curl/7.x" "req-id" "host" "upstream"
+const ENVOY_LOG_RE = /\[(\S+)\]\s+"(\w+)\s+(\S+)\s+HTTP\/[\d.]+" (\d+) \S+ \d+ \d+ (\d+) \d+ "([^"]*)" "([^"]*)"/;
+function parseEnvoyLog(msg: string): { method: string; path: string; status: number; latencyMs: number; remoteIp: string; userAgent: string } | null {
+  const m = msg.match(ENVOY_LOG_RE);
+  if (!m) return null;
+  return { method: m[2], path: m[3], status: Number(m[4]), latencyMs: Number(m[5]), remoteIp: m[6], userAgent: m[7] };
+}
+
+// Parse nginx JSON access logs: {"time":...,"remote_addr":...,"method":...,"uri":...,"status":200,...}
+function parseNginxLog(msg: string): { method: string; path: string; status: number; latencyMs: number; remoteIp: string; userAgent: string } | null {
+  try {
+    const j = JSON.parse(msg);
+    if (!j.method && !j.uri) return null;
+    return {
+      method:    j.method ?? "",
+      path:      j.uri ?? "",
+      status:    Number(j.status ?? 0),
+      latencyMs: j.request_time ? Math.round(Number(j.request_time) * 1000) : 0,
+      remoteIp:  j.remote_addr ?? j.x_forwarded_for ?? "",
+      userAgent: j.user_agent ?? "",
+    };
+  } catch { return null; }
+}
+
 type NodeDetailTab = "info" | "logs" | "routes";
 
 interface DiscoveredRoute { method: string; path: string; description?: string; body?: Record<string, string> | null; }
@@ -480,21 +505,40 @@ function NodeDetail({
     status === "error" ? "text-red-400 border-red-900" :
     inPath ? "text-slate-400 border-slate-700" : "text-slate-600 border-slate-800";
 
-  // Tabs — logs/routes for compute nodes and VMs
-  const showTabs = node.type === "gke" || node.type === "cloudrun" || node.type === "lb" || node.type === "vm";
+  // Tabs — only nodes that have their own logs/routes get the tab bar.
+  // LBs are infrastructure (no container logs); they only get routes if matchUrl is set.
+  const hasLogs   = node.type === "gke" || node.type === "cloudrun" || node.type === "vm";
+  const hasRoutes = node.type === "gke" || node.type === "cloudrun" || node.type === "lb" || node.type === "vm";
+  const showTabs  = hasLogs || hasRoutes;
   const [tab, setTab] = useState<NodeDetailTab>("info");
 
   // Logs state
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
   const [logsError, setLogsError] = useState<string | null>(null);
+  const [logSearch, setLogSearch] = useState("");
+  const [logStatusFilter, setLogStatusFilter] = useState<"all" | "2xx" | "3xx" | "4xx" | "5xx">("all");
+  const [logsExpanded, setLogsExpanded] = useState(false);
+  const [copyFlash, setCopyFlash] = useState(false);
+  const [availableContainers, setAvailableContainers] = useState<string[]>([]);
+  const [selectedContainer, setSelectedContainer] = useState<string>("");
 
   // Routes state
   const [routes, setRoutes] = useState<DiscoveredRoute[]>([]);
   const [loadingRoutes, setLoadingRoutes] = useState(false);
   const [routesSource, setRoutesSource] = useState<string | null>(null);
 
-  // Fetch logs when tab becomes active
+  // Fetch available containers for GKE nodes (for the container selector)
+  useEffect(() => {
+    if (tab !== "logs" || node.type !== "gke" || !node.projectId) return;
+    const params = new URLSearchParams({ projectId: node.projectId, mode: "containers" });
+    fetch(`/api/gcp/logs?${params}`)
+      .then(r => r.json())
+      .then(d => setAvailableContainers(d.containers ?? []))
+      .catch(() => {});
+  }, [tab, node.id, node.projectId, node.type]);
+
+  // Fetch logs when tab or container selection changes
   useEffect(() => {
     if (tab !== "logs" || !node.projectId) return;
     setLoadingLogs(true);
@@ -510,9 +554,13 @@ function NodeDetail({
       params.set("instance", node.label.toLowerCase());
       if (node.region) params.set("region", node.region);
     } else {
-      // gke / lb — query k8s request logs from the watchmen namespace
       params.set("resourceType", "k8s_container");
-      params.set("reqOnly", "1");
+      if (selectedContainer) {
+        params.set("container", selectedContainer);
+      } else {
+        // Exclude the watchmen app itself — show only service containers
+        params.set("excludeContainer", "watchmen");
+      }
     }
 
     fetch(`/api/gcp/logs?${params}`)
@@ -523,7 +571,7 @@ function NodeDetail({
       })
       .catch(e => setLogsError(e.message))
       .finally(() => setLoadingLogs(false));
-  }, [tab, node.id, node.projectId, node.type, node.label, node.region]);
+  }, [tab, node.id, node.projectId, node.type, node.label, node.region, selectedContainer]);
 
   // Fetch routes when tab becomes active
   useEffect(() => {
@@ -536,6 +584,62 @@ function NodeDetail({
       .catch(() => {})
       .finally(() => setLoadingRoutes(false));
   }, [tab, node.matchUrl]);
+
+  // Filtered logs
+  const filteredLogs = useMemo(() => {
+    return logs.filter(l => {
+      const parsed = !l.httpRequest ? (parseReqLog(l.message) ?? parseNginxLog(l.message) ?? parseEnvoyLog(l.message)) : null;
+      const status = l.httpRequest?.status ?? parsed?.status;
+      const searchable = l.httpRequest
+        ? `${l.httpRequest.method} ${l.httpRequest.url} ${l.httpRequest.remoteIp} ${l.httpRequest.userAgent}`
+        : parsed
+        ? `${parsed.method} ${parsed.path} ${parsed.ip} ${parsed.body ?? ""}`
+        : l.message;
+
+      if (logStatusFilter !== "all") {
+        if (status === undefined) return false;
+        const ranges: Record<string, [number, number]> = { "2xx": [200, 299], "3xx": [300, 399], "4xx": [400, 499], "5xx": [500, 599] };
+        const r = ranges[logStatusFilter];
+        if (r && (status < r[0] || status > r[1])) return false;
+      }
+      if (logSearch.trim()) {
+        if (!searchable.toLowerCase().includes(logSearch.toLowerCase())) return false;
+      }
+      return true;
+    });
+  }, [logs, logSearch, logStatusFilter]);
+
+  // Copy logs to clipboard
+  const handleCopyLogs = useCallback(() => {
+    const text = filteredLogs.map(l => {
+      const ts = l.timestamp ? new Date(l.timestamp).toISOString() : "";
+      if (l.httpRequest) {
+        const hr = l.httpRequest;
+        return `${ts}  ${hr.method}  ${hr.status ?? "?"}  ${hr.url}  ${hr.remoteIp}  ${hr.latency}`;
+      }
+      const parsed = parseReqLog(l.message);
+      if (parsed) {
+        return `${ts}  ${parsed.method}  ${parsed.status}  ${parsed.path}  ${parsed.ip}  ${parsed.latencyMs}ms${parsed.body ? `  body=${parsed.body}` : ""}`;
+      }
+      return `${ts}  ${l.severity}  ${l.message}`;
+    }).join("\n");
+    navigator.clipboard.writeText(text).then(() => {
+      setCopyFlash(true);
+      setTimeout(() => setCopyFlash(false), 1200);
+    });
+  }, [filteredLogs]);
+
+  // Keyboard: C = copy, Escape = close expand
+  useEffect(() => {
+    if (tab !== "logs") return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.key === "c" && !e.ctrlKey && !e.metaKey) handleCopyLogs();
+      if (e.key === "Escape") setLogsExpanded(false);
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [tab, handleCopyLogs]);
 
   const METHOD_COLOR: Record<string, string> = {
     GET: "text-sky-400", POST: "text-emerald-400", PUT: "text-amber-400",
@@ -558,7 +662,7 @@ function NodeDetail({
       {/* Tab bar */}
       {showTabs && (
         <div className="shrink-0 flex border-b border-slate-800/50">
-          {(["info", "logs", "routes"] as NodeDetailTab[]).map(t => (
+          {(["info", ...(hasLogs ? ["logs"] : []), ...(hasRoutes ? ["routes"] : [])] as NodeDetailTab[]).map(t => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -642,12 +746,82 @@ function NodeDetail({
         {/* ── LOGS tab ── */}
         {tab === "logs" && (
           <>
-            <div className="flex items-center justify-between">
-              <span className="text-[9px] uppercase tracking-widest text-slate-600">Cloud Logging · {node.projectId}</span>
+            {/* Header row */}
+            <div className="flex items-center gap-1.5">
+              <span className="text-[9px] uppercase tracking-widest text-slate-600 flex-1 truncate">Cloud Logging · {node.projectId}</span>
+              <button
+                onClick={handleCopyLogs}
+                title="Copy logs (C)"
+                className={cn("transition-colors", copyFlash ? "text-emerald-400" : "text-slate-600 hover:text-slate-300")}
+              ><Copy size={9} /></button>
+              <button
+                onClick={() => setLogsExpanded(v => !v)}
+                title="Expand logs"
+                className="text-slate-600 hover:text-slate-300 transition-colors"
+              ><Maximize2 size={9} /></button>
               <button
                 onClick={() => { setLogs([]); setTab("info"); setTimeout(() => setTab("logs"), 0); }}
+                title="Refresh"
                 className="text-slate-600 hover:text-slate-300 transition-colors"
               ><RefreshCw size={9} /></button>
+            </div>
+
+            {/* Container selector (GKE only, shown when multiple containers detected) */}
+            {node.type === "gke" && availableContainers.length > 0 && (
+              <div className="flex gap-1 flex-wrap">
+                <button
+                  onClick={() => setSelectedContainer("")}
+                  className={cn("text-[8px] px-1.5 py-0.5 border transition-colors",
+                    !selectedContainer ? "border-slate-500 text-slate-300 bg-slate-800" : "border-slate-800 text-slate-600 hover:text-slate-400"
+                  )}>ALL</button>
+                {availableContainers.map(c => (
+                  <button
+                    key={c}
+                    onClick={() => setSelectedContainer(c)}
+                    className={cn("text-[8px] px-1.5 py-0.5 border transition-colors font-mono",
+                      selectedContainer === c ? "border-emerald-700 text-emerald-400 bg-emerald-900/20" : "border-slate-800 text-slate-600 hover:text-slate-400"
+                    )}>{c}</button>
+                ))}
+              </div>
+            )}
+
+            {/* Search */}
+            <div className="relative">
+              <Search size={8} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-600 pointer-events-none" />
+              <input
+                value={logSearch}
+                onChange={e => setLogSearch(e.target.value)}
+                placeholder="Search logs…"
+                className="w-full bg-[#0d0d0d] border border-slate-800 text-[10px] text-slate-300 font-mono pl-5 pr-2 py-1 outline-none focus:border-slate-600 placeholder:text-slate-700"
+              />
+              {logSearch && (
+                <button onClick={() => setLogSearch("")} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-600 hover:text-slate-400">
+                  <X size={8} />
+                </button>
+              )}
+            </div>
+
+            {/* Status filter pills */}
+            <div className="flex gap-1 flex-wrap">
+              {(["all", "2xx", "3xx", "4xx", "5xx"] as const).map(f => (
+                <button
+                  key={f}
+                  onClick={() => setLogStatusFilter(f)}
+                  className={cn(
+                    "text-[8px] px-1.5 py-0.5 border transition-colors",
+                    logStatusFilter === f
+                      ? f === "all" ? "border-slate-500 text-slate-300 bg-slate-800"
+                        : f === "2xx" ? "border-emerald-700 text-emerald-400 bg-emerald-900/20"
+                        : f === "3xx" ? "border-sky-700 text-sky-400 bg-sky-900/20"
+                        : f === "4xx" ? "border-amber-700 text-amber-400 bg-amber-900/20"
+                        : "border-red-700 text-red-400 bg-red-900/20"
+                      : "border-slate-800 text-slate-600 hover:text-slate-400 hover:border-slate-700"
+                  )}
+                >{f.toUpperCase()}</button>
+              ))}
+              {(logSearch || logStatusFilter !== "all") && (
+                <span className="text-[8px] text-slate-600 self-center ml-1">{filteredLogs.length}/{logs.length}</span>
+              )}
             </div>
 
             {loadingLogs && (
@@ -658,10 +832,10 @@ function NodeDetail({
             {logsError && (
               <div className="border border-red-900/40 bg-red-900/10 p-2 text-red-400 text-[10px]">{logsError}</div>
             )}
-            {!loadingLogs && !logsError && logs.length === 0 && (
-              <p className="text-[10px] text-slate-600">No recent logs found.</p>
+            {!loadingLogs && !logsError && filteredLogs.length === 0 && (
+              <p className="text-[10px] text-slate-600">{logs.length === 0 ? "No recent logs found." : "No logs match the current filter."}</p>
             )}
-            {logs.map((l, i) => {
+            {filteredLogs.map((l, i) => {
               const ts = l.timestamp ? new Date(l.timestamp).toLocaleTimeString() : "";
               const severityColor =
                 l.severity === "ERROR" ? "text-red-500" :
@@ -697,15 +871,17 @@ function NodeDetail({
                 );
               }
 
-              // ── Try to parse wm-echo [req] structured text log ──
-              const parsed = parseReqLog(l.message);
+              // ── Try to parse structured text log ([req], nginx JSON, Envoy) ──
+              const parsed = parseReqLog(l.message) ?? parseNginxLog(l.message) ?? parseEnvoyLog(l.message);
               if (parsed) {
                 const statusC =
                   parsed.status < 300 ? "text-emerald-400" :
                   parsed.status < 400 ? "text-sky-400" :
                   parsed.status < 500 ? "text-amber-400" : "text-red-400";
                 const methodColor = METHOD_COLOR[parsed.method] ?? "text-slate-400";
-                const source = l.pod || l.instanceId || "";
+                const source = l.container || l.pod || l.instanceId || "";
+                const ip = (parsed as any).ip ?? (parsed as any).remoteIp ?? "";
+                const body = (parsed as any).body ?? "";
                 return (
                   <div key={i} className="border-b border-slate-800/30 pb-1.5 last:border-0">
                     <div className="flex items-center gap-1.5 mb-0.5">
@@ -715,12 +891,12 @@ function NodeDetail({
                       <span className="text-[8px] text-slate-600 ml-auto shrink-0">{ts}</span>
                     </div>
                     <div className="flex gap-3 text-[8px] text-slate-600 font-mono">
-                      <span title="Caller IP">{parsed.ip}</span>
+                      {ip && <span title="Caller IP">{ip}</span>}
                       <span>{parsed.latencyMs}ms</span>
                       {source && <span className="truncate text-slate-700">{source}</span>}
                     </div>
-                    {parsed.body && (
-                      <p className="text-[8px] text-slate-700 font-mono truncate mt-0.5" title={parsed.body}>{parsed.body}</p>
+                    {body && (
+                      <p className="text-[8px] text-slate-700 font-mono truncate mt-0.5" title={body}>{body}</p>
                     )}
                   </div>
                 );
@@ -741,6 +917,108 @@ function NodeDetail({
                 </div>
               );
             })}
+
+            {filteredLogs.length > 0 && (
+              <p className="text-[8px] text-slate-700 text-center">Press <kbd className="bg-slate-800 px-1 rounded text-slate-500">C</kbd> to copy · {filteredLogs.length} entries</p>
+            )}
+
+            {/* ── Expanded overlay ── */}
+            <AnimatePresence>
+              {logsExpanded && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center p-6"
+                  onClick={() => setLogsExpanded(false)}
+                >
+                  <motion.div
+                    initial={{ scale: 0.95, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    exit={{ scale: 0.95, opacity: 0 }}
+                    transition={{ duration: 0.15 }}
+                    className="bg-[#0a0a0a] border border-slate-800 w-full max-w-4xl max-h-[85vh] flex flex-col"
+                    onClick={e => e.stopPropagation()}
+                  >
+                    {/* Modal header */}
+                    <div className="flex items-center gap-3 px-4 py-2.5 border-b border-slate-800 shrink-0">
+                      <span className="text-[9px] uppercase tracking-widest text-slate-500 flex-1">{node.label} · Cloud Logging</span>
+                      <span className="text-[8px] text-slate-600">{filteredLogs.length} entries</span>
+                      <button onClick={handleCopyLogs} title="Copy (C)" className={cn("transition-colors", copyFlash ? "text-emerald-400" : "text-slate-600 hover:text-slate-300")}><Copy size={11} /></button>
+                      <button onClick={() => setLogsExpanded(false)} className="text-slate-600 hover:text-slate-300 transition-colors"><X size={11} /></button>
+                    </div>
+                    {/* Modal filters */}
+                    <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-800 shrink-0">
+                      <div className="relative flex-1">
+                        <Search size={9} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-600 pointer-events-none" />
+                        <input
+                          value={logSearch}
+                          onChange={e => setLogSearch(e.target.value)}
+                          placeholder="Search…"
+                          className="w-full bg-[#0d0d0d] border border-slate-800 text-[10px] text-slate-300 font-mono pl-6 pr-2 py-1 outline-none focus:border-slate-600 placeholder:text-slate-700"
+                        />
+                        {logSearch && (
+                          <button onClick={() => setLogSearch("")} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-600 hover:text-slate-400"><X size={8} /></button>
+                        )}
+                      </div>
+                      <div className="flex gap-1">
+                        {(["all", "2xx", "3xx", "4xx", "5xx"] as const).map(f => (
+                          <button key={f} onClick={() => setLogStatusFilter(f)}
+                            className={cn("text-[8px] px-1.5 py-0.5 border transition-colors",
+                              logStatusFilter === f
+                                ? f === "all" ? "border-slate-500 text-slate-300 bg-slate-800"
+                                  : f === "2xx" ? "border-emerald-700 text-emerald-400 bg-emerald-900/20"
+                                  : f === "3xx" ? "border-sky-700 text-sky-400 bg-sky-900/20"
+                                  : f === "4xx" ? "border-amber-700 text-amber-400 bg-amber-900/20"
+                                  : "border-red-700 text-red-400 bg-red-900/20"
+                                : "border-slate-800 text-slate-600 hover:text-slate-400"
+                            )}>{f.toUpperCase()}</button>
+                        ))}
+                      </div>
+                    </div>
+                    {/* Modal log list */}
+                    <div className="flex-1 overflow-y-auto px-4 py-2 flex flex-col gap-1.5 font-mono text-[10px]">
+                      {filteredLogs.map((l, i) => {
+                        const ts = l.timestamp ? new Date(l.timestamp).toLocaleTimeString() : "";
+                        const parsed = !l.httpRequest ? parseReqLog(l.message) : null;
+                        const status = l.httpRequest?.status ?? parsed?.status;
+                        const method = l.httpRequest?.method ?? parsed?.method ?? "";
+                        const path = l.httpRequest
+                          ? (() => { try { return new URL(l.httpRequest!.url).pathname; } catch { return l.httpRequest!.url; } })()
+                          : parsed?.path ?? "";
+                        const ip = l.httpRequest?.remoteIp ?? parsed?.ip ?? "";
+                        const latency = l.httpRequest?.latency ?? (parsed ? `${parsed.latencyMs}ms` : "");
+                        const body = parsed?.body ?? "";
+                        const pod = l.pod || l.instanceId || "";
+                        const statusC = !status ? "text-slate-400"
+                          : status < 300 ? "text-emerald-400"
+                          : status < 400 ? "text-sky-400"
+                          : status < 500 ? "text-amber-400" : "text-red-400";
+                        const methodColor = METHOD_COLOR[method] ?? "text-slate-400";
+                        if (method) return (
+                          <div key={i} className="flex items-baseline gap-2 border-b border-slate-800/30 pb-1 last:border-0">
+                            <span className="text-slate-700 shrink-0 w-16">{ts}</span>
+                            <span className={cn("shrink-0 w-10 font-bold", methodColor)}>{method}</span>
+                            <span className={cn("shrink-0 w-8 font-bold", statusC)}>{status ?? "?"}</span>
+                            <span className="text-white flex-1 truncate">{path}</span>
+                            <span className="text-slate-600 shrink-0">{ip}</span>
+                            <span className="text-slate-700 shrink-0">{latency}</span>
+                            {body && <span className="text-slate-700 truncate max-w-[200px]" title={body}>{body}</span>}
+                          </div>
+                        );
+                        return (
+                          <div key={i} className="flex items-baseline gap-2 border-b border-slate-800/30 pb-1 last:border-0">
+                            <span className="text-slate-700 shrink-0 w-16">{ts}</span>
+                            {pod && <span className="text-slate-700 shrink-0 truncate max-w-[120px]">{pod}</span>}
+                            <span className="text-slate-400 flex-1 break-all">{l.message}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </motion.div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </>
         )}
 
