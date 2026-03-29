@@ -28,6 +28,8 @@ export async function GET(req: NextRequest) {
   const projectId    = searchParams.get("projectId");
   const resourceType = searchParams.get("resourceType") ?? "k8s_container";
   const limit        = Math.min(Number(searchParams.get("limit") ?? "40"), 200);
+  const after        = searchParams.get("after") ?? "";
+  const before       = searchParams.get("before") ?? "";
 
   if (!projectId) {
     return NextResponse.json({ error: "projectId is required" }, { status: 400 });
@@ -100,6 +102,9 @@ export async function GET(req: NextRequest) {
       if (zone)     filters.push(`resource.labels.zone="${zone}"`);
       filters.push(`(severity="INFO" OR severity="DEFAULT" OR severity="NOTICE" OR severity="WARNING" OR severity="ERROR")`);
     }
+
+    if (after)  filters.push(`timestamp >= "${after}"`);
+    if (before) filters.push(`timestamp <= "${before}"`);
 
     const filterStr = filters.join("\n");
     console.log("[api/gcp/logs] filter:", filterStr);

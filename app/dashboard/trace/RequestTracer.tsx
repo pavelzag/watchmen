@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Globe, Server, Box, Database, Play, Loader2,
   Cloud, CheckCircle2, XCircle, ChevronDown, RefreshCw,
-  ZoomIn, ZoomOut, Maximize2, Minimize2, X, Info, Cpu, Copy, Search, Shield,
+  ZoomIn, ZoomOut, Maximize2, Minimize2, X, Info, Cpu, Copy, Search, Shield, Activity,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { GcpSnapshot, GkeEntryPoint } from "@/lib/gcp/types";
@@ -22,7 +22,7 @@ const ANIM_PULSE_MS = 260;  // ms node stays "active" before "done"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type NodeType = "internet" | "lb" | "gke" | "cloudrun" | "cloudsql" | "vm";
+type NodeType = "internet" | "lb" | "gke" | "cloudrun" | "cloudsql" | "vm" | "sidecar";
 type NodeStatus = "idle" | "active" | "done" | "error";
 
 interface GraphNode {
@@ -34,6 +34,8 @@ interface GraphNode {
   projectId?: string;
   region?: string;   // Cloud Run region or GCE zone — used for log filtering
   matchUrl?: string; // Cloud Run URL or LB IP
+  container?: string; // sidecar: k8s container name
+  parentId?: string;  // sidecar: parent GKE node id
 }
 
 interface GraphEdge {
@@ -286,14 +288,16 @@ function buildSvgLines(
     const from = pos[e.from];
     const to = pos[e.to];
     if (!from || !to) return null;
+    // Same-column edges (sidecar chains): draw bottom-center → top-center
+    const sameCol = Math.abs(from.cx - to.cx) < 4;
     return {
       id: `${e.from}__${e.to}`,
       fromId: e.from,
       toId: e.to,
-      x1: from.cx + NODE_W / 2,
-      y1: from.cy,
-      x2: to.cx - NODE_W / 2,
-      y2: to.cy,
+      x1: sameCol ? from.cx : from.cx + NODE_W / 2,
+      y1: sameCol ? from.cy + NODE_H / 2 : from.cy,
+      x2: sameCol ? to.cx : to.cx - NODE_W / 2,
+      y2: sameCol ? to.cy - NODE_H / 2 : to.cy,
     };
   }).filter((l): l is SvgLine => l !== null);
 }
@@ -312,7 +316,22 @@ const NODE_META: Record<NodeType, { Icon: any; border: string; text: string; glo
   cloudrun: { Icon: Cloud,         border: "border-emerald-700", text: "text-emerald-400", glow: "shadow-emerald-500/20" },
   cloudsql: { Icon: Database,      border: "border-amber-700",   text: "text-amber-400",   glow: "shadow-amber-500/20" },
   vm:       { Icon: Cpu,           border: "border-cyan-700",    text: "text-cyan-400",    glow: "shadow-cyan-500/20" },
+  sidecar:  { Icon: Box,           border: "border-slate-700",   text: "text-slate-400",   glow: "shadow-slate-500/20" },
 };
+
+// Per-container icon/color for sidecar nodes
+function getContainerMeta(name: string): { Icon: any; border: string; text: string } {
+  if (name === "nginx")       return { Icon: Server, border: "border-orange-700",  text: "text-orange-400" };
+  if (name === "istio-proxy") return { Icon: Shield, border: "border-violet-700",  text: "text-violet-400" };
+  return                             { Icon: Box,    border: "border-teal-700",    text: "text-teal-400"   };
+}
+
+// Canonical sidecar processing order: network interceptors first, then app containers
+const SIDECAR_ORDER = ["istio-proxy", "nginx"];
+function sidecarSortKey(name: string): string {
+  const idx = SIDECAR_ORDER.indexOf(name);
+  return idx >= 0 ? String(idx).padStart(3, "0") : `999-${name}`;
+}
 
 const STATUS_OVERLAY: Record<NodeStatus, string> = {
   idle:   "border-slate-800 bg-[#0d0d0d]",
@@ -354,6 +373,7 @@ const NODE_TYPE_LABEL: Record<NodeType, string> = {
   cloudrun:  "Cloud Run",
   cloudsql:  "Cloud SQL",
   vm:        "Compute Engine VM",
+  sidecar:   "Sidecar Container",
 };
 
 const NODE_ROLE_DESC: Record<NodeType, string> = {
@@ -363,7 +383,158 @@ const NODE_ROLE_DESC: Record<NodeType, string> = {
   cloudrun:  "Serverless Cloud Run service — the request is delivered directly here.",
   cloudsql:  "Managed relational database — not reachable via HTTP, accessed internally.",
   vm:        "Compute Engine VM instance — direct or LB-fronted HTTP workload.",
+  sidecar:   "Sidecar container injected alongside the main app in the same pod.",
 };
+
+// ─── TraceModal sub-component ─────────────────────────────────────────────────
+
+const CONTAINER_COLORS: Record<string, string> = {
+  nginx:         "text-orange-400",
+  "istio-proxy": "text-violet-400",
+};
+function containerColor(name: string) { return CONTAINER_COLORS[name] ?? "text-teal-400"; }
+
+function TraceModal({
+  requestTime, nodeContainers, gkeNodes, onClose,
+}: {
+  requestTime: Date;
+  nodeContainers: Record<string, string[]>;
+  gkeNodes: GraphNode[];
+  onClose: () => void;
+}) {
+  type TraceEntry = LogEntry & { containerName: string; nodeLabel: string };
+  const [entries, setEntries] = useState<TraceEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const after  = new Date(requestTime.getTime() - 30000).toISOString();
+    const before = new Date(requestTime.getTime() + 30000).toISOString();
+
+    const fetches: Promise<void>[] = [];
+    const all: TraceEntry[] = [];
+
+    for (const node of gkeNodes) {
+      const containers = nodeContainers[node.id] ?? [];
+      for (const cname of containers) {
+        const params = new URLSearchParams({
+          projectId: node.projectId!, container: cname, after, before, limit: "50",
+        });
+        fetches.push(
+          fetch(`/api/gcp/logs?${params}`)
+            .then(r => r.json())
+            .then(d => {
+              (d.entries ?? []).forEach((e: LogEntry) => {
+                all.push({ ...e, containerName: cname, nodeLabel: node.label });
+              });
+            })
+            .catch(() => {})
+        );
+      }
+    }
+
+    Promise.all(fetches)
+      .then(() => {
+        all.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+        setEntries(all);
+      })
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const MCOLOR: Record<string, string> = {
+    GET: "text-sky-400", POST: "text-emerald-400", PUT: "text-amber-400",
+    PATCH: "text-orange-400", DELETE: "text-red-400",
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center p-6"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.95, opacity: 0 }} transition={{ duration: 0.15 }}
+        className="bg-[#0a0a0a] border border-slate-800 w-full max-w-5xl max-h-[85vh] flex flex-col"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center gap-3 px-4 py-2.5 border-b border-slate-800 shrink-0">
+          <Activity size={11} className="text-emerald-400 shrink-0" />
+          <span className="text-[9px] uppercase tracking-widest text-slate-400 flex-1">
+            Request Trace · {requestTime.toLocaleTimeString()} ±30s
+          </span>
+          {!loading && (
+            <span className="text-[8px] text-slate-600">{entries.length} events</span>
+          )}
+          <button onClick={onClose} className="text-slate-600 hover:text-slate-300"><X size={11} /></button>
+        </div>
+
+        {/* Legend */}
+        {!loading && entries.length > 0 && (
+          <div className="flex items-center gap-4 px-4 py-1.5 border-b border-slate-800/50 shrink-0">
+            {[...new Set(entries.map(e => e.containerName))].map(c => (
+              <span key={c} className={cn("text-[8px] font-mono flex items-center gap-1", containerColor(c))}>
+                <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ background: "currentColor" }} />
+                {c}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Body */}
+        {loading && (
+          <div className="flex items-center gap-2 p-4 text-emerald-500 text-[10px]">
+            <Loader2 size={10} className="animate-spin" /> Fetching trace data…
+          </div>
+        )}
+        {error && (
+          <div className="p-4 text-red-400 text-[10px]">{error}</div>
+        )}
+        {!loading && !error && entries.length === 0 && (
+          <div className="p-4 text-slate-600 text-[10px]">No logs found within ±30s of the request.</div>
+        )}
+        {!loading && entries.length > 0 && (
+          <div className="flex-1 overflow-y-auto px-4 py-2 flex flex-col gap-0.5 font-mono text-[10px]">
+            {entries.map((e, i) => {
+              const ts = e.timestamp
+                ? new Date(e.timestamp).toLocaleTimeString([], { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })
+                : "";
+              const parsed = !e.httpRequest
+                ? (parseReqLog(e.message) ?? parseNginxLog(e.message) ?? parseEnvoyLog(e.message))
+                : null;
+              const method = e.httpRequest?.method ?? parsed?.method ?? "";
+              const path = e.httpRequest
+                ? (() => { try { return new URL(e.httpRequest!.url).pathname; } catch { return e.httpRequest!.url; } })()
+                : parsed?.path ?? "";
+              const status = e.httpRequest?.status ?? parsed?.status;
+              const statusC = !status ? "" : status < 300 ? "text-emerald-400" : status < 400 ? "text-sky-400" : status < 500 ? "text-amber-400" : "text-red-400";
+              const latency = e.httpRequest?.latency ?? (parsed ? `${parsed.latencyMs}ms` : "");
+
+              return (
+                <div key={i} className="flex items-baseline gap-2 border-b border-slate-800/20 pb-0.5 last:border-0">
+                  <span className="text-slate-700 shrink-0 w-20">{ts}</span>
+                  <span className={cn("shrink-0 w-24 truncate text-[8px]", containerColor(e.containerName))}>{e.containerName}</span>
+                  {method ? (
+                    <>
+                      <span className={cn("shrink-0 w-10 font-bold", MCOLOR[method] ?? "text-slate-400")}>{method}</span>
+                      {status !== undefined && <span className={cn("shrink-0 w-8", statusC)}>{status}</span>}
+                      <span className="text-white flex-1 truncate">{path}</span>
+                      {latency && <span className="text-slate-700 shrink-0">{latency}</span>}
+                    </>
+                  ) : (
+                    <span className="text-slate-500 flex-1 truncate">{e.message}</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </motion.div>
+    </motion.div>
+  );
+}
 
 // ─── ResponseDetail sub-component ────────────────────────────────────────────
 
@@ -492,7 +663,9 @@ function NodeDetail({
   response: ProxyResponse | null; url: string; method: string; onClose: () => void;
   onIstioDetected?: (nodeId: string) => void;
 }) {
-  const meta = NODE_META[node.type];
+  const meta = node.type === "sidecar" && node.container
+    ? { ...NODE_META.sidecar, ...getContainerMeta(node.container) }
+    : NODE_META[node.type];
   const isTerminal = (node.type === "cloudrun" || node.type === "gke") &&
     inPath && node.matchUrl && url.startsWith(node.matchUrl ?? "~~");
   const isErrorNode = status === "error";
@@ -508,7 +681,7 @@ function NodeDetail({
 
   // Tabs — only nodes that have their own logs/routes get the tab bar.
   // LBs are infrastructure (no container logs); they only get routes if matchUrl is set.
-  const hasLogs   = node.type === "gke" || node.type === "cloudrun" || node.type === "vm";
+  const hasLogs   = node.type === "gke" || node.type === "cloudrun" || node.type === "vm" || node.type === "sidecar";
   const hasRoutes = node.type === "gke" || node.type === "cloudrun" || node.type === "lb" || node.type === "vm";
   const showTabs  = hasLogs || hasRoutes;
   const [tab, setTab] = useState<NodeDetailTab>("info");
@@ -558,6 +731,9 @@ function NodeDetail({
       params.set("resourceType", "gce_instance");
       params.set("instance", node.label.toLowerCase());
       if (node.region) params.set("region", node.region);
+    } else if (node.type === "sidecar") {
+      params.set("resourceType", "k8s_container");
+      params.set("container", node.container ?? "");
     } else {
       params.set("resourceType", "k8s_container");
       if (selectedContainer) {
@@ -777,7 +953,7 @@ function NodeDetail({
               ><RefreshCw size={9} /></button>
             </div>
 
-            {/* Container selector (GKE only, shown when multiple containers detected) */}
+            {/* Container selector (GKE only — sidecar nodes are already scoped to one container) */}
             {node.type === "gke" && availableContainers.length > 0 && (
               <div className="flex gap-1 flex-wrap">
                 <button
@@ -1094,10 +1270,68 @@ export default function RequestTracer() {
   const [loadingEntryPoints, setLoadingEntryPoints] = useState(true);
 
   // Topology derived from snapshot + entry points — auto-updates when either changes
-  const { nodes, edges } = useMemo(
+  const { nodes: baseNodes, edges: baseEdges } = useMemo(
     () => buildTopology(snapshot, entryPoints),
     [snapshot, entryPoints],
   );
+
+  // Containers discovered per GKE node (used to build sidecar nodes)
+  const [nodeContainers, setNodeContainers] = useState<Record<string, string[]>>({});
+
+  // Eagerly fetch container lists for all GKE nodes so sidecar nodes appear
+  useEffect(() => {
+    const gkeNodes = baseNodes.filter(n => n.type === "gke" && n.projectId);
+    for (const node of gkeNodes) {
+      if (nodeContainers[node.id] !== undefined) continue; // already fetched/fetching
+      setNodeContainers(prev => ({ ...prev, [node.id]: [] })); // mark as in-progress
+      const params = new URLSearchParams({ projectId: node.projectId!, mode: "containers" });
+      fetch(`/api/gcp/logs?${params}`)
+        .then(r => r.json())
+        .then(d => {
+          const containers: string[] = d.containers ?? [];
+          setNodeContainers(prev => ({ ...prev, [node.id]: containers }));
+          if (containers.includes("istio-proxy")) handleIstioDetected(node.id);
+        })
+        .catch(() => {});
+    }
+  }, [baseNodes]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Build display topology: add sidecar nodes and shift SQL when containers are known
+  const { nodes, edges } = useMemo(() => {
+    const hasSidecars = baseNodes.some(
+      n => n.type === "gke" && (nodeContainers[n.id] ?? []).length > 0
+    );
+    if (!hasSidecars) return { nodes: baseNodes, edges: baseEdges };
+
+    // Shift Cloud SQL from col 3 → 4 to make room for sidecar column
+    const newNodes: GraphNode[] = baseNodes.map(n =>
+      n.type === "cloudsql" ? { ...n, col: n.col + 1 } : n
+    );
+    const newEdges: GraphEdge[] = [...baseEdges];
+
+    baseNodes.filter(n => n.type === "gke").forEach(gkeNode => {
+      // Sort containers by canonical request-processing order (istio-proxy, nginx, app...)
+      const containers = [...(nodeContainers[gkeNode.id] ?? [])]
+        .sort((a, b) => sidecarSortKey(a).localeCompare(sidecarSortKey(b)));
+
+      containers.forEach((cname, idx) => {
+        const sid = `sidecar-${gkeNode.id}-${cname}`;
+        newNodes.push({
+          id: sid, type: "sidecar", col: 3,
+          label: cname.slice(0, 14).toUpperCase(),
+          sublabel: gkeNode.label,
+          projectId: gkeNode.projectId,
+          container: cname,
+          parentId: gkeNode.id,
+        });
+        // Chain: gke → first sidecar, then sidecar[i-1] → sidecar[i]
+        const prevId = idx === 0 ? gkeNode.id : `sidecar-${gkeNode.id}-${containers[idx - 1]}`;
+        newEdges.push({ from: prevId, to: sid });
+      });
+    });
+
+    return { nodes: newNodes, edges: newEdges };
+  }, [baseNodes, baseEdges, nodeContainers]);
 
   // Layout
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1121,6 +1355,17 @@ export default function RequestTracer() {
   const handleIstioDetected = useCallback((nodeId: string) => {
     setIstioNodes(prev => prev.has(nodeId) ? prev : new Set([...prev, nodeId]));
   }, []);
+
+  // Request trace
+  const [requestTime, setRequestTime] = useState<Date | null>(null);
+  const [showTrace, setShowTrace] = useState(false);
+
+  // Live monitoring
+  const [liveMode, setLiveMode] = useState(false);
+  const liveModeRef = useRef(false);
+  const liveLastTs = useRef("");
+  const liveTimestamps = useRef<number[]>([]);   // sliding window of request timestamps
+  const [liveRps, setLiveRps] = useState<number | null>(null);
 
   // Fullscreen graph
   const [graphFullscreen, setGraphFullscreen] = useState(false);
@@ -1236,18 +1481,132 @@ export default function RequestTracer() {
   const basePos = useMemo(() => calcPositions(nodes, containerSize.w, graphH), [nodes, containerSize.w, graphH]);
   const pos = useMemo(() => ({ ...basePos, ...nodePositions }), [basePos, nodePositions]);
   const lines = useMemo(() => buildSvgLines(edges, pos), [edges, pos]);
-  const activePath = inferActivePath(url, nodes, edges);
+  const activePath = useMemo(() => {
+    const base = inferActivePath(url, nodes, edges);
+    // Include sidecar nodes whose parent GKE is in path
+    nodes.forEach(n => {
+      if (n.type === "sidecar" && n.parentId && base.has(n.parentId)) base.add(n.id);
+    });
+    return base;
+  }, [url, nodes, edges]);
+
+  // ── BFS pulse animation (shared by handleSend and live mode) ────────────────
+  // colDelay: ms between waves (default = ANIM_COL_DELAY); resetAfterMs: if >0 fade to idle
+  const runBfsAnimation = useCallback(async (
+    pathIds: Set<string>,
+    { colDelay = ANIM_COL_DELAY, resetAfterMs = 0 } = {},
+  ) => {
+    const visited = new Set<string>(["internet"]);
+    const waves: string[][] = [["internet"].filter(id => pathIds.has(id))];
+    if (waves[0].length === 0) return;
+    let wi = 0;
+    while (wi < waves.length) {
+      const next: string[] = [];
+      for (const id of waves[wi]) {
+        edges
+          .filter(e => e.from === id && pathIds.has(e.to) && !visited.has(e.to))
+          .forEach(e => { visited.add(e.to); next.push(e.to); });
+      }
+      if (next.length > 0) waves.push(next);
+      wi++;
+    }
+    for (let i = 0; i < waves.length; i++) {
+      if (i > 0) await sleep(colDelay);
+      setNodeStatus(prev => {
+        const s = { ...prev };
+        waves[i].forEach(id => { s[id] = "active"; });
+        return s;
+      });
+    }
+    await sleep(ANIM_PULSE_MS);
+    const allIds = new Set(waves.flat());
+    setNodeStatus(prev => {
+      const s = { ...prev };
+      allIds.forEach(id => { s[id] = "done"; });
+      return s;
+    });
+    if (resetAfterMs > 0) {
+      await sleep(resetAfterMs);
+      setNodeStatus(prev => {
+        const s = { ...prev };
+        allIds.forEach(id => { if (s[id] === "done") delete s[id]; });
+        return s;
+      });
+    }
+  }, [edges]);
+
+  // ── Live monitoring: poll Cloud Logging, fire pulse on new traffic ───────────
+  useEffect(() => {
+    liveModeRef.current = liveMode;
+    if (!liveMode) {
+      liveLastTs.current = "";
+      liveTimestamps.current = [];
+      setLiveRps(null);
+      return;
+    }
+
+    // Find a GKE node with known containers to poll
+    const gkeNode = nodes.find(n => n.type === "gke" && n.projectId);
+    const containers = gkeNode ? (nodeContainers[gkeNode.id] ?? []) : [];
+    // Prefer the first sidecar in processing order (istio-proxy → nginx → …)
+    const pollContainer = SIDECAR_ORDER.find(c => containers.includes(c)) ?? containers[0];
+    if (!gkeNode || !pollContainer) return;
+
+    // Animate the full topology path (all known nodes)
+    const allNodeIds = new Set(nodes.map(n => n.id));
+
+    liveLastTs.current = new Date().toISOString();
+    let busy = false;
+
+    const poll = async () => {
+      if (!liveModeRef.current || busy) return;
+      const params = new URLSearchParams({
+        projectId: gkeNode.projectId!,
+        container: pollContainer,
+        after: liveLastTs.current,
+        limit: "20",
+      });
+      try {
+        const data = await fetch(`/api/gcp/logs?${params}`).then(r => r.json());
+        const entries: LogEntry[] = data.entries ?? [];
+        if (entries.length > 0) {
+          const latest = entries.reduce((a, b) => a.timestamp > b.timestamp ? a : b);
+          liveLastTs.current = latest.timestamp;
+
+          // ── RPS calculation using a 10s sliding window of server-side timestamps ──
+          entries.forEach(e => {
+            if (e.timestamp) liveTimestamps.current.push(new Date(e.timestamp).getTime());
+          });
+          const maxTs = Math.max(...liveTimestamps.current);
+          liveTimestamps.current = liveTimestamps.current.filter(t => maxTs - t < 60_000);
+          const inWindow = liveTimestamps.current.filter(t => maxTs - t < 10_000).length;
+          setLiveRps(inWindow / 10);
+
+          busy = true;
+          // Scale pulse count to traffic volume: 1 pulse per ~5 requests, max 4
+          const pulses = Math.min(Math.max(1, Math.round(entries.length / 5)), 4);
+          for (let p = 0; p < pulses; p++) {
+            if (!liveModeRef.current) break;
+            if (p > 0) await sleep(350);
+            await runBfsAnimation(allNodeIds, { colDelay: 160, resetAfterMs: 700 });
+          }
+          busy = false;
+        }
+      } catch { /* ignore polling errors */ }
+    };
+
+    const id = setInterval(poll, 2000);
+    poll(); // immediate first check
+    return () => { clearInterval(id); };
+  }, [liveMode, nodes, nodeContainers, runBfsAnimation]);
 
   // ── Send request ────────────────────────────────────────────────────────────
   const handleSend = useCallback(async () => {
     if (sending || !url.trim()) return;
     setSending(true);
     setResponse(null);
-
-    // Build ordered animation path: cols 0→1→2→3
-    const pathNodes = nodes
-      .filter(n => activePath.has(n.id))
-      .sort((a, b) => a.col - b.col || a.id.localeCompare(b.id));
+    setRequestTime(new Date());
+    setShowTrace(false);
 
     // Reset status
     setNodeStatus({});
@@ -1265,32 +1624,19 @@ export default function RequestTracer() {
       body: JSON.stringify({ url: url.trim(), method, body: parsedBody }),
     }).then(r => r.json() as Promise<ProxyResponse>);
 
-    // Animate columns
-    let prevCol = -1;
-    for (const node of pathNodes) {
-      if (node.col > prevCol) {
-        if (prevCol >= 0) await sleep(ANIM_COL_DELAY);
-        prevCol = node.col;
-      }
-      setNodeStatus(prev => ({ ...prev, [node.id]: "active" }));
-    }
-
-    await sleep(ANIM_PULSE_MS);
-
-    // Mark all path nodes done
-    setNodeStatus(prev => {
-      const next = { ...prev };
-      pathNodes.forEach(n => { next[n.id] = "done"; });
-      return next;
-    });
+    // BFS pulse through the active path (handles sidecar chains in correct order)
+    await runBfsAnimation(activePath);
 
     // Wait for HTTP response
     try {
       const result = await httpPromise;
       setResponse(result);
       if (!result.ok && result.error) {
-        // Mark last compute/cloudrun node as error
-        const lastNode = [...pathNodes].reverse().find(n => n.col >= 2);
+        // Mark the last compute/sidecar node in the active path as error
+        const lastNode = [...activePath]
+          .map(id => nodes.find(n => n.id === id))
+          .filter((n): n is GraphNode => !!n && n.col >= 2)
+          .sort((a, b) => b.col - a.col || b.id.localeCompare(a.id))[0];
         if (lastNode) {
           setNodeStatus(prev => ({ ...prev, [lastNode.id]: "error" }));
         }
@@ -1300,7 +1646,7 @@ export default function RequestTracer() {
     }
 
     setSending(false);
-  }, [sending, url, method, bodyText, nodes, activePath]);
+  }, [sending, url, method, bodyText, nodes, activePath, runBfsAnimation]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
@@ -1467,12 +1813,44 @@ export default function RequestTracer() {
       <div className="flex-1 flex flex-col min-w-0 border border-slate-800/50 bg-[#070b07] overflow-hidden">
         {/* Column headers + zoom controls */}
         <div className="flex border-b border-slate-800/50 shrink-0 items-stretch">
-          {["INTERNET", "EDGE / LB", "COMPUTE", "DATA"].map((label, i) => (
+          {(nodes.some(n => n.type === "sidecar")
+            ? ["INTERNET", "EDGE / LB", "COMPUTE", "CONTAINERS", "DATA"]
+            : ["INTERNET", "EDGE / LB", "COMPUTE", "DATA"]
+          ).map((label, i) => (
             <div key={i} className="flex-1 text-center py-1.5 text-[9px] tracking-widest uppercase text-slate-600 border-r border-slate-800/30">
               {label}
             </div>
           ))}
           <div className="flex items-center gap-0.5 px-2 border-l border-slate-800/30 shrink-0">
+            {/* Live monitor toggle */}
+            {nodes.some(n => n.type === "sidecar") && (
+              <>
+                <button
+                  onClick={() => {
+                    const next = !liveMode;
+                    liveModeRef.current = next;
+                    setLiveMode(next);
+                    if (!next) setNodeStatus({});
+                  }}
+                  title={liveMode ? "Stop live monitoring" : "Watch for incoming requests (polls Cloud Logging every 5s)"}
+                  className={cn(
+                    "flex items-center gap-1 text-[8px] px-1.5 py-0.5 border transition-colors font-bold tracking-widest",
+                    liveMode
+                      ? "border-emerald-600 text-emerald-400 bg-emerald-900/20"
+                      : "border-slate-700 text-slate-600 hover:border-slate-500 hover:text-slate-400"
+                  )}
+                >
+                  <Activity size={8} className={liveMode ? "animate-pulse" : ""} />
+                  LIVE
+                  {liveMode && liveRps !== null && (
+                    <span className="font-mono text-emerald-300">
+                      {liveRps >= 10 ? liveRps.toFixed(0) : liveRps.toFixed(1)}/s
+                    </span>
+                  )}
+                </button>
+                <div className="w-px h-3 bg-slate-800 mx-0.5" />
+              </>
+            )}
             <button onClick={() => setZoom(z => Math.min(3, z + 0.2))} className="p-1 text-slate-600 hover:text-slate-300 transition-colors" title="Zoom in"><ZoomIn size={11} /></button>
             <button onClick={() => setZoom(z => Math.max(0.3, z - 0.2))} className="p-1 text-slate-600 hover:text-slate-300 transition-colors" title="Zoom out"><ZoomOut size={11} /></button>
             <button onClick={resetView} className="p-1 text-slate-600 hover:text-slate-300 transition-colors" title="Reset view"><Maximize2 size={11} /></button>
@@ -1516,12 +1894,18 @@ export default function RequestTracer() {
             viewBox={`0 0 ${containerSize.w} ${graphH}`}
             overflow="visible"
           >
+            <defs>
+              <filter id="pulse-glow" x="-50%" y="-50%" width="200%" height="200%">
+                <feGaussianBlur stdDeviation="3" result="blur" />
+                <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+              </filter>
+            </defs>
+
             {lines.map(line => {
               const fromActive = activePath.has(line.fromId);
               const toActive = activePath.has(line.toId);
               const isLit = nodeStatus[line.fromId] === "done" || nodeStatus[line.fromId] === "active";
               const isPath = fromActive && toActive;
-
               const lineVisible = !url.trim() || isPath || fromActive || toActive;
 
               return (
@@ -1534,19 +1918,36 @@ export default function RequestTracer() {
                     strokeWidth={1.5}
                     strokeDasharray={isPath ? "none" : "4 4"}
                   />
-                  {/* Animated flow */}
+                  {/* Animated pulse — glowing bolt along the line */}
                   {isLit && isPath && (
-                    <motion.path
-                      key={`flow-${line.id}-${sending}`}
-                      d={bezierPath(line)}
-                      fill="none"
-                      stroke="#00ff41"
-                      strokeWidth={2}
-                      strokeLinecap="round"
-                      initial={{ pathLength: 0, opacity: 0.9 }}
-                      animate={{ pathLength: 1, opacity: 1 }}
-                      transition={{ duration: 0.35, ease: "easeOut" }}
-                    />
+                    <>
+                      {/* Glow layer */}
+                      <motion.path
+                        key={`glow-${line.id}-${sending}`}
+                        d={bezierPath(line)}
+                        fill="none"
+                        stroke="#00ff41"
+                        strokeWidth={6}
+                        strokeLinecap="round"
+                        opacity={0.25}
+                        filter="url(#pulse-glow)"
+                        initial={{ pathLength: 0 }}
+                        animate={{ pathLength: 1 }}
+                        transition={{ duration: 0.38, ease: "easeOut" }}
+                      />
+                      {/* Sharp core */}
+                      <motion.path
+                        key={`flow-${line.id}-${sending}`}
+                        d={bezierPath(line)}
+                        fill="none"
+                        stroke="#00ff41"
+                        strokeWidth={2}
+                        strokeLinecap="round"
+                        initial={{ pathLength: 0, opacity: 0.95 }}
+                        animate={{ pathLength: 1, opacity: 1 }}
+                        transition={{ duration: 0.35, ease: "easeOut" }}
+                      />
+                    </>
                   )}
                 </g>
               );
@@ -1557,7 +1958,9 @@ export default function RequestTracer() {
           {nodes.map(node => {
             const p = pos[node.id];
             if (!p) return null;
-            const meta = NODE_META[node.type];
+            const meta = node.type === "sidecar" && node.container
+              ? { ...NODE_META.sidecar, ...getContainerMeta(node.container) }
+              : NODE_META[node.type];
             const status = nodeStatus[node.id] ?? "idle";
             const inPath = activePath.has(node.id);
             const isSelected = selectedNode?.id === node.id;
@@ -1679,6 +2082,28 @@ export default function RequestTracer() {
           })}
           </div>{/* end zoom/pan wrapper */}
 
+          {/* Live RPS overlay */}
+          <AnimatePresence>
+            {liveMode && liveRps !== null && (
+              <motion.div
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 4 }}
+                className="absolute bottom-3 left-3 pointer-events-none flex items-baseline gap-1.5 border border-emerald-900/60 bg-[#020a02]/80 px-2.5 py-1.5 backdrop-blur-sm"
+              >
+                <span className={cn(
+                  "font-mono font-bold leading-none",
+                  liveRps >= 50 ? "text-red-400 text-2xl" :
+                  liveRps >= 10 ? "text-amber-400 text-2xl" :
+                  "text-emerald-400 text-2xl"
+                )}>
+                  {liveRps >= 10 ? liveRps.toFixed(0) : liveRps.toFixed(1)}
+                </span>
+                <span className="text-[9px] text-slate-500 uppercase tracking-widest">req/s</span>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           {/* Hover tooltip — fullscreen only */}
           <AnimatePresence>
             {graphFullscreen && hoveredNode && hoveredNode.id !== selectedNode?.id && (
@@ -1759,11 +2184,22 @@ export default function RequestTracer() {
           <>
             <div className="shrink-0 px-3 py-2 border-b border-slate-800/50 flex items-center justify-between">
               <span className="text-[10px] uppercase tracking-widest text-slate-500">Response</span>
-              {response?.status && (
-                <span className={cn("text-xs font-bold font-mono", statusColor(response.status))}>
-                  {response.status}
-                </span>
-              )}
+              <div className="flex items-center gap-2">
+                {requestTime && nodes.some(n => n.type === "sidecar") && (
+                  <button
+                    onClick={() => setShowTrace(true)}
+                    title="View request trace across all containers"
+                    className="flex items-center gap-1 text-[8px] text-emerald-500 border border-emerald-900/60 px-1.5 py-0.5 hover:border-emerald-700 transition-colors"
+                  >
+                    <Activity size={8} />TRACE
+                  </button>
+                )}
+                {response?.status && (
+                  <span className={cn("text-xs font-bold font-mono", statusColor(response.status))}>
+                    {response.status}
+                  </span>
+                )}
+              </div>
             </div>
 
             <div className="flex-1 overflow-y-auto p-3 text-[11px] font-mono">
@@ -1809,6 +2245,18 @@ export default function RequestTracer() {
               onIstioDetected={handleIstioDetected}
             />
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Request Trace modal ───────────────────────────────────────── */}
+      <AnimatePresence>
+        {showTrace && requestTime && (
+          <TraceModal
+            requestTime={requestTime}
+            nodeContainers={nodeContainers}
+            gkeNodes={baseNodes.filter(n => n.type === "gke" && n.projectId)}
+            onClose={() => setShowTrace(false)}
+          />
         )}
       </AnimatePresence>
 
