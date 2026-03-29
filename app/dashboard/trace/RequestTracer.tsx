@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Globe, Server, Box, Database, Play, Loader2,
   Cloud, CheckCircle2, XCircle, ChevronDown, RefreshCw,
-  ZoomIn, ZoomOut, Maximize2, Minimize2, X, Info, Cpu, Copy, Search,
+  ZoomIn, ZoomOut, Maximize2, Minimize2, X, Info, Cpu, Copy, Search, Shield,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { GcpSnapshot, GkeEntryPoint } from "@/lib/gcp/types";
@@ -486,10 +486,11 @@ interface LogEntry {
 }
 
 function NodeDetail({
-  node, status, inPath, response, url, method, onClose,
+  node, status, inPath, response, url, method, onClose, onIstioDetected,
 }: {
   node: GraphNode; status: NodeStatus; inPath: boolean;
   response: ProxyResponse | null; url: string; method: string; onClose: () => void;
+  onIstioDetected?: (nodeId: string) => void;
 }) {
   const meta = NODE_META[node.type];
   const isTerminal = (node.type === "cloudrun" || node.type === "gke") &&
@@ -534,9 +535,13 @@ function NodeDetail({
     const params = new URLSearchParams({ projectId: node.projectId, mode: "containers" });
     fetch(`/api/gcp/logs?${params}`)
       .then(r => r.json())
-      .then(d => setAvailableContainers(d.containers ?? []))
+      .then(d => {
+        const containers: string[] = d.containers ?? [];
+        setAvailableContainers(containers);
+        if (containers.includes("istio-proxy")) onIstioDetected?.(node.id);
+      })
       .catch(() => {});
-  }, [tab, node.id, node.projectId, node.type]);
+  }, [tab, node.id, node.projectId, node.type, onIstioDetected]);
 
   // Fetch logs when tab or container selection changes
   useEffect(() => {
@@ -593,7 +598,7 @@ function NodeDetail({
       const searchable = l.httpRequest
         ? `${l.httpRequest.method} ${l.httpRequest.url} ${l.httpRequest.remoteIp} ${l.httpRequest.userAgent}`
         : parsed
-        ? `${parsed.method} ${parsed.path} ${parsed.ip} ${parsed.body ?? ""}`
+        ? `${parsed.method} ${parsed.path} ${(parsed as any).ip ?? (parsed as any).remoteIp ?? ""} ${(parsed as any).userAgent ?? ""} ${(parsed as any).body ?? ""}`
         : l.message;
 
       if (logStatusFilter !== "all") {
@@ -619,7 +624,7 @@ function NodeDetail({
       }
       const parsed = parseReqLog(l.message);
       if (parsed) {
-        return `${ts}  ${parsed.method}  ${parsed.status}  ${parsed.path}  ${parsed.ip}  ${parsed.latencyMs}ms${parsed.body ? `  body=${parsed.body}` : ""}`;
+        return `${ts}  ${parsed.method}  ${parsed.status}  ${parsed.path}  ${(parsed as any).ip ?? (parsed as any).remoteIp ?? ""}  ${parsed.latencyMs}ms${(parsed as any).body ? `  body=${(parsed as any).body}` : ""}`;
       }
       return `${ts}  ${l.severity}  ${l.message}`;
     }).join("\n");
@@ -690,6 +695,12 @@ function NodeDetail({
               {node.sublabel && <MetaRow label="Info" value={node.sublabel} />}
               {node.projectId && <MetaRow label="Project" value={node.projectId} mono />}
               {node.matchUrl && <MetaRow label="Address" value={node.matchUrl} mono />}
+              {availableContainers.length > 0 && (
+                <MetaRow label="Containers" value={availableContainers.join(", ")} mono />
+              )}
+              {availableContainers.includes("istio-proxy") && (
+                <MetaRow label="Service Mesh" value="Istio · mTLS enabled" />
+              )}
             </div>
 
             {(status !== "idle" || response) && (
@@ -1106,6 +1117,10 @@ export default function RequestTracer() {
 
   // Node selection
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+  const [istioNodes, setIstioNodes] = useState<Set<string>>(new Set());
+  const handleIstioDetected = useCallback((nodeId: string) => {
+    setIstioNodes(prev => prev.has(nodeId) ? prev : new Set([...prev, nodeId]));
+  }, []);
 
   // Fullscreen graph
   const [graphFullscreen, setGraphFullscreen] = useState(false);
@@ -1636,7 +1651,14 @@ export default function RequestTracer() {
                   )}>
                     {node.label}
                   </div>
-                  <div className="text-[9px] text-slate-600 truncate mt-0.5">{node.sublabel}</div>
+                  <div className="flex items-center gap-1 mt-0.5">
+                    <span className="text-[9px] text-slate-600 truncate">{node.sublabel}</span>
+                    {istioNodes.has(node.id) && (
+                      <span className="shrink-0 flex items-center gap-0.5 text-[7px] text-violet-400 border border-violet-800/60 px-0.5 rounded" title="Istio service mesh · mTLS enabled">
+                        <Shield size={6} />mTLS
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 {/* Status badge */}
@@ -1730,6 +1752,7 @@ export default function RequestTracer() {
             url={url}
             method={method}
             onClose={() => setSelectedNode(null)}
+            onIstioDetected={handleIstioDetected}
           />
         ) : (
           // ── Response view (default) ───────────────────────────────────
@@ -1783,6 +1806,7 @@ export default function RequestTracer() {
               url={url}
               method={method}
               onClose={() => setSelectedNode(null)}
+              onIstioDetected={handleIstioDetected}
             />
           </motion.div>
         )}
