@@ -33,5 +33,13 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 .vercel
-.env*.local
-.env.local_bk
+
+# Test output
+coverage/
+
+# Downloaded tooling (install outside the repo)
+istio-*/
+
+# IDE / local tooling
+.vscode/
+.claude/
