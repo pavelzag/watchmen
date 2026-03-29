@@ -5,9 +5,10 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Globe, Server, Box, Database, Play, Loader2,
   Cloud, CheckCircle2, XCircle, ChevronDown, RefreshCw,
-  ZoomIn, ZoomOut, Maximize2, Minimize2, X, Info, Cpu, Copy, Search, Shield, Activity,
+  ZoomIn, ZoomOut, Maximize2, Minimize2, X, Info, Cpu, Copy, Search, Shield, Activity, Zap, Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
 import type { GcpSnapshot, GkeEntryPoint } from "@/lib/gcp/types";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -695,16 +696,19 @@ function NodeDetail({
   const [logsExpanded, setLogsExpanded] = useState(false);
   const [copyFlash, setCopyFlash] = useState(false);
   const [availableContainers, setAvailableContainers] = useState<string[]>([]);
-  const [selectedContainer, setSelectedContainer] = useState<string>("");
+  const [selectedContainer, setSelectedContainer] = useState<string>(
+    node.type === "sidecar" ? (node.container ?? "") : ""
+  );
 
   // Routes state
   const [routes, setRoutes] = useState<DiscoveredRoute[]>([]);
   const [loadingRoutes, setLoadingRoutes] = useState(false);
   const [routesSource, setRoutesSource] = useState<string | null>(null);
 
-  // Fetch available containers for GKE nodes (for the container selector)
+  // Fetch available containers for GKE and sidecar nodes (for the container selector)
   useEffect(() => {
-    if (tab !== "logs" || node.type !== "gke" || !node.projectId) return;
+    if (tab !== "logs" || !node.projectId) return;
+    if (node.type !== "gke" && node.type !== "sidecar") return;
     const params = new URLSearchParams({ projectId: node.projectId, mode: "containers" });
     fetch(`/api/gcp/logs?${params}`)
       .then(r => r.json())
@@ -733,7 +737,7 @@ function NodeDetail({
       if (node.region) params.set("region", node.region);
     } else if (node.type === "sidecar") {
       params.set("resourceType", "k8s_container");
-      params.set("container", node.container ?? "");
+      params.set("container", selectedContainer || (node.container ?? ""));
     } else {
       params.set("resourceType", "k8s_container");
       if (selectedContainer) {
@@ -821,6 +825,50 @@ function NodeDetail({
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
   }, [tab, handleCopyLogs]);
+
+  // AI analysis state
+  const [aiState, setAiState] = useState<{ loading: boolean; text: string | null; error: string | null }>({ loading: false, text: null, error: null });
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiQuestion, setAiQuestion] = useState("");
+
+  async function askAI(question?: string) {
+    if (!filteredLogs.length) return;
+    setAiState({ loading: true, text: null, error: null });
+    setAiOpen(true);
+    try {
+      const browserAI = getActiveBrowserAIKey();
+      const res = await fetch("/api/logs/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          logs: filteredLogs,
+          nodeLabel: node.label,
+          nodeType: node.type,
+          container: selectedContainer || node.container,
+          question: question?.trim() || undefined,
+          demoCredentials: browserAI ? { aiKey: browserAI.key, aiProvider: browserAI.provider } : undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed");
+      setAiState({ loading: false, text: data.analysis, error: null });
+    } catch (e) {
+      setAiState({ loading: false, text: null, error: e instanceof Error ? e.message : "Error" });
+    }
+  }
+
+  function renderAiMd(text: string): string {
+    return text
+      .replace(/```[\w]*\n?([\s\S]*?)```/g, (_, code) =>
+        `<pre class="bg-[#0d0d0d] border border-slate-800 px-2 py-1.5 text-[9px] font-mono text-slate-300 overflow-x-auto my-1.5 whitespace-pre-wrap">${code.trim()}</pre>`
+      )
+      .replace(/`([^`]+)`/g, '<code class="px-1 rounded bg-slate-800 text-sky-300 text-[9px] font-mono">$1</code>')
+      .replace(/^### (.+)$/gm, '<p class="text-[9px] font-semibold text-slate-300 uppercase tracking-wider mt-2.5 mb-0.5">$1</p>')
+      .replace(/\*\*(.*?)\*\*/g, '<strong class="text-slate-200">$1</strong>')
+      .replace(/^[-*] (.+)$/gm, '<li class="ml-3 list-disc">$1</li>')
+      .replace(/(<li[\s\S]*?<\/li>\n?)+/g, (m) => `<ul class="space-y-0.5 my-1">${m}</ul>`)
+      .replace(/\n(?!<)/g, "<br />");
+  }
 
   const METHOD_COLOR: Record<string, string> = {
     GET: "text-sky-400", POST: "text-emerald-400", PUT: "text-amber-400",
@@ -951,16 +999,28 @@ function NodeDetail({
                 title="Refresh"
                 className="text-slate-600 hover:text-slate-300 transition-colors"
               ><RefreshCw size={9} /></button>
+              <button
+                onClick={askAI}
+                disabled={aiState.loading || filteredLogs.length === 0}
+                title="Analyze logs with AI"
+                className={cn(
+                  "transition-colors",
+                  aiState.loading ? "text-violet-400 animate-pulse" : "text-slate-600 hover:text-violet-400",
+                  "disabled:opacity-40 disabled:cursor-not-allowed"
+                )}
+              ><Sparkles size={9} /></button>
             </div>
 
-            {/* Container selector (GKE only — sidecar nodes are already scoped to one container) */}
-            {node.type === "gke" && availableContainers.length > 0 && (
+            {/* Container selector (GKE + sidecar nodes) */}
+            {(node.type === "gke" || node.type === "sidecar") && availableContainers.length > 0 && (
               <div className="flex gap-1 flex-wrap">
-                <button
-                  onClick={() => setSelectedContainer("")}
-                  className={cn("text-[8px] px-1.5 py-0.5 border transition-colors",
-                    !selectedContainer ? "border-slate-500 text-slate-300 bg-slate-800" : "border-slate-800 text-slate-600 hover:text-slate-400"
-                  )}>ALL</button>
+                {node.type === "gke" && (
+                  <button
+                    onClick={() => setSelectedContainer("")}
+                    className={cn("text-[8px] px-1.5 py-0.5 border transition-colors",
+                      !selectedContainer ? "border-slate-500 text-slate-300 bg-slate-800" : "border-slate-800 text-slate-600 hover:text-slate-400"
+                    )}>ALL</button>
+                )}
                 {availableContainers.map(c => (
                   <button
                     key={c}
@@ -1107,6 +1167,52 @@ function NodeDetail({
 
             {filteredLogs.length > 0 && (
               <p className="text-[8px] text-slate-700 text-center">Press <kbd className="bg-slate-800 px-1 rounded text-slate-500">C</kbd> to copy · {filteredLogs.length} entries</p>
+            )}
+
+            {/* ── AI analysis panel ── */}
+            {aiOpen && (
+              <div className="border border-violet-900/40 bg-[#0a0010] flex flex-col">
+                <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-violet-900/30">
+                  <Sparkles size={8} className="text-violet-400 shrink-0" />
+                  <span className="text-[9px] uppercase tracking-widest text-violet-400 flex-1">AI Analysis</span>
+                  <button onClick={() => setAiOpen(false)} className="text-violet-700 hover:text-violet-400 transition-colors"><X size={8} /></button>
+                </div>
+
+                {/* Question input */}
+                <div className="flex items-center gap-1 px-2 py-1.5 border-b border-violet-900/20">
+                  <input
+                    value={aiQuestion}
+                    onChange={e => setAiQuestion(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter" && !aiState.loading) askAI(aiQuestion); }}
+                    placeholder="Ask a question about these logs…"
+                    className="flex-1 bg-transparent text-[10px] text-slate-300 placeholder-slate-700 outline-none font-mono"
+                  />
+                  <button
+                    onClick={() => askAI(aiQuestion)}
+                    disabled={aiState.loading}
+                    className="text-violet-700 hover:text-violet-400 transition-colors disabled:opacity-40 shrink-0"
+                    title="Ask (Enter)"
+                  >
+                    {aiState.loading ? <Loader2 size={8} className="animate-spin" /> : <Play size={8} />}
+                  </button>
+                </div>
+
+                <div className="px-2 py-2 text-[10px] text-slate-400 leading-relaxed">
+                  {aiState.loading && (
+                    <div className="flex items-center gap-1.5 text-violet-400">
+                      <Loader2 size={9} className="animate-spin" />
+                      <span className="text-[9px]">Analyzing {filteredLogs.length} log entries…</span>
+                    </div>
+                  )}
+                  {aiState.error && <p className="text-red-400 text-[9px]">{aiState.error}</p>}
+                  {aiState.text && (
+                    <div
+                      className="text-[10px] leading-relaxed"
+                      dangerouslySetInnerHTML={{ __html: renderAiMd(aiState.text) }}
+                    />
+                  )}
+                </div>
+              </div>
             )}
 
             {/* ── Expanded overlay ── */}
@@ -1296,17 +1402,15 @@ export default function RequestTracer() {
     }
   }, [baseNodes]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Build display topology: add sidecar nodes and shift SQL when containers are known
+  // Build display topology: add sidecar nodes alongside existing col-3 nodes (SQL stays at col 3)
   const { nodes, edges } = useMemo(() => {
     const hasSidecars = baseNodes.some(
       n => n.type === "gke" && (nodeContainers[n.id] ?? []).length > 0
     );
     if (!hasSidecars) return { nodes: baseNodes, edges: baseEdges };
 
-    // Shift Cloud SQL from col 3 → 4 to make room for sidecar column
-    const newNodes: GraphNode[] = baseNodes.map(n =>
-      n.type === "cloudsql" ? { ...n, col: n.col + 1 } : n
-    );
+    // Keep existing nodes as-is — sidecars stack in col 3 next to SQL
+    const newNodes: GraphNode[] = [...baseNodes];
     const newEdges: GraphEdge[] = [...baseEdges];
 
     baseNodes.filter(n => n.type === "gke").forEach(gkeNode => {
@@ -1351,6 +1455,7 @@ export default function RequestTracer() {
 
   // Node selection
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+  const [showResponse, setShowResponse] = useState(true);
   const [istioNodes, setIstioNodes] = useState<Set<string>>(new Set());
   const handleIstioDetected = useCallback((nodeId: string) => {
     setIstioNodes(prev => prev.has(nodeId) ? prev : new Set([...prev, nodeId]));
@@ -1362,6 +1467,8 @@ export default function RequestTracer() {
 
   // Live monitoring
   const [liveMode, setLiveMode] = useState(false);
+  const [liveAnimEnabled, setLiveAnimEnabled] = useState(true);
+  const liveAnimEnabledRef = useRef(true);
   const liveModeRef = useRef(false);
   const liveLastTs = useRef("");
   const liveTimestamps = useRef<number[]>([]);   // sliding window of request timestamps
@@ -1447,7 +1554,7 @@ export default function RequestTracer() {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { setGraphFullscreen(false); setSelectedNode(null); }
+      if (e.key === "Escape") { setGraphFullscreen(false); setSelectedNode(null); setShowResponse(true); }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -1582,15 +1689,17 @@ export default function RequestTracer() {
           const inWindow = liveTimestamps.current.filter(t => maxTs - t < 10_000).length;
           setLiveRps(inWindow / 10);
 
-          busy = true;
-          // Scale pulse count to traffic volume: 1 pulse per ~5 requests, max 4
-          const pulses = Math.min(Math.max(1, Math.round(entries.length / 5)), 4);
-          for (let p = 0; p < pulses; p++) {
-            if (!liveModeRef.current) break;
-            if (p > 0) await sleep(350);
-            await runBfsAnimation(allNodeIds, { colDelay: 160, resetAfterMs: 700 });
+          if (liveAnimEnabledRef.current) {
+            busy = true;
+            // Scale pulse count to traffic volume: 1 pulse per ~5 requests, max 4
+            const pulses = Math.min(Math.max(1, Math.round(entries.length / 5)), 4);
+            for (let p = 0; p < pulses; p++) {
+              if (!liveModeRef.current) break;
+              if (p > 0) await sleep(350);
+              await runBfsAnimation(allNodeIds, { colDelay: 160, resetAfterMs: 700 });
+            }
+            busy = false;
           }
-          busy = false;
         }
       } catch { /* ignore polling errors */ }
     };
@@ -1814,7 +1923,7 @@ export default function RequestTracer() {
         {/* Column headers + zoom controls */}
         <div className="flex border-b border-slate-800/50 shrink-0 items-stretch">
           {(nodes.some(n => n.type === "sidecar")
-            ? ["INTERNET", "EDGE / LB", "COMPUTE", "CONTAINERS", "DATA"]
+            ? ["INTERNET", "EDGE / LB", "COMPUTE", "SERVICES"]
             : ["INTERNET", "EDGE / LB", "COMPUTE", "DATA"]
           ).map((label, i) => (
             <div key={i} className="flex-1 text-center py-1.5 text-[9px] tracking-widest uppercase text-slate-600 border-r border-slate-800/30">
@@ -1832,7 +1941,7 @@ export default function RequestTracer() {
                     setLiveMode(next);
                     if (!next) setNodeStatus({});
                   }}
-                  title={liveMode ? "Stop live monitoring" : "Watch for incoming requests (polls Cloud Logging every 5s)"}
+                  title={liveMode ? "Stop live monitoring" : "Watch for incoming requests (polls Cloud Logging every 2s)"}
                   className={cn(
                     "flex items-center gap-1 text-[8px] px-1.5 py-0.5 border transition-colors font-bold tracking-widest",
                     liveMode
@@ -1848,6 +1957,26 @@ export default function RequestTracer() {
                     </span>
                   )}
                 </button>
+                {liveMode && (
+                  <button
+                    onClick={() => {
+                      const next = !liveAnimEnabled;
+                      liveAnimEnabledRef.current = next;
+                      setLiveAnimEnabled(next);
+                      if (!next) setNodeStatus({});
+                    }}
+                    title={liveAnimEnabled ? "Disable pulse animation" : "Enable pulse animation"}
+                    className={cn(
+                      "flex items-center gap-1 text-[8px] px-1.5 py-0.5 border transition-colors tracking-widest",
+                      liveAnimEnabled
+                        ? "border-emerald-800 text-emerald-600 hover:border-emerald-700"
+                        : "border-slate-700 text-slate-600 hover:border-slate-500 hover:text-slate-400"
+                    )}
+                  >
+                    <Zap size={8} />
+                    ANIM
+                  </button>
+                )}
                 <div className="w-px h-3 bg-slate-800 mx-0.5" />
               </>
             )}
@@ -1878,7 +2007,7 @@ export default function RequestTracer() {
         >
           {/* Zoom/pan wrapper */}
           <div
-            onClick={() => { if (!hasDraggedRef.current) setSelectedNode(null); }}
+            onClick={() => { if (!hasDraggedRef.current) { setSelectedNode(null); setShowResponse(true); } }}
             style={{
               position: "absolute",
               inset: 0,
@@ -1906,6 +2035,9 @@ export default function RequestTracer() {
               const toActive = activePath.has(line.toId);
               const isLit = nodeStatus[line.fromId] === "done" || nodeStatus[line.fromId] === "active";
               const isPath = fromActive && toActive;
+              // Show pulse when line is in the URL-matched path OR when both endpoints
+              // are actively being animated (e.g. live mode with no URL typed)
+              const bothAnimated = nodeStatus[line.fromId] !== undefined && nodeStatus[line.toId] !== undefined;
               const lineVisible = !url.trim() || isPath || fromActive || toActive;
 
               return (
@@ -1916,10 +2048,10 @@ export default function RequestTracer() {
                     fill="none"
                     stroke={isPath ? "#1a3a1a" : "#111"}
                     strokeWidth={1.5}
-                    strokeDasharray={isPath ? "none" : "4 4"}
+                    strokeDasharray={!url.trim() || isPath ? "none" : "4 4"}
                   />
                   {/* Animated pulse — glowing bolt along the line */}
-                  {isLit && isPath && (
+                  {isLit && (isPath || bothAnimated) && (
                     <>
                       {/* Glow layer */}
                       <motion.path
@@ -1993,7 +2125,9 @@ export default function RequestTracer() {
                   if (!d || d.nodeId !== node.id) return;
                   nodeDragRef.current = null;
                   setDraggingNodeId(null);
-                  if (!d.moved) setSelectedNode(n => n?.id === node.id ? null : node);
+                  if (!d.moved && selectedNode?.id !== node.id) {
+                    setSelectedNode(node);
+                  }
                 }}
                 onDoubleClick={e => {
                   e.stopPropagation();
@@ -2176,10 +2310,10 @@ export default function RequestTracer() {
             response={response}
             url={url}
             method={method}
-            onClose={() => setSelectedNode(null)}
+            onClose={() => { setSelectedNode(null); setShowResponse(true); }}
             onIstioDetected={handleIstioDetected}
           />
-        ) : (
+        ) : showResponse ? (
           // ── Response view (default) ───────────────────────────────────
           <>
             <div className="shrink-0 px-3 py-2 border-b border-slate-800/50 flex items-center justify-between">
@@ -2219,7 +2353,7 @@ export default function RequestTracer() {
               {response && <ResponseDetail response={response} open={responseOpen} onToggleHeaders={() => setResponseOpen(o => !o)} />}
             </div>
           </>
-        )}
+        ) : null}
       </div>}
 
       {/* ── Fullscreen NodeDetail slide-in panel ──────────────────────── */}
@@ -2241,7 +2375,7 @@ export default function RequestTracer() {
               response={response}
               url={url}
               method={method}
-              onClose={() => setSelectedNode(null)}
+              onClose={() => { setSelectedNode(null); setShowResponse(true); }}
               onIstioDetected={handleIstioDetected}
             />
           </motion.div>
