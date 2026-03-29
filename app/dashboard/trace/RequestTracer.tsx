@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Globe, Server, Box, Database, Play, Loader2,
   Cloud, CheckCircle2, XCircle, ChevronDown, RefreshCw,
-  ZoomIn, ZoomOut, Maximize2, Minimize2, X, Info,
+  ZoomIn, ZoomOut, Maximize2, Minimize2, X, Info, Cpu,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { GcpSnapshot, GkeEntryPoint } from "@/lib/gcp/types";
@@ -22,7 +22,7 @@ const ANIM_PULSE_MS = 260;  // ms node stays "active" before "done"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type NodeType = "internet" | "lb" | "gke" | "cloudrun" | "cloudsql";
+type NodeType = "internet" | "lb" | "gke" | "cloudrun" | "cloudsql" | "vm";
 type NodeStatus = "idle" | "active" | "done" | "error";
 
 interface GraphNode {
@@ -32,6 +32,7 @@ interface GraphNode {
   label: string;
   sublabel: string;
   projectId?: string;
+  region?: string;   // Cloud Run region or GCE zone — used for log filtering
   matchUrl?: string; // Cloud Run URL or LB IP
 }
 
@@ -77,10 +78,14 @@ function buildTopology(
     return { nodes, edges };
   }
 
-  const lbs = snapshot.loadBalancers ?? [];
+  const lbs  = snapshot.loadBalancers ?? [];
   const gkes = snapshot.gkeClusters ?? [];
   const runs = snapshot.cloudRunServices ?? [];
   const sqls = snapshot.cloudSqlInstances ?? [];
+  // VMs: exclude GKE node VMs and stopped instances
+  const vms  = (snapshot.vms ?? []).filter(
+    v => !v.name.startsWith("gke-") && v.status === "RUNNING"
+  );
 
   // Snapshot load balancers (managed/global LBs from GCP)
   lbs.forEach((lb, i) => {
@@ -146,15 +151,17 @@ function buildTopology(
         }
       });
 
-    // Fallback: if still no parent LB, connect to internet or first LB
+    // Fallback: if still no parent LB found, connect directly to internet.
+    // Don't guess which LB — attaching to an unrelated one creates false edges.
     const hasParent = edges.some(e => e.to === id);
-    if (!hasParent) {
-      if (!hasLbs) edges.push({ from: "internet", to: id });
-      else edges.push({ from: allLbNodes[0].id, to: id });
-    }
+    if (!hasParent) edges.push({ from: "internet", to: id });
   });
 
-  // Cloud Run services
+  // Cloud Run services — always directly from internet.
+  // Cloud Run has its own *.run.app URL and is NOT behind a GCP external LB
+  // unless a custom domain + serverless NEG is explicitly configured.
+  // Connecting it to snapshot LBs (which front GKE/VMs) would create false edges
+  // and cause Cloud Run to light up when sending requests to the GKE cluster.
   runs.forEach((svc, i) => {
     const id = `run-${i}`;
     nodes.push({
@@ -162,14 +169,30 @@ function buildTopology(
       label: svc.name.slice(0, 22).toUpperCase(),
       sublabel: `Cloud Run · ${svc.region}`,
       projectId: svc.projectId,
+      region: svc.region,
       matchUrl: svc.url,
+    });
+    edges.push({ from: "internet", to: id });
+  });
+
+  // Compute Engine VMs (non-GKE, RUNNING)
+  vms.forEach((vm, i) => {
+    const id = `vm-${i}`;
+    const zone = vm.zone.split("/").pop() ?? vm.zone;
+    nodes.push({
+      id, type: "vm", col: 2,
+      label: vm.name.slice(0, 22).toUpperCase(),
+      sublabel: `VM · ${zone}`,
+      projectId: vm.projectId,
+      region: zone,
+      matchUrl: vm.externalIp ?? undefined,
     });
     const parentLbs = lbs
       .map((lb, li) => ({ lb, id: `lb-${li}` }))
-      .filter(({ lb }) => lb.projectId === svc.projectId);
+      .filter(({ lb }) => lb.projectId === vm.projectId);
     if (parentLbs.length > 0) {
       parentLbs.forEach(({ id: lbId }) => edges.push({ from: lbId, to: id }));
-    } else if (!hasLbs) {
+    } else {
       edges.push({ from: "internet", to: id });
     }
   });
@@ -184,7 +207,7 @@ function buildTopology(
       projectId: db.projectId,
     });
     const computeInProject = nodes.filter(n =>
-      (n.type === "gke" || n.type === "cloudrun") && n.projectId === db.projectId
+      (n.type === "gke" || n.type === "cloudrun" || n.type === "vm") && n.projectId === db.projectId
     );
     if (computeInProject.length > 0) {
       computeInProject.forEach(c => edges.push({ from: c.id, to: id }));
@@ -288,6 +311,7 @@ const NODE_META: Record<NodeType, { Icon: any; border: string; text: string; glo
   gke:      { Icon: Box,           border: "border-emerald-700", text: "text-emerald-400", glow: "shadow-emerald-500/20" },
   cloudrun: { Icon: Cloud,         border: "border-emerald-700", text: "text-emerald-400", glow: "shadow-emerald-500/20" },
   cloudsql: { Icon: Database,      border: "border-amber-700",   text: "text-amber-400",   glow: "shadow-amber-500/20" },
+  vm:       { Icon: Cpu,           border: "border-cyan-700",    text: "text-cyan-400",    glow: "shadow-cyan-500/20" },
 };
 
 const STATUS_OVERLAY: Record<NodeStatus, string> = {
@@ -329,6 +353,7 @@ const NODE_TYPE_LABEL: Record<NodeType, string> = {
   gke:       "GKE Cluster",
   cloudrun:  "Cloud Run",
   cloudsql:  "Cloud SQL",
+  vm:        "Compute Engine VM",
 };
 
 const NODE_ROLE_DESC: Record<NodeType, string> = {
@@ -337,6 +362,7 @@ const NODE_ROLE_DESC: Record<NodeType, string> = {
   gke:       "Google Kubernetes Engine cluster running containerised workloads.",
   cloudrun:  "Serverless Cloud Run service — the request is delivered directly here.",
   cloudsql:  "Managed relational database — not reachable via HTTP, accessed internally.",
+  vm:        "Compute Engine VM instance — direct or LB-fronted HTTP workload.",
 };
 
 // ─── ResponseDetail sub-component ────────────────────────────────────────────
@@ -413,10 +439,26 @@ function ResponseDetail({
 
 // ─── NodeDetail sub-component ─────────────────────────────────────────────────
 
+// Parse wm-echo text logs: "[req] IP  METHOD PATH  →  STATUS  (Xms)  [body=...]"
+const REQ_LOG_RE = /\[req\]\s+(\S+)\s+(\S+)\s+(\S+)\s+→\s+(\d+)\s+\((\d+)ms\)(?:\s+body=(.+))?/;
+function parseReqLog(msg: string): { ip: string; method: string; path: string; status: number; latencyMs: number; body?: string } | null {
+  const m = msg.match(REQ_LOG_RE);
+  if (!m) return null;
+  return { ip: m[1], method: m[2], path: m[3], status: Number(m[4]), latencyMs: Number(m[5]), body: m[6] };
+}
+
 type NodeDetailTab = "info" | "logs" | "routes";
 
 interface DiscoveredRoute { method: string; path: string; description?: string; body?: Record<string, string> | null; }
-interface LogEntry { timestamp: string; severity: string; message: string; pod: string; }
+interface HttpRequestLog {
+  method: string; url: string; status?: number;
+  latency: string; remoteIp: string; responseSize: string; userAgent: string;
+}
+interface LogEntry {
+  timestamp: string; severity: string; message: string;
+  pod?: string; container?: string; revision?: string; instanceId?: string;
+  httpRequest?: HttpRequestLog;
+}
 
 function NodeDetail({
   node, status, inPath, response, url, method, onClose,
@@ -438,8 +480,8 @@ function NodeDetail({
     status === "error" ? "text-red-400 border-red-900" :
     inPath ? "text-slate-400 border-slate-700" : "text-slate-600 border-slate-800";
 
-  // Tabs — logs/routes only for compute nodes
-  const showTabs = node.type === "gke" || node.type === "cloudrun" || node.type === "lb";
+  // Tabs — logs/routes for compute nodes and VMs
+  const showTabs = node.type === "gke" || node.type === "cloudrun" || node.type === "lb" || node.type === "vm";
   const [tab, setTab] = useState<NodeDetailTab>("info");
 
   // Logs state
@@ -457,8 +499,23 @@ function NodeDetail({
     if (tab !== "logs" || !node.projectId) return;
     setLoadingLogs(true);
     setLogsError(null);
-    const params = new URLSearchParams({ projectId: node.projectId, limit: "40" });
-    fetch(`/api/gcp/pod-logs?${params}`)
+
+    const params = new URLSearchParams({ projectId: node.projectId, limit: "80" });
+    if (node.type === "cloudrun") {
+      params.set("resourceType", "cloud_run_revision");
+      params.set("service", node.label.toLowerCase());
+      if (node.region) params.set("region", node.region);
+    } else if (node.type === "vm") {
+      params.set("resourceType", "gce_instance");
+      params.set("instance", node.label.toLowerCase());
+      if (node.region) params.set("region", node.region);
+    } else {
+      // gke / lb — query k8s request logs from the watchmen namespace
+      params.set("resourceType", "k8s_container");
+      params.set("reqOnly", "1");
+    }
+
+    fetch(`/api/gcp/logs?${params}`)
       .then(r => r.json())
       .then(d => {
         if (d.error) { setLogsError(d.error); return; }
@@ -466,7 +523,7 @@ function NodeDetail({
       })
       .catch(e => setLogsError(e.message))
       .finally(() => setLoadingLogs(false));
-  }, [tab, node.projectId]);
+  }, [tab, node.id, node.projectId, node.type, node.label, node.region]);
 
   // Fetch routes when tab becomes active
   useEffect(() => {
@@ -540,7 +597,7 @@ function NodeDetail({
                     <MetaRow label="URL" value={url} mono />
                   </div>
                 )}
-                {(node.type === "lb" || node.type === "gke" || node.type === "cloudrun") && inPath && (
+                {(node.type === "lb" || node.type === "gke" || node.type === "cloudrun" || node.type === "vm") && inPath && (
                   <div className="border border-slate-800 bg-[#0d0d0d] divide-y divide-slate-800">
                     {node.type === "lb" && <MetaRow label="Role" value="Forwarded request to backend" />}
                     {node.type === "gke" && !isTerminal && <MetaRow label="Role" value="Backend cluster for this LB" />}
@@ -604,22 +661,86 @@ function NodeDetail({
             {!loadingLogs && !logsError && logs.length === 0 && (
               <p className="text-[10px] text-slate-600">No recent logs found.</p>
             )}
-            {logs.map((l, i) => (
-              <div key={i} className="border-b border-slate-800/40 pb-1.5 last:border-0">
-                <div className="flex items-center gap-2 mb-0.5">
-                  <span className={cn(
-                    "text-[8px] font-bold",
-                    l.severity === "ERROR" ? "text-red-500" :
-                    l.severity === "WARNING" ? "text-amber-500" : "text-slate-600"
-                  )}>{l.severity}</span>
-                  <span className="text-[8px] text-slate-700 truncate">{l.pod}</span>
-                  <span className="text-[8px] text-slate-700 ml-auto shrink-0">
-                    {new Date(l.timestamp).toLocaleTimeString()}
-                  </span>
+            {logs.map((l, i) => {
+              const ts = l.timestamp ? new Date(l.timestamp).toLocaleTimeString() : "";
+              const severityColor =
+                l.severity === "ERROR" ? "text-red-500" :
+                l.severity === "WARNING" ? "text-amber-500" : "text-slate-600";
+
+              // ── HTTP request log (Cloud Run / nginx structured logs) ──
+              if (l.httpRequest) {
+                const hr = l.httpRequest;
+                const statusC =
+                  !hr.status ? "text-slate-400" :
+                  hr.status < 300 ? "text-emerald-400" :
+                  hr.status < 400 ? "text-sky-400" :
+                  hr.status < 500 ? "text-amber-400" : "text-red-400";
+                const path = (() => { try { return new URL(hr.url).pathname; } catch { return hr.url; } })();
+                const methodColor = METHOD_COLOR[hr.method] ?? "text-slate-400";
+                return (
+                  <div key={i} className="border-b border-slate-800/30 pb-1.5 last:border-0">
+                    <div className="flex items-center gap-1.5 mb-0.5">
+                      <span className={cn("text-[8px] font-bold w-10 shrink-0", methodColor)}>{hr.method}</span>
+                      <span className={cn("text-[8px] font-bold shrink-0", statusC)}>{hr.status ?? "?"}</span>
+                      <span className="text-[9px] text-white font-mono truncate">{path}</span>
+                      <span className="text-[8px] text-slate-600 ml-auto shrink-0">{ts}</span>
+                    </div>
+                    <div className="flex gap-3 text-[8px] text-slate-600 font-mono">
+                      {hr.remoteIp && <span title="Caller IP">{hr.remoteIp}</span>}
+                      {hr.latency && <span>{hr.latency}</span>}
+                      {hr.responseSize && <span>{hr.responseSize}B</span>}
+                    </div>
+                    {hr.userAgent && (
+                      <p className="text-[8px] text-slate-700 truncate mt-0.5">{hr.userAgent}</p>
+                    )}
+                  </div>
+                );
+              }
+
+              // ── Try to parse wm-echo [req] structured text log ──
+              const parsed = parseReqLog(l.message);
+              if (parsed) {
+                const statusC =
+                  parsed.status < 300 ? "text-emerald-400" :
+                  parsed.status < 400 ? "text-sky-400" :
+                  parsed.status < 500 ? "text-amber-400" : "text-red-400";
+                const methodColor = METHOD_COLOR[parsed.method] ?? "text-slate-400";
+                const source = l.pod || l.instanceId || "";
+                return (
+                  <div key={i} className="border-b border-slate-800/30 pb-1.5 last:border-0">
+                    <div className="flex items-center gap-1.5 mb-0.5">
+                      <span className={cn("text-[8px] font-bold w-10 shrink-0", methodColor)}>{parsed.method}</span>
+                      <span className={cn("text-[8px] font-bold shrink-0", statusC)}>{parsed.status}</span>
+                      <span className="text-[9px] text-white font-mono truncate">{parsed.path}</span>
+                      <span className="text-[8px] text-slate-600 ml-auto shrink-0">{ts}</span>
+                    </div>
+                    <div className="flex gap-3 text-[8px] text-slate-600 font-mono">
+                      <span title="Caller IP">{parsed.ip}</span>
+                      <span>{parsed.latencyMs}ms</span>
+                      {source && <span className="truncate text-slate-700">{source}</span>}
+                    </div>
+                    {parsed.body && (
+                      <p className="text-[8px] text-slate-700 font-mono truncate mt-0.5" title={parsed.body}>{parsed.body}</p>
+                    )}
+                  </div>
+                );
+              }
+
+              // ── Plain text / JSON log ──
+              const source = l.revision || l.pod || l.instanceId || "";
+              return (
+                <div key={i} className="border-b border-slate-800/40 pb-1.5 last:border-0">
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <span className={cn("text-[8px] font-bold shrink-0", severityColor)}>{l.severity}</span>
+                    {source && <span className="text-[8px] text-slate-700 truncate">{source}</span>}
+                    <span className="text-[8px] text-slate-700 ml-auto shrink-0">{ts}</span>
+                  </div>
+                  {l.message && (
+                    <p className="text-[10px] text-slate-400 font-mono break-all leading-relaxed">{l.message}</p>
+                  )}
                 </div>
-                <p className="text-[10px] text-slate-400 font-mono break-all leading-relaxed">{l.message}</p>
-              </div>
-            ))}
+              );
+            })}
           </>
         )}
 
@@ -895,9 +1016,12 @@ export default function RequestTracer() {
         "flex gap-4 min-h-0",
         graphFullscreen
           ? "fixed inset-0 z-50 bg-[#02040a] p-4"
-          : "h-full"
+          : ""
       )}
-      style={{ fontFamily: "var(--font-mono, monospace)" }}
+      style={{
+        fontFamily: "var(--font-mono, monospace)",
+        ...(graphFullscreen ? {} : { height: "calc(100vh - 260px)" }),
+      }}
     >
 
       {/* ── Left: Request builder ─────────────────────────────────────── */}
@@ -1105,8 +1229,10 @@ export default function RequestTracer() {
               const isLit = nodeStatus[line.fromId] === "done" || nodeStatus[line.fromId] === "active";
               const isPath = fromActive && toActive;
 
+              const lineVisible = !url.trim() || isPath || fromActive || toActive;
+
               return (
-                <g key={line.id}>
+                <g key={line.id} opacity={lineVisible ? 1 : 0}>
                   {/* Base path */}
                   <path
                     d={bezierPath(line)}
@@ -1188,7 +1314,7 @@ export default function RequestTracer() {
                   height: NODE_H,
                 }}
                 animate={{
-                  opacity: inPath ? 1 : 0.3,
+                  opacity: inPath ? 1 : (url.trim() ? 0 : 0.3),
                   scale: status === "active" ? 1.04 : isBeingDragged ? 1.06 : 1,
                 }}
                 transition={{ duration: 0.15 }}

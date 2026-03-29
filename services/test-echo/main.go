@@ -1,16 +1,66 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 )
+
+// responseRecorder wraps ResponseWriter to capture the status code.
+type responseRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (rr *responseRecorder) WriteHeader(code int) {
+	rr.status = code
+	rr.ResponseWriter.WriteHeader(code)
+}
+
+// logMiddleware logs every non-health request: caller IP, method, path, body, status, duration.
+func logMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		start := time.Now()
+
+		// Capture request body for mutating methods (restore it for the actual handler).
+		var bodySnip string
+		if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch {
+			raw, _ := io.ReadAll(io.LimitReader(r.Body, 512))
+			bodySnip = strings.TrimSpace(string(raw))
+			r.Body = io.NopCloser(bytes.NewReader(raw))
+		}
+
+		// Resolve caller IP (respect X-Forwarded-For from load balancer).
+		ip := r.RemoteAddr
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			ip = strings.TrimSpace(strings.Split(xff, ",")[0])
+		}
+
+		rr := &responseRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rr, r)
+
+		ms := time.Since(start).Milliseconds()
+		if bodySnip != "" {
+			log.Printf("[req] %s  %s %s  →  %d  (%dms)  body=%s", ip, r.Method, r.URL.Path, rr.status, ms, bodySnip)
+		} else {
+			log.Printf("[req] %s  %s %s  →  %d  (%dms)", ip, r.Method, r.URL.Path, rr.status, ms)
+		}
+	})
+}
 
 var db *sql.DB
 
@@ -171,5 +221,5 @@ func main() {
 		port = "8080"
 	}
 	log.Printf("[server] listening on :%s", port)
-	log.Fatal(http.ListenAndServe(":"+port, mux))
+	log.Fatal(http.ListenAndServe(":"+port, logMiddleware(mux)))
 }
