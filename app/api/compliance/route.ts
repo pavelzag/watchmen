@@ -42,25 +42,30 @@ export async function GET(req: NextRequest) {
       if (result.rows.length > 0) awsSnapshot = result.rows[0].snapshot;
     }
 
-    if (!gcpSnapshot && !awsSnapshot) {
+    let report: ComplianceReport;
+    const gcpReport = gcpSnapshot
+      ? (standard === "iso27001" ? runIso27001(gcpSnapshot) : runSoc2(gcpSnapshot))
+      : null;
+    const awsReport = awsSnapshot
+      ? (standard === "iso27001" ? runAwsIso27001(awsSnapshot) : runAwsSoc2(awsSnapshot))
+      : null;
+
+    if (!gcpReport && !awsReport) {
       return NextResponse.json({ error: "No snapshots yet." }, { status: 404 });
     }
 
-    let report: ComplianceReport;
-    const gcpReport = standard === "iso27001" ? runIso27001(gcpSnapshot) : runSoc2(gcpSnapshot);
-    const awsReport = standard === "iso27001" ? runAwsIso27001(awsSnapshot) : runAwsSoc2(awsSnapshot);
-
-    // Merge reports
+    // Merge whichever reports are available
+    const reports = [gcpReport, awsReport].filter(Boolean) as ComplianceReport[];
     report = {
-      standard: gcpReport.standard + " & " + awsReport.standard,
+      standard: reports.map((r) => r.standard).join(" & "),
       generatedAt: new Date().toISOString(),
-      totalControls: gcpReport.totalControls + awsReport.totalControls,
-      passingControls: gcpReport.passingControls + awsReport.passingControls,
-      failingControls: gcpReport.failingControls + awsReport.failingControls,
-      warningControls: gcpReport.warningControls + awsReport.warningControls,
-      suppressedControls: gcpReport.suppressedControls + awsReport.suppressedControls,
+      totalControls: reports.reduce((s, r) => s + r.totalControls, 0),
+      passingControls: reports.reduce((s, r) => s + r.passingControls, 0),
+      failingControls: reports.reduce((s, r) => s + r.failingControls, 0),
+      warningControls: reports.reduce((s, r) => s + r.warningControls, 0),
+      suppressedControls: reports.reduce((s, r) => s + r.suppressedControls, 0),
       score: 0, // Recalculated below
-      categories: [...gcpReport.categories, ...awsReport.categories],
+      categories: reports.flatMap((r) => r.categories),
     };
 
     // Recalculate score

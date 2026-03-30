@@ -232,7 +232,7 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    Q([User question]) --> A[/api/query]
+    Q([User question]) --> A["/api/query"]
     A --> B{Resolve AI key}
     B -->|User DB key| C[Decrypt AES-256-GCM]
     B -->|Browser key| D[From localStorage]
