@@ -6,18 +6,86 @@ Watchmen scans your cloud infrastructure for misconfigurations, runs SOC 2 Type 
 
 ---
 
+## Screenshots
+
+### Security Findings
+![Security Findings page showing critical and high-severity misconfigurations with AI-powered remediation advice](docs/images/findings.png)
+
+### Compliance Dashboard
+![SOC 2 Type II compliance report with control pass/fail status, score trend, and risk acceptance](docs/images/compliance.png)
+
+### Live Request Tracer
+![Kubernetes topology graph showing Internet → LB → istio-proxy → nginx → echo signal flow with animated live pulse](docs/images/request-tracer.png)
+
+### AI Log Analysis
+![NodeDetail panel with logs tab open, AI analysis panel showing summary and recommendations for container logs](docs/images/ai-log-analysis.png)
+
+### GCP Resource Overview
+![GCP dashboard showing service accounts, buckets, clusters, VMs and Cloud Run services](docs/images/gcp-overview.png)
+
+### AWS Resource Overview
+![AWS dashboard showing IAM users, EC2 instances, S3 buckets, RDS instances and security groups](docs/images/aws-overview.png)
+
+> **Contributing screenshots:** run the app locally in mock mode (`DEMO_MODE=true USE_MOCK_DATA=true`), take screenshots at 1440×900 or wider, and save them as PNG in `docs/images/`.
+
+---
+
 ## Features
 
 | Category | Capabilities |
 |---|---|
 | **GCP scanning** | IAM, service accounts, storage buckets, GKE, Cloud Run, Cloud SQL, BigQuery, Pub/Sub, Secret Manager, Compute VMs, firewall rules |
 | **AWS scanning** | IAM users & roles, EC2, EKS, RDS, Lambda, S3, Security Groups, SNS, Secrets Manager, Redshift, Load Balancers |
-| **Security findings** | Automated detection of critical misconfigurations (public buckets, open firewall rules, stale keys, missing MFA, etc.) |
+| **Security findings** | Automated detection of critical misconfigurations with AI-powered remediation guides |
 | **Compliance** | SOC 2 Type II (18 controls) and ISO 27001:2022 (18 controls) with score trending and risk acceptance |
-| **AI assistant** | Natural-language queries powered by Claude, Gemini, or GPT-4o. Ask "which S3 buckets are public?" or "show me all service accounts with owner role" |
+| **AI assistant** | Natural-language queries powered by Claude, Gemini, or GPT-4o |
 | **AI log analysis** | Ask freeform questions about live container logs directly in the topology view |
-| **Request tracing** | Live topology graph of Kubernetes traffic (Internet → LB → istio-proxy → nginx → app), with animated pulse on real requests |
-| **Multi-user** | Per-user encrypted cloud credentials, AI keys, and compliance history stored in PostgreSQL |
+| **Request tracing** | Live topology graph of Kubernetes traffic with animated pulse on real requests |
+| **Multi-user** | Per-user encrypted cloud credentials, AI keys, and compliance history |
+
+---
+
+## How it works
+
+```mermaid
+flowchart LR
+    subgraph Users["Users (browser)"]
+        U1["Engineer"]
+        U2["Security team"]
+    end
+
+    subgraph Watchmen["Watchmen (Next.js)"]
+        AUTH["Auth\nGoogle OAuth"]
+        SCAN["Scanner\nGCP + AWS APIs"]
+        SNAP[("Snapshot\nPostgreSQL")]
+        NLP["AI Pipeline\nNLP queries"]
+        COMP["Compliance\nSOC 2 · ISO 27001"]
+        FIND["Findings\nSecurity rules"]
+        TRACE["Tracer\nLive K8s graph"]
+    end
+
+    subgraph Cloud["Cloud Infrastructure"]
+        GCP["GCP\n10+ services"]
+        AWS["AWS\n10+ services"]
+        K8S["Kubernetes\n+ Istio"]
+    end
+
+    subgraph AI["AI Providers\n(user-owned keys)"]
+        LLM["Claude · Gemini · GPT-4o"]
+    end
+
+    U1 --> AUTH
+    U2 --> AUTH
+    AUTH --> SCAN
+    SCAN -->|cache| SNAP
+    SNAP --> NLP
+    SNAP --> COMP
+    SNAP --> FIND
+    NLP --> LLM
+    TRACE --> K8S
+    SCAN --> GCP
+    SCAN --> AWS
+```
 
 ---
 
@@ -55,7 +123,7 @@ psql postgresql://postgres:dev@localhost:5432/watchmen < scripts/migrate.sql
 npm run dev   # → http://localhost:3000
 ```
 
-Sign in with the **Enter Demo** button. Go to **Settings → AI Keys** to add a Gemini, Claude, or OpenAI key and enable natural-language queries and AI recommendations.
+Sign in with the **Enter Demo** button. Go to **Settings → AI Keys** to add a Gemini, Claude, or OpenAI key to enable natural-language queries and AI recommendations.
 
 ---
 
@@ -63,11 +131,51 @@ Sign in with the **Enter Demo** button. Go to **Settings → AI Keys** to add a 
 
 | Guide | Contents |
 |---|---|
-| [Deployment Guide](docs/deployment.md) | Environment variables, GCP setup, AWS setup, Google OAuth, database, Vercel, Cloud Run, **Kubernetes (full stack with processor service)**, CI/CD |
+| [Deployment Guide](docs/deployment.md) | Environment variables, GCP setup, AWS setup, Google OAuth, database, Vercel, Cloud Run, Kubernetes (full stack + Istio), CI/CD |
 | [AWS Setup](docs/aws-setup.md) | Creating an IAM user with least-privilege permissions for scanning |
-| [GCP Setup](#) | Service account creation and role assignments (see [Deployment Guide § GCP Setup](docs/deployment.md#gcp-setup)) |
 | [User Guide](docs/user-guide.md) | Signing in, adding AI keys, queries, findings, compliance, risk acceptance |
-| [Architecture](docs/architecture.md) | System design, component map, database schema, microservices |
+| [Architecture](docs/architecture.md) | System diagrams, component map, database schema, request flow |
+
+---
+
+## Architecture at a glance
+
+```mermaid
+graph TD
+    subgraph K8s["Kubernetes (optional — for live tracing)"]
+        PROC["watchmen-processor\n(Go)"]
+        ECHO["wm-echo + nginx\n+ istio-proxy"]
+    end
+
+    subgraph App["Watchmen App (Next.js 15)"]
+        API["API Routes"]
+        UI["React UI"]
+    end
+
+    subgraph Data["Persistence"]
+        PG[("PostgreSQL")]
+    end
+
+    subgraph CloudAPIs["Cloud APIs"]
+        GCP["GCP\nIAM · GKE · Cloud SQL\nCloud Run · BigQuery…"]
+        AWS["AWS\nIAM · EC2 · S3 · RDS\nLambda · EKS…"]
+    end
+
+    subgraph AIProviders["AI (user-owned keys)"]
+        AI["Claude · Gemini · GPT-4o"]
+    end
+
+    Browser["Browser"] --> UI
+    UI --> API
+    API --> PG
+    API --> GCP
+    API --> AWS
+    API --> AI
+    API --> PROC
+    PROC --> ECHO
+```
+
+See [docs/architecture.md](docs/architecture.md) for the full diagrams including request flow, compliance engine, database schema, and Kubernetes topology.
 
 ---
 
@@ -82,7 +190,7 @@ Sign in with the **Enter Demo** button. Go to **Settings → AI Keys** to add a 
 | AI | Anthropic Claude, Google Gemini, OpenAI GPT-4o |
 | Cloud APIs | Google APIs (googleapis), AWS SDK v3 |
 | UI | Tailwind CSS, Framer Motion, Lucide |
-| Container | Docker (multi-stage, non-root, read-only fs) |
+| Container | Docker (multi-stage, non-root, read-only filesystem) |
 | Orchestration | Kubernetes + optional Istio service mesh |
 | Tracing | OpenTelemetry → GCP Cloud Trace |
 | Processor | Go 1.22 sidecar service |
@@ -105,12 +213,12 @@ watchmen/
 ├── services/
 │   ├── request-processor/ Go service — traces in-cluster HTTP requests
 │   └── test-echo/         Lightweight echo app for topology demos
-├── k8s/                  Kubernetes manifests (namespace, deployment, service, ingress, secrets)
+├── k8s/                  Kubernetes manifests
 │   └── istio/            Optional Istio mTLS and access-log telemetry
 ├── scripts/
 │   ├── migrate.sql       Database schema
-│   └── terraform/        GCP + AWS test infrastructure (for demo environments)
-└── docs/                 Extended guides
+│   └── terraform/        GCP + AWS test infrastructure (demo environments)
+└── docs/                 Extended guides and diagrams
 ```
 
 ---
@@ -128,9 +236,9 @@ watchmen/
 | `GCP_PROJECTS` | — | Comma-separated GCP project IDs |
 | `GCP_SERVICE_ACCOUNT_KEY` | — | Base64-encoded service account JSON |
 | `GCP_ORG_ID` | — | Enumerate all org projects automatically |
-| `USE_MOCK_DATA` | — | `true` → use fixture data (no GCP calls) |
+| `USE_MOCK_DATA` | — | `true` → use fixture data (no cloud API calls) |
 | `DEMO_MODE` | — | `true` → auto sign-in, fixture data, no OAuth needed |
-| `PROCESSOR_URL` | — | Internal processor service (Kubernetes only) |
+| `PROCESSOR_URL` | — | Internal processor service URL (Kubernetes only) |
 
 \* Not required in `DEMO_MODE=true`.
 \** At least one required (not needed in `DEMO_MODE=true`).

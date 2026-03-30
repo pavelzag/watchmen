@@ -350,6 +350,64 @@ Add `--add-cloudsql-instances=PROJECT:REGION:INSTANCE` to the deploy command.
 
 ## Kubernetes — Full Stack
 
+### Deployment topology
+
+```mermaid
+graph TD
+    Internet(("Internet\n(HTTPS)"))
+
+    subgraph K8s["Kubernetes Cluster"]
+        subgraph ingress["ingress-nginx namespace"]
+            LB["LoadBalancer\n(external IP)"]
+            NginxCtrl["nginx-ingress-controller"]
+            LB --> NginxCtrl
+        end
+
+        subgraph certmgr["cert-manager namespace"]
+            CM["cert-manager\n(Let's Encrypt TLS)"]
+        end
+
+        subgraph watchmen["watchmen namespace"]
+            WatchmenSvc["Service: watchmen\nClusterIP :3000"]
+            ProcSvc["Service: watchmen-processor\nClusterIP :8080"]
+            EchoSvc["Service: wm-echo\nClusterIP :80"]
+
+            subgraph WatchmenPod["watchmen pod (2/2 with Istio)"]
+                WApp["watchmen\n(Next.js)"]
+                WProxy["istio-proxy\n(Envoy)"]
+            end
+
+            subgraph ProcPod["watchmen-processor pod (2/2)"]
+                PApp["watchmen-processor\n(Go)"]
+                PProxy["istio-proxy\n(Envoy)"]
+            end
+
+            subgraph EchoPod["wm-echo pod (3/3)"]
+                EApp["echo app"]
+                ENginx["nginx sidecar"]
+                EProxy["istio-proxy\n(Envoy)"]
+            end
+
+            Secret["Secret: watchmen-env\n(all env vars)"]
+        end
+    end
+
+    PG[("PostgreSQL\n(external)")]
+    GCPAPIs["GCP APIs"]
+    AWSAPIs["AWS APIs"]
+    CloudTrace["Cloud Trace"]
+
+    Internet --> LB --> NginxCtrl --> WatchmenSvc --> WatchmenPod
+    WApp --> ProcSvc --> ProcPod
+    WApp --> EchoSvc --> EchoPod
+    WApp --> PG
+    WApp --> GCPAPIs
+    WApp --> AWSAPIs
+    PApp --> CloudTrace
+    CM -.->|TLS cert| NginxCtrl
+    Secret -.->|envFrom| WatchmenPod
+```
+
 The full Kubernetes deployment runs three workloads:
 
 | Workload | Purpose |

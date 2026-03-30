@@ -2,6 +2,22 @@
 
 Watchmen scans your AWS account for security misconfigurations across IAM, EC2, RDS, Lambda, S3, EKS, and more. AWS credentials are configured **per user** through the Watchmen UI — no server-side environment variables are needed.
 
+## Setup flow
+
+```mermaid
+flowchart LR
+    A([AWS Console]) --> B["Create IAM user\nwatchmen-scanner"]
+    B --> C{Policy type}
+    C -->|Simple| D["Attach ReadOnlyAccess\n(managed policy)"]
+    C -->|Least privilege| E["Create custom policy\n(exact permissions list)"]
+    D --> F["Create access key\n(Third-party service)"]
+    E --> F
+    F --> G["Copy Access Key ID\n+ Secret Access Key"]
+    G --> H([Watchmen Settings\n→ Cloud Credentials → AWS])
+    H --> I["Watchmen verifies\nsts:GetCallerIdentity"]
+    I --> J([Background scan starts\nresults in seconds])
+```
+
 ---
 
 ## What Watchmen scans
