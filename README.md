@@ -108,8 +108,7 @@ Sign in with the **Enter Demo** button. Go to **Settings → AI Keys** to add a 
 
 | Guide | Contents |
 |---|---|
-| [Deployment Guide](docs/deployment.md) | Environment variables, GCP setup, AWS setup, Google OAuth, database, Vercel, Cloud Run, Kubernetes (full stack + Istio), CI/CD |
-| [AWS Setup](docs/aws-setup.md) | Creating an IAM user with least-privilege permissions for scanning |
+| [Deployment Guide](docs/deployment.md) | Environment variables, GCP + AWS setup, Google OAuth, database, Vercel, Cloud Run, Kubernetes (full stack + Istio), CI/CD |
 | [User Guide](docs/user-guide.md) | Signing in, adding AI keys, queries, findings, compliance, risk acceptance |
 | [Architecture](docs/architecture.md) | System diagrams, component map, database schema, request flow |
 
