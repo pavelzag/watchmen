@@ -49,6 +49,15 @@ export default function GlobalKeyNav() {
                 }
             }
 
+            if (e.key === "/") {
+                const queryInput = document.getElementById("query-input") as HTMLTextAreaElement | null;
+                if (queryInput) {
+                    e.preventDefault();
+                    queryInput.focus();
+                    queryInput.setSelectionRange(queryInput.value.length, queryInput.value.length);
+                }
+            }
+
             if (e.key === "Enter") {
                 const cur = current();
                 if (!cur) return;

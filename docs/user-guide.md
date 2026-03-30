@@ -90,6 +90,8 @@ The scan covers:
 
 ## Natural language queries
 
+> **Shortcut:** Press **`/`** from anywhere in the dashboard to instantly jump to the query box — no mouse required.
+
 The **Query** box on the dashboard lets you ask questions in plain English. Examples:
 
 | Question | What it returns |
@@ -105,6 +107,14 @@ The **Query** box on the dashboard lets you ask questions in plain English. Exam
 Results appear as a formatted answer with **clickable resource chips** that link directly to the relevant resource page.
 
 Your last 20 queries are saved locally and accessible via the history icon next to the query box.
+
+### Keyboard shortcuts
+
+| Key | Action |
+|---|---|
+| **`/`** | Focus the query box from anywhere on the page |
+| **`Enter`** | Submit the query |
+| **`Shift + Enter`** | New line (multi-line queries) |
 
 > **Tip:** Queries use two AI calls — one to parse your intent, one to answer. If you get an unexpected result, try rephrasing with the project ID or resource name.
 

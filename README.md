@@ -15,7 +15,7 @@ Watchmen scans your cloud infrastructure for misconfigurations, runs SOC 2 Type 
 | **AWS scanning** | IAM users & roles, EC2, EKS, RDS, Lambda, S3, Security Groups, SNS, Secrets Manager, Redshift, Load Balancers |
 | **Security findings** | Automated detection of critical misconfigurations with AI-powered remediation guides |
 | **Compliance** | SOC 2 Type II (18 controls) and ISO 27001:2022 (18 controls) with score trending and risk acceptance |
-| **AI assistant** | Natural-language queries powered by Claude, Gemini, or GPT-4o |
+| **AI assistant** | Natural-language queries powered by Claude, Gemini, or GPT-4o — press **`/`** to open from anywhere |
 | **AI log analysis** | Ask freeform questions about live container logs directly in the topology view |
 | **Request tracing** | Live topology graph of Kubernetes traffic with animated pulse on real requests |
 | **Multi-user** | Per-user encrypted cloud credentials, AI keys, and compliance history |

@@ -126,6 +126,7 @@ export default function QueryBox({ onResult }: QueryBoxProps) {
         <form onSubmit={handleSubmit} className="flex flex-col text-sm md:text-base">
           <textarea
             ref={textareaRef}
+            id="query-input"
             rows={1}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
