@@ -32,6 +32,8 @@ Watchmen scans your cloud infrastructure for misconfigurations, runs SOC 2 Type 
 | **Compliance** — SOC 2 Type II and ISO 27001:2022 score with control breakdown | **Request Tracer** — live Kubernetes topology graph with animated request pulses |
 | ![Service Accounts](docs/images/service-accounts.png) | ![Settings](docs/images/settings.png) |
 | **Service Accounts** — per-account key audit and role assignments | **Settings** — per-user AI keys and encrypted cloud credentials |
+| ![AI Query](docs/images/ai-query.png) | ![AI Auth Failures](docs/images/ai-auth-failures.png) |
+| **AI Assistant** — press `/` to ask anything about your infrastructure in plain English | **Auth Failure Analysis** — ask about recent login failures and get a grouped breakdown with suspicious pattern detection |
 
 ---
 

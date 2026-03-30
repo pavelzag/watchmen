@@ -1,6 +1,6 @@
 {
   "name": "watchmen",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -14,6 +14,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
     "@auth/core": "^0.37.4",
+    "@aws-sdk/client-cloudtrail": "^3.1019.0",
     "@aws-sdk/client-ec2": "^3.1000.0",
     "@aws-sdk/client-eks": "^3.1000.0",
     "@aws-sdk/client-elastic-load-balancing-v2": "^3.1003.0",

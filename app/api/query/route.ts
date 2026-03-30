@@ -7,6 +7,8 @@ import { useMockAwsData } from "@/lib/aws/client"; // Integrated AWS
 import { extractIntent, generateAnswer, extractResources } from "@/lib/claude/query-processor";
 import { callAI, resolveAI, type AIProvider } from "@/lib/ai/client";
 import { sql, ensureGcpSnapshotTable, ensureAwsSnapshotTable } from "@/lib/db"; // Added AWS table ensure
+import { getGcpAuthFailures } from "@/lib/gcp/auth-failures";
+import { getAwsAuthFailures } from "@/lib/aws/auth-failures";
 
 export async function POST(req: NextRequest) {
   const session = await auth();
@@ -108,6 +110,31 @@ export async function POST(req: NextRequest) {
     const intent = await extractIntent(query, provider, apiKey);
     const combinedSnapshot: any = { gcp: gcpSnapshot, aws: awsSnapshot };
     if (scenarioContext) combinedSnapshot.trace_scenarios = scenarioContext;
+
+    // For auth log queries, fetch live data on-demand instead of using the snapshot
+    if (intent.queryType === "auth_logs") {
+      const hours = intent.logHours ?? 2;
+      const isMock = useMockData() || session.isDemoUser;
+      const isAwsMock = useMockAwsData() || session.isDemoUser;
+      const gcpProjects = gcpSnapshot?.projects?.map((p: any) => p.projectId).filter(Boolean) ?? [];
+      const awsAccounts = awsSnapshot?.accounts ?? [];
+
+      const [gcpFailures, awsFailures] = await Promise.all([
+        gcpProjects.length > 0 || isMock
+          ? getGcpAuthFailures(gcpProjects, hours, isMock || undefined)
+          : Promise.resolve([]),
+        awsAccounts.length > 0 || isAwsMock
+          ? getAwsAuthFailures(awsAccounts, hours, isAwsMock || undefined)
+          : Promise.resolve([]),
+      ]);
+
+      combinedSnapshot.authFailures = {
+        windowHours: hours,
+        gcp: gcpFailures,
+        aws: awsFailures,
+        totalCount: gcpFailures.length + awsFailures.length,
+      };
+    }
 
     const [answer, resources] = await Promise.all([
       generateAnswer(query, intent, combinedSnapshot, provider, apiKey),

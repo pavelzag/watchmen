@@ -999,16 +999,6 @@ function NodeDetail({
                 title="Refresh"
                 className="text-slate-600 hover:text-slate-300 transition-colors"
               ><RefreshCw size={9} /></button>
-              <button
-                onClick={() => askAI()}
-                disabled={aiState.loading || filteredLogs.length === 0}
-                title="Analyze logs with AI"
-                className={cn(
-                  "transition-colors",
-                  aiState.loading ? "text-violet-400 animate-pulse" : "text-slate-600 hover:text-violet-400",
-                  "disabled:opacity-40 disabled:cursor-not-allowed"
-                )}
-              ><Sparkles size={9} /></button>
             </div>
 
             {/* Container selector (GKE + sidecar nodes) */}

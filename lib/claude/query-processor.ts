@@ -25,7 +25,9 @@ export interface QueryIntent {
   | "security_findings"
   | "principal_overview"
   | "compliance"
+  | "auth_logs"
   | "unknown";
+  logHours?: number; // for auth_logs: how many hours back to look
   user?: string;
   resourceType?:
   | "bucket"
@@ -72,13 +74,20 @@ Query: "${query}"
 
 Return JSON matching this exact schema:
 {
-  "queryType": "user_access" | "resource_owners" | "specific_resource_access" | "list_users" | "list_resources" | "security_findings" | "principal_overview" | "compliance" | "unknown",
+  "queryType": "user_access" | "resource_owners" | "specific_resource_access" | "list_users" | "list_resources" | "security_findings" | "principal_overview" | "compliance" | "auth_logs" | "unknown",
   "user": "<email or null>",
   "resourceType": "bucket" | "gke_cluster" | "project" | "service_account" | "vm" | "cloud_run" | "cloud_sql" | "bigquery" | "pubsub" | "secret" | "firewall" | "s3_bucket" | "ec2_instance" | "rds_instance" | "eks_cluster" | "lambda_function" | null,
   "resourceName": "<name or null>",
   "projectId": "<GCP project ID or AWS account ID or null>",
-  "region": "<region or null>"
+  "region": "<region or null>",
+  "logHours": <number or null>
 }
+
+queryType rules:
+- Use "auth_logs" for questions about authentication failures, login failures, access denied errors, permission denied events, or unauthorized access attempts. Set logHours to the number of hours to look back (default 2 if unspecified).
+- Use "security_findings" for general security posture questions.
+- Use "compliance" for SOC 2 / ISO 27001 questions.
+- Use all other types for IAM/resource questions.
 
 resourceType mapping:
 GCP: bucket, gke_cluster, vm, cloud_run, cloud_sql, bigquery, pubsub, secret, firewall, service_account
@@ -106,12 +115,14 @@ export async function generateAnswer(
 ): Promise<string> {
   const context = buildContext(intent, snapshot);
 
+  const isAuthLogs = intent.queryType === "auth_logs";
   const prompt = `You are a Cloud Security analyst assistant. Answer the user's question using ONLY the provided GCP/AWS data below.
 
 Be specific and factual. Format your answer clearly:
 - Use **bold** for roles, resource names, and emails
 - Use bullet points for lists
 - Mention the Cloud Provider (GCP or AWS) and the Project/Account ID
+${isAuthLogs ? "- Group failures by principal, show counts, highlight any suspicious patterns (repeated failures, unknown principals, unusual IPs)\n- Show the time window and total count prominently at the top" : ""}
 
 Cloud Data:
 ${JSON.stringify(context, null, 2)}
@@ -125,8 +136,15 @@ User question: "${query}"`;
  * Builds a minimal context object focused on the query intent.
  */
 function buildContext(intent: QueryIntent, snapshot: CombinedSnapshot): unknown {
-  const { queryType, resourceType, resourceName, projectId } = intent;
   const context: any = {};
+
+  // Auth log queries: pass the pre-fetched failures directly, skip snapshot context
+  if (intent.queryType === "auth_logs") {
+    if ((snapshot as any).authFailures) {
+      context.authFailures = (snapshot as any).authFailures;
+    }
+    return context;
+  }
 
   if (snapshot.gcp) {
     context.gcp = buildGcpContext(intent, snapshot.gcp);
