@@ -123,6 +123,8 @@ graph TD
 
 ## Kubernetes deployment topology
 
+> **Note — sample application:** The diagrams and manifests in this section describe the **sample stack bundled in this repository** (`services/request-processor`, `services/test-echo`, `k8s/`). They exist so you can spin up a working demo cluster and immediately see live request traces in the Request Tracer. You are not required to run this sample stack — you can point Watchmen at any existing GKE cluster that already has Istio and Cloud Logging enabled.
+
 When deployed on Kubernetes with Istio, every pod receives an Envoy sidecar that intercepts all in-pod network traffic. The topology graph in the Request Tracer page reflects this physical signal flow.
 
 ```mermaid
@@ -175,6 +177,8 @@ graph LR
 ---
 
 ## Live request signal flow
+
+> **Note — sample application:** This flow uses the `wm-echo` test app and `watchmen-processor` Go service that ship with this repo. The same signal path applies to any Istio-enabled workload you connect — swap `wm-echo` for your own service and the topology graph will reflect your traffic.
 
 When a real HTTP request arrives at the cluster, it passes through each sidecar in order. The Request Tracer page visualises this as an animated pulse.
 

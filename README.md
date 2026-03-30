@@ -22,6 +22,19 @@ Watchmen scans your cloud infrastructure for misconfigurations, runs SOC 2 Type 
 
 ---
 
+## Screenshots
+
+| | |
+|---|---|
+| ![GCP Overview](docs/images/dashboard.png) | ![Security Findings](docs/images/findings.png) |
+| **GCP Overview** — all scanned resources at a glance | **Security Findings** — misconfigurations ranked by severity with AI remediation guides |
+| ![Compliance](docs/images/compliance.png) | ![Request Tracer](docs/images/request-tracer.png) |
+| **Compliance** — SOC 2 Type II and ISO 27001:2022 score with control breakdown | **Request Tracer** — live Kubernetes topology graph with animated request pulses |
+| ![Service Accounts](docs/images/service-accounts.png) | ![Settings](docs/images/settings.png) |
+| **Service Accounts** — per-account key audit and role assignments | **Settings** — per-user AI keys and encrypted cloud credentials |
+
+---
+
 ## How it works
 
 ```mermaid

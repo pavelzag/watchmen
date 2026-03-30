@@ -471,7 +471,7 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
                         className="w-3.5 h-3.5 border border-border-dim bg-transparent text-green-500 focus:ring-green-500/20 disabled:opacity-50"
                       />
                       <span className="text-[11px] transition-colors" style={{ color: "var(--text-muted)" }}>
-                        Save to this browser only {isDemoUser ? "(required in demo mode)" : "(prevents sharing across browsers)"}
+                        Save to this browser only
                       </span>
                     </label>
                   </div>
