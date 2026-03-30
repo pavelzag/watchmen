@@ -1000,7 +1000,7 @@ function NodeDetail({
                 className="text-slate-600 hover:text-slate-300 transition-colors"
               ><RefreshCw size={9} /></button>
               <button
-                onClick={askAI}
+                onClick={() => askAI()}
                 disabled={aiState.loading || filteredLogs.length === 0}
                 title="Analyze logs with AI"
                 className={cn(
