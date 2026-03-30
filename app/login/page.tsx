@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { auth, signIn } from "@/lib/auth";
-import { Terminal, ShieldAlert, Zap } from "lucide-react";
+import { ShieldAlert, Zap } from "lucide-react";
+import Image from "next/image";
 import Footer from "@/components/Footer";
 
 const DEMO_MODE = process.env.DEMO_MODE === "true";
@@ -27,14 +28,15 @@ export default async function LoginPage() {
       <div className="relative z-10 w-full max-w-sm px-6">
         {/* Logo */}
         <div className="mb-8 text-center">
-          <div className="flex items-center justify-center gap-2 mb-2">
-            <Terminal className="w-5 h-5" style={{ color: "#00ff41" }} />
-            <span
-              className="text-xl font-bold tracking-widest uppercase"
-              style={{ color: "#00ff41", textShadow: "0 0 12px #00ff41" }}
-            >
-              WATCHMEN
-            </span>
+          <div className="flex justify-center mb-4">
+            <Image
+              src="/watchmen-logo.png"
+              alt="Watchmen"
+              width={160}
+              height={160}
+              priority
+              style={{ filter: "drop-shadow(0 0 18px #00ff4166)" }}
+            />
           </div>
           <p className="text-xs uppercase tracking-widest" style={{ color: "#005c16" }}>
             CLOUD SECURITY EXPLORER
@@ -138,7 +140,7 @@ export default async function LoginPage() {
         {/* Bottom decoration */}
         <div className="mt-4 flex items-center justify-center gap-2 text-xs" style={{ color: "#003010" }}>
           <ShieldAlert className="w-3 h-3" />
-          <span>WATCHMEN v0.1.0 · CLOUD SECURITY EXPLORER</span>
+          <span>WATCHMEN v0.2.0 · CLOUD SECURITY EXPLORER</span>
         </div>
       </div>
       <Footer />
