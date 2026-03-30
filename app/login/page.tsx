@@ -7,16 +7,21 @@ import SplashScreen from "@/components/SplashScreen";
 
 const DEMO_MODE = process.env.DEMO_MODE === "true";
 
-export default async function LoginPage() {
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ signout?: string }>;
+}) {
   const session = await auth();
   if (session) redirect("/dashboard");
+  const { signout } = await searchParams;
 
   return (
     <div
       className="min-h-screen flex items-center justify-center"
       style={{ background: "#090909" }}
     >
-      <SplashScreen />
+      <SplashScreen mode={signout === "1" ? "signout" : "signin"} />
       {/* Subtle grid background */}
       <div
         className="absolute inset-0 pointer-events-none"

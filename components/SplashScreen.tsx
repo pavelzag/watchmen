@@ -5,7 +5,7 @@ import Image from "next/image";
 
 const MATRIX_CHARS = "アイウエオカキクケコサシスセソタチツテトナニヌネノ01100110$#@!%&*01001101ABCDEF><|{}[]";
 
-const STATUS_LINES = [
+const STATUS_SIGNIN = [
   "INITIALIZING WATCHMEN v0.2.0...",
   "LOADING SECURITY MODULES...",
   "CONNECTING TO CLOUD APIS...",
@@ -14,13 +14,23 @@ const STATUS_LINES = [
   "ACCESS GRANTED",
 ];
 
+const STATUS_SIGNOUT = [
+  "FLUSHING SESSION TOKENS...",
+  "CLEARING CREDENTIAL CACHE...",
+  "REVOKING TEMPORARY ACCESS...",
+  "CLOSING SECURE CHANNELS...",
+  "WIPING LOCAL STATE...",
+  "SESSION TERMINATED",
+];
+
 function randomHex(bytes = 8) {
   return Array.from({ length: bytes }, () =>
     Math.floor(Math.random() * 0xff).toString(16).padStart(2, "0")
   ).join(" ");
 }
 
-export default function SplashScreen() {
+export default function SplashScreen({ mode = "signin" }: { mode?: "signin" | "signout" }) {
+  const STATUS_LINES = mode === "signout" ? STATUS_SIGNOUT : STATUS_SIGNIN;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [visible, setVisible] = useState(true);
   const [fading, setFading] = useState(false);
@@ -29,7 +39,7 @@ export default function SplashScreen() {
   const [glitch, setGlitch] = useState(false);
   const [glitchSlice, setGlitchSlice] = useState({ top: 30, height: 10, offset: 0 });
   const [noiseLines, setNoiseLines] = useState<{ top: number; left: number; w: number; opacity: number }[]>([]);
-  const [hexRows, setHexRows] = useState(() => Array.from({ length: 5 }, () => randomHex(8)));
+  const [hexRows, setHexRows] = useState<string[]>([]);
 
   /* ── Matrix rain ────────────────────────────────────────────────────── */
   useEffect(() => {
@@ -83,6 +93,9 @@ export default function SplashScreen() {
   /* ── Progress, glitch, noise ────────────────────────────────────────── */
   useEffect(() => {
     let p = 0;
+
+    // Seed initial hex rows now that we're on the client
+    setHexRows(Array.from({ length: 5 }, () => randomHex(8)));
 
     // Hex dump refresher
     const hexTimer = setInterval(() => {
@@ -292,9 +305,13 @@ export default function SplashScreen() {
               fontFamily: "'JetBrains Mono', monospace",
               fontSize: 11,
               letterSpacing: isAccessGranted ? undefined : 2,
-              color: isAccessGranted ? "#00ff41" : "#00aa2b",
+              color: isAccessGranted
+                ? (mode === "signout" ? "#ff3333" : "#00ff41")
+                : "#00aa2b",
               textTransform: "uppercase",
-              textShadow: isAccessGranted ? "0 0 12px #00ff41" : "none",
+              textShadow: isAccessGranted
+                ? (mode === "signout" ? "0 0 12px #ff3333" : "0 0 12px #00ff41")
+                : "none",
               animation: isAccessGranted ? "wm-granted 0.5s ease-out forwards" : undefined,
             }}>
               {STATUS_LINES[statusIdx]}
@@ -361,9 +378,19 @@ export default function SplashScreen() {
         }}>
           <div>SYS: WATCHMEN-NODE-01</div>
           <div>KERNEL: 6.1.0-wm</div>
-          <div>UPTIME: {Math.floor(progress / 10)}s</div>
-          <div>MEM: {Math.floor(progress * 4.2)}MB / 512MB</div>
-          <div>NET: GCP/AWS [SECURE]</div>
+          {mode === "signout" ? (
+            <>
+              <div>SESSION: CLOSING ({progress}%)</div>
+              <div>TOKENS: REVOKED</div>
+              <div>NET: DISCONNECTING...</div>
+            </>
+          ) : (
+            <>
+              <div>UPTIME: {Math.floor(progress / 10)}s</div>
+              <div>MEM: {Math.floor(progress * 4.2)}MB / 512MB</div>
+              <div>NET: GCP/AWS [SECURE]</div>
+            </>
+          )}
         </div>
 
         {/* Top center title bar */}
