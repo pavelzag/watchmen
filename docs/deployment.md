@@ -4,29 +4,32 @@
 
 1. [Prerequisites](#prerequisites)
 2. [Environment Variables](#environment-variables)
-3. [Demo Deployment](#demo-deployment)
-4. [GCP Setup](#gcp-setup)
-5. [Google OAuth Setup](#google-oauth-setup)
-6. [Database Setup](#database-setup)
+3. [Database Setup](#database-setup)
+4. [Google OAuth Setup](#google-oauth-setup)
+5. [GCP Setup](#gcp-setup)
+6. [AWS Setup](#aws-setup)
 7. [Access Control](#access-control)
 8. [Vercel](#vercel)
 9. [GCP Cloud Run](#gcp-cloud-run)
-10. [Kubernetes](#kubernetes)
-11. [GitHub Actions CI/CD](#github-actions-cicd)
-12. [Local development](#local-development)
+10. [Kubernetes — Full Stack](#kubernetes--full-stack)
+11. [Demo Deployment](#demo-deployment)
+12. [GitHub Actions CI/CD](#github-actions-cicd)
+13. [Local Development](#local-development)
 
 ---
 
 ## Prerequisites
 
-| Tool | Version |
-|---|---|
-| Node.js | ≥ 20 |
-| npm | ≥ 10 |
-| Docker | any recent (for container builds) |
-| PostgreSQL | ≥ 14 |
-| gcloud CLI | latest (for Cloud Run / GCP setup) |
-| kubectl + helm | latest (for Kubernetes) |
+| Tool | Version | Notes |
+|---|---|---|
+| Node.js | ≥ 20 | App runtime |
+| npm | ≥ 10 | Package manager |
+| Docker | any recent | Container builds |
+| PostgreSQL | ≥ 14 | Required for all non-demo deployments |
+| gcloud CLI | latest | GCP setup and Cloud Run deploys |
+| kubectl | ≥ 1.28 | Kubernetes deployments |
+| helm | ≥ 3.12 | Installing ingress controller and cert-manager |
+| go | ≥ 1.22 | Only if building the processor service locally |
 
 ---
 
@@ -35,55 +38,63 @@
 | Variable | Required | Description |
 |---|---|---|
 | `AUTH_SECRET` | ✅ | Random secret for NextAuth. Generate: `openssl rand -base64 32` |
-| `DEMO_MODE` | — | `true` enables one-click demo sign-in with fixture data. No GCP or OAuth needed. |
-| `GOOGLE_CLIENT_ID` | ✅*** | Google OAuth 2.0 client ID |
-| `GOOGLE_CLIENT_SECRET` | ✅*** | Google OAuth 2.0 client secret |
-| `ALLOWED_EMAILS` | ✅* | Comma-separated list of allowed email addresses |
-| `ALLOWED_DOMAIN` | ✅* | Domain restriction, e.g. `yourcompany.com` |
-| `USE_MOCK_DATA` | — | `true` uses fixture data, no GCP calls. Default: `false` |
-| `GCP_PROJECTS` | ✅** | Comma-separated GCP project IDs to scan |
-| `GCP_SERVICE_ACCOUNT_KEY` | ✅** | Base64-encoded service account JSON key |
-| `GCP_ORG_ID` | — | GCP org ID — when set, all projects in the org are enumerated automatically |
-| `POSTGRES_URL` | ✅ | Any PostgreSQL connection string |
+| `GOOGLE_CLIENT_ID` | ✅* | Google OAuth 2.0 client ID |
+| `GOOGLE_CLIENT_SECRET` | ✅* | Google OAuth 2.0 client secret |
+| `ALLOWED_EMAILS` | ✅** | Comma-separated list of allowed email addresses |
+| `ALLOWED_DOMAIN` | ✅** | Domain restriction, e.g. `yourcompany.com` |
+| `POSTGRES_URL` | ✅ | PostgreSQL connection string |
+| `USE_MOCK_DATA` | — | `true` → use fixture data, no GCP API calls |
+| `GCP_PROJECTS` | — | Comma-separated GCP project IDs to scan |
+| `GCP_SERVICE_ACCOUNT_KEY` | — | Base64-encoded service account JSON key |
+| `GCP_ORG_ID` | — | GCP org ID — auto-enumerates all projects in the org |
+| `DEMO_MODE` | — | `true` → one-click demo sign-in, fixture data, no OAuth needed |
+| `PROCESSOR_URL` | — | Internal processor service URL (Kubernetes only) |
+| `GOOGLE_CLOUD_PROJECT` | — | GCP project for Cloud Trace (Kubernetes only) |
 
-\* At least one of `ALLOWED_EMAILS` or `ALLOWED_DOMAIN` is required (not needed when `DEMO_MODE=true`).
-\** Required when `USE_MOCK_DATA=false`.
-\*** Not required when `DEMO_MODE=true`.
+\* Not required when `DEMO_MODE=true`.
+\** At least one of `ALLOWED_EMAILS` or `ALLOWED_DOMAIN` is required (not needed when `DEMO_MODE=true`).
 
-> **No AI API key is needed in the environment.** Each user adds their own key (Gemini, Claude, or OpenAI) through the in-app Settings page. Keys are encrypted at rest.
+> **No AI API key is required at the server level.** Each user adds their own Gemini, Claude, or OpenAI key through **Settings → AI Keys**. Keys are AES-256-GCM encrypted in the database.
+>
+> **AWS credentials are also per-user.** Users add their AWS access key via **Settings → Cloud Credentials**. No `AWS_*` env vars are needed on the server.
 
 ---
 
-## Demo Deployment
+## Database Setup
 
-The demo deployment uses fixture data and auto-signs in visitors — no Google OAuth or GCP credentials are needed.
+Run once before the first start:
 
-### Minimum env vars for demo (Vercel)
-
-```
-AUTH_SECRET=<openssl rand -base64 32>
-DEMO_MODE=true
-USE_MOCK_DATA=true
-POSTGRES_URL=<neon or any postgres>
+```bash
+psql $POSTGRES_URL < scripts/migrate.sql
 ```
 
-`POSTGRES_URL` is used to store compliance risk acceptances and score history so demo visitors get a full experience. Use a [Neon](https://neon.tech) free-tier database.
+**Supported databases:**
 
-### Vercel demo setup
+| Option | Connection string |
+|---|---|
+| Vercel Postgres (Neon) | Auto-injected when using Vercel Storage |
+| Neon (standalone) | `postgresql://user:pass@ep-xxx.neon.tech/db?sslmode=require` |
+| GCP Cloud SQL (private) | `postgresql://user:pass@/db?host=/cloudsql/project:region:instance` |
+| Self-hosted | `postgresql://user:pass@host:5432/watchmen` |
 
-1. Create a **new Vercel project** from the same repo (separate from your production project).
-2. In **Settings → Environment Variables**, add only the four vars above.
-3. Provision a Postgres database via **Storage → Create Database** and connect it (auto-injects `POSTGRES_URL`).
-4. Run the migration once: `psql $POSTGRES_URL < scripts/migrate.sql`
-5. Deploy — visitors land on a login page with an **Enter Demo** button and are immediately signed in as `demo@watchmen.dev`.
+---
 
-> The demo user is shared across all visitors. Risk acceptances and compliance suppressions made by one visitor are visible to others. This is intentional — it shows the feature in action. Reset the DB periodically if needed.
+## Google OAuth Setup
+
+1. Open [Google Cloud Console](https://console.cloud.google.com) → **APIs & Services → Credentials → Create Credentials → OAuth 2.0 Client ID → Web application**.
+2. Add **Authorized redirect URIs** for every environment you plan to use:
+   - Local: `http://localhost:3000/api/auth/callback/google`
+   - Production: `https://your-domain.com/api/auth/callback/google`
+3. Copy the **Client ID** and **Client Secret** into `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`.
+4. On the **OAuth consent screen**, ensure the `https://www.googleapis.com/auth/cloud-platform` scope is listed. Without it, GCP scans return 403 errors when users sign in with their own Google account (not needed when using a service account key).
 
 ---
 
 ## GCP Setup
 
-### 1. Create a service account
+Watchmen needs read-only access to the GCP resources it scans. The recommended approach is a dedicated service account.
+
+### 1. Create the service account
 
 ```bash
 export PROJECT_ID=my-gcp-project
@@ -91,7 +102,11 @@ export PROJECT_ID=my-gcp-project
 gcloud iam service-accounts create watchmen-reader \
   --display-name="Watchmen Reader" \
   --project=$PROJECT_ID
+```
 
+### 2. Assign read-only roles
+
+```bash
 for role in \
   roles/iam.securityReviewer \
   roles/storage.objectViewer \
@@ -101,26 +116,32 @@ for role in \
   roles/bigquery.metadataViewer \
   roles/pubsub.viewer \
   roles/secretmanager.viewer \
-  roles/compute.networkViewer; do
+  roles/compute.networkViewer \
+  roles/logging.viewer; do
     gcloud projects add-iam-policy-binding $PROJECT_ID \
       --member="serviceAccount:watchmen-reader@${PROJECT_ID}.iam.gserviceaccount.com" \
       --role="$role"
 done
 ```
 
-### 2. Export and encode the key
+The `logging.viewer` role is required for the live log viewer and AI log analysis features.
+
+### 3. Export and encode the key
 
 ```bash
 gcloud iam service-accounts keys create sa-key.json \
   --iam-account="watchmen-reader@${PROJECT_ID}.iam.gserviceaccount.com"
 
-# Paste this value into GCP_SERVICE_ACCOUNT_KEY
+# Copy this value into GCP_SERVICE_ACCOUNT_KEY
 base64 -i sa-key.json | tr -d '\n'
 
+# Delete the local key file — the base64 value is all you need
 rm sa-key.json
 ```
 
-### 3. (Optional) Org-wide scanning
+### 4. (Optional) Org-wide scanning
+
+To scan all projects in an organization automatically instead of listing them in `GCP_PROJECTS`:
 
 ```bash
 gcloud organizations add-iam-policy-binding YOUR_ORG_ID \
@@ -128,37 +149,103 @@ gcloud organizations add-iam-policy-binding YOUR_ORG_ID \
   --role="roles/iam.securityReviewer"
 ```
 
-Then set `GCP_ORG_ID` in your environment. Watchmen will enumerate all projects automatically instead of reading from `GCP_PROJECTS`.
+Set `GCP_ORG_ID=YOUR_ORG_ID` in your environment. Watchmen will call the Resource Manager API to enumerate all projects automatically.
+
+### 5. Per-user GCP credentials (alternative to service account key)
+
+Users can also connect their own GCP account via **Settings → Cloud Credentials → GCP → Connect with Google**. This uses the OAuth access token from their Google sign-in with the `cloud-platform` scope. No service account key is required for this flow.
 
 ---
 
-## Google OAuth Setup
+## AWS Setup
 
-1. [Google Cloud Console](https://console.cloud.google.com) → **APIs & Services** → **Credentials** → **Create Credentials** → **OAuth 2.0 Client ID** → **Web application**.
-2. Add **Authorized redirect URIs** for every environment:
-   - Development: `http://localhost:3000/api/auth/callback/google`
-   - Production: `https://your-domain.com/api/auth/callback/google`
-3. Copy the **Client ID** and **Client Secret** into your environment.
-4. On the **OAuth consent screen** ensure the `cloud-platform` scope is approved, or GCP scans will return 403 errors.
+AWS credentials are configured **per user** in the Watchmen UI, not as server environment variables. Each user provides their own IAM access key through **Settings → Cloud Credentials → AWS**.
 
----
+### Creating a least-privilege IAM user for scanning
 
-## Database Setup
+The recommended approach for each person scanning AWS resources:
 
-Run once before starting the app:
+#### Step 1 — Create a dedicated IAM user
 
-```bash
-psql $POSTGRES_URL < scripts/migrate.sql
+```
+AWS Console → IAM → Users → Create user
+User name: watchmen-scanner
 ```
 
-**Supported databases:**
+#### Step 2 — Attach a permissions policy
 
-| Option | Connection string format |
-|---|---|
-| Vercel Postgres (Neon) | Auto-injected when using Vercel Storage |
-| Neon (standalone) | `postgresql://user:pass@ep-xxx.neon.tech/db?sslmode=require` |
-| GCP Cloud SQL | `postgresql://user:pass@/db?host=/cloudsql/project:region:instance` |
-| Self-hosted | `postgresql://user:pass@host:5432/watchmen` |
+**Option A — AWS managed policy (simplest)**
+
+Attach `ReadOnlyAccess`. This grants broad read-only access to all services.
+
+**Option B — Custom least-privilege policy (recommended)**
+
+Create a custom policy with exactly the permissions Watchmen needs:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "WatchmenReadOnly",
+      "Effect": "Allow",
+      "Action": [
+        "iam:ListUsers",
+        "iam:ListRoles",
+        "iam:ListAccessKeys",
+        "iam:ListAttachedUserPolicies",
+        "iam:ListAttachedRolePolicies",
+        "iam:GetUser",
+        "iam:GetRole",
+        "iam:GetLoginProfile",
+        "iam:ListMFADevices",
+        "iam:ListUserPolicies",
+        "iam:GetUserPolicy",
+        "ec2:DescribeInstances",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeRegions",
+        "ec2:DescribeLoadBalancers",
+        "elasticloadbalancing:DescribeLoadBalancers",
+        "elasticloadbalancing:DescribeTargetGroups",
+        "eks:ListClusters",
+        "eks:DescribeCluster",
+        "rds:DescribeDBInstances",
+        "rds:DescribeDBClusters",
+        "lambda:ListFunctions",
+        "lambda:GetPolicy",
+        "s3:ListAllMyBuckets",
+        "s3:GetBucketPublicAccessBlock",
+        "s3:GetBucketPolicy",
+        "s3:GetBucketAcl",
+        "s3:GetBucketLocation",
+        "sns:ListTopics",
+        "sns:GetTopicAttributes",
+        "secretsmanager:ListSecrets",
+        "redshift:DescribeClusters",
+        "sts:GetCallerIdentity"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+#### Step 3 — Create an access key
+
+```
+IAM → Users → watchmen-scanner → Security credentials → Create access key
+Purpose: Third-party service
+```
+
+Download the **Access Key ID** and **Secret Access Key** — you will not be able to view the secret again.
+
+#### Step 4 — Add the credentials in Watchmen
+
+1. Go to **Settings → Cloud Credentials → AWS**.
+2. Enter the **Access Key ID**, **Secret Access Key**, and **Default Region** (e.g. `us-east-1`).
+3. Click **Save**. Watchmen will verify the credentials with a `sts:GetCallerIdentity` call and immediately run a background scan.
+
+To scan multiple regions, set a comma-separated list of regions in the region field (e.g. `us-east-1,eu-west-1,ap-southeast-1`).
 
 ---
 
@@ -166,10 +253,10 @@ psql $POSTGRES_URL < scripts/migrate.sql
 
 | Variable | Example | Behaviour |
 |---|---|---|
-| `ALLOWED_EMAILS` | `alice@corp.com,bob@corp.com` | Allowlist specific accounts |
-| `ALLOWED_DOMAIN` | `corp.com` | Allow everyone with a `@corp.com` Google account |
+| `ALLOWED_EMAILS` | `alice@corp.com,bob@corp.com` | Allow specific accounts |
+| `ALLOWED_DOMAIN` | `corp.com` | Allow all `@corp.com` Google accounts |
 
-Both can be set simultaneously (union of both lists). Users not on the list are redirected to the login page.
+Both can be set simultaneously — access is granted if either condition matches. Users not on the list are redirected to the sign-in page with an "Access denied" message.
 
 ---
 
@@ -200,7 +287,7 @@ gcloud config set project YOUR_PROJECT_ID
 gcloud services enable run.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com
 ```
 
-### Option A — Deploy from source (no Docker needed locally)
+### Option A — Deploy from source (no Docker required locally)
 
 ```bash
 gcloud run deploy watchmen \
@@ -231,7 +318,7 @@ echo -n "my-secret-value" | gcloud secrets create watchmen-auth-secret --data-fi
 # repeat for each secret
 ```
 
-### Option B — Deploy a pre-built image from GHCR
+### Option B — Deploy a pre-built image
 
 ```bash
 gcloud run deploy watchmen \
@@ -252,7 +339,6 @@ POSTGRES_URL=postgresql://USER:PASS@/DBNAME?host=/cloudsql/PROJECT:REGION:INSTAN
 ```
 
 ```bash
-# Grant the Cloud Run service account access to Cloud SQL
 gcloud projects add-iam-policy-binding PROJECT_ID \
   --member="serviceAccount:PROJECT_NUMBER-compute@developer.gserviceaccount.com" \
   --role="roles/cloudsql.client"
@@ -260,36 +346,47 @@ gcloud projects add-iam-policy-binding PROJECT_ID \
 
 Add `--add-cloudsql-instances=PROJECT:REGION:INSTANCE` to the deploy command.
 
-### Custom domain
+---
 
-```bash
-gcloud run domain-mappings create \
-  --service watchmen \
-  --domain watchmen.example.com \
-  --region us-central1
-```
+## Kubernetes — Full Stack
 
-Follow the DNS instructions printed, then add `https://watchmen.example.com/api/auth/callback/google` to your OAuth redirect URIs.
+The full Kubernetes deployment runs three workloads:
+
+| Workload | Purpose |
+|---|---|
+| `watchmen` | Next.js web application |
+| `watchmen-processor` | Go service that traces in-cluster HTTP requests and reports back to the topology graph |
+| `wm-echo` (optional) | Lightweight test echo app for live-trace demos |
+
+All manifests live in `k8s/`. Istio is optional but recommended for the live request-tracing feature.
 
 ---
 
-## Kubernetes
+### Step 0 — Cluster prerequisites
 
-All manifests are in `k8s/`. Apply with kustomize or individually.
-
-### Prerequisites
+Install the nginx ingress controller and cert-manager for TLS:
 
 ```bash
-# nginx ingress controller
+# Nginx ingress controller
 helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
-helm install ingress-nginx ingress-nginx/ingress-nginx -n ingress-nginx --create-namespace
+helm repo update
+helm install ingress-nginx ingress-nginx/ingress-nginx \
+  --namespace ingress-nginx --create-namespace
 
-# cert-manager (Let's Encrypt TLS)
+# cert-manager (Let's Encrypt)
 helm repo add jetstack https://charts.jetstack.io
+helm repo update
 helm install cert-manager jetstack/cert-manager \
-  -n cert-manager --create-namespace --set installCRDs=true
+  --namespace cert-manager --create-namespace \
+  --set installCRDs=true
 
-# ClusterIssuer — replace the email address
+# Wait for cert-manager pods to be ready
+kubectl rollout status deployment/cert-manager -n cert-manager
+```
+
+Create a ClusterIssuer for Let's Encrypt (replace the email address):
+
+```bash
 kubectl apply -f - <<'EOF'
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
@@ -308,58 +405,241 @@ spec:
 EOF
 ```
 
+---
+
 ### Step 1 — Run the database migration
 
 ```bash
 psql $POSTGRES_URL < scripts/migrate.sql
 ```
 
-### Step 2 — Create the namespace and secret
+---
+
+### Step 2 — Create the namespace
 
 ```bash
 kubectl apply -f k8s/namespace.yaml
+```
 
+---
+
+### Step 3 — Create the environment secret
+
+Populate the `watchmen-env` secret with your configuration:
+
+```bash
 kubectl create secret generic watchmen-env \
   --from-literal=AUTH_SECRET="$(openssl rand -base64 32)" \
   --from-literal=GOOGLE_CLIENT_ID="your-client-id.apps.googleusercontent.com" \
   --from-literal=GOOGLE_CLIENT_SECRET="your-client-secret" \
   --from-literal=ALLOWED_EMAILS="admin@example.com" \
-  --from-literal=USE_MOCK_DATA="false" \
+  --from-literal=POSTGRES_URL="postgresql://user:pass@host:5432/watchmen" \
   --from-literal=GCP_PROJECTS="project-a,project-b" \
   --from-literal=GCP_SERVICE_ACCOUNT_KEY="$(base64 -i sa-key.json | tr -d '\n')" \
-  --from-literal=POSTGRES_URL="postgresql://user:pass@host:5432/watchmen" \
+  --from-literal=GOOGLE_CLOUD_PROJECT="your-gcp-project-id" \
+  --from-literal=USE_MOCK_DATA="false" \
   -n watchmen
 ```
 
-### Step 3 — Update the image and domain
+> If you are scanning GCP via user OAuth (not a service account key), omit `GCP_SERVICE_ACCOUNT_KEY`. Users will connect their own GCP account from the Settings page.
+>
+> AWS credentials are **not** in this secret — they are provided per-user through the UI.
 
-In `k8s/deployment.yaml`, replace `YOUR_GITHUB_ORG`:
-```yaml
-image: ghcr.io/YOUR_GITHUB_ORG/watchmen:main
+---
+
+### Step 4 — Build and push images
+
+Replace `YOUR_REGISTRY` with your container registry (GCR, GHCR, Docker Hub, etc.).
+
+```bash
+# Main web application
+docker build -t YOUR_REGISTRY/watchmen:latest .
+docker push YOUR_REGISTRY/watchmen:latest
+
+# Request processor (Go service)
+docker build -t YOUR_REGISTRY/watchmen-processor:latest \
+  -f services/request-processor/Dockerfile services/request-processor/
+docker push YOUR_REGISTRY/watchmen-processor:latest
+
+# (Optional) Test echo app for live-trace demos
+docker build -t YOUR_REGISTRY/wm-echo:latest \
+  -f services/test-echo/Dockerfile services/test-echo/
+docker push YOUR_REGISTRY/wm-echo:latest
 ```
 
-In `k8s/ingress.yaml`, replace both occurrences of `watchmen.example.com`.
+Update the image references in the manifests:
 
-### Step 4 — Apply
+```bash
+# In k8s/deployment.yaml
+sed -i 's|gcr.io/watchmen-test-488807/watchmen:latest|YOUR_REGISTRY/watchmen:latest|' k8s/deployment.yaml
+
+# In k8s/processor-deployment.yaml
+sed -i 's|gcr.io/watchmen-test-488807/watchmen-processor:latest|YOUR_REGISTRY/watchmen-processor:latest|' k8s/processor-deployment.yaml
+```
+
+---
+
+### Step 5 — Deploy the main application
 
 ```bash
 kubectl apply -f k8s/deployment.yaml
 kubectl apply -f k8s/service.yaml
-kubectl apply -f k8s/ingress.yaml
 ```
 
-### Step 5 — Verify
+Verify the pod is running:
 
 ```bash
 kubectl get pods -n watchmen -w
-kubectl rollout status deployment/watchmen -n watchmen
-kubectl logs -n watchmen -l app=watchmen -f
-kubectl get ingress -n watchmen   # TLS cert takes ~60s
+# wait until STATUS is Running
+
+kubectl logs -n watchmen -l app=watchmen --tail=50
 ```
 
-### Pulling from a private GHCR package
+---
+
+### Step 6 — Deploy the request processor
+
+The processor service traces in-cluster HTTP requests. It is optional but required for the live topology graph to show real traffic.
 
 ```bash
+kubectl apply -f k8s/processor-deployment.yaml
+```
+
+The processor is reached by the main app via `PROCESSOR_URL=http://watchmen-processor.watchmen.svc.cluster.local` (already set in `k8s/deployment.yaml`).
+
+Verify:
+
+```bash
+kubectl get pods -n watchmen -l app=watchmen-processor
+kubectl logs -n watchmen -l app=watchmen-processor --tail=20
+```
+
+---
+
+### Step 7 — (Optional) Deploy the test echo app
+
+The echo app is a lightweight HTTP server useful for observing live traffic in the topology graph.
+
+```bash
+kubectl apply -f k8s/test-app/nginx-config.yaml
+kubectl apply -f k8s/test-app/deployment.yaml
+kubectl apply -f k8s/test-app/service.yaml
+```
+
+---
+
+### Step 8 — Configure the ingress
+
+Edit `k8s/ingress.yaml` and replace both occurrences of `watchmen.example.com` with your actual domain:
+
+```bash
+sed -i 's/watchmen.example.com/watchmen.yourdomain.com/g' k8s/ingress.yaml
+kubectl apply -f k8s/ingress.yaml
+```
+
+Point your domain's DNS A record to the ingress controller's external IP:
+
+```bash
+kubectl get svc -n ingress-nginx ingress-nginx-controller \
+  -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+```
+
+TLS certificate issuance takes about 60 seconds after DNS propagates:
+
+```bash
+kubectl get certificate -n watchmen -w
+# wait for READY = True
+```
+
+---
+
+### Step 9 — (Optional) Istio service mesh
+
+Istio enables mutual TLS between pods and provides Envoy access logs for the live traffic visualisation in the Request Tracer page.
+
+**Install Istio:**
+
+```bash
+# Download and install istioctl
+curl -L https://istio.io/downloadIstio | sh -
+export PATH="$PATH:$(pwd)/istio-*/bin"
+
+# Install with the default profile
+istioctl install --set profile=default -y
+
+# Verify
+kubectl get pods -n istio-system
+```
+
+**Enable sidecar injection for the watchmen namespace:**
+
+```bash
+kubectl apply -f k8s/istio/namespace-label.yaml
+```
+
+This labels the namespace with `istio-injection=enabled`. All pods created after this point will automatically receive an Envoy sidecar.
+
+**Restart existing pods to inject sidecars:**
+
+```bash
+kubectl rollout restart deployment/watchmen -n watchmen
+kubectl rollout restart deployment/watchmen-processor -n watchmen
+```
+
+**Apply Istio telemetry and security policies:**
+
+```bash
+# Enable Envoy JSON access logs (collected by Cloud Logging)
+kubectl apply -f k8s/istio/telemetry.yaml
+
+# Enable mTLS (PERMISSIVE mode — allows traffic from non-injected pods during rollout)
+kubectl apply -f k8s/istio/peer-authentication.yaml
+```
+
+After all pods have sidecars, tighten to STRICT mode:
+
+```bash
+kubectl patch peerauthentication default -n watchmen \
+  --type=merge -p '{"spec":{"mtls":{"mode":"STRICT"}}}'
+```
+
+**Verify sidecar injection:**
+
+```bash
+kubectl get pods -n watchmen
+# Each pod should show 2/2 containers (app + istio-proxy)
+```
+
+Once Istio is running, the Request Tracer page will display `istio-proxy` and `nginx` in the topology graph alongside your application containers, and the live pulse animation will fire on real incoming requests.
+
+---
+
+### Step 10 — Verify the full deployment
+
+```bash
+# All pods running
+kubectl get pods -n watchmen
+
+# Rollout complete
+kubectl rollout status deployment/watchmen -n watchmen
+kubectl rollout status deployment/watchmen-processor -n watchmen
+
+# Ingress and TLS
+kubectl get ingress -n watchmen
+kubectl get certificate -n watchmen
+
+# Tail live logs
+kubectl logs -n watchmen -l app=watchmen -f
+```
+
+Open `https://watchmen.yourdomain.com`, sign in, and run a GCP scan from the dashboard.
+
+---
+
+### Pulling from a private registry
+
+```bash
+# GHCR example
 kubectl create secret docker-registry ghcr-pull-secret \
   --docker-server=ghcr.io \
   --docker-username=YOUR_GITHUB_USERNAME \
@@ -367,16 +647,59 @@ kubectl create secret docker-registry ghcr-pull-secret \
   -n watchmen
 ```
 
-Uncomment `imagePullSecrets` in `k8s/deployment.yaml`.
+Uncomment the `imagePullSecrets` block in `k8s/deployment.yaml` and `k8s/processor-deployment.yaml`.
+
+---
 
 ### Rolling update
 
 ```bash
 kubectl set image deployment/watchmen \
-  watchmen=ghcr.io/YOUR_ORG/watchmen:sha-<NEW_SHA> \
+  watchmen=YOUR_REGISTRY/watchmen:sha-<NEW_SHA> \
   -n watchmen
 kubectl rollout status deployment/watchmen -n watchmen
 ```
+
+---
+
+### Scaling
+
+```bash
+# Scale web app to 3 replicas
+kubectl scale deployment/watchmen --replicas=3 -n watchmen
+
+# Check pod distribution
+kubectl get pods -n watchmen -o wide
+```
+
+The processor service is stateless and can be scaled independently:
+
+```bash
+kubectl scale deployment/watchmen-processor --replicas=2 -n watchmen
+```
+
+---
+
+## Demo Deployment
+
+The demo mode uses fixture data and auto-signs in visitors — no Google OAuth, GCP credentials, or AWS credentials are needed.
+
+**Minimum environment variables:**
+
+```
+AUTH_SECRET=<openssl rand -base64 32>
+DEMO_MODE=true
+USE_MOCK_DATA=true
+POSTGRES_URL=<neon or any postgres url>
+```
+
+**Vercel setup:**
+
+1. Create a new Vercel project from the repo.
+2. Add the four vars above in **Settings → Environment Variables**.
+3. Provision a Postgres database via **Storage → Create Database** and connect it.
+4. Run the migration: `psql $POSTGRES_URL < scripts/migrate.sql`
+5. Deploy — visitors see an **Enter Demo** button and are signed in as `demo@watchmen.dev`.
 
 ---
 
@@ -384,22 +707,22 @@ kubectl rollout status deployment/watchmen -n watchmen
 
 Two workflows ship in `.github/workflows/`:
 
-| Workflow | Trigger | What it does |
+| Workflow | Trigger | Action |
 |---|---|---|
 | `ci.yml` | Push / PR to `main` | TypeScript check + ESLint |
 | `docker.yml` | Push to `main`, semver tags | Multi-platform build, push to GHCR |
 
-### Image tags
+**Image tags produced:**
 
-| Git event | Tags produced |
+| Git event | Tags |
 |---|---|
 | Push to `main` | `:main`, `:sha-abc1234` |
 | Tag `v1.2.3` | `:1.2.3`, `:1.2`, `:1`, `:latest`, `:sha-abc1234` |
 | Pull request | Build only — not pushed |
 
-No extra secrets are required. `GITHUB_TOKEN` is used automatically with `packages: write` permission.
+`GITHUB_TOKEN` is used automatically with `packages: write` permission. No extra secrets required.
 
-To make the GHCR package public: GitHub → repo → **Packages** → `watchmen` → **Package settings** → **Make public**.
+To make the GHCR package public: GitHub repo → **Packages → watchmen → Package settings → Make public**.
 
 ---
 
@@ -408,27 +731,28 @@ To make the GHCR package public: GitHub → repo → **Packages** → `watchmen`
 ```bash
 npm install
 cp .env.local.example .env.local
-# Edit .env.local (see Environment Variables above)
+# Edit .env.local — minimum values listed inside
 
-# Optional: spin up a local Postgres
+# Optional: local Postgres
 docker run -d --name watchmen-pg \
   -e POSTGRES_PASSWORD=dev -e POSTGRES_DB=watchmen \
   -p 5432:5432 postgres:16-alpine
+
 psql postgresql://postgres:dev@localhost:5432/watchmen < scripts/migrate.sql
 
-npm run dev      # http://localhost:3000
+npm run dev      # → http://localhost:3000
 ```
 
 ### Mock mode (no GCP credentials needed)
 
-Set `USE_MOCK_DATA=true` in `.env.local`. The app uses fixture data from `fixtures/` for all GCP resources.
+Set `USE_MOCK_DATA=true` in `.env.local`. The app uses fixture data from `fixtures/` for all GCP resources. AWS mock data is enabled automatically when `USE_MOCK_DATA=true`.
 
 ### Useful commands
 
 ```bash
-npm run dev          # dev server with hot reload
-npm run build        # production build
-npm run start        # serve production build
+npm run dev          # Dev server with hot reload
+npm run build        # Production build
+npm run start        # Serve the production build
 npm run type-check   # TypeScript — no emit
 npm run lint         # ESLint
 
