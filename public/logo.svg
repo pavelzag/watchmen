@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 220" width="200" height="220">
+  <defs>
+    <radialGradient id="bgGlow" cx="50%" cy="45%" r="50%">
+      <stop offset="0%" stop-color="#0a1a0a"/>
+      <stop offset="100%" stop-color="#000"/>
+    </radialGradient>
+    <filter id="inkBlur">
+      <feGaussianBlur stdDeviation="1.2" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+
+  <!-- Background circle -->
+  <circle cx="100" cy="100" r="92" fill="url(#bgGlow)" stroke="#1a3a1a" stroke-width="1.5"/>
+
+  <!-- ── Symmetric inkblot shapes (left half mirrored right) ── -->
+
+  <!-- Upper crown blobs -->
+  <ellipse cx="100" cy="28" rx="7" ry="10" fill="#e8e8e0" filter="url(#inkBlur)"/>
+  <ellipse cx="78"  cy="34" rx="8" ry="6"  fill="#e8e8e0" filter="url(#inkBlur)"/>
+  <ellipse cx="122" cy="34" rx="8" ry="6"  fill="#e8e8e0" filter="url(#inkBlur)"/>
+  <ellipse cx="62"  cy="44" rx="6" ry="9"  fill="#d0d0c8" filter="url(#inkBlur)"/>
+  <ellipse cx="138" cy="44" rx="6" ry="9"  fill="#d0d0c8" filter="url(#inkBlur)"/>
+
+  <!-- Forehead bridge -->
+  <ellipse cx="100" cy="52" rx="22" ry="14" fill="#e8e8e0" filter="url(#inkBlur)"/>
+
+  <!-- Brow extensions — left and right symmetric -->
+  <path d="M78 48 Q62 38 52 52 Q58 62 72 58 Z" fill="#c8c8c0" filter="url(#inkBlur)"/>
+  <path d="M122 48 Q138 38 148 52 Q142 62 128 58 Z" fill="#c8c8c0" filter="url(#inkBlur)"/>
+
+  <!-- Cheek blobs -->
+  <ellipse cx="66"  cy="80" rx="14" ry="10" fill="#d8d8d0" filter="url(#inkBlur)"/>
+  <ellipse cx="134" cy="80" rx="14" ry="10" fill="#d8d8d0" filter="url(#inkBlur)"/>
+
+  <!-- Side splatter drops -->
+  <ellipse cx="46"  cy="68" rx="5" ry="8"  fill="#b0b0a8" filter="url(#inkBlur)"/>
+  <ellipse cx="154" cy="68" rx="5" ry="8"  fill="#b0b0a8" filter="url(#inkBlur)"/>
+  <ellipse cx="40"  cy="84" rx="4" ry="5"  fill="#909088" filter="url(#inkBlur)"/>
+  <ellipse cx="160" cy="84" rx="4" ry="5"  fill="#909088" filter="url(#inkBlur)"/>
+
+  <!-- Lower jaw / chin blob -->
+  <ellipse cx="100" cy="130" rx="20" ry="12" fill="#d0d0c8" filter="url(#inkBlur)"/>
+
+  <!-- Chin drips -->
+  <ellipse cx="88"  cy="144" rx="5"  ry="8"  fill="#b8b8b0" filter="url(#inkBlur)"/>
+  <ellipse cx="112" cy="144" rx="5"  ry="8"  fill="#b8b8b0" filter="url(#inkBlur)"/>
+  <ellipse cx="100" cy="150" rx="4"  ry="6"  fill="#a0a098" filter="url(#inkBlur)"/>
+  <ellipse cx="76"  cy="138" rx="4"  ry="5"  fill="#a0a098" filter="url(#inkBlur)"/>
+  <ellipse cx="124" cy="138" rx="4"  ry="5"  fill="#a0a098" filter="url(#inkBlur)"/>
+
+  <!-- ── Eyes: negative space (holes in the inkblot) ── -->
+  <!-- Left eye socket -->
+  <ellipse cx="82" cy="76" rx="10" ry="7" fill="#000810"/>
+  <!-- Right eye socket -->
+  <ellipse cx="118" cy="76" rx="10" ry="7" fill="#000810"/>
+
+  <!-- Iris glow — green, the app's accent colour -->
+  <ellipse cx="82"  cy="76" rx="5" ry="4.5" fill="#00cc44" opacity="0.85"/>
+  <ellipse cx="118" cy="76" rx="5" ry="4.5" fill="#00cc44" opacity="0.85"/>
+  <!-- Pupil -->
+  <ellipse cx="82"  cy="76" rx="2.2" ry="2.2" fill="#000"/>
+  <ellipse cx="118" cy="76" rx="2.2" ry="2.2" fill="#000"/>
+  <!-- Iris catchlight -->
+  <ellipse cx="83.4" cy="74.8" rx="1" ry="0.8" fill="#88ffaa" opacity="0.7"/>
+  <ellipse cx="119.4" cy="74.8" rx="1" ry="0.8" fill="#88ffaa" opacity="0.7"/>
+
+  <!-- ── Nose bridge notch ── -->
+  <path d="M94 88 Q100 96 106 88" stroke="#c0c0b8" stroke-width="2" fill="none" stroke-linecap="round" filter="url(#inkBlur)"/>
+
+  <!-- ── Mouth — thin asymmetric crack ── -->
+  <path d="M84 112 Q100 108 116 112" stroke="#b0b0a8" stroke-width="2.5" fill="none" stroke-linecap="round" filter="url(#inkBlur)"/>
+
+  <!-- ── Wordmark ── -->
+  <text
+    x="100" y="188"
+    text-anchor="middle"
+    font-family="'Courier New', Courier, monospace"
+    font-size="15"
+    font-weight="700"
+    letter-spacing="6"
+    fill="#00cc44"
+  >WATCHMEN</text>
+
+  <!-- Thin rule under wordmark -->
+  <line x1="38" y1="194" x2="162" y2="194" stroke="#1a4a1a" stroke-width="0.8"/>
+
+  <!-- Version tag -->
+  <text
+    x="100" y="207"
+    text-anchor="middle"
+    font-family="'Courier New', Courier, monospace"
+    font-size="7"
+    letter-spacing="3"
+    fill="#2a6a2a"
+  >v0.2.0</text>
+</svg>
