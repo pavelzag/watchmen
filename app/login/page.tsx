@@ -3,6 +3,7 @@ import { auth, signIn } from "@/lib/auth";
 import { ShieldAlert, Zap } from "lucide-react";
 import Image from "next/image";
 import Footer from "@/components/Footer";
+import SplashScreen from "@/components/SplashScreen";
 
 const DEMO_MODE = process.env.DEMO_MODE === "true";
 
@@ -15,6 +16,7 @@ export default async function LoginPage() {
       className="min-h-screen flex items-center justify-center"
       style={{ background: "#090909" }}
     >
+      <SplashScreen />
       {/* Subtle grid background */}
       <div
         className="absolute inset-0 pointer-events-none"
