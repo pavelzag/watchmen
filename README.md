@@ -6,29 +6,6 @@ Watchmen scans your cloud infrastructure for misconfigurations, runs SOC 2 Type 
 
 ---
 
-## Screenshots
-
-### Security Findings
-![Security Findings page showing critical and high-severity misconfigurations with AI-powered remediation advice](docs/images/findings.png)
-
-### Compliance Dashboard
-![SOC 2 Type II compliance report with control pass/fail status, score trend, and risk acceptance](docs/images/compliance.png)
-
-### Live Request Tracer
-![Kubernetes topology graph showing Internet → LB → istio-proxy → nginx → echo signal flow with animated live pulse](docs/images/request-tracer.png)
-
-### AI Log Analysis
-![NodeDetail panel with logs tab open, AI analysis panel showing summary and recommendations for container logs](docs/images/ai-log-analysis.png)
-
-### GCP Resource Overview
-![GCP dashboard showing service accounts, buckets, clusters, VMs and Cloud Run services](docs/images/gcp-overview.png)
-
-### AWS Resource Overview
-![AWS dashboard showing IAM users, EC2 instances, S3 buckets, RDS instances and security groups](docs/images/aws-overview.png)
-
-> **Contributing screenshots:** run the app locally in mock mode (`DEMO_MODE=true USE_MOCK_DATA=true`), take screenshots at 1440×900 or wider, and save them as PNG in `docs/images/`.
-
----
 
 ## Features
 
