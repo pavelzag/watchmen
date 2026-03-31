@@ -133,6 +133,10 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
   const [alertError, setAlertError] = useState<string | null>(null);
   const [alertTestResult, setAlertTestResult] = useState<"ok" | "fail" | null>(null);
   const [showSlackToken, setShowSlackToken] = useState(false);
+  const [simSelected, setSimSelected] = useState<string[]>([]);
+  const [simSending, setSimSending] = useState(false);
+  const [simResult, setSimResult] = useState<"ok" | "fail" | null>(null);
+  const [simError, setSimError] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/settings/keys")
@@ -214,6 +218,28 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
       setAlertError(e instanceof Error ? e.message : "Test failed");
     } finally {
       setAlertTesting(false);
+    }
+  }
+
+  async function sendSimulation() {
+    setSimSending(true);
+    setSimResult(null);
+    setSimError(null);
+    try {
+      const res = await fetch("/api/alerts/simulate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ findings: simSelected }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Simulation failed");
+      setSimResult("ok");
+      setTimeout(() => setSimResult(null), 3000);
+    } catch (e) {
+      setSimResult("fail");
+      setSimError(e instanceof Error ? e.message : "Simulation failed");
+    } finally {
+      setSimSending(false);
     }
   }
 
@@ -1002,159 +1028,281 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
 
       {/* Alerts Block */}
       {activeTab === "alerts" && (
-        <div className="space-y-8 mt-6">
+        <div className="space-y-6 mt-6">
           {!isDemoUser ? (
-            <div className="space-y-4">
-          <div>
-            <h2 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2" style={{ color: "var(--border-dim)" }}>
-              <Bell className="w-3.5 h-3.5" />
-              Alert Notifications
-            </h2>
-            <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
-              Receive a Slack or webhook notification when new critical findings are detected on your next scan.
-            </p>
-          </div>
+            <>
+              {/* ── Section: Slack Connection ─────────────────────────────── */}
+              <div>
+                <h2 className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: "var(--text-muted)" }}>
+                  Slack Connection
+                </h2>
+                <p className="text-xs" style={{ color: "var(--border-dim)" }}>
+                  Connect a Slack bot to post alerts to your workspace.
+                </p>
+              </div>
 
-          <div className="space-y-3 p-4" style={{ border: "1px solid var(--border-dim)", background: "var(--bg-card)" }}>
-            {/* Slack Bot Token */}
-            <div className="space-y-1.5">
-              <label className="text-[11px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>
-                Slack Bot Token
-              </label>
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <input
-                    type={showSlackToken ? "text" : "password"}
-                    value={alertSlackToken}
-                    onChange={(e) => setAlertSlackToken(e.target.value)}
-                    placeholder="xoxb-..."
-                    className="w-full px-3 py-2 bg-transparent border text-xs placeholder:opacity-30 outline-none font-mono pr-8"
-                    style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowSlackToken((v) => !v)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 opacity-40 hover:opacity-80"
-                    style={{ color: "var(--text-muted)" }}
-                  >
-                    {showSlackToken ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                  </button>
+              {/* Slack card */}
+              <div className="overflow-hidden" style={{ border: "1px solid var(--border-dim)", background: "var(--bg-card)" }}>
+                {/* Card header stripe */}
+                <div className="flex items-center gap-3 px-4 py-3 border-b" style={{ borderColor: "var(--border-dim)", background: "rgba(74,144,226,0.06)" }}>
+                  <div className="w-6 h-6 rounded flex items-center justify-center text-[13px] font-bold shrink-0" style={{ background: "rgba(74,144,226,0.15)", color: "#4A90E2" }}>
+                    S
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-bold" style={{ color: "var(--text-strong)" }}>Slack</p>
+                    <p className="text-[10px] uppercase tracking-wider truncate" style={{ color: "var(--border-dim)" }}>
+                      {alertSlackToken && alertSlackChannel
+                        ? `Connected · #${alertSlackChannel}`
+                        : "Not configured"}
+                    </p>
+                  </div>
+                  {alertSlackToken && alertSlackChannel && (
+                    <span className="px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-widest" style={{ background: "rgba(16,185,129,0.12)", color: "var(--green)", border: "1px solid rgba(16,185,129,0.25)" }}>
+                      Active
+                    </span>
+                  )}
+                </div>
+
+                <div className="p-4 space-y-4">
+                  {/* Bot Token */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] uppercase tracking-widest font-semibold" style={{ color: "var(--text-muted)" }}>
+                      Bot Token
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showSlackToken ? "text" : "password"}
+                        value={alertSlackToken}
+                        onChange={(e) => setAlertSlackToken(e.target.value)}
+                        placeholder="xoxb-..."
+                        className="w-full px-3 py-2 bg-transparent text-xs placeholder:opacity-30 outline-none font-mono pr-8"
+                        style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowSlackToken((v) => !v)}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 transition-opacity opacity-40 hover:opacity-80"
+                        style={{ color: "var(--text-muted)" }}
+                      >
+                        {showSlackToken ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                      </button>
+                    </div>
+                    <p className="text-[10px]" style={{ color: "var(--border-dim)" }}>
+                      api.slack.com/apps → OAuth &amp; Permissions → Bot User OAuth Token
+                    </p>
+                  </div>
+
+                  {/* Channel ID */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] uppercase tracking-widest font-semibold" style={{ color: "var(--text-muted)" }}>
+                      Channel ID
+                    </label>
+                    <input
+                      type="text"
+                      value={alertSlackChannel}
+                      onChange={(e) => setAlertSlackChannel(e.target.value)}
+                      placeholder="C08XXXXXXXXX"
+                      className="w-full px-3 py-2 bg-transparent text-xs placeholder:opacity-30 outline-none font-mono"
+                      style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
+                    />
+                    <p className="text-[10px]" style={{ color: "var(--border-dim)" }}>
+                      Right-click the channel in Slack → View channel details → scroll to Channel ID
+                    </p>
+                  </div>
+
+                  {/* Webhook fallback (collapsed visually) */}
+                  <div className="space-y-1.5 pt-1 border-t" style={{ borderColor: "var(--border-dim)" }}>
+                    <label className="text-[10px] uppercase tracking-widest font-semibold" style={{ color: "var(--border-dim)" }}>
+                      Webhook URL <span className="normal-case font-normal opacity-60">— alternative to bot token</span>
+                    </label>
+                    <input
+                      type="url"
+                      value={alertWebhook}
+                      onChange={(e) => setAlertWebhook(e.target.value)}
+                      placeholder="https://hooks.slack.com/services/..."
+                      className="w-full px-3 py-2 bg-transparent text-xs placeholder:opacity-20 outline-none font-mono"
+                      style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
+                    />
+                  </div>
+
+                  {/* Test + Save row */}
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      onClick={testWebhook}
+                      disabled={!(alertSlackToken.trim() && alertSlackChannel.trim()) && !alertWebhook.trim() || alertTesting}
+                      className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold transition-all duration-150"
+                      style={
+                        ((alertSlackToken.trim() && alertSlackChannel.trim()) || alertWebhook.trim()) && !alertTesting
+                          ? { border: "1px solid var(--border-dim)", color: "var(--text-muted)" }
+                          : { border: "1px solid var(--border-dim)", color: "var(--border-dim)", opacity: 0.4 }
+                      }
+                    >
+                      {alertTesting ? <Loader2 className="w-3 h-3 animate-spin" /> : alertTestResult === "ok" ? <Check className="w-3 h-3 text-green-400" /> : <Send className="w-3 h-3" />}
+                      {alertTesting ? "Sending…" : alertTestResult === "ok" ? "Sent!" : "Test"}
+                    </button>
+                    <button
+                      onClick={saveAlertRules}
+                      disabled={alertSaving}
+                      className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold transition-all duration-150"
+                      style={
+                        !alertSaving
+                          ? { background: "var(--green)", color: "var(--bg)" }
+                          : { border: "1px solid var(--border-dim)", color: "var(--text-muted)", opacity: 0.5 }
+                      }
+                    >
+                      {alertSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : alertSaved ? <Check className="w-3.5 h-3.5" /> : <Bell className="w-3.5 h-3.5" />}
+                      {alertSaving ? "Saving…" : alertSaved ? "Saved!" : "Save"}
+                    </button>
+                    {alertError && (
+                      <p className="text-xs text-red-400 font-mono ml-1">{alertError}</p>
+                    )}
+                  </div>
                 </div>
               </div>
-              <p className="text-[10px] uppercase tracking-wider" style={{ color: "var(--border-dim)" }}>
-                From api.slack.com/apps → OAuth &amp; Permissions → Bot User OAuth Token
-              </p>
-            </div>
 
-            {/* Slack Channel ID */}
-            <div className="space-y-1.5">
-              <label className="text-[11px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>
-                Slack Channel ID
-              </label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={alertSlackChannel}
-                  onChange={(e) => setAlertSlackChannel(e.target.value)}
-                  placeholder="C08XXXXXXXXX"
-                  className="flex-1 px-3 py-2 bg-transparent border text-xs placeholder:opacity-30 outline-none font-mono"
-                  style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
-                />
-                <button
-                  onClick={testWebhook}
-                  disabled={!(alertSlackToken.trim() && alertSlackChannel.trim()) || alertTesting}
-                  className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold transition-all duration-150 whitespace-nowrap"
-                  style={
-                    alertSlackToken.trim() && alertSlackChannel.trim() && !alertTesting
-                      ? { border: "1px solid var(--border-dim)", color: "var(--text-muted)" }
-                      : { border: "1px solid var(--border-dim)", color: "var(--border-dim)", opacity: 0.5 }
-                  }
-                >
-                  {alertTesting ? (
-                    <Loader2 className="w-3 h-3 animate-spin" />
-                  ) : alertTestResult === "ok" ? (
-                    <Check className="w-3 h-3 text-green-400" />
-                  ) : (
-                    <Send className="w-3 h-3" />
+              {/* ── Section: Trigger Rules ────────────────────────────────── */}
+              <div>
+                <h2 className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: "var(--text-muted)" }}>
+                  Trigger Rules
+                </h2>
+                <p className="text-xs" style={{ color: "var(--border-dim)" }}>
+                  Which severities fire an alert when new findings appear on the next scan.
+                </p>
+              </div>
+
+              <div className="flex gap-3">
+                {([
+                  { key: "critical" as const, label: "Critical", checked: alertOnCritical, onChange: setAlertOnCritical, activeColor: "rgba(239,68,68,0.15)", activeBorder: "rgba(239,68,68,0.4)", activeText: "#f87171" },
+                  { key: "high" as const, label: "High", checked: alertOnHigh, onChange: setAlertOnHigh, activeColor: "rgba(249,115,22,0.15)", activeBorder: "rgba(249,115,22,0.4)", activeText: "#fb923c" },
+                ]).map((rule) => (
+                  <button
+                    key={rule.key}
+                    onClick={() => rule.onChange(!rule.checked)}
+                    className="flex items-center gap-2 px-4 py-2.5 text-xs font-bold uppercase tracking-widest transition-all duration-150"
+                    style={
+                      rule.checked
+                        ? { background: rule.activeColor, border: `1px solid ${rule.activeBorder}`, color: rule.activeText }
+                        : { border: "1px solid var(--border-dim)", color: "var(--border-dim)" }
+                    }
+                  >
+                    <div className="w-2 h-2 rounded-full" style={{ background: rule.checked ? rule.activeText : "var(--border-dim)" }} />
+                    {rule.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* ── Section: Simulate Alert ───────────────────────────────── */}
+              <div>
+                <h2 className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: "var(--text-muted)" }}>
+                  Simulate Alert
+                </h2>
+                <p className="text-xs" style={{ color: "var(--border-dim)" }}>
+                  Fire a labelled test alert with any combination of finding types to verify your integration.
+                </p>
+              </div>
+
+              <div className="p-4 space-y-5" style={{ border: "1px solid var(--border-dim)", background: "var(--bg-card)" }}>
+                {(
+                  [
+                    {
+                      label: "Critical", dot: "#f87171", bg: "rgba(239,68,68,0.08)", border: "rgba(239,68,68,0.2)",
+                      findings: [
+                        { id: "public_bucket", label: "Public Storage Bucket" },
+                        { id: "public_firewall", label: "Firewall Open to Internet" },
+                        { id: "secret_in_env", label: "Secret in Cloud Run Env Var" },
+                      ],
+                    },
+                    {
+                      label: "High", dot: "#fb923c", bg: "rgba(249,115,22,0.08)", border: "rgba(249,115,22,0.2)",
+                      findings: [
+                        { id: "expired_sa_key", label: "Expired SA Key" },
+                        { id: "sa_owner_editor", label: "SA with Owner/Editor Role" },
+                        { id: "user_owner_editor", label: "User Owner on Multiple Projects" },
+                        { id: "secret_public", label: "Public Secret" },
+                      ],
+                    },
+                    {
+                      label: "Medium", dot: "#facc15", bg: "rgba(234,179,8,0.08)", border: "rgba(234,179,8,0.2)",
+                      findings: [
+                        { id: "vm_external_ip_no_sa", label: "VM External IP / No SA" },
+                        { id: "multiple_sa_keys", label: "Multiple SA Keys" },
+                        { id: "sql_public_ip", label: "SQL Public IP" },
+                        { id: "cloud_run_public", label: "Cloud Run Public" },
+                      ],
+                    },
+                    {
+                      label: "Low", dot: "#60a5fa", bg: "rgba(96,165,250,0.08)", border: "rgba(96,165,250,0.2)",
+                      findings: [
+                        { id: "orphaned_sa", label: "Orphaned SA in IAM" },
+                        { id: "sa_not_in_list", label: "Unknown SA in Bindings" },
+                      ],
+                    },
+                  ] as { label: string; dot: string; bg: string; border: string; findings: { id: string; label: string }[] }[]
+                ).map((group) => (
+                  <div key={group.label} className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: group.dot }} />
+                      <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: group.dot }}>{group.label}</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {group.findings.map((f) => {
+                        const on = simSelected.includes(f.id);
+                        return (
+                          <button
+                            key={f.id}
+                            onClick={() =>
+                              setSimSelected((prev) =>
+                                on ? prev.filter((x) => x !== f.id) : [...prev, f.id]
+                              )
+                            }
+                            className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium transition-all duration-100"
+                            style={
+                              on
+                                ? { background: group.bg, border: `1px solid ${group.border}`, color: group.dot }
+                                : { border: "1px solid var(--border-dim)", color: "var(--border-dim)" }
+                            }
+                          >
+                            {on && <Check className="w-2.5 h-2.5 shrink-0" />}
+                            {f.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+
+                {simError && (
+                  <p className="text-xs text-red-400 font-mono">{simError}</p>
+                )}
+
+                <div className="flex items-center gap-3 pt-1 border-t" style={{ borderColor: "var(--border-dim)" }}>
+                  <button
+                    onClick={sendSimulation}
+                    disabled={simSelected.length === 0 || simSending}
+                    className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold transition-all duration-150"
+                    style={
+                      simSelected.length > 0 && !simSending
+                        ? { background: "var(--green)", color: "var(--bg)" }
+                        : { border: "1px solid var(--border-dim)", color: "var(--border-dim)", opacity: 0.4 }
+                    }
+                  >
+                    {simSending ? <Loader2 className="w-3 h-3 animate-spin" /> : simResult === "ok" ? <Check className="w-3 h-3" /> : <Send className="w-3 h-3" />}
+                    {simSending ? "Sending…" : simResult === "ok" ? "Sent!" : `Send${simSelected.length > 0 ? ` (${simSelected.length})` : ""}`}
+                  </button>
+                  {simSelected.length > 0 && (
+                    <button
+                      onClick={() => setSimSelected([])}
+                      className="text-[10px] uppercase tracking-wider transition-opacity hover:opacity-80"
+                      style={{ color: "var(--border-dim)" }}
+                    >
+                      Clear all
+                    </button>
                   )}
-                  {alertTesting ? "Sending…" : alertTestResult === "ok" ? "Sent!" : "Test"}
-                </button>
+                </div>
               </div>
-              <p className="text-[10px] uppercase tracking-wider" style={{ color: "var(--border-dim)" }}>
-                Right-click #alerts in Slack → View channel details → Channel ID
-              </p>
-            </div>
-
-            {/* Webhook URL (fallback) */}
-            <div className="space-y-1.5">
-              <label className="text-[11px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>
-                Webhook URL <span className="normal-case opacity-50">(alternative)</span>
-              </label>
-              <div className="flex gap-2">
-                <input
-                  type="url"
-                  value={alertWebhook}
-                  onChange={(e) => setAlertWebhook(e.target.value)}
-                  placeholder="https://hooks.slack.com/services/..."
-                  className="flex-1 px-3 py-2 bg-transparent border text-xs placeholder:opacity-30 outline-none font-mono"
-                  style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
-                />
-              </div>
-              <p className="text-[10px] uppercase tracking-wider" style={{ color: "var(--border-dim)" }}>
-                Compatible with Slack Incoming Webhooks and any JSON-accepting endpoint. Bot token takes priority.
-              </p>
-            </div>
-
-            {/* Rules */}
-            <div className="space-y-2 pt-1">
-              <p className="text-[11px] uppercase tracking-widest" style={{ color: "var(--border-dim)" }}>
-                Trigger on
-              </p>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={alertOnCritical}
-                  onChange={(e) => setAlertOnCritical(e.target.checked)}
-                  className="w-3.5 h-3.5 border border-border-dim bg-transparent text-green-500 focus:ring-green-500/20"
-                />
-                <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-                  New <span className="font-bold text-red-400">CRITICAL</span> findings
-                </span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={alertOnHigh}
-                  onChange={(e) => setAlertOnHigh(e.target.checked)}
-                  className="w-3.5 h-3.5 border border-border-dim bg-transparent text-green-500 focus:ring-green-500/20"
-                />
-                <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-                  New <span className="font-bold text-orange-400">HIGH</span> findings
-                </span>
-              </label>
-            </div>
-
-            {alertError && (
-              <p className="text-xs text-red-400 font-mono">{alertError}</p>
-            )}
-
-            <button
-              onClick={saveAlertRules}
-              disabled={alertSaving}
-              className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold transition-all duration-150"
-              style={
-                !alertSaving
-                  ? { background: "var(--green)", color: "var(--bg)" }
-                  : { border: "1px solid var(--border-dim)", color: "var(--text-muted)", opacity: 0.5 }
-              }
-            >
-              {alertSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : alertSaved ? <Check className="w-3.5 h-3.5" /> : <Bell className="w-3.5 h-3.5" />}
-              {alertSaving ? "Saving…" : alertSaved ? "Saved!" : "Save Alert Rules"}
-            </button>
-          </div>
-        </div>
+            </>
           ) : (
-            <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
+            <p className="text-xs" style={{ color: "var(--text-muted)" }}>
               Alert notifications are disabled for demo accounts.
             </p>
           )}

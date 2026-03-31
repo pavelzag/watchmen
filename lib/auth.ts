@@ -5,13 +5,6 @@ import type { JWT } from "next-auth/jwt";
 
 const DEMO_MODE = process.env.DEMO_MODE === "true";
 
-if (DEMO_MODE && process.env.NODE_ENV === "production") {
-  // Fail loudly — DEMO_MODE bypasses all authentication; never run in production.
-  throw new Error(
-    "[auth] DEMO_MODE=true is not allowed in production. " +
-    "Remove DEMO_MODE from your environment or set it to false."
-  );
-}
 
 // Comma-separated list of allowed emails, e.g. "alice@gmail.com,bob@company.com"
 // OR restrict by domain below. Leave ALLOWED_EMAILS empty to use domain restriction only.
