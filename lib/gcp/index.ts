@@ -70,6 +70,29 @@ export async function fetchGcpSnapshot(options?: { accessToken?: string; service
     getLoadBalancers(projectIds, mock),
   ]);
 
+  // Enrich SA roles from project IAM bindings.
+  // getRealServiceAccounts returns roles:[] because the list API doesn't
+  // include project-level role assignments. Cross-reference here so that
+  // attack-path generators (saPrivilege checks) work on real GCP data.
+  if (!mock) {
+    const saRoleMap = new Map<string, Set<string>>();
+    for (const project of projects) {
+      for (const binding of project.bindings) {
+        for (const member of binding.members) {
+          if (member.startsWith("serviceAccount:")) {
+            const email = member.slice("serviceAccount:".length);
+            if (!saRoleMap.has(email)) saRoleMap.set(email, new Set());
+            saRoleMap.get(email)!.add(binding.role);
+          }
+        }
+      }
+    }
+    for (const sa of serviceAccounts) {
+      const roles = saRoleMap.get(sa.email);
+      if (roles && roles.size > 0) sa.roles = Array.from(roles);
+    }
+  }
+
   return {
     snapshotId: crypto.randomUUID(),
     projects,

@@ -221,8 +221,9 @@ function pathsPublicBucket(snapshot: GcpSnapshot, saByEmail: Map<string, Service
     const pubRoles = publicRoles(bucket.iamPolicy.bindings);
     if (pubRoles.length === 0) continue;
 
-    const writeable = pubRoles.some((r) =>
-      r.includes("admin") || r.includes("creator") || r.includes("owner") || r === "storage.objectUser"
+    const rl = pubRoles.map((r) => r.toLowerCase());
+    const writeable = rl.some((r) =>
+      r.includes("admin") || r.includes("creator") || r.includes("owner") || r === "storage.objectuser"
     );
 
     if (writeable) {
@@ -231,12 +232,57 @@ function pathsPublicBucket(snapshot: GcpSnapshot, saByEmail: Map<string, Service
         sa.projectId === bucket.projectId && saPrivilege(sa) !== null
       );
 
-      for (const sa of adminSas.slice(0, 2)) {
+      if (adminSas.length > 0) {
+        for (const sa of adminSas.slice(0, 2)) {
+          paths.push({
+            id: `bucket-write-sa:${bucket.name}:${sa.email}`,
+            severity: "critical",
+            title: "Public Writable Bucket → SA Privilege Escalation",
+            description: `Bucket "${bucket.name}" is publicly writable (roles: ${pubRoles.join(", ")}). An attacker can upload malicious objects. Service account "${sa.email}" has ${saPrivilege(sa)} access and could read or execute content from this bucket, enabling privilege escalation.`,
+            nodes: [
+              {
+                id: "internet",
+                kind: "entry",
+                resourceType: "internet",
+                label: "Internet",
+                detail: "Any unauthenticated user",
+                projectId: bucket.projectId,
+                risk: "No authentication required to write",
+              },
+              {
+                id: `bucket:${bucket.name}`,
+                kind: "entry",
+                resourceType: "storage_bucket",
+                label: bucket.name,
+                detail: `Public roles: ${pubRoles.join(", ")}`,
+                projectId: bucket.projectId,
+                risk: "World-writable — attacker can plant malicious content",
+              },
+              saNode(sa, `SA with ${saPrivilege(sa)} permissions can read/execute bucket content`),
+              {
+                id: `target:project:${sa.projectId}`,
+                kind: "target",
+                resourceType: "project",
+                label: `Project ${sa.projectId}`,
+                detail: "Full project access",
+                projectId: sa.projectId,
+                risk: "Attacker can escalate to full project control",
+              },
+            ],
+            mitigations: [
+              `Remove allUsers / allAuthenticatedUsers write permissions from bucket "${bucket.name}" immediately.`,
+              `Enable Object Versioning and audit logs on the bucket.`,
+              `Replace "${sa.email}" ${saPrivilege(sa)} role with least-privilege roles.`,
+            ],
+          });
+        }
+      } else {
+        // No privileged SAs found in scope, but bucket is still publicly writable — surface as critical
         paths.push({
-          id: `bucket-write-sa:${bucket.name}:${sa.email}`,
+          id: `bucket-write:${bucket.name}`,
           severity: "critical",
-          title: "Public Writable Bucket → SA Privilege Escalation",
-          description: `Bucket "${bucket.name}" is publicly writable (roles: ${pubRoles.join(", ")}). An attacker can upload malicious objects. Service account "${sa.email}" has ${saPrivilege(sa)} access and could read or execute content from this bucket, enabling privilege escalation.`,
+          title: "Public Writable Bucket → Unauthorized Data Tampering",
+          description: `Bucket "${bucket.name}" is publicly writable (roles: ${pubRoles.join(", ")}). Any attacker on the internet can upload, overwrite, or delete objects without authentication.`,
           nodes: [
             {
               id: "internet",
@@ -249,28 +295,18 @@ function pathsPublicBucket(snapshot: GcpSnapshot, saByEmail: Map<string, Service
             },
             {
               id: `bucket:${bucket.name}`,
-              kind: "entry",
+              kind: "target",
               resourceType: "storage_bucket",
               label: bucket.name,
               detail: `Public roles: ${pubRoles.join(", ")}`,
               projectId: bucket.projectId,
-              risk: "World-writable — attacker can plant malicious content",
-            },
-            saNode(sa, `SA with ${saPrivilege(sa)} permissions can read/execute bucket content`),
-            {
-              id: `target:project:${sa.projectId}`,
-              kind: "target",
-              resourceType: "project",
-              label: `Project ${sa.projectId}`,
-              detail: "Full project access",
-              projectId: sa.projectId,
-              risk: "Attacker can escalate to full project control",
+              risk: "World-writable — attacker can plant or destroy content",
             },
           ],
           mitigations: [
             `Remove allUsers / allAuthenticatedUsers write permissions from bucket "${bucket.name}" immediately.`,
             `Enable Object Versioning and audit logs on the bucket.`,
-            `Replace "${sa.email}" ${saPrivilege(sa)} role with least-privilege roles.`,
+            `Use signed URLs for time-limited uploads instead of open IAM bindings.`,
           ],
         });
       }

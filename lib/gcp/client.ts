@@ -94,8 +94,15 @@ export function logFetchWarning(fetcher: string, projectId: string, reason: unkn
     msg.includes("not enabled") ||
     msg.includes("has not enabled") ||
     msg.includes("BigQuery is not enabled");
+  const isAuthError =
+    msg.includes("Invalid Credentials") ||
+    msg.includes("invalid_grant") ||
+    msg.includes("Token has been expired") ||
+    msg.includes("UNAUTHENTICATED");
   if (isExpected) {
     console.info(`[${fetcher}] skipping ${projectId}: API not enabled`);
+  } else if (isAuthError) {
+    console.error(`[${fetcher}] AUTH ERROR for ${projectId} — session token expired or missing scope: ${msg}`);
   } else {
     console.warn(`[${fetcher}] ${projectId} warning:`, reason);
   }

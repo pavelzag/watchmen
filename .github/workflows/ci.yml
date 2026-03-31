@@ -7,6 +7,15 @@ on:
     branches: [main]
 
 jobs:
+  socket-security:
+    name: Socket Security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: socket-security/socket-action@v2
+        with:
+          api-key: ${{ secrets.SOCKET_SECURITY_API_KEY }}
+
   typecheck-lint:
     name: Type-check & Lint
     runs-on: ubuntu-latest

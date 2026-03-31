@@ -242,45 +242,9 @@ resource "google_project_iam_member" "attack_owner_iam" {
   member  = "serviceAccount:${google_service_account.attack_owner_sa.email}"
 }
 
-# ── SCENARIO 12 ──────────────────────────────────────────────────────────────
-# Secret Manager secret readable by allUsers — unauthenticated secret access
-# Triggers: HIGH  secret_public
-
-resource "google_secret_manager_secret" "attack_public_api_key" {
-  secret_id = "wm-attack-public-api-key"
-  replication { auto {} }
-}
-
-resource "google_secret_manager_secret_version" "attack_public_api_key" {
-  secret      = google_secret_manager_secret.attack_public_api_key.id
-  secret_data = "demo-public-secret-not-real"
-}
-
-resource "google_secret_manager_secret_iam_member" "attack_public_api_key_allUsers" {
-  secret_id = google_secret_manager_secret.attack_public_api_key.id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "allUsers"
-}
-
-# ── SCENARIO 13 ──────────────────────────────────────────────────────────────
-# Secret Manager secret readable by allAuthenticatedUsers
-# Triggers: HIGH  secret_public
-
-resource "google_secret_manager_secret" "attack_public_oauth_token" {
-  secret_id = "wm-attack-public-oauth-token"
-  replication { auto {} }
-}
-
-resource "google_secret_manager_secret_version" "attack_public_oauth_token" {
-  secret      = google_secret_manager_secret.attack_public_oauth_token.id
-  secret_data = "demo-oauth-token-not-real"
-}
-
-resource "google_secret_manager_secret_iam_member" "attack_public_oauth_token_allAuth" {
-  secret_id = google_secret_manager_secret.attack_public_oauth_token.id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "allAuthenticatedUsers"
-}
+# ── SCENARIO 12 & 13 ─────────────────────────────────────────────────────────
+# NOTE: Skipped — GCP org policy on this project blocks allUsers /
+# allAuthenticatedUsers IAM members on Secret Manager secrets.
 
 # ── SCENARIO 14 ──────────────────────────────────────────────────────────────
 # Cloud Run service with high-entropy database password in plaintext env var
@@ -370,6 +334,7 @@ resource "google_cloud_run_v2_service" "attack_public_internal_api" {
   location = var.region
 
   template {
+    service_account = google_service_account.attack_escalation_sa.email
     containers {
       image = "us-docker.pkg.dev/cloudrun/container/hello"
 
@@ -383,6 +348,8 @@ resource "google_cloud_run_v2_service" "attack_public_internal_api" {
       max_instance_count = 1
     }
   }
+
+  depends_on = [google_project_iam_member.attack_escalation_editor]
 }
 
 resource "google_cloud_run_v2_service_iam_member" "attack_public_internal_api_allUsers" {
@@ -402,6 +369,7 @@ resource "google_cloud_run_v2_service" "attack_public_api" {
   location = var.region
 
   template {
+    service_account = google_service_account.attack_owner_sa.email
     containers {
       image = "us-docker.pkg.dev/cloudrun/container/hello"
 
@@ -415,6 +383,8 @@ resource "google_cloud_run_v2_service" "attack_public_api" {
       max_instance_count = 1
     }
   }
+
+  depends_on = [google_project_iam_member.attack_owner_iam]
 }
 
 resource "google_cloud_run_v2_service_iam_member" "attack_public_api_allUsers" {
@@ -423,6 +393,43 @@ resource "google_cloud_run_v2_service_iam_member" "attack_public_api_allUsers" {
   name     = google_cloud_run_v2_service.attack_public_api.name
   role     = "roles/run.invoker"
   member   = "allUsers"
+}
+
+# ── SCENARIO 21 ──────────────────────────────────────────────────────────────
+# VM with external IP + privileged SA — completes the firewall → VM → SA chain.
+# Combined with the open firewall rules above (scenarios 3–6), this triggers
+# the "Internet → Open Firewall → VM → Privileged SA" attack path.
+
+resource "google_compute_instance" "attack_privileged_vm" {
+  name         = "wm-attack-privileged-vm"
+  machine_type = "e2-micro"
+  zone         = var.zone
+
+  scheduling {
+    preemptible         = true
+    automatic_restart   = false
+    on_host_maintenance = "TERMINATE"
+  }
+
+  boot_disk {
+    initialize_params {
+      image = "debian-cloud/debian-12"
+      size  = 10
+      type  = "pd-standard"
+    }
+  }
+
+  network_interface {
+    network = "default"
+    access_config {}  # ephemeral public IP
+  }
+
+  service_account {
+    email  = google_service_account.attack_escalation_sa.email
+    scopes = ["https://www.googleapis.com/auth/cloud-platform"]
+  }
+
+  depends_on = [google_project_iam_member.attack_escalation_editor]
 }
 
 # ── SCENARIO 19 ──────────────────────────────────────────────────────────────

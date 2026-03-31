@@ -20,14 +20,33 @@ async function getRealCloudRunServices(projectIds: string[]): Promise<CloudRunSe
       for (const svc of res.data.items ?? []) {
         const nameParts = (svc.metadata?.name ?? "").split("/");
         const locationParts = (svc.metadata?.namespace ?? "").split("/");
+        const svcName = nameParts[nameParts.length - 1] ?? svc.metadata?.name ?? "";
+        const region = locationParts[locationParts.length - 1] ?? svc.metadata?.labels?.["cloud.googleapis.com/location"] ?? "";
+
+        // Fetch IAM policy for this service so pathsPublicCloudRunSa can detect allUsers bindings
+        let iamBindings: { role: string; members: string[] }[] = [];
+        if (svcName && region) {
+          try {
+            const iamRes = await run.projects.locations.services.getIamPolicy({
+              resource: `projects/${projectId}/locations/${region}/services/${svcName}`,
+            });
+            iamBindings = (iamRes.data.bindings ?? []).map((b) => ({
+              role: b.role ?? "",
+              members: b.members ?? [],
+            }));
+          } catch {
+            // IAM fetch failure is non-fatal — service is included without policy
+          }
+        }
+
         services.push({
-          name: nameParts[nameParts.length - 1] ?? svc.metadata?.name ?? "",
+          name: svcName,
           projectId,
-          region: locationParts[locationParts.length - 1] ?? "",
+          region,
           url: svc.status?.url ?? undefined,
           status: svc.status?.conditions?.[0]?.status === "True" ? "ACTIVE" : "INACTIVE",
           serviceAccount: svc.spec?.template?.spec?.serviceAccountName ?? undefined,
-          iamPolicy: { bindings: [] },
+          iamPolicy: { bindings: iamBindings },
           envVars: Object.fromEntries(
             (svc.spec?.template?.spec?.containers?.[0]?.env ?? [])
               .filter((e) => e.name != null && e.value !== undefined)
