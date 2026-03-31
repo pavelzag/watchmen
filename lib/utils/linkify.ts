@@ -59,8 +59,9 @@ export function linkifyText(
         // Boundary check to avoid matching parts of words
         const regex = new RegExp(`(^|[^\\w@./:-])${esc}(?=[^\\w@./:"'>-]|$)`, "gm");
 
+        const safeDisplayName = item.name.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
         out = out.replace(regex, (_, pre) =>
-            `${pre}<a href="${href}" style="${linkStyle}">${item.name}</a>`
+            `${pre}<a href="${href}" style="${linkStyle}">${safeDisplayName}</a>`
         );
     }
     return out;

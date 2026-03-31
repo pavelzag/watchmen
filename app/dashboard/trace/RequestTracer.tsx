@@ -858,9 +858,10 @@ function NodeDetail({
   }
 
   function renderAiMd(text: string): string {
-    return text
+    const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    return escapeHtml(text)
       .replace(/```[\w]*\n?([\s\S]*?)```/g, (_, code) =>
-        `<pre class="bg-[#0d0d0d] border border-slate-800 px-2 py-1.5 text-[9px] font-mono text-slate-300 overflow-x-auto my-1.5 whitespace-pre-wrap">${code.trim()}</pre>`
+        `<pre class="bg-[#0d0d0d] border border-slate-800 px-2 py-1.5 text-[9px] font-mono text-slate-300 overflow-x-auto my-1.5 whitespace-pre-wrap">${code}</pre>`
       )
       .replace(/`([^`]+)`/g, '<code class="px-1 rounded bg-slate-800 text-sky-300 text-[9px] font-mono">$1</code>')
       .replace(/^### (.+)$/gm, '<p class="text-[9px] font-semibold text-slate-300 uppercase tracking-wider mt-2.5 mb-0.5">$1</p>')

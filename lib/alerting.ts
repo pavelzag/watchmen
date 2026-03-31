@@ -8,6 +8,8 @@ export interface AlertRules {
   webhookUrl: string;
   onNewCritical: boolean;
   onNewHigh: boolean;
+  slackBotToken?: string;
+  slackChannelId?: string;
 }
 
 export interface AlertFinding {
@@ -125,7 +127,26 @@ export async function fireWebhook(url: string, payload: object): Promise<void> {
 }
 
 /**
- * Evaluate alert rules, fire webhook if needed.
+ * Post a message to Slack using a bot token via chat.postMessage.
+ */
+export async function postToSlack(token: string, channel: string, payload: object): Promise<void> {
+  const res = await fetch("https://slack.com/api/chat.postMessage", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ channel, ...payload }),
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.ok) {
+    throw new Error(`Slack API error: ${data.error ?? res.status}`);
+  }
+}
+
+/**
+ * Evaluate alert rules, fire webhook or Slack bot message if needed.
  * Returns the list of new alerted findings.
  */
 export async function evaluateAlerts(
@@ -133,13 +154,21 @@ export async function evaluateAlerts(
   currentFindings: AlertFinding[],
   previousIds: string[]
 ): Promise<AlertFinding[]> {
-  if (!rules.webhookUrl) return [];
+  const hasSlack = rules.slackBotToken && rules.slackChannelId;
+  if (!rules.webhookUrl && !hasSlack) return [];
 
   const newFindings = diffFindings(currentFindings, previousIds);
   const toAlert = filterByRules(newFindings, rules);
 
   if (toAlert.length === 0) return [];
 
-  await fireWebhook(rules.webhookUrl, buildPayload(toAlert));
+  const payload = buildPayload(toAlert);
+
+  if (hasSlack) {
+    await postToSlack(rules.slackBotToken!, rules.slackChannelId!, payload);
+  } else {
+    await fireWebhook(rules.webhookUrl, payload);
+  }
+
   return toAlert;
 }

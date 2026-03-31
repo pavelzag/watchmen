@@ -1,6 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 
+// Blocked headers — never forward credentials or host overrides to upstream.
+const BLOCKED_HEADERS = new Set(["authorization", "cookie", "host", "x-forwarded-for", "x-real-ip"]);
+
+function isBlockedUrl(rawUrl: string): boolean {
+  let parsed: URL;
+  try { parsed = new URL(rawUrl); } catch { return true; }
+  if (parsed.protocol !== "https:") return true;
+  const h = parsed.hostname.toLowerCase();
+  // Metadata endpoints
+  if (h === "169.254.169.254" || h === "metadata.google.internal" || h === "metadata.internal") return true;
+  // Loopback / link-local
+  if (h === "localhost" || h === "127.0.0.1" || h === "::1" || h === "0.0.0.0") return true;
+  // RFC-1918 private ranges
+  if (/^10\./.test(h)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return true;
+  if (/^192\.168\./.test(h)) return true;
+  return false;
+}
+
 export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session?.user) {
@@ -12,6 +31,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "url is required" }, { status: 400 });
   }
 
+  if (isBlockedUrl(url)) {
+    return NextResponse.json({ error: "URL not allowed" }, { status: 400 });
+  }
+
+  // Strip blocked headers from caller-supplied headers
+  const safeHeaders: Record<string, string> = {};
+  if (reqHeaders && typeof reqHeaders === "object") {
+    for (const [k, v] of Object.entries(reqHeaders)) {
+      if (!BLOCKED_HEADERS.has(k.toLowerCase())) {
+        safeHeaders[k] = String(v);
+      }
+    }
+  }
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15_000);
   const start = Date.now();
@@ -20,7 +53,7 @@ export async function POST(req: NextRequest) {
     const fetchOptions: RequestInit = {
       method: method.toUpperCase(),
       signal: controller.signal,
-      headers: { "Content-Type": "application/json", ...(reqHeaders ?? {}) },
+      headers: { "Content-Type": "application/json", ...safeHeaders },
     };
 
     if (body !== undefined && method !== "GET" && method !== "HEAD") {

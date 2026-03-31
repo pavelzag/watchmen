@@ -51,8 +51,13 @@ function resourceHref(item: ResourceItem): string {
     return `${base}?search=${encodeURIComponent(item.name)}`;
 }
 
+function escapeHtml(s: string): string {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 function renderMarkdown(text: string): string {
-    return text
+    const safe = escapeHtml(text);
+    return safe
         .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
         .replace(/\*(.*?)\*/g, "<em>$1</em>")
         .replace(/^- (.+)$/gm, "<li>$1</li>")
@@ -274,7 +279,7 @@ export default function CommandPalette() {
                             </p>
                             <div
                                 className="prose-answer text-[11px] md:text-xs leading-relaxed break-words"
-                                dangerouslySetInnerHTML={{ __html: renderMarkdown(linkifyText(result.answer, result.resources ?? [], resourceHref)) }}
+                                dangerouslySetInnerHTML={{ __html: linkifyText(renderMarkdown(result.answer), result.resources ?? [], resourceHref) }}
                             />
                             <div className="mt-3 pt-2 text-xs" style={{ borderTop: "1px solid #003010", color: "#005c16" }}>
               // query saved to history · close overlay to return to dashboard

@@ -48,8 +48,13 @@ function ResourceIcon({ type }: { type: ResourceItem["type"] }) {
   return <cfg.Icon className="w-3 h-3 shrink-0" style={{ color: "#005c16" }} />;
 }
 
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 function renderMarkdown(text: string): string {
-  return text
+  const safe = escapeHtml(text);
+  return safe
     .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.*?)\*/g, "<em>$1</em>")
     .replace(/^- (.+)$/gm, "<li>$1</li>")
@@ -97,7 +102,7 @@ export default function ResultCard({ result, index }: ResultCardProps) {
       <div className="px-3 md:px-4 py-3">
         <div
           className="prose-answer text-xs md:text-sm leading-relaxed break-words"
-          dangerouslySetInnerHTML={{ __html: renderMarkdown(linkifyResources(result.answer, resources)) }}
+          dangerouslySetInnerHTML={{ __html: linkifyResources(renderMarkdown(result.answer), resources) }}
         />
       </div>
 

@@ -138,7 +138,7 @@ function PathCard({ path, index }: { path: AttackPath; index: number }) {
           </p>
 
           {/* Node chain */}
-          <div className="flex items-center gap-0 flex-wrap mb-6" style={{ overflowX: "auto" }}>
+          <div className="flex items-center gap-0 flex-wrap mb-6" style={{ overflowX: "auto", paddingTop: 12 }}>
             {path.nodes.map((node, i) => (
               <div key={node.id} className="flex items-center gap-0">
                 <NodeCard node={node} />

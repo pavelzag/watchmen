@@ -1,12 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/lib/auth";
 
 export async function POST(req: NextRequest) {
+    const session = await auth();
+    if (!session?.user) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     try {
         const body = await req.json();
-        const { target_url, data: payloadData, id: requestId } = body;
+        const { data: payloadData, id: requestId } = body;
 
-        // Priority: target_url from body, then PROCESSOR_URL from env
-        const finalTargetUrl = target_url || process.env['PROCESSOR_URL'];
+        // Only use the server-configured PROCESSOR_URL — never a client-supplied URL.
+        const finalTargetUrl = process.env['PROCESSOR_URL'];
 
         if (finalTargetUrl) {
             try {

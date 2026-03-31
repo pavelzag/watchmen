@@ -11,6 +11,8 @@ dist/
 # Environment files (NEVER commit these)
 .env
 .env.local
+.env.local_bk
+
 .env.*.local
 *.json.key
 key.json

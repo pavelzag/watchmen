@@ -71,6 +71,9 @@ export async function ensureAlertRulesTable(): Promise<void> {
       updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `;
+  // Migrate: add Slack bot token columns if they don't exist yet
+  await sql`ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS slack_bot_token TEXT NOT NULL DEFAULT ''`;
+  await sql`ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS slack_channel_id TEXT NOT NULL DEFAULT ''`;
 }
 
 /**

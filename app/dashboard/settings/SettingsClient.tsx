@@ -123,6 +123,8 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
 
   // Alert notifications state
   const [alertWebhook, setAlertWebhook] = useState("");
+  const [alertSlackToken, setAlertSlackToken] = useState("");
+  const [alertSlackChannel, setAlertSlackChannel] = useState("");
   const [alertOnCritical, setAlertOnCritical] = useState(true);
   const [alertOnHigh, setAlertOnHigh] = useState(false);
   const [alertSaving, setAlertSaving] = useState(false);
@@ -130,6 +132,7 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
   const [alertSaved, setAlertSaved] = useState(false);
   const [alertError, setAlertError] = useState<string | null>(null);
   const [alertTestResult, setAlertTestResult] = useState<"ok" | "fail" | null>(null);
+  const [showSlackToken, setShowSlackToken] = useState(false);
 
   useEffect(() => {
     fetch("/api/settings/keys")
@@ -164,6 +167,8 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
           setAlertWebhook(d.webhookUrl);
           setAlertOnCritical(d.onNewCritical);
           setAlertOnHigh(d.onNewHigh);
+          setAlertSlackToken(d.slackBotToken ?? "");
+          setAlertSlackChannel(d.slackChannelId ?? "");
         }
       })
       .catch(() => { });
@@ -177,7 +182,7 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
       const res = await fetch("/api/alerts/rules", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ webhookUrl: alertWebhook, onNewCritical: alertOnCritical, onNewHigh: alertOnHigh }),
+        body: JSON.stringify({ webhookUrl: alertWebhook, onNewCritical: alertOnCritical, onNewHigh: alertOnHigh, slackBotToken: alertSlackToken, slackChannelId: alertSlackChannel }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to save");
@@ -198,7 +203,7 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
       const res = await fetch("/api/alerts/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ webhookUrl: alertWebhook }),
+        body: JSON.stringify({ webhookUrl: alertWebhook, slackBotToken: alertSlackToken, slackChannelId: alertSlackChannel }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Test failed");
@@ -1011,26 +1016,56 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
           </div>
 
           <div className="space-y-3 p-4" style={{ border: "1px solid var(--border-dim)", background: "var(--bg-card)" }}>
-            {/* Webhook URL */}
+            {/* Slack Bot Token */}
             <div className="space-y-1.5">
               <label className="text-[11px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>
-                Webhook URL
+                Slack Bot Token
+              </label>
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <input
+                    type={showSlackToken ? "text" : "password"}
+                    value={alertSlackToken}
+                    onChange={(e) => setAlertSlackToken(e.target.value)}
+                    placeholder="xoxb-..."
+                    className="w-full px-3 py-2 bg-transparent border text-xs placeholder:opacity-30 outline-none font-mono pr-8"
+                    style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowSlackToken((v) => !v)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 opacity-40 hover:opacity-80"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    {showSlackToken ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                  </button>
+                </div>
+              </div>
+              <p className="text-[10px] uppercase tracking-wider" style={{ color: "var(--border-dim)" }}>
+                From api.slack.com/apps → OAuth &amp; Permissions → Bot User OAuth Token
+              </p>
+            </div>
+
+            {/* Slack Channel ID */}
+            <div className="space-y-1.5">
+              <label className="text-[11px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>
+                Slack Channel ID
               </label>
               <div className="flex gap-2">
                 <input
-                  type="url"
-                  value={alertWebhook}
-                  onChange={(e) => setAlertWebhook(e.target.value)}
-                  placeholder="https://hooks.slack.com/services/..."
+                  type="text"
+                  value={alertSlackChannel}
+                  onChange={(e) => setAlertSlackChannel(e.target.value)}
+                  placeholder="C08XXXXXXXXX"
                   className="flex-1 px-3 py-2 bg-transparent border text-xs placeholder:opacity-30 outline-none font-mono"
                   style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
                 />
                 <button
                   onClick={testWebhook}
-                  disabled={!alertWebhook.trim() || alertTesting}
+                  disabled={!(alertSlackToken.trim() && alertSlackChannel.trim()) || alertTesting}
                   className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold transition-all duration-150 whitespace-nowrap"
                   style={
-                    alertWebhook.trim() && !alertTesting
+                    alertSlackToken.trim() && alertSlackChannel.trim() && !alertTesting
                       ? { border: "1px solid var(--border-dim)", color: "var(--text-muted)" }
                       : { border: "1px solid var(--border-dim)", color: "var(--border-dim)", opacity: 0.5 }
                   }
@@ -1046,7 +1081,27 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
                 </button>
               </div>
               <p className="text-[10px] uppercase tracking-wider" style={{ color: "var(--border-dim)" }}>
-                Compatible with Slack Incoming Webhooks and any JSON-accepting endpoint.
+                Right-click #alerts in Slack → View channel details → Channel ID
+              </p>
+            </div>
+
+            {/* Webhook URL (fallback) */}
+            <div className="space-y-1.5">
+              <label className="text-[11px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>
+                Webhook URL <span className="normal-case opacity-50">(alternative)</span>
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="url"
+                  value={alertWebhook}
+                  onChange={(e) => setAlertWebhook(e.target.value)}
+                  placeholder="https://hooks.slack.com/services/..."
+                  className="flex-1 px-3 py-2 bg-transparent border text-xs placeholder:opacity-30 outline-none font-mono"
+                  style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
+                />
+              </div>
+              <p className="text-[10px] uppercase tracking-wider" style={{ color: "var(--border-dim)" }}>
+                Compatible with Slack Incoming Webhooks and any JSON-accepting endpoint. Bot token takes priority.
               </p>
             </div>
 

@@ -24,12 +24,20 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // Removes characters that can escape a GCP Logging quoted filter value.
+  function sanitizeFilterValue(v: string): string {
+    return v.replace(/["\\]/g, "");
+  }
+
+  const ALLOWED_RESOURCE_TYPES = new Set(["k8s_container", "cloud_run_revision", "gce_instance"]);
+
   const { searchParams } = new URL(req.url);
   const projectId    = searchParams.get("projectId");
-  const resourceType = searchParams.get("resourceType") ?? "k8s_container";
+  const rawResourceType = searchParams.get("resourceType") ?? "k8s_container";
+  const resourceType = ALLOWED_RESOURCE_TYPES.has(rawResourceType) ? rawResourceType : "k8s_container";
   const limit        = Math.min(Number(searchParams.get("limit") ?? "40"), 200);
-  const after        = searchParams.get("after") ?? "";
-  const before       = searchParams.get("before") ?? "";
+  const after        = sanitizeFilterValue(searchParams.get("after") ?? "");
+  const before       = sanitizeFilterValue(searchParams.get("before") ?? "");
 
   if (!projectId) {
     return NextResponse.json({ error: "projectId is required" }, { status: 400 });
@@ -78,9 +86,9 @@ export async function GET(req: NextRequest) {
     const filters: string[] = [`resource.type="${resourceType}"`];
 
     if (resourceType === "k8s_container") {
-      const namespace        = searchParams.get("namespace") ?? "watchmen";
-      const container        = searchParams.get("container") ?? "";
-      const excludeContainer = searchParams.get("excludeContainer") ?? "";
+      const namespace        = sanitizeFilterValue(searchParams.get("namespace") ?? "watchmen");
+      const container        = sanitizeFilterValue(searchParams.get("container") ?? "");
+      const excludeContainer = sanitizeFilterValue(searchParams.get("excludeContainer") ?? "");
       filters.push(`resource.labels.project_id="${projectId}"`);
       filters.push(`resource.labels.namespace_name="${namespace}"`);
       if (container)        filters.push(`resource.labels.container_name="${container}"`);
@@ -88,16 +96,16 @@ export async function GET(req: NextRequest) {
       filters.push(`(severity="INFO" OR severity="DEFAULT" OR severity="NOTICE" OR severity="WARNING" OR severity="ERROR")`);
 
     } else if (resourceType === "cloud_run_revision") {
-      const service = searchParams.get("service") ?? "";
-      const region  = searchParams.get("region") ?? "";
+      const service = sanitizeFilterValue(searchParams.get("service") ?? "");
+      const region  = sanitizeFilterValue(searchParams.get("region") ?? "");
       if (service) filters.push(`resource.labels.service_name="${service}"`);
       if (region)  filters.push(`resource.labels.location="${region}"`);
       // Cloud Run logs include both application logs and request logs (httpRequest field)
       // Don't filter severity so we get httpRequest entries (they have severity DEFAULT)
 
     } else if (resourceType === "gce_instance") {
-      const instance = searchParams.get("instance") ?? "";
-      const zone     = searchParams.get("region") ?? ""; // we reuse "region" param for zone
+      const instance = sanitizeFilterValue(searchParams.get("instance") ?? "");
+      const zone     = sanitizeFilterValue(searchParams.get("region") ?? ""); // we reuse "region" param for zone
       if (instance) filters.push(`labels."compute.googleapis.com/resource_name"="${instance}"`);
       if (zone)     filters.push(`resource.labels.zone="${zone}"`);
       filters.push(`(severity="INFO" OR severity="DEFAULT" OR severity="NOTICE" OR severity="WARNING" OR severity="ERROR")`);
@@ -107,7 +115,6 @@ export async function GET(req: NextRequest) {
     if (before) filters.push(`timestamp <= "${before}"`);
 
     const filterStr = filters.join("\n");
-    console.log("[api/gcp/logs] filter:", filterStr);
 
     const res = await logging.entries.list({
       requestBody: {

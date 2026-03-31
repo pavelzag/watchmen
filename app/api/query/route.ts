@@ -27,11 +27,15 @@ export async function POST(req: NextRequest) {
   // Resolve the user's AI key: check body first (browser-only), then fallback to DB
   let provider: AIProvider;
   let apiKey: string;
+  const ALLOWED_PROVIDERS: AIProvider[] = ["openai", "anthropic", "google"];
   const browserKey = (body as any)?.demoCredentials?.aiKey;
   const browserProvider = (body as any)?.demoCredentials?.aiProvider;
 
   if (browserKey && browserProvider) {
-    provider = browserProvider;
+    if (!ALLOWED_PROVIDERS.includes(browserProvider)) {
+      return NextResponse.json({ error: "Invalid AI provider." }, { status: 400 });
+    }
+    provider = browserProvider as AIProvider;
     apiKey = browserKey;
   } else {
     try {
@@ -62,6 +66,12 @@ export async function POST(req: NextRequest) {
   }
 
   const query: string = body?.query?.trim();
+  if (!query || query.length < 3) {
+    return NextResponse.json({ error: "Query must be at least 3 characters." }, { status: 400 });
+  }
+  if (query.length > 500) {
+    return NextResponse.json({ error: "Query must be under 500 characters." }, { status: 400 });
+  }
 
   try {
     let gcpSnapshot;

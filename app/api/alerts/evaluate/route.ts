@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
     await ensureAlertRulesTable();
 
     const result = await sql`
-      SELECT webhook_url, on_new_critical, on_new_high, last_finding_ids
+      SELECT webhook_url, on_new_critical, on_new_high, last_finding_ids, slack_bot_token, slack_channel_id
       FROM alert_rules
       WHERE user_email = ${email}
     `;
@@ -36,6 +36,8 @@ export async function POST(req: NextRequest) {
       webhookUrl: row.webhook_url as string,
       onNewCritical: row.on_new_critical as boolean,
       onNewHigh: row.on_new_high as boolean,
+      slackBotToken: row.slack_bot_token as string,
+      slackChannelId: row.slack_channel_id as string,
     };
     const previousIds: string[] = (row.last_finding_ids as string[]) ?? [];
 
