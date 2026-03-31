@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import CloudShellProvider from "@/components/CloudShellProvider";
+import PostLoginSplash from "@/components/PostLoginSplash";
 
 export default async function DashboardLayout({
   children,
@@ -14,6 +15,7 @@ export default async function DashboardLayout({
 
   return (
     <CloudShellProvider>
+      <PostLoginSplash />
       <div className="min-h-screen" style={{ background: "#090909" }}>
         {session.isDemoUser && (
           <div

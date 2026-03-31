@@ -28,6 +28,11 @@ async function getRealCloudRunServices(projectIds: string[]): Promise<CloudRunSe
           status: svc.status?.conditions?.[0]?.status === "True" ? "ACTIVE" : "INACTIVE",
           serviceAccount: svc.spec?.template?.spec?.serviceAccountName ?? undefined,
           iamPolicy: { bindings: [] },
+          envVars: Object.fromEntries(
+            (svc.spec?.template?.spec?.containers?.[0]?.env ?? [])
+              .filter((e) => e.name != null && e.value !== undefined)
+              .map((e) => [e.name as string, e.value ?? ""] as [string, string])
+          ),
         });
       }
       return services;

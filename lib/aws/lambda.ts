@@ -63,6 +63,7 @@ async function getRealLambdaFunctions(creds?: AwsCredentials): Promise<AwsLambda
                 }
                 : undefined,
               tags: {},
+              envVars: fn.Environment?.Variables ?? undefined,
             };
           })
         );

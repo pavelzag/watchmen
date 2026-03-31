@@ -8,18 +8,28 @@ const MATRIX_CHARS = "アイウエオカキクケコサシスセソタチツテ�
 const STATUS_SIGNIN = [
   "INITIALIZING WATCHMEN v0.2.0...",
   "LOADING SECURITY MODULES...",
-  "CONNECTING TO CLOUD APIS...",
-  "SCANNING INFRASTRUCTURE...",
-  "VERIFYING CREDENTIALS...",
+  "ESTABLISHING ENCRYPTED CHANNEL...",
+  "CONNECTING TO GCP / AWS APIS...",
+  "LOADING IAM POLICY ENGINE...",
+  "SCANNING INFRASTRUCTURE TOPOLOGY...",
+  "CALIBRATING COMPLIANCE ENGINE...",
+  "LOADING FINDINGS DATABASE...",
+  "VERIFYING USER CREDENTIALS...",
+  "SETTING UP SECURE CONTEXT...",
   "ACCESS GRANTED",
 ];
 
 const STATUS_SIGNOUT = [
+  "INITIATING SECURE LOGOUT SEQUENCE...",
   "FLUSHING SESSION TOKENS...",
   "CLEARING CREDENTIAL CACHE...",
-  "REVOKING TEMPORARY ACCESS...",
-  "CLOSING SECURE CHANNELS...",
-  "WIPING LOCAL STATE...",
+  "REVOKING TEMPORARY ACCESS GRANTS...",
+  "CLOSING ENCRYPTED API CHANNELS...",
+  "PURGING LOCAL KEY STORES...",
+  "WIPING MEMORY BUFFERS...",
+  "UNREGISTERING CLOUD HOOKS...",
+  "TERMINATING BACKGROUND WORKERS...",
+  "ZEROING SENSITIVE DATA...",
   "SESSION TERMINATED",
 ];
 
@@ -94,6 +104,9 @@ export default function SplashScreen({ mode = "signin" }: { mode?: "signin" | "s
   useEffect(() => {
     let p = 0;
 
+    // Clear the post-login splash flag so it re-shows on next login
+    if (mode === "signout") sessionStorage.removeItem("wm_splash_shown");
+
     // Seed initial hex rows now that we're on the client
     setHexRows(Array.from({ length: 5 }, () => randomHex(8)));
 
@@ -126,9 +139,9 @@ export default function SplashScreen({ mode = "signin" }: { mode?: "signin" | "s
       setTimeout(() => setGlitch(false), 120);
     }, 600);
 
-    // Progress counter
+    // Progress counter — ~4 s to reach 100%, then 1.2 s pause, then 1 s fade = ~6 s total
     const progressTimer = setInterval(() => {
-      p += Math.random() * 5 + 1.2;
+      p += Math.random() * 1.8 + 0.5;   // avg ≈ 1.4 per tick @ 70 ms → ~5 ticks/s → ~14%/s → ~7 s raw; clamp gives ≈4 s
       if (p >= 100) {
         p = 100;
         clearInterval(progressTimer);
@@ -136,14 +149,14 @@ export default function SplashScreen({ mode = "signin" }: { mode?: "signin" | "s
         clearInterval(glitchTimer);
         clearInterval(hexTimer);
         setStatusIdx(STATUS_LINES.length - 1);
-        setTimeout(() => setFading(true), 700);
-        setTimeout(() => setVisible(false), 1600);
+        setTimeout(() => setFading(true), 1200);
+        setTimeout(() => setVisible(false), 2200);
         return;
       }
       setProgress(Math.min(Math.round(p), 100));
       const idx = Math.floor((p / 100) * (STATUS_LINES.length - 2));
       setStatusIdx(Math.min(idx, STATUS_LINES.length - 2));
-    }, 55);
+    }, 70);
 
     return () => {
       clearInterval(progressTimer);

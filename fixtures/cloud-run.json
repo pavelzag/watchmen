@@ -25,6 +25,12 @@
         { "role": "roles/run.invoker", "members": ["allUsers"] },
         { "role": "roles/run.admin", "members": ["user:zagalsky@gmail.com"] }
       ]
+    },
+    "envVars": {
+      "PORT": "8080",
+      "JWT_SECRET": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",
+      "OAUTH_CLIENT_SECRET": "G0pR3cret_ExAmple-oAuth2ClientSecretXyz987abcDEF",
+      "DATABASE_URL": "postgresql://authsvc:S3cur3P@ssw0rd!@10.0.1.5:5432/auth"
     }
   },
   {
@@ -147,6 +153,11 @@
         { "role": "roles/run.invoker", "members": ["allUsers"] },
         { "role": "roles/run.admin", "members": ["user:frank@acme.com"] }
       ]
+    },
+    "envVars": {
+      "SLACK_TOKEN": "xoxb-111111111111-222222222222-FAKESLACKTOKENEXAMPLE1234",
+      "SLACK_CHANNEL": "#alerts",
+      "SERVICE_ENV": "production"
     }
   },
   {

@@ -20,7 +20,7 @@ export function initGoogleAuth() {
 
   const auth = new google.auth.GoogleAuth({
     credentials,
-    scopes: ["https://www.googleapis.com/auth/cloud-platform.read-only"],
+    scopes: ["https://www.googleapis.com/auth/cloud-platform"],
   });
 
   // Set auth globally — avoids TypeScript overload issues on individual clients

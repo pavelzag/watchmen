@@ -17,7 +17,13 @@
       "subnetIds": ["subnet-prod-private-01"],
       "securityGroupIds": ["sg-prod-lambda-01"]
     },
-    "tags": { "env": "prod", "team": "backend" }
+    "tags": { "env": "prod", "team": "backend" },
+    "envVars": {
+      "NODE_ENV": "production",
+      "AWS_ACCESS_KEY_ID": "AKIAIOSFODNN7EXAMPLE",
+      "AWS_SECRET_ACCESS_KEY": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+      "LOG_LEVEL": "info"
+    }
   },
   {
     "functionName": "prod-image-processor",
@@ -32,7 +38,6 @@
     "memorySize": 1024,
     "state": "Active",
     "resourcePolicy": [],
-    "vpcConfig": null,
     "tags": { "env": "prod", "team": "media" }
   },
   {
@@ -55,7 +60,6 @@
         "resources": ["arn:aws:lambda:us-east-1:111111111111:function:prod-event-bridge-handler"]
       }
     ],
-    "vpcConfig": null,
     "tags": { "env": "prod", "team": "platform" }
   },
   {
@@ -76,7 +80,13 @@
       "subnetIds": ["subnet-staging-private-01"],
       "securityGroupIds": ["sg-staging-default-01"]
     },
-    "tags": { "env": "staging", "team": "data" }
+    "tags": { "env": "staging", "team": "data" },
+    "envVars": {
+      "ENVIRONMENT": "staging",
+      "DATABASE_PASSWORD": "Tr0ub4dor&3xampleP@ssw0rd!SecretValue99",
+      "DATABASE_URL": "postgresql://admin:Tr0ub4dor%26ExamplePass@db.internal:5432/datawarehouse",
+      "S3_BUCKET": "staging-data-sync-bucket"
+    }
   },
   {
     "functionName": "staging-notification-sender",
@@ -91,7 +101,11 @@
     "memorySize": 128,
     "state": "Active",
     "resourcePolicy": [],
-    "vpcConfig": null,
-    "tags": { "env": "staging", "team": "backend" }
+    "tags": { "env": "staging", "team": "backend" },
+    "envVars": {
+      "SENDGRID_API_KEY": "SG.nkjhJHBnkjhKJHBkjhKJHB.nkjhJHBnkjhKJHBkjhKJHBnkjhJHBkjh",
+      "FROM_EMAIL": "noreply@example.com",
+      "NODE_ENV": "staging"
+    }
   }
 ]

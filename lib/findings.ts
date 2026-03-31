@@ -1,4 +1,5 @@
 import type { GcpSnapshot, SecurityFinding } from "@/lib/gcp/types";
+import { scanEnvVars } from "@/lib/secrets-detection";
 
 const PUBLIC_MEMBERS = new Set(["allUsers", "allAuthenticatedUsers"]);
 
@@ -255,6 +256,26 @@ export function computeFindings(snapshot: GcpSnapshot): SecurityFinding[] {
         projectId: sa?.projectId ?? "unknown",
         resourceType: "service_account",
         remediationHint: `Remove "${email}" from all IAM bindings since it is disabled and should not have active permissions.`,
+      });
+    }
+  }
+
+  // ── SECRETS IN ENV VARS ───────────────────────────────────────────────────
+
+  // cloud_run_secret_env: Cloud Run services with secrets in environment variables
+  for (const svc of snapshot.cloudRunServices) {
+    if (!svc.envVars || Object.keys(svc.envVars).length === 0) continue;
+    const matches = scanEnvVars(svc.envVars);
+    for (const match of matches) {
+      findings.push({
+        id: `secret_in_env:cloudrun:${svc.projectId}:${svc.name}:${match.key}`,
+        severity: match.confidence === "high" ? "critical" : "high",
+        title: "Secret Detected in Cloud Run Environment Variable",
+        description: `Cloud Run service "${svc.name}" has a potential secret in env var "${match.key}" — detected pattern: ${match.patternLabel}. Value starts with: ${match.redactedValue}`,
+        resourceName: svc.name,
+        projectId: svc.projectId,
+        resourceType: "cloud_run",
+        remediationHint: `Move the value of "${match.key}" in service "${svc.name}" to Google Secret Manager and reference it as a mounted secret instead of a plain env var.`,
       });
     }
   }

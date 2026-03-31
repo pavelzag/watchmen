@@ -86,6 +86,8 @@ export interface CloudRunService {
   status: string;
   serviceAccount?: string;
   iamPolicy: { bindings: IamBinding[] };
+  /** Environment variables from the latest revision (may contain secrets) */
+  envVars?: Record<string, string>;
 }
 
 export interface CloudSqlInstance {

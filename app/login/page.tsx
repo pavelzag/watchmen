@@ -21,7 +21,7 @@ export default async function LoginPage({
       className="min-h-screen flex items-center justify-center"
       style={{ background: "#090909" }}
     >
-      <SplashScreen mode={signout === "1" ? "signout" : "signin"} />
+      {signout === "1" && <SplashScreen mode="signout" />}
       {/* Subtle grid background */}
       <div
         className="absolute inset-0 pointer-events-none"

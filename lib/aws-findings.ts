@@ -1,4 +1,5 @@
 import type { AwsSnapshot, AwsSecurityFinding } from "./aws/types";
+import { scanEnvVars } from "@/lib/secrets-detection";
 
 let _findingId = 0;
 function nextId(): string {
@@ -392,6 +393,27 @@ export function computeAwsFindings(snapshot: AwsSnapshot): AwsSecurityFinding[] 
         resourceType: "lambda_function",
         remediationHint:
           "Restrict the Lambda resource policy to specific AWS principals or services.",
+      });
+    }
+  }
+
+  // ── Secrets in Lambda env vars ───────────────────────────────────────────
+
+  // Rule: Lambda function with a detected secret in environment variables
+  for (const fn of snapshot.lambdaFunctions) {
+    if (!fn.envVars || Object.keys(fn.envVars).length === 0) continue;
+    const matches = scanEnvVars(fn.envVars);
+    for (const match of matches) {
+      findings.push({
+        id: `secret_in_env:lambda:${fn.accountId}:${fn.functionName}:${match.key}`,
+        severity: match.confidence === "high" ? "critical" : "high",
+        title: "Secret Detected in Lambda Environment Variable",
+        description: `Lambda function "${fn.functionName}" has a potential secret in env var "${match.key}" — detected pattern: ${match.patternLabel}. Value starts with: ${match.redactedValue}`,
+        resourceName: fn.functionName,
+        accountId: fn.accountId,
+        region: fn.region,
+        resourceType: "lambda_function",
+        remediationHint: `Move the value of "${match.key}" in function "${fn.functionName}" to AWS Secrets Manager or Parameter Store and reference it at runtime instead of storing it as a plain env var.`,
       });
     }
   }

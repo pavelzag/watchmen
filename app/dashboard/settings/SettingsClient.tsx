@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Eye, EyeOff, Trash2, Check, Loader2, AlertCircle, CheckCircle2, Star, Plus, X, ShieldCheck } from "lucide-react";
+import { ArrowLeft, Eye, EyeOff, Trash2, Check, Loader2, AlertCircle, CheckCircle2, Star, Plus, X, ShieldCheck, Bell, Send } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AIProvider, AIKeyRecord } from "@/lib/ai/client";
 import {
@@ -88,6 +88,7 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
   const [deleting, setDeleting] = useState<Record<AIProvider, boolean>>({ google: false, openai: false, anthropic: false });
   const [activating, setActivating] = useState<AIProvider | null>(null);
   const [errorLog, setErrorLog] = useState<ErrorEntry[]>([]);
+  const [activeTab, setActiveTab] = useState<"ai" | "integrations" | "alerts" | "diagnostics">("ai");
 
   // Server-backed cloud credentials state (non-demo users)
   const [cloudCreds, setCloudCreds] = useState<CloudCredRecord[]>([]);
@@ -95,9 +96,15 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
   const [gcpKeyInput, setGcpKeyInput] = useState("");
   const [awsInputs, setAwsInputs] = useState({ accessKeyId: "", secretAccessKey: "", region: "us-east-1" });
   const [showAwsSecret, setShowAwsSecret] = useState(false);
-  const [cloudSaving, setCloudSaving] = useState<Record<string, boolean>>({ gcp: false, aws: false });
-  const [cloudDeleting, setCloudDeleting] = useState<Record<string, boolean>>({ gcp: false, aws: false });
-  const [cloudErrors, setCloudErrors] = useState<Record<string, string>>({ gcp: "", aws: "" });
+  const [cloudSaving, setCloudSaving] = useState<Record<string, boolean>>({ gcp: false, aws: false, ghcr: false, dockerhub: false });
+  const [cloudDeleting, setCloudDeleting] = useState<Record<string, boolean>>({ gcp: false, aws: false, ghcr: false, dockerhub: false });
+  const [cloudErrors, setCloudErrors] = useState<Record<string, string>>({ gcp: "", aws: "", ghcr: "", dockerhub: "" });
+
+  const [ghcrToken, setGhcrToken] = useState("");
+  const [showGhcrToken, setShowGhcrToken] = useState(false);
+  
+  const [dockerHubInputs, setDockerHubInputs] = useState({ username: "", token: "" });
+  const [showDockerHubToken, setShowDockerHubToken] = useState(false);
 
   // Browser-only AI keys
   const [browserKeys, setBrowserKeys] = useState<BrowserAIKeys>({});
@@ -113,6 +120,16 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
   const [demoAwsInputs, setDemoAwsInputs] = useState({ accessKeyId: "", secretAccessKey: "", region: "us-east-1" });
   const [showDemoAwsSecret, setShowDemoAwsSecret] = useState(false);
   const [demoSaved, setDemoSaved] = useState<Record<string, boolean>>({ gcp: false, aws: false });
+
+  // Alert notifications state
+  const [alertWebhook, setAlertWebhook] = useState("");
+  const [alertOnCritical, setAlertOnCritical] = useState(true);
+  const [alertOnHigh, setAlertOnHigh] = useState(false);
+  const [alertSaving, setAlertSaving] = useState(false);
+  const [alertTesting, setAlertTesting] = useState(false);
+  const [alertSaved, setAlertSaved] = useState(false);
+  const [alertError, setAlertError] = useState<string | null>(null);
+  const [alertTestResult, setAlertTestResult] = useState<"ok" | "fail" | null>(null);
 
   useEffect(() => {
     fetch("/api/settings/keys")
@@ -136,6 +153,64 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
         .finally(() => setCloudLoading(false));
     }
   }, [isDemoUser]);
+
+  // Load alert rules
+  useEffect(() => {
+    if (isDemoUser) return;
+    fetch("/api/alerts/rules")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.webhookUrl !== undefined) {
+          setAlertWebhook(d.webhookUrl);
+          setAlertOnCritical(d.onNewCritical);
+          setAlertOnHigh(d.onNewHigh);
+        }
+      })
+      .catch(() => { });
+  }, [isDemoUser]);
+
+  async function saveAlertRules() {
+    setAlertSaving(true);
+    setAlertError(null);
+    setAlertSaved(false);
+    try {
+      const res = await fetch("/api/alerts/rules", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ webhookUrl: alertWebhook, onNewCritical: alertOnCritical, onNewHigh: alertOnHigh }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to save");
+      setAlertSaved(true);
+      setTimeout(() => setAlertSaved(false), 2000);
+    } catch (e) {
+      setAlertError(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setAlertSaving(false);
+    }
+  }
+
+  async function testWebhook() {
+    setAlertTesting(true);
+    setAlertTestResult(null);
+    setAlertError(null);
+    try {
+      const res = await fetch("/api/alerts/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ webhookUrl: alertWebhook }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Test failed");
+      setAlertTestResult("ok");
+      setTimeout(() => setAlertTestResult(null), 3000);
+    } catch (e) {
+      setAlertTestResult("fail");
+      setAlertError(e instanceof Error ? e.message : "Test failed");
+    } finally {
+      setAlertTesting(false);
+    }
+  }
 
   function addError(provider: string, message: string) {
     setErrorLog((prev) => [
@@ -233,18 +308,24 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
     }
   }
 
-  async function saveCloudCred(provider: "gcp" | "aws") {
+  async function saveCloudCred(provider: "gcp" | "aws" | "ghcr" | "dockerhub") {
     setCloudSaving((s) => ({ ...s, [provider]: true }));
     setCloudErrors((e) => ({ ...e, [provider]: "" }));
     try {
-      const credentials =
-        provider === "gcp"
-          ? { serviceAccountKey: gcpKeyInput.trim() }
-          : {
-            accessKeyId: awsInputs.accessKeyId.trim(),
-            secretAccessKey: awsInputs.secretAccessKey.trim(),
-            region: awsInputs.region.trim() || "us-east-1",
-          };
+      let credentials;
+      if (provider === "gcp") {
+        credentials = { serviceAccountKey: gcpKeyInput.trim() };
+      } else if (provider === "aws") {
+        credentials = {
+          accessKeyId: awsInputs.accessKeyId.trim(),
+          secretAccessKey: awsInputs.secretAccessKey.trim(),
+          region: awsInputs.region.trim() || "us-east-1",
+        };
+      } else if (provider === "ghcr") {
+        credentials = { token: ghcrToken.trim() };
+      } else if (provider === "dockerhub") {
+        credentials = { username: dockerHubInputs.username.trim(), token: dockerHubInputs.token.trim() };
+      }
       const res = await fetch("/api/settings/credentials", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -254,7 +335,9 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
       if (!res.ok) { setCloudErrors((e) => ({ ...e, [provider]: data.error ?? "Unknown error" })); return; }
       setCloudCreds(data.credentials);
       if (provider === "gcp") setGcpKeyInput("");
-      else setAwsInputs({ accessKeyId: "", secretAccessKey: "", region: "us-east-1" });
+      else if (provider === "aws") setAwsInputs({ accessKeyId: "", secretAccessKey: "", region: "us-east-1" });
+      else if (provider === "ghcr") setGhcrToken("");
+      else if (provider === "dockerhub") setDockerHubInputs({ username: "", token: "" });
     } catch (e) {
       setCloudErrors((err) => ({ ...err, [provider]: e instanceof Error ? e.message : "Network error" }));
     } finally {
@@ -262,7 +345,7 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
     }
   }
 
-  async function deleteCloudCred(provider: "gcp" | "aws") {
+  async function deleteCloudCred(provider: "gcp" | "aws" | "ghcr" | "dockerhub") {
     setCloudDeleting((d) => ({ ...d, [provider]: true }));
     try {
       const res = await fetch(`/api/settings/credentials/${provider}`, { method: "DELETE" });
@@ -325,9 +408,33 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
         </div>
       </div>
 
-      {/* No-key notice - REMOVED */}
+      {/* Tab Navigation */}
+      <div className="flex gap-6 border-b" style={{ borderColor: "var(--border-dim)" }}>
+        {(["ai", "integrations", "alerts", "diagnostics"] as const).map((tab) => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={cn(
+              "pb-3 text-xs font-bold uppercase tracking-widest transition-colors relative",
+              activeTab === tab ? "text-emerald-400" : "text-slate-500 hover:text-slate-300"
+            )}
+            style={activeTab === tab ? { color: "var(--green)" } : {}}
+          >
+            {tab === "ai" && "AI Models"}
+            {tab === "integrations" && "Integrations"}
+            {tab === "alerts" && "Alerts"}
+            {tab === "diagnostics" && "Diagnostics"}
+            {activeTab === tab && (
+              <div className="absolute bottom-[-1px] left-0 right-0 h-0.5" style={{ background: "var(--green)" }} />
+            )}
+          </button>
+        ))}
+      </div>
 
-      {/* Active key summary */}
+      {/* AI Block */}
+      {activeTab === "ai" && (
+        <div className="space-y-8 mt-6">
+          {/* Active key summary */}
       {activeKey && (
         <div className="flex items-center gap-2 px-3 py-2 border border-emerald-500/20" style={{ background: "rgba(16, 185, 129, 0.05)" }}>
           <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
@@ -462,18 +569,7 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
                         {isSaving ? "Testing…" : record ? "Update" : "Add & Test"}
                       </button>
                     </div>
-                    <label className={cn("flex items-center gap-2 group", isDemoUser ? "cursor-not-allowed" : "cursor-pointer")}>
-                      <input
-                        type="checkbox"
-                        disabled={isDemoUser}
-                        checked={saveToBrowser[prov.id]}
-                        onChange={(e) => setSaveToBrowser((s) => ({ ...s, [prov.id]: e.target.checked }))}
-                        className="w-3.5 h-3.5 border border-border-dim bg-transparent text-green-500 focus:ring-green-500/20 disabled:opacity-50"
-                      />
-                      <span className="text-[11px] transition-colors" style={{ color: "var(--text-muted)" }}>
-                        Save to this browser only
-                      </span>
-                    </label>
+
                   </div>
                   <p className="text-[10px] uppercase tracking-wider" style={{ color: "var(--border-dim)" }}>
                     Key is tested before saving and stored encrypted. Never shared with third parties.
@@ -484,8 +580,13 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
           </div>
         )}
       </div>
+        </div>
+      )}
 
-      {/* Cloud Credentials */}
+      {/* Integrations Block */}
+      {activeTab === "integrations" && (
+        <div className="space-y-8 mt-6">
+          {/* Cloud Credentials */}
       <div className="space-y-4">
         <div>
           <h2 className="text-xs font-bold uppercase tracking-widest" style={{ color: "var(--border-dim)" }}>Cloud Credentials</h2>
@@ -760,13 +861,256 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
                 </div>
               );
             })()}
+
+            {/* GHCR Card */}
+            {(() => {
+              const record = cloudCreds.find((c) => c.provider === "ghcr");
+              const isSaving = cloudSaving.ghcr;
+              const isDeleting = cloudDeleting.ghcr;
+              const error = cloudErrors.ghcr;
+              return (
+                <div className="border p-5 space-y-4 transition-all duration-150" style={{ background: "rgba(167, 139, 250, 0.05)", borderColor: "rgba(167, 139, 250, 0.2)" }}>
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 flex items-center justify-center text-sm font-bold text-white shrink-0 bg-violet-500 rounded text-center">GH</div>
+                      <div>
+                        <span className="text-sm font-bold text-violet-400">GitHub Container Registry</span>
+                        <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>Personal Access Token for GHCR scanning</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {record ? (
+                        <>
+                          <span className="flex items-center gap-1 text-xs" style={{ color: "var(--green)" }}>
+                            <Check className="w-3 h-3" /> Connected
+                          </span>
+                          <button onClick={() => deleteCloudCred("ghcr")} disabled={isDeleting} className="hover:text-red-400 transition-colors" style={{ color: "var(--text-muted)" }}>
+                            {isDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                          </button>
+                        </>
+                      ) : (
+                        <span className="text-xs shrink-0" style={{ color: "var(--text-muted)" }}>Not configured</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="relative">
+                      <input type={showGhcrToken ? "text" : "password"} value={ghcrToken} onChange={(e) => setGhcrToken(e.target.value)}
+                        placeholder={record ? "New GitHub PAT (leave blank to keep existing)" : "GitHub Personal Access Token (ghp_...)"}
+                        className="w-full pl-3 pr-9 py-2 bg-transparent border text-xs placeholder:opacity-30 outline-none font-mono"
+                        style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
+                      />
+                      <button type="button" onClick={() => setShowGhcrToken((s) => !s)} className="absolute right-2.5 top-1/2 -translate-y-1/2 hover:text-white transition-colors" style={{ color: "var(--text-muted)" }}>
+                        {showGhcrToken ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                    {error && <p className="text-xs text-red-400 font-mono">{error}</p>}
+                    <button
+                      onClick={() => saveCloudCred("ghcr")}
+                      disabled={!ghcrToken.trim() || isSaving}
+                      className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold transition-all duration-150"
+                      style={
+                        ghcrToken.trim() && !isSaving
+                          ? { background: "var(--green)", color: "var(--bg)" }
+                          : { border: "1px solid var(--border-dim)", color: "var(--text-muted)", opacity: 0.5 }
+                      }
+                    >
+                      {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                      {isSaving ? "Testing…" : record ? "Update & Test" : "Connect & Test"}
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Docker Hub Card */}
+            {(() => {
+              const record = cloudCreds.find((c) => c.provider === "dockerhub");
+              const isSaving = cloudSaving.dockerhub;
+              const isDeleting = cloudDeleting.dockerhub;
+              const error = cloudErrors.dockerhub;
+              return (
+                <div className="border p-5 space-y-4 transition-all duration-150" style={{ background: "rgba(56, 189, 248, 0.05)", borderColor: "rgba(56, 189, 248, 0.2)" }}>
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 flex items-center justify-center text-sm font-bold text-white shrink-0 bg-sky-500 rounded text-center">DH</div>
+                      <div>
+                        <span className="text-sm font-bold text-sky-400">Docker Hub</span>
+                        <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>Username & PAT for Docker Hub scanning</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {record ? (
+                        <>
+                          <span className="flex items-center gap-1 text-xs" style={{ color: "var(--green)" }}>
+                            <Check className="w-3 h-3" /> Connected
+                          </span>
+                          <button onClick={() => deleteCloudCred("dockerhub")} disabled={isDeleting} className="hover:text-red-400 transition-colors" style={{ color: "var(--text-muted)" }}>
+                            {isDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                          </button>
+                        </>
+                      ) : (
+                        <span className="text-xs shrink-0" style={{ color: "var(--text-muted)" }}>Not configured</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <input type="text" value={dockerHubInputs.username} onChange={(e) => setDockerHubInputs((i) => ({ ...i, username: e.target.value }))}
+                      placeholder={record ? "New Username (leave blank to keep existing)" : "Docker Hub Username"}
+                      className="w-full px-3 py-2 bg-transparent border text-xs placeholder:opacity-30 outline-none font-mono"
+                      style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
+                    />
+                    <div className="relative">
+                      <input type={showDockerHubToken ? "text" : "password"} value={dockerHubInputs.token} onChange={(e) => setDockerHubInputs((i) => ({ ...i, token: e.target.value }))}
+                        placeholder="Docker Hub Access Token"
+                        className="w-full pl-3 pr-9 py-2 bg-transparent border text-xs placeholder:opacity-30 outline-none font-mono"
+                        style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
+                      />
+                      <button type="button" onClick={() => setShowDockerHubToken((s) => !s)} className="absolute right-2.5 top-1/2 -translate-y-1/2 hover:text-white transition-colors" style={{ color: "var(--text-muted)" }}>
+                        {showDockerHubToken ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                    {error && <p className="text-xs text-red-400 font-mono">{error}</p>}
+                    <button
+                      onClick={() => saveCloudCred("dockerhub")}
+                      disabled={(!dockerHubInputs.username.trim() || !dockerHubInputs.token.trim()) || isSaving}
+                      className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold transition-all duration-150"
+                      style={
+                        (dockerHubInputs.username.trim() && dockerHubInputs.token.trim()) && !isSaving
+                          ? { background: "var(--green)", color: "var(--bg)" }
+                          : { border: "1px solid var(--border-dim)", color: "var(--text-muted)", opacity: 0.5 }
+                      }
+                    >
+                      {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                      {isSaving ? "Testing…" : record ? "Update & Test" : "Connect & Test"}
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+
           </div>
         )}
       </div>
+        </div>
+      )}
 
-      {/* Error log */}
-      {errorLog.length > 0 && (
-        <div className="space-y-3">
+      {/* Alerts Block */}
+      {activeTab === "alerts" && (
+        <div className="space-y-8 mt-6">
+          {!isDemoUser ? (
+            <div className="space-y-4">
+          <div>
+            <h2 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2" style={{ color: "var(--border-dim)" }}>
+              <Bell className="w-3.5 h-3.5" />
+              Alert Notifications
+            </h2>
+            <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
+              Receive a Slack or webhook notification when new critical findings are detected on your next scan.
+            </p>
+          </div>
+
+          <div className="space-y-3 p-4" style={{ border: "1px solid var(--border-dim)", background: "var(--bg-card)" }}>
+            {/* Webhook URL */}
+            <div className="space-y-1.5">
+              <label className="text-[11px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>
+                Webhook URL
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="url"
+                  value={alertWebhook}
+                  onChange={(e) => setAlertWebhook(e.target.value)}
+                  placeholder="https://hooks.slack.com/services/..."
+                  className="flex-1 px-3 py-2 bg-transparent border text-xs placeholder:opacity-30 outline-none font-mono"
+                  style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
+                />
+                <button
+                  onClick={testWebhook}
+                  disabled={!alertWebhook.trim() || alertTesting}
+                  className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold transition-all duration-150 whitespace-nowrap"
+                  style={
+                    alertWebhook.trim() && !alertTesting
+                      ? { border: "1px solid var(--border-dim)", color: "var(--text-muted)" }
+                      : { border: "1px solid var(--border-dim)", color: "var(--border-dim)", opacity: 0.5 }
+                  }
+                >
+                  {alertTesting ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : alertTestResult === "ok" ? (
+                    <Check className="w-3 h-3 text-green-400" />
+                  ) : (
+                    <Send className="w-3 h-3" />
+                  )}
+                  {alertTesting ? "Sending…" : alertTestResult === "ok" ? "Sent!" : "Test"}
+                </button>
+              </div>
+              <p className="text-[10px] uppercase tracking-wider" style={{ color: "var(--border-dim)" }}>
+                Compatible with Slack Incoming Webhooks and any JSON-accepting endpoint.
+              </p>
+            </div>
+
+            {/* Rules */}
+            <div className="space-y-2 pt-1">
+              <p className="text-[11px] uppercase tracking-widest" style={{ color: "var(--border-dim)" }}>
+                Trigger on
+              </p>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={alertOnCritical}
+                  onChange={(e) => setAlertOnCritical(e.target.checked)}
+                  className="w-3.5 h-3.5 border border-border-dim bg-transparent text-green-500 focus:ring-green-500/20"
+                />
+                <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+                  New <span className="font-bold text-red-400">CRITICAL</span> findings
+                </span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={alertOnHigh}
+                  onChange={(e) => setAlertOnHigh(e.target.checked)}
+                  className="w-3.5 h-3.5 border border-border-dim bg-transparent text-green-500 focus:ring-green-500/20"
+                />
+                <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+                  New <span className="font-bold text-orange-400">HIGH</span> findings
+                </span>
+              </label>
+            </div>
+
+            {alertError && (
+              <p className="text-xs text-red-400 font-mono">{alertError}</p>
+            )}
+
+            <button
+              onClick={saveAlertRules}
+              disabled={alertSaving}
+              className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold transition-all duration-150"
+              style={
+                !alertSaving
+                  ? { background: "var(--green)", color: "var(--bg)" }
+                  : { border: "1px solid var(--border-dim)", color: "var(--text-muted)", opacity: 0.5 }
+              }
+            >
+              {alertSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : alertSaved ? <Check className="w-3.5 h-3.5" /> : <Bell className="w-3.5 h-3.5" />}
+              {alertSaving ? "Saving…" : alertSaved ? "Saved!" : "Save Alert Rules"}
+            </button>
+          </div>
+        </div>
+          ) : (
+            <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
+              Alert notifications are disabled for demo accounts.
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Diagnostics Block */}
+      {activeTab === "diagnostics" && (
+        <div className="space-y-8 mt-6">
+          {errorLog.length > 0 ? (
+            <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2" style={{ color: "var(--text-muted)" }}>
               <AlertCircle className="w-3.5 h-3.5" style={{ color: "var(--red)" }} />
@@ -789,6 +1133,12 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
               ))}
             </div>
           </div>
+            </div>
+          ) : (
+            <p className="text-xs relative" style={{ color: "var(--text-muted)" }}>
+              No diagnostics logs available.
+            </p>
+          )}
         </div>
       )}
     </div>

@@ -23,6 +23,7 @@ export interface QueryIntent {
   | "list_users"
   | "list_resources"
   | "security_findings"
+  | "container_vulnerabilities"
   | "principal_overview"
   | "compliance"
   | "auth_logs"
@@ -49,7 +50,8 @@ export interface QueryIntent {
   | "lambda_function"
   | "iam_user"
   | "iam_role"
-  | "aws_account";
+  | "aws_account"
+  | "container_image";
   resourceName?: string;
   projectId?: string;
   region?: string;
@@ -74,9 +76,9 @@ Query: "${query}"
 
 Return JSON matching this exact schema:
 {
-  "queryType": "user_access" | "resource_owners" | "specific_resource_access" | "list_users" | "list_resources" | "security_findings" | "principal_overview" | "compliance" | "auth_logs" | "unknown",
+  "queryType": "user_access" | "resource_owners" | "specific_resource_access" | "list_users" | "list_resources" | "security_findings" | "container_vulnerabilities" | "principal_overview" | "compliance" | "auth_logs" | "unknown",
   "user": "<email or null>",
-  "resourceType": "bucket" | "gke_cluster" | "project" | "service_account" | "vm" | "cloud_run" | "cloud_sql" | "bigquery" | "pubsub" | "secret" | "firewall" | "s3_bucket" | "ec2_instance" | "rds_instance" | "eks_cluster" | "lambda_function" | null,
+  "resourceType": "bucket" | "gke_cluster" | "project" | "service_account" | "vm" | "cloud_run" | "cloud_sql" | "bigquery" | "pubsub" | "secret" | "firewall" | "s3_bucket" | "ec2_instance" | "rds_instance" | "eks_cluster" | "lambda_function" | "container_image" | null,
   "resourceName": "<name or null>",
   "projectId": "<GCP project ID or AWS account ID or null>",
   "region": "<region or null>",
@@ -85,13 +87,14 @@ Return JSON matching this exact schema:
 
 queryType rules:
 - Use "auth_logs" for questions about authentication failures, login failures, access denied errors, permission denied events, or unauthorized access attempts. Set logHours to the number of hours to look back (default 2 if unspecified).
-- Use "security_findings" for general security posture questions.
+- Use "security_findings" for general security posture questions (firewalls, public buckets).
+- Use "container_vulnerabilities" for questions about CVEs, container image scans, or package vulnerabilities.
 - Use "compliance" for SOC 2 / ISO 27001 questions.
 - Use all other types for IAM/resource questions.
 
 resourceType mapping:
-GCP: bucket, gke_cluster, vm, cloud_run, cloud_sql, bigquery, pubsub, secret, firewall, service_account
-AWS: s3_bucket, eks_cluster, ec2_instance, lambda_function, rds_instance, iam_user, iam_role, aws_account (also secret, firewall mapped to AWS equivalents)`;
+GCP: bucket, gke_cluster, vm, cloud_run, cloud_sql, bigquery, pubsub, secret, firewall, service_account, container_image
+AWS: s3_bucket, eks_cluster, ec2_instance, lambda_function, rds_instance, iam_user, iam_role, aws_account, container_image (also secret, firewall mapped to AWS equivalents)`;
 
   const text = await callAI(provider, apiKey, prompt);
   const cleaned = text.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
@@ -142,6 +145,14 @@ function buildContext(intent: QueryIntent, snapshot: CombinedSnapshot): unknown 
   if (intent.queryType === "auth_logs") {
     if ((snapshot as any).authFailures) {
       context.authFailures = (snapshot as any).authFailures;
+    }
+    return context;
+  }
+
+  // Container Vulnerability queries
+  if (intent.queryType === "container_vulnerabilities") {
+    if ((snapshot as any).containerScans) {
+      context.containerScans = (snapshot as any).containerScans;
     }
     return context;
   }
@@ -292,6 +303,12 @@ export function extractResources(intent: QueryIntent, snapshot: CombinedSnapshot
   }
   if (snapshot.aws) {
     items.push(...extractAwsResources(intent, snapshot.aws));
+  }
+
+  // Inject container scan item resources
+  if (intent.queryType === "container_vulnerabilities" && (snapshot as any).containerScans) {
+    const scans: any[] = (snapshot as any).containerScans;
+    scans.forEach(s => items.push({ name: s.imageRef, projectId: s.accountId, type: "container_image", cloud: s.cloud as any }));
   }
 
   // Deduplicate and filter out items without names

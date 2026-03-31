@@ -58,6 +58,22 @@ export async function ensureComplianceTables(): Promise<void> {
   `;
 }
 /**
+ * Ensures the alert rules table exists. Safe to call on every request.
+ */
+export async function ensureAlertRulesTable(): Promise<void> {
+  await sql`
+    CREATE TABLE IF NOT EXISTS alert_rules (
+      user_email         TEXT PRIMARY KEY,
+      webhook_url        TEXT NOT NULL DEFAULT '',
+      on_new_critical    BOOLEAN NOT NULL DEFAULT TRUE,
+      on_new_high        BOOLEAN NOT NULL DEFAULT FALSE,
+      last_finding_ids   JSONB NOT NULL DEFAULT '[]',
+      updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+}
+
+/**
  * Ensures the demo usage tracking table exists.
  */
 export async function ensureDemoUsageTable(): Promise<void> {

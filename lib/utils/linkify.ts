@@ -20,6 +20,7 @@ export const RESOURCE_LINKS: Record<string, { path: string; label: string; Icon:
     iam_user: { path: "/dashboard/aws/iam", label: "IAM Users", Icon: User },
     iam_role: { path: "/dashboard/aws/iam", label: "IAM Roles", Icon: KeySquare },
     aws_account: { path: "/dashboard/aws", label: "AWS Account", Icon: Server },
+    container_image: { path: "/dashboard/container-scan", label: "Container Images", Icon: Server },
 };
 
 export function getResourceHref(item: ResourceItem): string {

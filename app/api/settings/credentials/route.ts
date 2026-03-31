@@ -27,11 +27,11 @@ export async function POST(req: NextRequest) {
   if (!session?.user?.email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { provider, credentials } = (await req.json()) as {
-    provider: "gcp" | "aws";
+    provider: "gcp" | "aws" | "ghcr" | "dockerhub";
     credentials: Record<string, string>;
   };
 
-  if (!["gcp", "aws"].includes(provider)) {
+  if (!["gcp", "aws", "ghcr", "dockerhub"].includes(provider)) {
     return NextResponse.json({ error: "Invalid provider." }, { status: 400 });
   }
 
@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
         { status: 422 }
       );
     }
-  } else {
+  } else if (provider === "aws") {
     if (!credentials?.accessKeyId || !credentials?.secretAccessKey) {
       return NextResponse.json(
         { error: "accessKeyId and secretAccessKey are required." },
@@ -68,6 +68,46 @@ export async function POST(req: NextRequest) {
       const msg = err instanceof Error ? err.message : String(err);
       return NextResponse.json(
         { error: `AWS credential test failed: ${msg}` },
+        { status: 422 }
+      );
+    }
+  } else if (provider === "ghcr") {
+    if (!credentials?.token) {
+      return NextResponse.json({ error: "Token is required for GitHub Container Registry." }, { status: 400 });
+    }
+    try {
+      const res = await fetch("https://api.github.com/user", {
+        headers: { 
+          Authorization: `Bearer ${credentials.token}`,
+          "User-Agent": "Watchmen-App"
+        }
+      });
+      if (!res.ok) throw new Error("Invalid GitHub token or insufficient scope");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return NextResponse.json(
+        { error: `GHCR validation failed: ${msg}` },
+        { status: 422 }
+      );
+    }
+  } else if (provider === "dockerhub") {
+    if (!credentials?.username || !credentials?.token) {
+      return NextResponse.json({ error: "Username and Token are required for Docker Hub." }, { status: 400 });
+    }
+    try {
+      const res = await fetch("https://hub.docker.com/v2/users/login/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: credentials.username,
+          password: credentials.token
+        })
+      });
+      if (!res.ok) throw new Error("Invalid Docker Hub credentials");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return NextResponse.json(
+        { error: `Docker Hub validation failed: ${msg}` },
         { status: 422 }
       );
     }

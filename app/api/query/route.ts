@@ -9,6 +9,12 @@ import { callAI, resolveAI, type AIProvider } from "@/lib/ai/client";
 import { sql, ensureGcpSnapshotTable, ensureAwsSnapshotTable } from "@/lib/db"; // Added AWS table ensure
 import { getGcpAuthFailures } from "@/lib/gcp/auth-failures";
 import { getAwsAuthFailures } from "@/lib/aws/auth-failures";
+import { getMockScanResults } from "@/lib/container-scanning";
+import { getGcpContainerVulnerabilities } from "@/lib/gcp/container-analysis";
+import { getAwsContainerVulnerabilities } from "@/lib/aws/ecr-scanning";
+import { getGhcrVulnerabilities } from "@/lib/github/ghcr-scanning";
+import { getDockerHubVulnerabilities } from "@/lib/dockerhub/dockerhub-scanning";
+import { getAwsRegions } from "@/lib/aws/client";
 
 export async function POST(req: NextRequest) {
   const session = await auth();
@@ -134,6 +140,36 @@ export async function POST(req: NextRequest) {
         aws: awsFailures,
         totalCount: gcpFailures.length + awsFailures.length,
       };
+    }
+
+    if (intent.queryType === "container_vulnerabilities") {
+      const isMock = useMockData() || session.isDemoUser;
+      const isAwsMock = useMockAwsData() || session.isDemoUser;
+
+      if (isMock && isAwsMock) {
+        combinedSnapshot.containerScans = getMockScanResults();
+      } else {
+        const gcpProjects = gcpSnapshot?.projects?.map((p: any) => p.projectId).filter(Boolean) ?? [];
+        const awsRegions = getAwsRegions();
+
+        const [gcpResultsList, awsResultsList, ghcrResults, dockerHubResults] = await Promise.all([
+          Promise.all(gcpProjects.map((pid: string) => (!isMock ? getGcpContainerVulnerabilities(pid) : []))),
+          Promise.all(awsRegions.map((region: string) => (!isAwsMock ? getAwsContainerVulnerabilities(region) : []))),
+          getGhcrVulnerabilities(session.user.email),
+          getDockerHubVulnerabilities(session.user.email)
+        ]);
+
+        const results = [
+          ...gcpResultsList.flat(),
+          ...awsResultsList.flat(),
+          ...ghcrResults,
+          ...dockerHubResults,
+          ...(isMock ? getMockScanResults().filter(r => r.cloud === "gcp") : []),
+          ...(isAwsMock ? getMockScanResults().filter(r => r.cloud === "aws") : [])
+        ];
+
+        combinedSnapshot.containerScans = results;
+      }
     }
 
     const [answer, resources] = await Promise.all([

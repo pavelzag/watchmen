@@ -38,6 +38,9 @@
 
   body {
     @apply antialiased min-h-screen;
+    /* Prevent global text-selection on structural elements from triggering scroll jumps */
+    user-select: none;
+    -webkit-user-select: none;
     /* Scanline overlay */
     position: relative;
   }

@@ -126,6 +126,8 @@ export interface AwsLambdaFunction {
     securityGroupIds: string[];
   };
   tags: Record<string, string>;
+  /** Environment variables (may contain secrets) */
+  envVars?: Record<string, string>;
 }
 
 // ── RDS ───────────────────────────────────────────────────────────────────
