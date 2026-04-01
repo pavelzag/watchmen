@@ -115,7 +115,9 @@ export async function POST(req: NextRequest) {
           branchName
         );
       } else {
-        const faultyPath = patch.path.replace(/\.tf$/, "-faulty.tf");
+        const dir = patch.path.includes("/") ? patch.path.slice(0, patch.path.lastIndexOf("/") + 1) : "";
+        const basename = patch.path.slice(dir.length).replace(/\.tf$/, "-faulty.tf");
+        const faultyPath = `${dir}.terraform-originals/${basename}`;
         faultyPaths.push(faultyPath);
 
         await createFile(
@@ -142,7 +144,9 @@ export async function POST(req: NextRequest) {
     const changedFiles = remediationPlan.patches
       .map((p) => {
         if (p.isNewFile) return `- \`${p.path}\` — new file generated`;
-        const faulty = p.path.replace(/\.tf$/, "-faulty.tf");
+        const dir = p.path.includes("/") ? p.path.slice(0, p.path.lastIndexOf("/") + 1) : "";
+        const basename = p.path.slice(dir.length).replace(/\.tf$/, "-faulty.tf");
+        const faulty = `${dir}.terraform-originals/${basename}`;
         return `- \`${p.path}\` — fixed _(original preserved as \`${faulty}\`)_`;
       })
       .join("\n");
