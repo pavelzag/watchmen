@@ -293,8 +293,6 @@ Use the **ALL / CRITICAL / HIGH** filter buttons at the top of the page to focus
 
 When attack paths are present, a **Fix with GitHub PR** button appears on the Attack Paths page. Clicking it opens a guided flow that creates a pull request in your Terraform repository with AI-generated fixes for the selected paths.
 
-![Fix with GitHub PR button on the Attack Paths page](images/github-pr-button.png)
-
 ### Prerequisites
 
 **1. An active AI key** — This feature uses whichever AI provider you have set as active in **Settings → AI Keys** (Google Gemini, Anthropic Claude, or OpenAI). See [First-time setup: add an AI key](#first-time-setup-add-an-ai-key) if you haven't added one yet.
@@ -320,10 +318,6 @@ If Slack is configured in **Settings → Alerts**, a notification is sent to you
 | **5 — Creating** | Changes are committed to a new branch (`watchmen-fix-<timestamp>`) and a pull request is opened. |
 | **6 — Done** | The PR URL is shown with a direct link to GitHub. A Slack notification is sent if Slack is configured. |
 
-![Step 1 — select attack paths](images/github-pr-select-paths.png)
-
-![Step 4 — diff preview of proposed changes](images/github-pr-preview.png)
-
 ### How the AI fix works
 
 Watchmen extracts resource identifiers from each attack path node (bucket names, firewall names, Cloud Run service names, SA emails, secret names) and searches all `.tf` files in the repo for those strings. For each matching file, the AI generates a minimal fix that removes overly permissive IAM bindings, restricts `source_ranges`, or downgrades SA roles — without touching unrelated resources.
@@ -339,9 +333,7 @@ The generated file:
 - Uses `watchmen-` as a resource name prefix to avoid collisions with your existing infrastructure
 - Addresses every selected attack path
 
-In the preview step, newly generated files are shown with a **NEW FILE** badge and all lines highlighted in green (since there is no prior version to diff against):
-
-![Preview step showing a newly generated watchmen-security-fixes.tf](images/github-pr-new-file.png)
+In the preview step, newly generated files are shown with a **NEW FILE** badge and all lines highlighted in green (since there is no prior version to diff against).
 
 The PR commit message reflects the file origin:
 - Modified existing file: `fix: remediate "..." in main.tf` _(original preserved as `main-faulty.tf`)_
