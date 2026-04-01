@@ -306,3 +306,37 @@ resource "google_project_iam_binding" "watchmen-cicd-sa-no-project-owner" {
   role    = "roles/owner"
   members = []
 }
+
+# ---------------------------------------------------------------------------
+# Fix 9: Restrict firewall rule "default-allow-rdp" - change source range from
+# 0.0.0.0/0 to internal only (10.0.0.0/8) to block internet RDP access on port 3389
+# ---------------------------------------------------------------------------
+
+resource "google_compute_firewall" "default-allow-rdp" {
+  name    = "default-allow-rdp"
+  network = "default"
+
+  allow {
+    protocol = "tcp"
+    ports    = ["3389"]
+  }
+
+  source_ranges = ["10.0.0.0/8"]
+}
+
+# ---------------------------------------------------------------------------
+# Fix 10: Restrict firewall rule "default-allow-ssh" - change source range from
+# 0.0.0.0/0 to internal only (10.0.0.0/8) to block internet SSH access on port 22
+# ---------------------------------------------------------------------------
+
+resource "google_compute_firewall" "default-allow-ssh" {
+  name    = "default-allow-ssh"
+  network = "default"
+
+  allow {
+    protocol = "tcp"
+    ports    = ["22"]
+  }
+
+  source_ranges = ["10.0.0.0/8"]
+}
