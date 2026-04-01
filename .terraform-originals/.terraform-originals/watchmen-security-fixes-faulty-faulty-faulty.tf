@@ -14,22 +14,22 @@ terraform {
 
 # Remove allUsers objectAdmin binding from the writable bucket
 resource "google_storage_bucket_iam_binding" "watchmen-remove-public-write-uploads" {
-  bucket = "watchmen-test-488807-wm-attack-public-uploads"
-  role   = "roles/storage.objectAdmin"
+  bucket  = "watchmen-test-488807-wm-attack-public-uploads"
+  role    = "roles/storage.objectAdmin"
   members = []
 }
 
 # Remove allUsers objectViewer binding from the writable bucket (defense in depth)
 resource "google_storage_bucket_iam_binding" "watchmen-remove-public-read-uploads" {
-  bucket = "watchmen-test-488807-wm-attack-public-uploads"
-  role   = "roles/storage.objectViewer"
+  bucket  = "watchmen-test-488807-wm-attack-public-uploads"
+  role    = "roles/storage.objectViewer"
   members = []
 }
 
 # Remove allUsers objectCreator binding from the writable bucket (defense in depth)
 resource "google_storage_bucket_iam_binding" "watchmen-remove-public-create-uploads" {
-  bucket = "watchmen-test-488807-wm-attack-public-uploads"
-  role   = "roles/storage.objectCreator"
+  bucket  = "watchmen-test-488807-wm-attack-public-uploads"
+  role    = "roles/storage.objectCreator"
   members = []
 }
 
@@ -48,8 +48,8 @@ resource "google_storage_bucket" "watchmen-harden-public-uploads-bucket" {
 
 # Ensure the CI/CD service account does NOT have objectAdmin on the writable bucket
 resource "google_storage_bucket_iam_binding" "watchmen-cicd-sa-no-admin-uploads" {
-  bucket = "watchmen-test-488807-wm-attack-public-uploads"
-  role   = "roles/storage.objectAdmin"
+  bucket  = "watchmen-test-488807-wm-attack-public-uploads"
+  role    = "roles/storage.objectAdmin"
   members = []
 
   depends_on = [
@@ -62,8 +62,8 @@ resource "google_storage_bucket_iam_binding" "watchmen-cicd-sa-no-admin-uploads"
 # ---------------------------------------------------------------------------
 
 resource "google_storage_bucket_iam_binding" "watchmen-escalation-sa-no-admin-uploads" {
-  bucket = "watchmen-test-488807-wm-attack-public-uploads"
-  role   = "roles/storage.objectAdmin"
+  bucket  = "watchmen-test-488807-wm-attack-public-uploads"
+  role    = "roles/storage.objectAdmin"
   members = []
 
   depends_on = [
@@ -90,8 +90,8 @@ resource "google_project_iam_binding" "watchmen-escalation-sa-no-project-editor"
 # ---------------------------------------------------------------------------
 
 resource "google_storage_bucket_iam_binding" "watchmen-remove-public-read-theinsite-images" {
-  bucket = "theinsite-scraped-images"
-  role   = "roles/storage.objectViewer"
+  bucket  = "theinsite-scraped-images"
+  role    = "roles/storage.objectViewer"
   members = []
 }
 
@@ -108,8 +108,8 @@ resource "google_storage_bucket" "watchmen-harden-theinsite-images-bucket" {
 # ---------------------------------------------------------------------------
 
 resource "google_storage_bucket_iam_binding" "watchmen-remove-public-read-attack-data" {
-  bucket = "watchmen-test-488807-wm-attack-public-data"
-  role   = "roles/storage.objectViewer"
+  bucket  = "watchmen-test-488807-wm-attack-public-data"
+  role    = "roles/storage.objectViewer"
   members = []
 }
 
@@ -305,4 +305,104 @@ resource "google_project_iam_binding" "watchmen-cicd-sa-no-project-owner" {
   project = "watchmen-test-488807"
   role    = "roles/owner"
   members = []
+}
+
+# ---------------------------------------------------------------------------
+# Fix 9: Restrict firewall rules - change source_ranges from 0.0.0.0/0 to
+# 10.0.0.0/8 for all overly permissive ingress firewall rules
+# ---------------------------------------------------------------------------
+
+resource "google_compute_firewall" "default-allow-rdp" {
+  name    = "default-allow-rdp"
+  network = "default"
+
+  allow {
+    protocol = "tcp"
+    ports    = ["3389"]
+  }
+
+  source_ranges = ["10.0.0.0/8"]
+  direction     = "INGRESS"
+}
+
+resource "google_compute_firewall" "default-allow-ssh" {
+  name    = "default-allow-ssh"
+  network = "default"
+
+  allow {
+    protocol = "tcp"
+    ports    = ["22"]
+  }
+
+  source_ranges = ["10.0.0.0/8"]
+  direction     = "INGRESS"
+}
+
+resource "google_compute_firewall" "wm-attack-allow-all-ingress" {
+  name    = "wm-attack-allow-all-ingress"
+  network = "default"
+
+  allow {
+    protocol = "all"
+  }
+
+  source_ranges = ["10.0.0.0/8"]
+  direction     = "INGRESS"
+}
+
+resource "google_compute_firewall" "wm-attack-open-db-ports" {
+  name    = "wm-attack-open-db-ports"
+  network = "default"
+
+  allow {
+    protocol = "tcp"
+    ports    = ["3306", "5432", "27017", "6379"]
+  }
+
+  source_ranges = ["10.0.0.0/8"]
+  direction     = "INGRESS"
+}
+
+resource "google_compute_firewall" "wm-attack-open-rdp" {
+  name    = "wm-attack-open-rdp"
+  network = "default"
+
+  allow {
+    protocol = "tcp"
+    ports    = ["3389"]
+  }
+
+  source_ranges = ["10.0.0.0/8"]
+  direction     = "INGRESS"
+}
+
+resource "google_compute_firewall" "wm-attack-open-ssh" {
+  name    = "wm-attack-open-ssh"
+  network = "default"
+
+  allow {
+    protocol = "tcp"
+    ports    = ["22"]
+  }
+
+  source_ranges = ["10.0.0.0/8"]
+  direction     = "INGRESS"
+}
+
+# ---------------------------------------------------------------------------
+# Fix 10: Require authentication for Cloud Run services
+# ---------------------------------------------------------------------------
+
+resource "google_cloud_run_service_iam_binding" "wm-attack-public-api-no-unauth" {
+  location = "us-central1"
+  service  = "wm-attack-public-api"
+  role     = "roles/run.invoker"
+  members  = []
+}
+
+resource "google_cloud_run_service_iam_binding" "wm-attack-public-internal-api-no-unauth" {
+  location = "us-central1"
+  service  = "wm-attack-public-internal-api"
+  role     = "roles/run.invoker"
+  members  = []
 }
