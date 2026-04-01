@@ -5,6 +5,7 @@ import { getUserCloudCredentials } from "@/lib/credentials";
 import {
   getDefaultBranchSha,
   createBranch,
+  createFile,
   updateFile,
   createPullRequest,
 } from "@/lib/github/client";
@@ -94,18 +95,24 @@ export async function POST(req: NextRequest) {
     const branchName = `watchmen-fix-${Date.now()}`;
     await createBranch(token, owner, repo, branchName, headSha);
 
-    // Commit each changed file
+    // Commit each changed file:
+    //  1. Save the original as <name>-faulty.tf for reference
+    //  2. Overwrite the original path with the fixed content
     const attackPathTitles = paths.map((p) => p.title).join(", ");
+    const faultyPaths: string[] = [];
+
     for (const patch of remediationPlan.patches) {
-      const commitMessage = `fix: remediate "${attackPathTitles}" in ${patch.path}`;
+      const faultyPath = patch.path.replace(/\.tf$/, "-faulty.tf");
+      faultyPaths.push(faultyPath);
+
+      await createFile(
+        token, owner, repo, faultyPath, patch.originalContent,
+        `chore: preserve original ${patch.path} as ${faultyPath}`,
+        branchName
+      );
       await updateFile(
-        token,
-        owner,
-        repo,
-        patch.path,
-        patch.fixedContent,
-        patch.sha,
-        commitMessage,
+        token, owner, repo, patch.path, patch.fixedContent, patch.sha,
+        `fix: remediate "${attackPathTitles}" in ${patch.path}`,
         branchName
       );
     }
@@ -118,7 +125,12 @@ export async function POST(req: NextRequest) {
       )
       .join("\n\n---\n\n");
 
-    const changedFiles = remediationPlan.patches.map((p) => `- \`${p.path}\``).join("\n");
+    const changedFiles = remediationPlan.patches
+      .map((p) => {
+        const faulty = p.path.replace(/\.tf$/, "-faulty.tf");
+        return `- \`${p.path}\` — fixed _(original preserved as \`${faulty}\`)_`;
+      })
+      .join("\n");
 
     const prBody = `## Watchmen Security Remediation
 

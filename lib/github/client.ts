@@ -150,6 +150,29 @@ export async function createBranch(
   }
 }
 
+/** Create a new file that does not yet exist on the branch. */
+export async function createFile(
+  token: string,
+  owner: string,
+  repo: string,
+  path: string,
+  content: string,
+  message: string,
+  branch: string
+): Promise<void> {
+  const encoded = Buffer.from(content, "utf-8").toString("base64");
+  const res = await ghFetch(`${GITHUB_API}/repos/${owner}/${repo}/contents/${path}`, {
+    method: "PUT",
+    headers: { ...ghHeaders(token), "Content-Type": "application/json" },
+    body: JSON.stringify({ message, content: encoded, branch }),
+    // Omitting `sha` tells GitHub this is a new file
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`GitHub createFile failed for "${path}" (${res.status}): ${body.slice(0, 200)}`);
+  }
+}
+
 /** Update (PUT) a file on a branch with new content (base64-encoded). */
 export async function updateFile(
   token: string,
