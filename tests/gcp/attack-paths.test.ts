@@ -123,7 +123,9 @@ describe("computeAttackPaths", () => {
   // ── 2. pathsPublicCloudRunSa ────────────────────────────────────────────────
   describe("pathsPublicCloudRunSa", () => {
     const saEmail = "editor-sa@proj-1.iam.gserviceaccount.com";
-    const editorSA = makeSA(saEmail, ["roles/editor"]);
+    // roles/editor is in ADMIN_ROLES → severity "critical"; use a SENSITIVE_ROLES-only
+    // role (storage.admin) to produce a "high" path
+    const editorSA = makeSA(saEmail, ["roles/storage.admin"]);
 
     const publicCloudRun: CloudRunService = {
       name: "my-public-service",
