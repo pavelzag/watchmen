@@ -117,18 +117,29 @@ export async function buildRemediationPlan(
     };
   }
 
-  // Step 4: Call Gemini for each relevant file
+  // Step 4: Call Gemini for each relevant file (cap at 5 to avoid runaway requests)
   const patches: TfFilePatch[] = [];
+  const AI_TIMEOUT_MS = 45_000;
+  const MAX_FILES = 5;
 
-  for (const filePath of relevantPaths) {
+  for (const filePath of relevantPaths.slice(0, MAX_FILES)) {
     const { content: originalContent, sha } = fileMap.get(filePath)!;
+
+    // Skip files over 200 KB — prompt would be too large
+    if (originalContent.length > 200_000) continue;
+
     const prompt = buildPrompt(filePath, originalContent, paths);
 
     let fixedContent: string;
     try {
-      fixedContent = await callAI("google", geminiApiKey, prompt);
+      fixedContent = await Promise.race([
+        callAI("google", geminiApiKey, prompt),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Gemini timed out")), AI_TIMEOUT_MS)
+        ),
+      ]);
     } catch {
-      // Skip files where AI call fails
+      // Skip files where AI call fails or times out
       continue;
     }
 

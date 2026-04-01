@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { fetchGcpSnapshot } from "@/lib/gcp";
 import { useMockData } from "@/lib/gcp/client";
-import { sql, ensureGcpSnapshotTable } from "@/lib/db";
+import { sql } from "@/lib/db";
 import { computeAttackPaths } from "@/lib/gcp/attack-paths";
 
 export async function GET() {
@@ -16,7 +16,6 @@ export async function GET() {
     if (useMockData() || session.isDemoUser) {
       snapshot = await fetchGcpSnapshot({ forceMock: true });
     } else {
-      await ensureGcpSnapshotTable();
       const result = await sql`SELECT snapshot FROM user_snapshots WHERE user_email = ${session.user.email}`;
       if (result.rows.length > 0) snapshot = result.rows[0].snapshot;
     }

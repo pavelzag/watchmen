@@ -39,7 +39,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "repoFullName must be in 'owner/repo' format" }, { status: 400 });
   }
 
-  const creds = await getUserCloudCredentials(email, "github");
+  let creds: Record<string, string> | null = null;
+  try {
+    creds = await Promise.race([
+      getUserCloudCredentials(email, "github"),
+      new Promise<null>((_, reject) =>
+        setTimeout(() => reject(new Error("DB timeout")), 8_000)
+      ),
+    ]);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Failed to load credentials";
+    return NextResponse.json({ error: msg }, { status: 503 });
+  }
   if (!creds?.token) {
     return NextResponse.json(
       { error: "GitHub token not configured", tokenRequired: true },

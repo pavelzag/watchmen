@@ -4,6 +4,7 @@
  */
 
 const GITHUB_API = "https://api.github.com";
+const FETCH_TIMEOUT_MS = 20_000;
 
 function ghHeaders(token: string): Record<string, string> {
   return {
@@ -12,6 +13,10 @@ function ghHeaders(token: string): Record<string, string> {
     "X-GitHub-Api-Version": "2022-11-28",
     "User-Agent": "Watchmen-Security",
   };
+}
+
+function ghFetch(url: string, init?: RequestInit): Promise<Response> {
+  return fetch(url, { ...init, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
 }
 
 export interface GhRepo {
@@ -24,7 +29,7 @@ export interface GhRepo {
 
 /** List all repos accessible to the token (up to 100, sorted by updated). */
 export async function listRepos(token: string): Promise<GhRepo[]> {
-  const res = await fetch(
+  const res = await ghFetch(
     `${GITHUB_API}/user/repos?per_page=100&sort=updated&affiliation=owner,collaborator,organization_member`,
     { headers: ghHeaders(token) }
   );
@@ -55,7 +60,7 @@ export async function getDefaultBranchSha(
   repo: string,
   branch: string
 ): Promise<string> {
-  const res = await fetch(
+  const res = await ghFetch(
     `${GITHUB_API}/repos/${owner}/${repo}/git/ref/heads/${branch}`,
     { headers: ghHeaders(token) }
   );
@@ -88,7 +93,7 @@ export async function searchTfFiles(
     sha = await getDefaultBranchSha(token, owner, repo, repoData.default_branch);
   }
 
-  const res = await fetch(
+  const res = await ghFetch(
     `${GITHUB_API}/repos/${owner}/${repo}/git/trees/${sha}?recursive=1`,
     { headers: ghHeaders(token) }
   );
@@ -115,7 +120,7 @@ export async function getFileContent(
 ): Promise<{ content: string; sha: string }> {
   const url = new URL(`${GITHUB_API}/repos/${owner}/${repo}/contents/${path}`);
   if (branch) url.searchParams.set("ref", branch);
-  const res = await fetch(url.toString(), { headers: ghHeaders(token) });
+  const res = await ghFetch(url.toString(), { headers: ghHeaders(token) });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`GitHub getFileContent failed for "${path}" (${res.status}): ${body.slice(0, 200)}`);
@@ -134,7 +139,7 @@ export async function createBranch(
   branch: string,
   fromSha: string
 ): Promise<void> {
-  const res = await fetch(`${GITHUB_API}/repos/${owner}/${repo}/git/refs`, {
+  const res = await ghFetch(`${GITHUB_API}/repos/${owner}/${repo}/git/refs`, {
     method: "POST",
     headers: { ...ghHeaders(token), "Content-Type": "application/json" },
     body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: fromSha }),
@@ -157,7 +162,7 @@ export async function updateFile(
   branch: string
 ): Promise<void> {
   const encoded = Buffer.from(content, "utf-8").toString("base64");
-  const res = await fetch(`${GITHUB_API}/repos/${owner}/${repo}/contents/${path}`, {
+  const res = await ghFetch(`${GITHUB_API}/repos/${owner}/${repo}/contents/${path}`, {
     method: "PUT",
     headers: { ...ghHeaders(token), "Content-Type": "application/json" },
     body: JSON.stringify({ message, content: encoded, sha, branch }),
@@ -178,7 +183,7 @@ export async function createPullRequest(
   head: string,
   base: string
 ): Promise<{ number: number; html_url: string }> {
-  const res = await fetch(`${GITHUB_API}/repos/${owner}/${repo}/pulls`, {
+  const res = await ghFetch(`${GITHUB_API}/repos/${owner}/${repo}/pulls`, {
     method: "POST",
     headers: { ...ghHeaders(token), "Content-Type": "application/json" },
     body: JSON.stringify({ title, body, head, base }),

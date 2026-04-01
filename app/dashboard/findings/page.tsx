@@ -2,13 +2,15 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, ShieldAlert, ShieldCheck, RefreshCw, Sparkles, Loader2, ChevronDown, ChevronUp, AlertCircle } from "lucide-react";
+import { ArrowLeft, ShieldAlert, ShieldCheck, RefreshCw, Sparkles, Loader2, ChevronDown, ChevronUp, AlertCircle, GitPullRequest } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { computeFindings } from "@/lib/findings";
 import type { GcpSnapshot, SecurityFinding, SecurityFindingSeverity } from "@/lib/gcp/types";
 import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
 import { linkifyText } from "@/lib/utils/linkify";
 import type { ResourceItem } from "@/lib/claude/query-processor";
+import RemediateModal from "@/app/dashboard/attack-paths/RemediateModal";
+import type { AttackPath } from "@/lib/gcp/attack-paths";
 
 const SEVERITY_CONFIG: Record<SecurityFindingSeverity, { label: string; color: string; bg: string; border: string; dot: string }> = {
   critical: {
@@ -219,12 +221,34 @@ function FindingCard({ finding, cfg }: { finding: SecurityFinding; cfg: typeof S
   );
 }
 
+function findingToAttackPath(f: SecurityFinding): AttackPath {
+  return {
+    id: f.id,
+    severity: f.severity === "critical" ? "critical" : "high",
+    title: f.title,
+    description: f.description,
+    mitigations: f.remediationHint ? [f.remediationHint] : [],
+    nodes: [
+      {
+        id: `${f.resourceType}:${f.resourceName}`,
+        kind: "target",
+        resourceType: f.resourceType,
+        label: f.resourceName,
+        detail: f.projectId,
+        projectId: f.projectId,
+        risk: f.description,
+      },
+    ],
+  };
+}
+
 export default function FindingsPage() {
   const [findings, setFindings] = useState<SecurityFinding[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
+  const [showRemediate, setShowRemediate] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -279,6 +303,15 @@ export default function FindingsPage() {
             </span>
           )}
         </div>
+        {!loading && findings.length > 0 && (
+          <button
+            onClick={() => setShowRemediate(true)}
+            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-violet-500/40 text-violet-400 hover:bg-violet-500/10 transition-colors"
+          >
+            <GitPullRequest className="w-3.5 h-3.5" />
+            Fix with GitHub PR
+          </button>
+        )}
         <button
           onClick={load}
           disabled={loading}
@@ -344,6 +377,13 @@ export default function FindingsPage() {
           <p className="text-slate-300 font-medium">No security findings detected</p>
           <p className="text-slate-500 text-sm mt-1">Your GCP environment looks clean based on the current snapshot.</p>
         </div>
+      )}
+
+      {showRemediate && (
+        <RemediateModal
+          paths={findings.map(findingToAttackPath)}
+          onClose={() => setShowRemediate(false)}
+        />
       )}
 
       {!loading && bySeverity.map(({ severity, items }) => {
