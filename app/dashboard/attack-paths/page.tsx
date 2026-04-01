@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import type { AttackPath, AttackNode } from "@/lib/gcp/attack-paths";
 import RemediateModal from "./RemediateModal";
+import ScanCloudButton from "@/components/ScanCloudButton";
 
 // ─── Node icon / colour ───────────────────────────────────────────────────────
 
@@ -231,6 +232,7 @@ export default function AttackPathsPage() {
               Fix with GitHub PR
             </button>
           )}
+          <ScanCloudButton onScanComplete={load} variant="terminal" />
           <button
             onClick={load}
             disabled={loading}

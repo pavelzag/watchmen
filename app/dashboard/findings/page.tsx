@@ -11,6 +11,7 @@ import { linkifyText } from "@/lib/utils/linkify";
 import type { ResourceItem } from "@/lib/claude/query-processor";
 import RemediateModal from "@/app/dashboard/attack-paths/RemediateModal";
 import type { AttackPath } from "@/lib/gcp/attack-paths";
+import ScanCloudButton from "@/components/ScanCloudButton";
 
 const SEVERITY_CONFIG: Record<SecurityFindingSeverity, { label: string; color: string; bg: string; border: string; dot: string }> = {
   critical: {
@@ -312,6 +313,7 @@ export default function FindingsPage() {
             Fix with GitHub PR
           </button>
         )}
+        <ScanCloudButton onScanComplete={load} variant="modern" />
         <button
           onClick={load}
           disabled={loading}

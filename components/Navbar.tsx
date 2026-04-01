@@ -1,5 +1,5 @@
 import { auth, signOut } from "@/lib/auth";
-import { ShieldAlert, Clock, ClipboardCheck, Settings, LogOut, IterationCw, GitBranch, Network, Swords, Container } from "lucide-react";
+import { ShieldAlert, Clock, ClipboardCheck, Settings, LogOut, IterationCw, Network, Swords, Container } from "lucide-react";
 import Link from "next/link";
 import NavbarAskButton from "./NavbarAskButton";
 import NavbarCloudTabs from "./NavbarCloudTabs";
@@ -76,7 +76,7 @@ export default async function Navbar() {
         <NavbarLink href="/dashboard/trace" icon={<IterationCw className="w-3 h-3" />} label="TRACE" />
         <NavbarLink href="/dashboard/findings" icon={<ShieldAlert className="w-3 h-3" />} label="FINDINGS" danger />
         <NavbarLink href="/dashboard/attack-paths" icon={<Swords className="w-3 h-3" />} label="ATTACK PATHS" />
-        <NavbarLink href="/dashboard/iac-drift" icon={<GitBranch className="w-3 h-3" />} label="IAC DRIFT" />
+        {/* IAC DRIFT hidden for now — feature retained at /dashboard/iac-drift */}
         <NavbarLink href="/dashboard/container-scan" icon={<Container className="w-3 h-3" />} label="CONTAINERS" />
         <NavbarLink href="/dashboard/history" icon={<Clock className="w-3 h-3" />} label="HISTORY" />
         <NavbarLink href="/dashboard/compliance" icon={<ClipboardCheck className="w-3 h-3" />} label="COMPLIANCE" />
