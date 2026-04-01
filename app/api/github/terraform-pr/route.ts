@@ -10,6 +10,7 @@ import {
   createPullRequest,
 } from "@/lib/github/client";
 import { buildRemediationPlan } from "@/lib/github/terraform-remediation";
+import { resolveAI, type AIProvider } from "@/lib/ai/client";
 import { postToSlack } from "@/lib/alerting";
 import type { AttackPath } from "@/lib/gcp/attack-paths";
 
@@ -70,15 +71,20 @@ export async function POST(req: NextRequest) {
   }
   const token = creds.token;
 
-  // Gemini API key
-  const geminiApiKey = process.env.GEMINI_API_KEY;
-  if (!geminiApiKey) {
-    return NextResponse.json({ error: "GEMINI_API_KEY is not configured on the server" }, { status: 500 });
+  // Resolve AI provider and key (user's configured key, or server demo fallback)
+  let aiKey: { provider: AIProvider; key: string };
+  try {
+    aiKey = await resolveAI(email);
+  } catch {
+    return NextResponse.json(
+      { error: "No AI API key configured. Please add one in Settings → AI Keys." },
+      { status: 422 }
+    );
   }
 
   try {
     // Build remediation plan (AI-powered)
-    const remediationPlan = await buildRemediationPlan(token, owner, repo, paths, geminiApiKey);
+    const remediationPlan = await buildRemediationPlan(token, owner, repo, paths, aiKey.provider, aiKey.key);
 
     if (remediationPlan.patches.length === 0) {
       return NextResponse.json({
@@ -102,19 +108,27 @@ export async function POST(req: NextRequest) {
     const faultyPaths: string[] = [];
 
     for (const patch of remediationPlan.patches) {
-      const faultyPath = patch.path.replace(/\.tf$/, "-faulty.tf");
-      faultyPaths.push(faultyPath);
+      if (patch.isNewFile) {
+        await createFile(
+          token, owner, repo, patch.path, patch.fixedContent,
+          `fix: generate ${patch.path} to remediate "${attackPathTitles}"`,
+          branchName
+        );
+      } else {
+        const faultyPath = patch.path.replace(/\.tf$/, "-faulty.tf");
+        faultyPaths.push(faultyPath);
 
-      await createFile(
-        token, owner, repo, faultyPath, patch.originalContent,
-        `chore: preserve original ${patch.path} as ${faultyPath}`,
-        branchName
-      );
-      await updateFile(
-        token, owner, repo, patch.path, patch.fixedContent, patch.sha,
-        `fix: remediate "${attackPathTitles}" in ${patch.path}`,
-        branchName
-      );
+        await createFile(
+          token, owner, repo, faultyPath, patch.originalContent,
+          `chore: preserve original ${patch.path} as ${faultyPath}`,
+          branchName
+        );
+        await updateFile(
+          token, owner, repo, patch.path, patch.fixedContent, patch.sha,
+          `fix: remediate "${attackPathTitles}" in ${patch.path}`,
+          branchName
+        );
+      }
     }
 
     // Build PR body
@@ -127,6 +141,7 @@ export async function POST(req: NextRequest) {
 
     const changedFiles = remediationPlan.patches
       .map((p) => {
+        if (p.isNewFile) return `- \`${p.path}\` — new file generated`;
         const faulty = p.path.replace(/\.tf$/, "-faulty.tf");
         return `- \`${p.path}\` — fixed _(original preserved as \`${faulty}\`)_`;
       })

@@ -14,6 +14,9 @@
 10. [Resource pages](#resource-pages)
 11. [Attack path analysis](#attack-path-analysis)
 12. [GitHub PR remediation](#github-pr-remediation)
+    - [Prerequisites](#prerequisites-1)
+    - [The flow](#the-flow)
+    - [New-file generation fallback](#new-file-generation-fallback)
 
 ---
 
@@ -41,9 +44,10 @@ If you see *"Access denied"*, contact whoever deployed Watchmen and ask them to 
 
 ## First-time setup: add an AI key
 
-Watchmen uses AI for two things:
+Watchmen uses AI for three things:
 - **Natural language query parsing** — understanding what you're asking
 - **AI remediation recommendations** — per-control advice on the Compliance page
+- **GitHub PR remediation** — generating Terraform fixes for detected attack paths
 
 You must add your own API key before either of these features will work. Your key is encrypted before being stored and is never shared with other users.
 
@@ -287,11 +291,15 @@ Use the **ALL / CRITICAL / HIGH** filter buttons at the top of the page to focus
 
 ## GitHub PR remediation
 
-When attack paths are present, a **Fix with GitHub PR** button appears on the Attack Paths page. Clicking it opens a 6-step guided flow that creates a pull request in your Terraform repository with AI-generated fixes for the selected paths.
+When attack paths are present, a **Fix with GitHub PR** button appears on the Attack Paths page. Clicking it opens a guided flow that creates a pull request in your Terraform repository with AI-generated fixes for the selected paths.
+
+![Fix with GitHub PR button on the Attack Paths page](images/github-pr-button.png)
 
 ### Prerequisites
 
-Before using this feature, configure a GitHub Personal Access Token in **Settings → Integrations**:
+**1. An active AI key** — This feature uses whichever AI provider you have set as active in **Settings → AI Keys** (Google Gemini, Anthropic Claude, or OpenAI). See [First-time setup: add an AI key](#first-time-setup-add-an-ai-key) if you haven't added one yet.
+
+**2. A GitHub Personal Access Token** — Configure one in **Settings → Integrations**:
 
 1. Go to **GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens**
 2. Grant the following permissions: **Contents** (read & write), **Pull requests** (read & write)
@@ -301,23 +309,47 @@ Watchmen validates the token against the GitHub API before saving it. The token 
 
 If Slack is configured in **Settings → Alerts**, a notification is sent to your Slack channel when the PR is created.
 
-### The 6-step flow
+### The flow
 
 | Step | What happens |
 |---|---|
 | **1 — Select paths** | Choose which attack paths to fix. All detected paths are pre-selected. |
 | **2 — Select repo** | Pick the GitHub repository where your Terraform files live. The list is populated from your GitHub token. |
-| **3 — Analyzing** | Watchmen scans all `.tf` files in the repo and uses Gemini AI to identify which files contain the misconfigured resources and what changes are needed. |
-| **4 — Preview** | A before/after diff is shown for every file that will be modified. Review the changes before committing. |
+| **3 — Analyzing** | Watchmen scans all `.tf` files in the repo and uses your active AI key to identify which files contain the misconfigured resources and generate fixes. |
+| **4 — Preview** | A before/after diff is shown for every file that will be modified (or the new file that will be created). Review the changes before committing. |
 | **5 — Creating** | Changes are committed to a new branch (`watchmen-fix-<timestamp>`) and a pull request is opened. |
 | **6 — Done** | The PR URL is shown with a direct link to GitHub. A Slack notification is sent if Slack is configured. |
 
+![Step 1 — select attack paths](images/github-pr-select-paths.png)
+
+![Step 4 — diff preview of proposed changes](images/github-pr-preview.png)
+
 ### How the AI fix works
 
-Watchmen extracts resource identifiers from each attack path node (bucket names, firewall names, Cloud Run service names, SA emails, secret names) and searches all `.tf` files in the repo for those strings. For each matching file, Gemini generates a minimal fix that removes overly permissive IAM bindings, restricts `source_ranges`, or downgrades SA roles — without touching unrelated resources.
+Watchmen extracts resource identifiers from each attack path node (bucket names, firewall names, Cloud Run service names, SA emails, secret names) and searches all `.tf` files in the repo for those strings. For each matching file, the AI generates a minimal fix that removes overly permissive IAM bindings, restricts `source_ranges`, or downgrades SA roles — without touching unrelated resources.
+
+The AI call uses whichever provider you have active in Settings. All three supported providers (Google Gemini, Anthropic Claude, OpenAI) are fully supported.
+
+### New-file generation fallback
+
+If no existing `.tf` files in the repository contain identifiers matching the selected attack paths — or if the AI determines that the matched files need no changes — Watchmen automatically generates a **new** Terraform file (`watchmen-security-fixes.tf`) with resources that remediate the issues from scratch.
+
+The generated file:
+- Creates IAM bindings, firewall rules, and other GCP resources that enforce least-privilege
+- Uses `watchmen-` as a resource name prefix to avoid collisions with your existing infrastructure
+- Addresses every selected attack path
+
+In the preview step, newly generated files are shown with a **NEW FILE** badge and all lines highlighted in green (since there is no prior version to diff against):
+
+![Preview step showing a newly generated watchmen-security-fixes.tf](images/github-pr-new-file.png)
+
+The PR commit message reflects the file origin:
+- Modified existing file: `fix: remediate "..." in main.tf` _(original preserved as `main-faulty.tf`)_
+- New generated file: `fix: generate watchmen-security-fixes.tf to remediate "..."`
 
 ### What the PR contains
 
-- One commit per changed `.tf` file
-- PR title: `fix(security): Watchmen automated remediation — N attack paths`
-- PR body listing each attack path fixed, the mitigations applied, and a link back to Watchmen
+- One commit per changed or created `.tf` file
+- For modified files, the original is preserved alongside it (e.g. `main-faulty.tf`) for easy reference
+- PR title: `fix(security): remediate N attack paths [Watchmen]`
+- PR body listing each attack path fixed, the mitigations applied, and a review reminder

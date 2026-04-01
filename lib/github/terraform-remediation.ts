@@ -1,5 +1,5 @@
 import type { AttackPath } from "@/lib/gcp/attack-paths";
-import { callAI } from "@/lib/ai/client";
+import { callAI, type AIProvider } from "@/lib/ai/client";
 import {
   searchTfFiles,
   getFileContent,
@@ -10,6 +10,7 @@ export interface TfFilePatch {
   originalContent: string;
   fixedContent: string;
   sha: string;
+  isNewFile?: boolean;
 }
 
 export interface RemediationPlan {
@@ -42,7 +43,28 @@ function isFileRelevant(
 }
 
 /**
- * Build a Gemini prompt for remediating a specific Terraform file.
+ * Build a prompt to generate a new Terraform file that remediates the attack paths.
+ */
+function buildNewFilePrompt(paths: AttackPath[]): string {
+  const pathDescriptions = paths
+    .map((p) => `- ${p.title}: ${p.description}`)
+    .join("\n");
+
+  return `You are a Terraform security expert. The following security attack paths were detected in a GCP environment:
+
+${pathDescriptions}
+
+Generate a new Terraform file called "watchmen-security-fixes.tf" that addresses these security issues.
+Rules:
+- Create Google Cloud IAM bindings, firewall rules, and other resources to remediate the issues
+- Apply the principle of least privilege
+- Use "watchmen-" as a prefix for resource names
+- Include only resources that directly fix the detected issues
+- Return ONLY the complete Terraform file content, no markdown fences, no explanation`;
+}
+
+/**
+ * Build a prompt for remediating a specific Terraform file.
  */
 function buildPrompt(filePath: string, fileContent: string, paths: AttackPath[]): string {
   const pathDescriptions = paths
@@ -64,6 +86,25 @@ File: ${filePath}
 ${fileContent}`;
 }
 
+async function generateNewSecurityFile(
+  paths: AttackPath[],
+  aiProvider: AIProvider,
+  aiApiKey: string,
+  timeoutMs: number
+): Promise<string | null> {
+  try {
+    const content = await Promise.race([
+      callAI(aiProvider, aiApiKey, buildNewFilePrompt(paths)),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("AI timed out")), timeoutMs)
+      ),
+    ]);
+    return content.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Build a remediation plan by:
  * 1. Listing all .tf files in the repo
@@ -77,7 +118,8 @@ export async function buildRemediationPlan(
   owner: string,
   repo: string,
   paths: AttackPath[],
-  geminiApiKey: string
+  aiProvider: AIProvider,
+  aiApiKey: string
 ): Promise<RemediationPlan> {
   // Step 1: Get all .tf file paths
   const tfPaths = await searchTfFiles(token, owner, repo);
@@ -110,16 +152,22 @@ export async function buildRemediationPlan(
     }
   }
 
+  const AI_TIMEOUT_MS = 45_000;
+
+  // Step 4: If no files matched, generate a new security fixes file
   if (relevantPaths.length === 0) {
+    const newFileContent = await generateNewSecurityFile(paths, aiProvider, aiApiKey, AI_TIMEOUT_MS);
+    if (!newFileContent) {
+      return { patches: [], summary: "No Terraform files matched the selected attack paths and AI could not generate a fix." };
+    }
     return {
-      patches: [],
-      summary: "No Terraform files matched the resources in the selected attack paths.",
+      patches: [{ path: "watchmen-security-fixes.tf", originalContent: "", fixedContent: newFileContent, sha: "", isNewFile: true }],
+      summary: "No existing Terraform files matched. Generated a new watchmen-security-fixes.tf to remediate the attack paths.",
     };
   }
 
-  // Step 4: Call Gemini for each relevant file (cap at 5 to avoid runaway requests)
+  // Step 5: Call AI for each relevant file (cap at 5 to avoid runaway requests)
   const patches: TfFilePatch[] = [];
-  const AI_TIMEOUT_MS = 45_000;
   const MAX_FILES = 5;
 
   for (const filePath of relevantPaths.slice(0, MAX_FILES)) {
@@ -133,9 +181,9 @@ export async function buildRemediationPlan(
     let fixedContent: string;
     try {
       fixedContent = await Promise.race([
-        callAI("google", geminiApiKey, prompt),
+        callAI(aiProvider, aiApiKey, prompt),
         new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("Gemini timed out")), AI_TIMEOUT_MS)
+          setTimeout(() => reject(new Error("AI timed out")), AI_TIMEOUT_MS)
         ),
       ]);
     } catch {
@@ -143,22 +191,24 @@ export async function buildRemediationPlan(
       continue;
     }
 
-    // Step 5: Only include files that actually changed
+    // Step 6: Only include files that actually changed
     const trimmedFixed = fixedContent.trim();
     if (trimmedFixed && trimmedFixed !== originalContent.trim()) {
-      patches.push({
-        path: filePath,
-        originalContent,
-        fixedContent: trimmedFixed,
-        sha,
-      });
+      patches.push({ path: filePath, originalContent, fixedContent: trimmedFixed, sha });
     }
   }
 
-  const summary =
-    patches.length === 0
-      ? "AI analysis found no changes needed in the matched Terraform files."
-      : `Found ${patches.length} file${patches.length === 1 ? "" : "s"} to update across ${relevantPaths.length} matched Terraform file${relevantPaths.length === 1 ? "" : "s"}. Addressing ${paths.length} attack path${paths.length === 1 ? "" : "s"}.`;
+  // Step 7: If AI found no changes in matched files, generate a new file as fallback
+  if (patches.length === 0) {
+    const newFileContent = await generateNewSecurityFile(paths, aiProvider, aiApiKey, AI_TIMEOUT_MS);
+    if (newFileContent) {
+      return {
+        patches: [{ path: "watchmen-security-fixes.tf", originalContent: "", fixedContent: newFileContent, sha: "", isNewFile: true }],
+        summary: "Matched Terraform files needed no changes. Generated a new watchmen-security-fixes.tf to remediate the attack paths.",
+      };
+    }
+  }
 
+  const summary = `Found ${patches.length} file${patches.length === 1 ? "" : "s"} to update across ${relevantPaths.length} matched Terraform file${relevantPaths.length === 1 ? "" : "s"}. Addressing ${paths.length} attack path${paths.length === 1 ? "" : "s"}.`;
   return { patches, summary };
 }

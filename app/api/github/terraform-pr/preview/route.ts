@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getUserCloudCredentials } from "@/lib/credentials";
 import { buildRemediationPlan } from "@/lib/github/terraform-remediation";
+import { resolveAI } from "@/lib/ai/client";
 import type { AttackPath } from "@/lib/gcp/attack-paths";
 
 interface RequestBody {
@@ -58,13 +59,18 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const geminiApiKey = process.env.GEMINI_API_KEY;
-  if (!geminiApiKey) {
-    return NextResponse.json({ error: "GEMINI_API_KEY is not configured on the server" }, { status: 500 });
+  let aiKey: Awaited<ReturnType<typeof resolveAI>>;
+  try {
+    aiKey = await resolveAI(email);
+  } catch {
+    return NextResponse.json(
+      { error: "No AI API key configured. Please add one in Settings → AI Keys." },
+      { status: 422 }
+    );
   }
 
   try {
-    const plan = await buildRemediationPlan(creds.token, owner, repo, paths, geminiApiKey);
+    const plan = await buildRemediationPlan(creds.token, owner, repo, paths, aiKey.provider, aiKey.key);
     return NextResponse.json({ patches: plan.patches, summary: plan.summary });
   } catch (err) {
     console.error("[api/github/terraform-pr/preview] error:", err);

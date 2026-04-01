@@ -302,7 +302,14 @@ export default function RemediateModal({ paths, onClose }: Props) {
               {step === "select-paths" && "Select attack paths to remediate"}
               {step === "select-repo" && "Choose a repository with Terraform files"}
               {step === "analyzing" && "Scanning Terraform files…"}
-              {step === "preview" && `${patches.length} file${patches.length === 1 ? "" : "s"} will be changed`}
+              {step === "preview" && patches.length > 0 && (
+                patches.every(p => p.isNewFile)
+                  ? "New security file will be created"
+                  : patches.some(p => p.isNewFile)
+                    ? `${patches.filter(p => !p.isNewFile).length} file(s) changed, 1 new file created`
+                    : `${patches.length} file${patches.length === 1 ? "" : "s"} will be changed`
+              )}
+              {step === "preview" && patches.length === 0 && "No changes needed"}
               {step === "creating" && "Opening pull request…"}
               {step === "done" && "Pull request created"}
               {step === "error" && "Something went wrong"}
@@ -455,9 +462,16 @@ export default function RemediateModal({ paths, onClose }: Props) {
                 <div className="space-y-5">
                   {patches.map((patch) => (
                     <div key={patch.path}>
-                      <p style={{ fontFamily: "monospace", fontSize: 10, color: "var(--green)", marginBottom: 6 }}>
-                        // {patch.path}
-                      </p>
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <p style={{ fontFamily: "monospace", fontSize: 10, color: "var(--green)" }}>
+                          // {patch.path}
+                        </p>
+                        {patch.isNewFile && (
+                          <span style={{ fontSize: 8, letterSpacing: 2, fontFamily: "monospace", padding: "2px 6px", border: "1px solid rgba(0,170,43,0.5)", color: "var(--green)", background: "rgba(0,170,43,0.08)" }}>
+                            NEW FILE
+                          </span>
+                        )}
+                      </div>
                       <DiffView original={patch.originalContent} fixed={patch.fixedContent} />
                     </div>
                   ))}
