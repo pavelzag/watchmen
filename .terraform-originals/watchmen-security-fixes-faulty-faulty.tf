@@ -1,4 +1,5 @@
-terraform {
+terraform
+{
   required_providers {
     google = {
       source  = "hashicorp/google"
@@ -14,22 +15,22 @@ terraform {
 
 # Remove allUsers objectAdmin binding from the writable bucket
 resource "google_storage_bucket_iam_binding" "watchmen-remove-public-write-uploads" {
-  bucket = "watchmen-test-488807-wm-attack-public-uploads"
-  role   = "roles/storage.objectAdmin"
+  bucket  = "watchmen-test-488807-wm-attack-public-uploads"
+  role    = "roles/storage.objectAdmin"
   members = []
 }
 
 # Remove allUsers objectViewer binding from the writable bucket (defense in depth)
 resource "google_storage_bucket_iam_binding" "watchmen-remove-public-read-uploads" {
-  bucket = "watchmen-test-488807-wm-attack-public-uploads"
-  role   = "roles/storage.objectViewer"
+  bucket  = "watchmen-test-488807-wm-attack-public-uploads"
+  role    = "roles/storage.objectViewer"
   members = []
 }
 
 # Remove allUsers objectCreator binding from the writable bucket (defense in depth)
 resource "google_storage_bucket_iam_binding" "watchmen-remove-public-create-uploads" {
-  bucket = "watchmen-test-488807-wm-attack-public-uploads"
-  role   = "roles/storage.objectCreator"
+  bucket  = "watchmen-test-488807-wm-attack-public-uploads"
+  role    = "roles/storage.objectCreator"
   members = []
 }
 
@@ -48,8 +49,8 @@ resource "google_storage_bucket" "watchmen-harden-public-uploads-bucket" {
 
 # Ensure the CI/CD service account does NOT have objectAdmin on the writable bucket
 resource "google_storage_bucket_iam_binding" "watchmen-cicd-sa-no-admin-uploads" {
-  bucket = "watchmen-test-488807-wm-attack-public-uploads"
-  role   = "roles/storage.objectAdmin"
+  bucket  = "watchmen-test-488807-wm-attack-public-uploads"
+  role    = "roles/storage.objectAdmin"
   members = []
 
   depends_on = [
@@ -62,8 +63,8 @@ resource "google_storage_bucket_iam_binding" "watchmen-cicd-sa-no-admin-uploads"
 # ---------------------------------------------------------------------------
 
 resource "google_storage_bucket_iam_binding" "watchmen-escalation-sa-no-admin-uploads" {
-  bucket = "watchmen-test-488807-wm-attack-public-uploads"
-  role   = "roles/storage.objectAdmin"
+  bucket  = "watchmen-test-488807-wm-attack-public-uploads"
+  role    = "roles/storage.objectAdmin"
   members = []
 
   depends_on = [
@@ -90,8 +91,8 @@ resource "google_project_iam_binding" "watchmen-escalation-sa-no-project-editor"
 # ---------------------------------------------------------------------------
 
 resource "google_storage_bucket_iam_binding" "watchmen-remove-public-read-theinsite-images" {
-  bucket = "theinsite-scraped-images"
-  role   = "roles/storage.objectViewer"
+  bucket  = "theinsite-scraped-images"
+  role    = "roles/storage.objectViewer"
   members = []
 }
 
@@ -108,8 +109,8 @@ resource "google_storage_bucket" "watchmen-harden-theinsite-images-bucket" {
 # ---------------------------------------------------------------------------
 
 resource "google_storage_bucket_iam_binding" "watchmen-remove-public-read-attack-data" {
-  bucket = "watchmen-test-488807-wm-attack-public-data"
-  role   = "roles/storage.objectViewer"
+  bucket  = "watchmen-test-488807-wm-attack-public-data"
+  role    = "roles/storage.objectViewer"
   members = []
 }
 
