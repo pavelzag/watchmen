@@ -1359,7 +1359,7 @@ function MetaRow({ label, value, mono }: { label: string; value: string | number
   );
 }
 
-export default function RequestTracer() {
+export default function RequestTracer({ demoMode = false }: { demoMode?: boolean }) {
   // Snapshot + topology
   const [snapshot, setSnapshot] = useState<GcpSnapshot | null>(null);
   const [loadingSnapshot, setLoadingSnapshot] = useState(true);
@@ -1465,6 +1465,12 @@ export default function RequestTracer() {
   const liveTimestamps = useRef<number[]>([]);   // sliding window of request timestamps
   const [liveRps, setLiveRps] = useState<number | null>(null);
 
+  // Demo simulation
+  const [demoRps, setDemoRps] = useState<number | null>(null);
+  const [demoRequestCount, setDemoRequestCount] = useState(0);
+  const demoRunningRef = useRef(false);
+  const demoReqCountRef = useRef(0);
+
   // Fullscreen graph
   const [graphFullscreen, setGraphFullscreen] = useState(false);
 
@@ -1542,6 +1548,13 @@ export default function RequestTracer() {
   }, []);
 
   useEffect(() => { fetchSnapshot(); }, [fetchSnapshot]);
+
+  // Pre-fill URL in demo mode once snapshot is loaded
+  useEffect(() => {
+    if (!demoMode || !snapshot || url) return;
+    const firstRun = (snapshot.cloudRunServices ?? []).find(s => s.url);
+    if (firstRun) setUrl(firstRun.url!);
+  }, [demoMode, snapshot]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -1632,6 +1645,110 @@ export default function RequestTracer() {
       });
     }
   }, [edges]);
+
+  // ── Demo simulation: auto-animate traffic through topology ──────────────────
+  useEffect(() => {
+    if (!demoMode || nodes.length < 2 || loadingSnapshot) return;
+    if (demoRunningRef.current) return;
+    demoRunningRef.current = true;
+
+    // Build candidate paths through the topology using BFS from internet
+    const buildPath = (targetTypes: NodeType[]): Set<string> => {
+      const path = new Set<string>(["internet"]);
+      for (const type of targetTypes) {
+        const candidate = nodes.find(n => n.type === type && !path.has(n.id));
+        if (!candidate) continue;
+        // Include edge intermediaries: find LB nodes between internet and compute
+        if (type !== "lb") {
+          const lbNode = nodes.find(n => n.type === "lb" &&
+            edges.some(e => e.from === "internet" && e.to === n.id) &&
+            edges.some(e => e.from === n.id && e.to === candidate.id)
+          );
+          if (lbNode) path.add(lbNode.id);
+        }
+        path.add(candidate.id);
+        // Pull in downstream data nodes connected to this compute node
+        const downstream = edges
+          .filter(e => e.from === candidate.id)
+          .map(e => nodes.find(n => n.id === e.to))
+          .filter((n): n is GraphNode => !!n && (n.type === "cloudsql"));
+        downstream.forEach(n => path.add(n.id));
+      }
+      return path;
+    };
+
+    // Weighted scenario pool — mix of Cloud Run hits, GKE+SQL queries, errors
+    const scenarios: Array<{ path: () => Set<string>; colDelay: number; error?: boolean; weight: number }> = [
+      { path: () => buildPath(["cloudrun"]), colDelay: 140, weight: 35 },
+      { path: () => buildPath(["gke", "cloudsql"]), colDelay: 200, weight: 25 },
+      { path: () => buildPath(["gke"]), colDelay: 160, weight: 20 },
+      { path: () => {
+          // Pick ALL cloudrun nodes for a broadcast-style scan hit
+          const all = new Set<string>(["internet"]);
+          nodes.filter(n => n.type === "cloudrun").forEach(n => all.add(n.id));
+          return all;
+        }, colDelay: 110, weight: 10 },
+      { path: () => buildPath(["cloudrun"]), colDelay: 120, error: true, weight: 10 },
+    ];
+
+    // Weighted random pick
+    const pickScenario = () => {
+      const total = scenarios.reduce((s, sc) => s + sc.weight, 0);
+      let r = Math.random() * total;
+      for (const sc of scenarios) { r -= sc.weight; if (r <= 0) return sc; }
+      return scenarios[0];
+    };
+
+    // RPS tracking
+    const rpsWindow: number[] = [];
+    const updateRps = () => {
+      const now = Date.now();
+      rpsWindow.push(now);
+      const cutoff = now - 10_000;
+      while (rpsWindow.length && rpsWindow[0] < cutoff) rpsWindow.shift();
+      setDemoRps(rpsWindow.length / 10);
+    };
+
+    let running = true;
+    const run = async () => {
+      // Small staggered start so the graph doesn't animate on first render
+      await sleep(1200);
+      while (running) {
+        const sc = pickScenario();
+        const path = sc.path();
+        if (path.size < 2) { await sleep(800); continue; }
+
+        updateRps();
+        demoReqCountRef.current += 1;
+        setDemoRequestCount(demoReqCountRef.current);
+
+        if (sc.error) {
+          // Animate up to last compute node, then mark it error
+          await runBfsAnimation(path, { colDelay: sc.colDelay });
+          const errNode = [...path]
+            .map(id => nodes.find(n => n.id === id))
+            .filter((n): n is GraphNode => !!n && n.col >= 2)
+            .sort((a, b) => b.col - a.col)[0];
+          if (errNode) setNodeStatus(prev => ({ ...prev, [errNode.id]: "error" }));
+          await sleep(600);
+          setNodeStatus(prev => {
+            const s = { ...prev };
+            path.forEach(id => { if (s[id] === "error" || s[id] === "done") delete s[id]; });
+            return s;
+          });
+        } else {
+          await runBfsAnimation(path, { colDelay: sc.colDelay, resetAfterMs: 900 });
+        }
+
+        // Variable inter-request gap: 0.4–1.8s
+        const gap = 400 + Math.random() * 1400;
+        await sleep(gap);
+      }
+    };
+
+    run();
+    return () => { running = false; demoRunningRef.current = false; };
+  }, [demoMode, nodes, edges, loadingSnapshot, runBfsAnimation]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Live monitoring: poll Cloud Logging, fire pulse on new traffic ───────────
   useEffect(() => {
@@ -1968,6 +2085,17 @@ export default function RequestTracer() {
                     ANIM
                   </button>
                 )}
+                <div className="w-px h-3 bg-slate-800 mx-0.5" />
+              </>
+            )}
+            {demoMode && demoRps !== null && (
+              <>
+                <span className="flex items-center gap-1 text-[8px] px-1.5 py-0.5 border border-emerald-900 text-emerald-500 font-bold tracking-widest">
+                  <Activity size={8} className="animate-pulse" />
+                  SIM
+                  <span className="font-mono text-emerald-300">{demoRps >= 10 ? demoRps.toFixed(0) : demoRps.toFixed(1)}/s</span>
+                </span>
+                <span className="text-[8px] text-slate-600 font-mono">{demoRequestCount} reqs</span>
                 <div className="w-px h-3 bg-slate-800 mx-0.5" />
               </>
             )}

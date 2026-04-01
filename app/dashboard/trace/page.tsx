@@ -1,6 +1,7 @@
 import RequestTracer from "./RequestTracer";
 
 export default function TracePage() {
+  const demoMode = process.env.DEMO_MODE === "true";
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-[#02040a]">
       <div className="flex-1 flex flex-col p-6 overflow-hidden">
@@ -19,7 +20,7 @@ export default function TracePage() {
           </div>
         </div>
 
-        <RequestTracer />
+        <RequestTracer demoMode={demoMode} />
       </div>
     </div>
   );
