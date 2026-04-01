@@ -1,4 +1,5 @@
-terraform {
+terraform
+{
   required_providers {
     google = {
       source  = "hashicorp/google"
@@ -305,4 +306,35 @@ resource "google_project_iam_binding" "watchmen-cicd-sa-no-project-owner" {
   project = "watchmen-test-488807"
   role    = "roles/owner"
   members = []
+}
+
+# ---------------------------------------------------------------------------
+# Fix 9 & 10: Restrict firewall rules default-allow-rdp and default-allow-ssh
+# Change source_ranges from 0.0.0.0/0 to 10.0.0.0/8 to limit to internal traffic only
+# ---------------------------------------------------------------------------
+
+resource "google_compute_firewall" "default-allow-rdp" {
+  name    = "default-allow-rdp"
+  network = "default"
+
+  allow {
+    protocol = "tcp"
+    ports    = ["3389"]
+  }
+
+  source_ranges = ["10.0.0.0/8"]
+  direction     = "INGRESS"
+}
+
+resource "google_compute_firewall" "default-allow-ssh" {
+  name    = "default-allow-ssh"
+  network = "default"
+
+  allow {
+    protocol = "tcp"
+    ports    = ["22"]
+  }
+
+  source_ranges = ["10.0.0.0/8"]
+  direction     = "INGRESS"
 }
