@@ -96,15 +96,18 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
   const [gcpKeyInput, setGcpKeyInput] = useState("");
   const [awsInputs, setAwsInputs] = useState({ accessKeyId: "", secretAccessKey: "", region: "us-east-1" });
   const [showAwsSecret, setShowAwsSecret] = useState(false);
-  const [cloudSaving, setCloudSaving] = useState<Record<string, boolean>>({ gcp: false, aws: false, ghcr: false, dockerhub: false });
-  const [cloudDeleting, setCloudDeleting] = useState<Record<string, boolean>>({ gcp: false, aws: false, ghcr: false, dockerhub: false });
-  const [cloudErrors, setCloudErrors] = useState<Record<string, string>>({ gcp: "", aws: "", ghcr: "", dockerhub: "" });
+  const [cloudSaving, setCloudSaving] = useState<Record<string, boolean>>({ gcp: false, aws: false, ghcr: false, dockerhub: false, github: false });
+  const [cloudDeleting, setCloudDeleting] = useState<Record<string, boolean>>({ gcp: false, aws: false, ghcr: false, dockerhub: false, github: false });
+  const [cloudErrors, setCloudErrors] = useState<Record<string, string>>({ gcp: "", aws: "", ghcr: "", dockerhub: "", github: "" });
 
   const [ghcrToken, setGhcrToken] = useState("");
   const [showGhcrToken, setShowGhcrToken] = useState(false);
-  
+
   const [dockerHubInputs, setDockerHubInputs] = useState({ username: "", token: "" });
   const [showDockerHubToken, setShowDockerHubToken] = useState(false);
+
+  const [githubToken, setGithubToken] = useState("");
+  const [showGithubToken, setShowGithubToken] = useState(false);
 
   // Browser-only AI keys
   const [browserKeys, setBrowserKeys] = useState<BrowserAIKeys>({});
@@ -339,7 +342,7 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
     }
   }
 
-  async function saveCloudCred(provider: "gcp" | "aws" | "ghcr" | "dockerhub") {
+  async function saveCloudCred(provider: "gcp" | "aws" | "ghcr" | "dockerhub" | "github") {
     setCloudSaving((s) => ({ ...s, [provider]: true }));
     setCloudErrors((e) => ({ ...e, [provider]: "" }));
     try {
@@ -356,6 +359,8 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
         credentials = { token: ghcrToken.trim() };
       } else if (provider === "dockerhub") {
         credentials = { username: dockerHubInputs.username.trim(), token: dockerHubInputs.token.trim() };
+      } else if (provider === "github") {
+        credentials = { token: githubToken.trim() };
       }
       const res = await fetch("/api/settings/credentials", {
         method: "POST",
@@ -369,6 +374,7 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
       else if (provider === "aws") setAwsInputs({ accessKeyId: "", secretAccessKey: "", region: "us-east-1" });
       else if (provider === "ghcr") setGhcrToken("");
       else if (provider === "dockerhub") setDockerHubInputs({ username: "", token: "" });
+      else if (provider === "github") setGithubToken("");
     } catch (e) {
       setCloudErrors((err) => ({ ...err, [provider]: e instanceof Error ? e.message : "Network error" }));
     } finally {
@@ -376,7 +382,7 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
     }
   }
 
-  async function deleteCloudCred(provider: "gcp" | "aws" | "ghcr" | "dockerhub") {
+  async function deleteCloudCred(provider: "gcp" | "aws" | "ghcr" | "dockerhub" | "github") {
     setCloudDeleting((d) => ({ ...d, [provider]: true }));
     try {
       const res = await fetch(`/api/settings/credentials/${provider}`, { method: "DELETE" });
@@ -942,6 +948,65 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
                       className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold transition-all duration-150"
                       style={
                         ghcrToken.trim() && !isSaving
+                          ? { background: "var(--green)", color: "var(--bg)" }
+                          : { border: "1px solid var(--border-dim)", color: "var(--text-muted)", opacity: 0.5 }
+                      }
+                    >
+                      {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                      {isSaving ? "Testing…" : record ? "Update & Test" : "Connect & Test"}
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* GitHub PAT Card */}
+            {(() => {
+              const record = cloudCreds.find((c) => c.provider === "github");
+              const isSaving = cloudSaving.github;
+              const isDeleting = cloudDeleting.github;
+              const error = cloudErrors.github;
+              return (
+                <div className="border p-5 space-y-4 transition-all duration-150" style={{ background: "rgba(100, 116, 139, 0.05)", borderColor: "rgba(100, 116, 139, 0.2)" }}>
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 flex items-center justify-center text-sm font-bold text-white shrink-0 rounded text-center" style={{ background: "#24292e" }}>GH</div>
+                      <div>
+                        <span className="text-sm font-bold" style={{ color: "#94a3b8" }}>GitHub</span>
+                        <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>Personal Access Token for PR remediation</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {record ? (
+                        <>
+                          <span className="flex items-center gap-1 text-xs" style={{ color: "var(--green)" }}>
+                            <Check className="w-3 h-3" /> Connected
+                          </span>
+                          <button onClick={() => deleteCloudCred("github")} disabled={isDeleting} className="hover:text-red-400 transition-colors" style={{ color: "var(--text-muted)" }}>
+                            {isDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                          </button>
+                        </>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="relative">
+                      <input type={showGithubToken ? "text" : "password"} value={githubToken} onChange={(e) => setGithubToken(e.target.value)}
+                        placeholder={record ? "New GitHub PAT (leave blank to keep existing)" : "GitHub Personal Access Token (ghp_...)"}
+                        className="w-full pl-3 pr-9 py-2 bg-transparent border text-xs placeholder:opacity-30 outline-none font-mono"
+                        style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
+                      />
+                      <button type="button" onClick={() => setShowGithubToken((v) => !v)} className="absolute right-2.5 top-1/2 -translate-y-1/2 opacity-40 hover:opacity-80" style={{ color: "var(--text-muted)" }}>
+                        {showGithubToken ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                      </button>
+                    </div>
+                    {error && <p className="text-xs text-red-400 font-mono">{error}</p>}
+                    <button
+                      onClick={() => saveCloudCred("github")}
+                      disabled={!githubToken.trim() || isSaving}
+                      className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold transition-all duration-150"
+                      style={
+                        githubToken.trim() && !isSaving
                           ? { background: "var(--green)", color: "var(--bg)" }
                           : { border: "1px solid var(--border-dim)", color: "var(--text-muted)", opacity: 0.5 }
                       }

@@ -12,6 +12,8 @@
 8. [Principal overview](#principal-overview)
 9. [Snapshot history](#snapshot-history)
 10. [Resource pages](#resource-pages)
+11. [Attack path analysis](#attack-path-analysis)
+12. [GitHub PR remediation](#github-pr-remediation)
 
 ---
 
@@ -21,6 +23,8 @@ Watchmen scans your GCP organisation and lets you:
 
 - Ask questions about your infrastructure in plain English (*"Which buckets are public?"*, *"Who has owner access on project X?"*)
 - See a prioritised list of security findings across all your projects
+- Visualise multi-step attack chains that correlate misconfigurations into exploitable paths (Attack Path Analysis)
+- Automatically generate and open GitHub PRs that fix Terraform misconfigurations identified in attack paths
 - Run SOC 2 Type II and ISO 27001:2022 compliance checks and track your score over time
 - Accept risk on individual compliance controls with a written justification
 - Browse all IAM bindings, service accounts, clusters, databases, firewall rules, and more in one place
@@ -242,3 +246,78 @@ Each GCP resource type has a dedicated page accessible from the left sidebar or 
 | Firewall | VPC firewall rules, directions, source ranges |
 
 All pages support a **search bar** that filters by resource name — compliance evidence chips link directly to the relevant page with the resource pre-searched.
+
+---
+
+## Attack path analysis
+
+Navigate to **Attack Paths** from the top navbar (or go directly to `/dashboard/attack-paths`) to see multi-step attack chains derived from your current GCP snapshot.
+
+Unlike the Findings page — which surfaces individual misconfigurations — Attack Paths correlates multiple findings into complete exploit chains, showing you how an attacker could move from an entry point through pivot resources to a high-value target.
+
+### How it works
+
+Attack Paths reads from the same GCP snapshot as the Findings page. No additional API calls are made. If the data looks stale, trigger a new scan from the Dashboard first (**Sync GCP**), then return to this page.
+
+The engine (`lib/gcp/attack-paths.ts` → `computeAttackPaths()`) detects the following chain types:
+
+| Chain | Severity | Condition |
+|---|---|---|
+| Internet → Open Firewall → VM → Privileged SA | CRITICAL / HIGH | Firewall rule with `0.0.0.0/0` source + VM with external IP running a privileged SA |
+| Unauthenticated Cloud Run → Privileged SA | CRITICAL / HIGH | `allUsers` invoker on a Cloud Run service running a privileged SA |
+| Public Writable Bucket → SA Privilege Escalation | CRITICAL | `allUsers` or `allAuthenticatedUsers` with write access + privileged SA in the same project |
+| Public Readable Bucket → Direct Data Exposure | HIGH | `allUsers` read access on a bucket |
+| Public Secret Manager Secret → Direct Credential Exposure | CRITICAL | `allUsers` or `allAuthenticatedUsers` on a secret |
+| Single User Account → Lateral Movement | HIGH | One user with `owner` or `editor` on 2 or more projects |
+
+### Reading a path card
+
+Each card shows:
+- **Node chain** — colour-coded **ENTRY → PIVOT → TARGET** badges representing the attack steps
+- **Description** — a plain-English explanation of how the chain is exploitable
+- **Mitigations** — specific remediation steps for each node in the chain
+
+Click any card to expand it and see the full detail.
+
+### Filtering
+
+Use the **ALL / CRITICAL / HIGH** filter buttons at the top of the page to focus on the severity level you care about.
+
+---
+
+## GitHub PR remediation
+
+When attack paths are present, a **Fix with GitHub PR** button appears on the Attack Paths page. Clicking it opens a 6-step guided flow that creates a pull request in your Terraform repository with AI-generated fixes for the selected paths.
+
+### Prerequisites
+
+Before using this feature, configure a GitHub Personal Access Token in **Settings → Integrations**:
+
+1. Go to **GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens**
+2. Grant the following permissions: **Contents** (read & write), **Pull requests** (read & write)
+3. In Watchmen, go to **Settings → Integrations → GitHub**, paste the token, and click **Save**
+
+Watchmen validates the token against the GitHub API before saving it. The token is AES-256-GCM encrypted before storage, the same as cloud credentials.
+
+If Slack is configured in **Settings → Alerts**, a notification is sent to your Slack channel when the PR is created.
+
+### The 6-step flow
+
+| Step | What happens |
+|---|---|
+| **1 — Select paths** | Choose which attack paths to fix. All detected paths are pre-selected. |
+| **2 — Select repo** | Pick the GitHub repository where your Terraform files live. The list is populated from your GitHub token. |
+| **3 — Analyzing** | Watchmen scans all `.tf` files in the repo and uses Gemini AI to identify which files contain the misconfigured resources and what changes are needed. |
+| **4 — Preview** | A before/after diff is shown for every file that will be modified. Review the changes before committing. |
+| **5 — Creating** | Changes are committed to a new branch (`watchmen-fix-<timestamp>`) and a pull request is opened. |
+| **6 — Done** | The PR URL is shown with a direct link to GitHub. A Slack notification is sent if Slack is configured. |
+
+### How the AI fix works
+
+Watchmen extracts resource identifiers from each attack path node (bucket names, firewall names, Cloud Run service names, SA emails, secret names) and searches all `.tf` files in the repo for those strings. For each matching file, Gemini generates a minimal fix that removes overly permissive IAM bindings, restricts `source_ranges`, or downgrades SA roles — without touching unrelated resources.
+
+### What the PR contains
+
+- One commit per changed `.tf` file
+- PR title: `fix(security): Watchmen automated remediation — N attack paths`
+- PR body listing each attack path fixed, the mitigations applied, and a link back to Watchmen

@@ -27,11 +27,11 @@ export async function POST(req: NextRequest) {
   if (!session?.user?.email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { provider, credentials } = (await req.json()) as {
-    provider: "gcp" | "aws" | "ghcr" | "dockerhub";
+    provider: "gcp" | "aws" | "ghcr" | "dockerhub" | "github";
     credentials: Record<string, string>;
   };
 
-  if (!["gcp", "aws", "ghcr", "dockerhub"].includes(provider)) {
+  if (!["gcp", "aws", "ghcr", "dockerhub", "github"].includes(provider)) {
     return NextResponse.json({ error: "Invalid provider." }, { status: 400 });
   }
 
@@ -110,6 +110,22 @@ export async function POST(req: NextRequest) {
         { error: `Docker Hub validation failed: ${msg}` },
         { status: 422 }
       );
+    }
+  } else if (provider === "github") {
+    if (!credentials?.token) {
+      return NextResponse.json({ error: "Token is required for GitHub." }, { status: 400 });
+    }
+    try {
+      const res = await fetch("https://api.github.com/user", {
+        headers: { Authorization: `Bearer ${credentials.token}`, "User-Agent": "Watchmen-App" }
+      });
+      if (!res.ok) throw new Error("Invalid GitHub token");
+      const user = await res.json();
+      // store login alongside token for display
+      credentials.login = user.login;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return NextResponse.json({ error: `GitHub validation failed: ${msg}` }, { status: 422 });
     }
   }
 

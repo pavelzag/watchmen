@@ -19,9 +19,8 @@ async function getRealCloudRunServices(projectIds: string[]): Promise<CloudRunSe
       const services: CloudRunService[] = [];
       for (const svc of res.data.items ?? []) {
         const nameParts = (svc.metadata?.name ?? "").split("/");
-        const locationParts = (svc.metadata?.namespace ?? "").split("/");
         const svcName = nameParts[nameParts.length - 1] ?? svc.metadata?.name ?? "";
-        const region = locationParts[locationParts.length - 1] ?? svc.metadata?.labels?.["cloud.googleapis.com/location"] ?? "";
+        const region = svc.metadata?.labels?.["cloud.googleapis.com/location"] ?? "";
 
         // Fetch IAM policy for this service so pathsPublicCloudRunSa can detect allUsers bindings
         let iamBindings: { role: string; members: string[] }[] = [];

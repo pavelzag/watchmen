@@ -1,0 +1,636 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { X, ChevronRight, Loader2, ExternalLink, AlertTriangle, Check } from "lucide-react";
+import type { AttackPath } from "@/lib/gcp/attack-paths";
+import type { TfFilePatch } from "@/lib/github/terraform-remediation";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface GhRepo {
+  full_name: string;
+  default_branch: string;
+  private: boolean;
+  html_url: string;
+}
+
+type Step =
+  | "select-paths"
+  | "select-repo"
+  | "analyzing"
+  | "preview"
+  | "creating"
+  | "done"
+  | "error";
+
+interface Props {
+  paths: AttackPath[];
+  onClose: () => void;
+}
+
+// ─── Diff view (before/after) ─────────────────────────────────────────────────
+
+function DiffView({ original, fixed }: { original: string; fixed: string }) {
+  const origLines = original.split("\n");
+  const fixedLines = fixed.split("\n");
+
+  // Simple line-by-line comparison — highlight changed lines
+  const maxLen = Math.max(origLines.length, fixedLines.length);
+
+  const rows: Array<{ kind: "same" | "removed" | "added"; text: string }> = [];
+
+  let i = 0;
+  let j = 0;
+  while (i < origLines.length || j < fixedLines.length) {
+    const origLine = origLines[i];
+    const fixedLine = fixedLines[j];
+
+    if (i >= origLines.length) {
+      rows.push({ kind: "added", text: fixedLine });
+      j++;
+    } else if (j >= fixedLines.length) {
+      rows.push({ kind: "removed", text: origLine });
+      i++;
+    } else if (origLine === fixedLine) {
+      rows.push({ kind: "same", text: origLine });
+      i++;
+      j++;
+    } else {
+      rows.push({ kind: "removed", text: origLine });
+      rows.push({ kind: "added", text: fixedLine });
+      i++;
+      j++;
+    }
+  }
+
+  void maxLen; // suppress unused warning
+
+  const visibleRows = rows.filter((r) => r.kind !== "same").length > 0 ? rows : rows;
+
+  return (
+    <div
+      style={{
+        fontFamily: "monospace",
+        fontSize: 11,
+        overflowX: "auto",
+        background: "#0a0a0b",
+        border: "1px solid var(--border-dim)",
+        maxHeight: 280,
+        overflowY: "auto",
+      }}
+    >
+      {visibleRows.map((row, idx) => (
+        <div
+          key={idx}
+          style={{
+            padding: "1px 12px",
+            whiteSpace: "pre",
+            background:
+              row.kind === "removed"
+                ? "rgba(239,68,68,0.12)"
+                : row.kind === "added"
+                  ? "rgba(16,185,129,0.10)"
+                  : "transparent",
+            color:
+              row.kind === "removed"
+                ? "#f87171"
+                : row.kind === "added"
+                  ? "#6ee7b7"
+                  : "#4b5563",
+          }}
+        >
+          {row.kind === "removed" ? "- " : row.kind === "added" ? "+ " : "  "}
+          {row.text}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Severity badge ────────────────────────────────────────────────────────────
+
+function SevBadge({ severity }: { severity: "critical" | "high" }) {
+  return (
+    <span
+      style={{
+        fontSize: 8,
+        letterSpacing: 2,
+        fontFamily: "monospace",
+        padding: "2px 6px",
+        border: `1px solid ${severity === "critical" ? "#ef444455" : "#f59e0b55"}`,
+        color: severity === "critical" ? "#ef4444" : "#f59e0b",
+        background: severity === "critical" ? "#1a0606" : "#1a1206",
+      }}
+    >
+      {severity.toUpperCase()}
+    </span>
+  );
+}
+
+// ─── Modal ────────────────────────────────────────────────────────────────────
+
+export default function RemediateModal({ paths, onClose }: Props) {
+  const [step, setStep] = useState<Step>("select-paths");
+  const [selectedPathIds, setSelectedPathIds] = useState<Set<string>>(
+    new Set(paths.map((p) => p.id))
+  );
+  const [repos, setRepos] = useState<GhRepo[]>([]);
+  const [repoSearch, setRepoSearch] = useState("");
+  const [selectedRepo, setSelectedRepo] = useState<GhRepo | null>(null);
+  const [repoError, setRepoError] = useState<string | null>(null);
+  const [tokenRequired, setTokenRequired] = useState(false);
+  const [patches, setPatches] = useState<TfFilePatch[]>([]);
+  const [prUrl, setPrUrl] = useState<string | null>(null);
+  const [prNumber, setPrNumber] = useState<number | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [noChanges, setNoChanges] = useState(false);
+
+  const selectedPaths = paths.filter((p) => selectedPathIds.has(p.id));
+
+  // ── Step 1 helpers ────────────────────────────────────────────────────────
+
+  function togglePath(id: string) {
+    setSelectedPathIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  // ── Step 2: fetch repos ───────────────────────────────────────────────────
+
+  async function loadRepos() {
+    setStep("select-repo");
+    setRepoError(null);
+    setTokenRequired(false);
+    try {
+      const res = await fetch("/api/github/repos");
+      const data = await res.json();
+      if (res.status === 422 && data.tokenRequired) {
+        setTokenRequired(true);
+        return;
+      }
+      if (!res.ok) throw new Error(data.error ?? "Failed to load repos");
+      setRepos(data.repos ?? []);
+    } catch (e) {
+      setRepoError(e instanceof Error ? e.message : "Network error");
+    }
+  }
+
+  // ── Step 3: analyze ───────────────────────────────────────────────────────
+
+  async function analyze() {
+    if (!selectedRepo) return;
+    setStep("analyzing");
+    setNoChanges(false);
+    setPatches([]);
+    try {
+      // We call the API to build the remediation plan. But to preview before
+      // creating the PR we just need to know the patches. We pass a dry-run
+      // flag via a separate endpoint — in this implementation we inline the
+      // preview by calling /api/github/terraform-pr with a dryRun flag.
+      // Since the spec doesn't define a separate preview endpoint, we call
+      // a lightweight preview by POSTing with dryRun=true and reading patches.
+      const res = await fetch("/api/github/terraform-pr/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          repoFullName: selectedRepo.full_name,
+          defaultBranch: selectedRepo.default_branch,
+          paths: selectedPaths,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Analysis failed");
+      if (!data.patches || data.patches.length === 0) {
+        setNoChanges(true);
+      }
+      setPatches(data.patches ?? []);
+      setStep("preview");
+    } catch (e) {
+      setErrorMsg(e instanceof Error ? e.message : "Unknown error during analysis");
+      setStep("error");
+    }
+  }
+
+  // ── Step 5: create PR ─────────────────────────────────────────────────────
+
+  async function createPr() {
+    if (!selectedRepo) return;
+    setStep("creating");
+    try {
+      const res = await fetch("/api/github/terraform-pr", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          repoFullName: selectedRepo.full_name,
+          defaultBranch: selectedRepo.default_branch,
+          paths: selectedPaths,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "PR creation failed");
+      if (data.patchCount === 0) {
+        setNoChanges(true);
+        setStep("done");
+        return;
+      }
+      setPrUrl(data.prUrl ?? null);
+      setPrNumber(data.prNumber ?? null);
+      setStep("done");
+    } catch (e) {
+      setErrorMsg(e instanceof Error ? e.message : "Unknown error creating PR");
+      setStep("error");
+    }
+  }
+
+  // ── Filter repos by search ─────────────────────────────────────────────────
+
+  const filteredRepos = repos.filter((r) =>
+    r.full_name.toLowerCase().includes(repoSearch.toLowerCase())
+  );
+
+  // ── Close on Escape ────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: "rgba(0,0,0,0.75)", backdropFilter: "blur(2px)" }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        className="w-full max-w-2xl flex flex-col"
+        style={{
+          background: "#09090b",
+          border: "1px solid var(--border-dim)",
+          maxHeight: "90vh",
+          overflow: "hidden",
+        }}
+      >
+        {/* Header */}
+        <div
+          className="flex items-center justify-between px-5 py-4 shrink-0"
+          style={{ borderBottom: "1px solid var(--border-dim)" }}
+        >
+          <div>
+            <p
+              style={{
+                fontFamily: "monospace",
+                fontSize: 12,
+                fontWeight: 700,
+                color: "var(--green)",
+                letterSpacing: 2,
+                textTransform: "uppercase",
+              }}
+            >
+              // Fix with GitHub PR
+            </p>
+            <p style={{ fontFamily: "monospace", fontSize: 10, color: "var(--border-dim)", marginTop: 2 }}>
+              {step === "select-paths" && "Select attack paths to remediate"}
+              {step === "select-repo" && "Choose a repository with Terraform files"}
+              {step === "analyzing" && "Scanning Terraform files…"}
+              {step === "preview" && `${patches.length} file${patches.length === 1 ? "" : "s"} will be changed`}
+              {step === "creating" && "Opening pull request…"}
+              {step === "done" && "Pull request created"}
+              {step === "error" && "Something went wrong"}
+            </p>
+          </div>
+          <button onClick={onClose} style={{ color: "var(--text-muted)" }} className="hover:text-white transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Body (scrollable) */}
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+
+          {/* ── Step 1: select paths ─────────────────────────────────── */}
+          {step === "select-paths" && (
+            <>
+              <p style={{ fontFamily: "monospace", fontSize: 10, color: "var(--text-muted)" }}>
+                Choose which attack paths Watchmen should attempt to fix:
+              </p>
+              <div className="space-y-2">
+                {paths.map((path) => (
+                  <label
+                    key={path.id}
+                    className="flex items-center gap-3 cursor-pointer group"
+                    style={{ padding: "8px 12px", border: "1px solid var(--border-dim)", background: selectedPathIds.has(path.id) ? "rgba(0,170,43,0.05)" : "transparent" }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedPathIds.has(path.id)}
+                      onChange={() => togglePath(path.id)}
+                      className="accent-green-500"
+                    />
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      <SevBadge severity={path.severity} />
+                      <span style={{ fontFamily: "monospace", fontSize: 11, color: "#e5e7eb", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {path.title}
+                      </span>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </>
+          )}
+
+          {/* ── Step 2: select repo ──────────────────────────────────── */}
+          {step === "select-repo" && (
+            <>
+              {tokenRequired ? (
+                <div
+                  className="flex items-start gap-3 p-4"
+                  style={{ border: "1px solid #f59e0b44", background: "#1a1206" }}
+                >
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "#f59e0b" }} />
+                  <div>
+                    <p style={{ fontFamily: "monospace", fontSize: 11, color: "#fbbf24", fontWeight: 700, marginBottom: 4 }}>
+                      GitHub token not configured
+                    </p>
+                    <p style={{ fontFamily: "monospace", fontSize: 10, color: "#6b7280", lineHeight: 1.6 }}>
+                      Go to{" "}
+                      <a href="/dashboard/settings?tab=integrations" target="_blank" style={{ color: "var(--green)", textDecoration: "underline" }}>
+                        Settings → Integrations
+                      </a>{" "}
+                      to add your GitHub Personal Access Token, then come back.
+                    </p>
+                  </div>
+                </div>
+              ) : repoError ? (
+                <div className="p-4" style={{ border: "1px solid #ef444444", background: "#1a0606" }}>
+                  <p style={{ fontFamily: "monospace", fontSize: 11, color: "#f87171" }}>!! {repoError}</p>
+                </div>
+              ) : (
+                <>
+                  <input
+                    type="text"
+                    placeholder="Search repositories…"
+                    value={repoSearch}
+                    onChange={(e) => setRepoSearch(e.target.value)}
+                    className="w-full px-3 py-2 bg-transparent text-xs font-mono outline-none"
+                    style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
+                    autoFocus
+                  />
+                  <div
+                    className="space-y-1"
+                    style={{ maxHeight: 300, overflowY: "auto" }}
+                  >
+                    {filteredRepos.length === 0 && (
+                      <p style={{ fontFamily: "monospace", fontSize: 11, color: "var(--border-dim)", padding: "12px 0" }}>
+                        No repositories found.
+                      </p>
+                    )}
+                    {filteredRepos.map((repo) => (
+                      <button
+                        key={repo.full_name}
+                        onClick={() => setSelectedRepo(repo)}
+                        className="w-full text-left flex items-center justify-between gap-3 px-3 py-2 transition-colors"
+                        style={{
+                          border: "1px solid",
+                          borderColor: selectedRepo?.full_name === repo.full_name ? "var(--green)" : "var(--border-dim)",
+                          background: selectedRepo?.full_name === repo.full_name ? "rgba(0,170,43,0.07)" : "transparent",
+                        }}
+                      >
+                        <span style={{ fontFamily: "monospace", fontSize: 11, color: "#e5e7eb" }}>
+                          {repo.full_name}
+                        </span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {repo.private && (
+                            <span style={{ fontSize: 9, letterSpacing: 1, fontFamily: "monospace", color: "var(--border-dim)", border: "1px solid var(--border-dim)", padding: "1px 5px" }}>
+                              PRIVATE
+                            </span>
+                          )}
+                          <span style={{ fontSize: 9, color: "var(--border-dim)", fontFamily: "monospace" }}>
+                            {repo.default_branch}
+                          </span>
+                          {selectedRepo?.full_name === repo.full_name && (
+                            <Check className="w-3 h-3" style={{ color: "var(--green)" }} />
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </>
+          )}
+
+          {/* ── Step 3: analyzing ────────────────────────────────────── */}
+          {step === "analyzing" && (
+            <div className="flex flex-col items-center justify-center py-12 gap-4">
+              <Loader2 className="w-8 h-8 animate-spin" style={{ color: "var(--green)" }} />
+              <p style={{ fontFamily: "monospace", fontSize: 12, color: "var(--text-muted)" }}>
+                Scanning Terraform files…
+              </p>
+              <p style={{ fontFamily: "monospace", fontSize: 10, color: "var(--border-dim)" }}>
+                This may take a moment while AI analyzes your infrastructure code.
+              </p>
+            </div>
+          )}
+
+          {/* ── Step 4: preview ──────────────────────────────────────── */}
+          {step === "preview" && (
+            <>
+              {noChanges || patches.length === 0 ? (
+                <div className="flex items-start gap-3 p-4" style={{ border: "1px solid var(--border-dim)", background: "rgba(0,170,43,0.04)" }}>
+                  <Check className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "var(--green)" }} />
+                  <p style={{ fontFamily: "monospace", fontSize: 11, color: "#9ca3af", lineHeight: 1.6 }}>
+                    No Terraform files matched the selected attack path resources, or no changes were needed.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-5">
+                  {patches.map((patch) => (
+                    <div key={patch.path}>
+                      <p style={{ fontFamily: "monospace", fontSize: 10, color: "var(--green)", marginBottom: 6 }}>
+                        // {patch.path}
+                      </p>
+                      <DiffView original={patch.originalContent} fixed={patch.fixedContent} />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+
+          {/* ── Step 5: creating ─────────────────────────────────────── */}
+          {step === "creating" && (
+            <div className="flex flex-col items-center justify-center py-12 gap-4">
+              <Loader2 className="w-8 h-8 animate-spin" style={{ color: "var(--green)" }} />
+              <p style={{ fontFamily: "monospace", fontSize: 12, color: "var(--text-muted)" }}>
+                Opening PR…
+              </p>
+            </div>
+          )}
+
+          {/* ── Step 6: done ─────────────────────────────────────────── */}
+          {step === "done" && (
+            <div className="space-y-4">
+              {noChanges || !prUrl ? (
+                <div className="flex items-start gap-3 p-4" style={{ border: "1px solid var(--border-dim)", background: "rgba(0,170,43,0.04)" }}>
+                  <Check className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "var(--green)" }} />
+                  <p style={{ fontFamily: "monospace", fontSize: 11, color: "#9ca3af", lineHeight: 1.6 }}>
+                    No changes were needed — your Terraform files already address these attack paths, or no matching resources were found.
+                  </p>
+                </div>
+              ) : (
+                <div className="p-4 space-y-3" style={{ border: "1px solid rgba(0,170,43,0.4)", background: "rgba(0,170,43,0.05)" }}>
+                  <div className="flex items-center gap-2">
+                    <Check className="w-4 h-4" style={{ color: "var(--green)" }} />
+                    <p style={{ fontFamily: "monospace", fontSize: 12, color: "var(--green)", fontWeight: 700 }}>
+                      Pull Request #{prNumber} created
+                    </p>
+                  </div>
+                  <a
+                    href={prUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 text-xs font-mono transition-opacity hover:opacity-80"
+                    style={{ color: "#60a5fa", textDecoration: "underline" }}
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                    {prUrl}
+                  </a>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Step 7: error ────────────────────────────────────────── */}
+          {step === "error" && (
+            <div className="flex items-start gap-3 p-4" style={{ border: "1px solid #ef444444", background: "#1a0606" }}>
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "#ef4444" }} />
+              <div>
+                <p style={{ fontFamily: "monospace", fontSize: 11, color: "#f87171", fontWeight: 700, marginBottom: 4 }}>
+                  Error
+                </p>
+                <p style={{ fontFamily: "monospace", fontSize: 10, color: "#6b7280", lineHeight: 1.6 }}>
+                  {errorMsg}
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer actions */}
+        <div
+          className="flex items-center justify-between gap-3 px-5 py-4 shrink-0"
+          style={{ borderTop: "1px solid var(--border-dim)" }}
+        >
+          {/* Back / Cancel */}
+          {(step === "select-paths" || step === "error") && (
+            <button
+              onClick={onClose}
+              className="text-xs font-mono px-4 py-2 transition-colors"
+              style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}
+            >
+              Cancel
+            </button>
+          )}
+          {step === "select-repo" && (
+            <button
+              onClick={() => setStep("select-paths")}
+              className="text-xs font-mono px-4 py-2 transition-colors"
+              style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}
+            >
+              ← Back
+            </button>
+          )}
+          {step === "preview" && (
+            <button
+              onClick={() => setStep("select-repo")}
+              className="text-xs font-mono px-4 py-2 transition-colors"
+              style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}
+            >
+              ← Back
+            </button>
+          )}
+          {step === "done" && (
+            <button
+              onClick={onClose}
+              className="text-xs font-mono px-4 py-2 transition-colors"
+              style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}
+            >
+              Close
+            </button>
+          )}
+          {step === "error" && (
+            <button
+              onClick={() => {
+                setErrorMsg(null);
+                setStep("select-repo");
+              }}
+              className="text-xs font-mono px-4 py-2 transition-colors"
+              style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}
+            >
+              ← Back
+            </button>
+          )}
+
+          {/* Primary action */}
+          <div className="ml-auto">
+            {step === "select-paths" && (
+              <button
+                onClick={loadRepos}
+                disabled={selectedPathIds.size === 0}
+                className="flex items-center gap-2 text-xs font-mono font-bold px-5 py-2 transition-all"
+                style={
+                  selectedPathIds.size > 0
+                    ? { background: "var(--green)", color: "var(--bg)" }
+                    : { border: "1px solid var(--border-dim)", color: "var(--text-muted)", opacity: 0.5 }
+                }
+              >
+                Next <ChevronRight className="w-3 h-3" />
+              </button>
+            )}
+            {step === "select-repo" && !tokenRequired && (
+              <button
+                onClick={analyze}
+                disabled={!selectedRepo}
+                className="flex items-center gap-2 text-xs font-mono font-bold px-5 py-2 transition-all"
+                style={
+                  selectedRepo
+                    ? { background: "var(--green)", color: "var(--bg)" }
+                    : { border: "1px solid var(--border-dim)", color: "var(--text-muted)", opacity: 0.5 }
+                }
+              >
+                Analyze <ChevronRight className="w-3 h-3" />
+              </button>
+            )}
+            {step === "preview" && patches.length > 0 && (
+              <button
+                onClick={createPr}
+                className="flex items-center gap-2 text-xs font-mono font-bold px-5 py-2 transition-all"
+                style={{ background: "var(--green)", color: "var(--bg)" }}
+              >
+                Create PR <ChevronRight className="w-3 h-3" />
+              </button>
+            )}
+            {step === "preview" && patches.length === 0 && (
+              <button
+                onClick={onClose}
+                className="text-xs font-mono px-4 py-2"
+                style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}
+              >
+                Close
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -10,13 +10,13 @@ export async function DELETE(
   if (!session?.user?.email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { provider } = await params;
-  if (!["gcp", "aws"].includes(provider)) {
+  if (!["gcp", "aws", "ghcr", "dockerhub", "github"].includes(provider)) {
     return NextResponse.json({ error: "Invalid provider." }, { status: 400 });
   }
 
   const email = session.user.email;
   try {
-    await deleteUserCloudCredentials(email, provider as "gcp" | "aws");
+    await deleteUserCloudCredentials(email, provider as "gcp" | "aws" | "ghcr" | "dockerhub" | "github");
     const credentials = await listUserCloudCredentials(email);
     return NextResponse.json({ ok: true, credentials });
   } catch (err) {

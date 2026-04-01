@@ -16,7 +16,7 @@ export async function ensureCredentialsTable(): Promise<void> {
 
 export async function getUserCloudCredentials(
   email: string,
-  provider: "gcp" | "aws" | "ghcr" | "dockerhub"
+  provider: "gcp" | "aws" | "ghcr" | "dockerhub" | "github"
 ): Promise<Record<string, string> | null> {
   try {
     const result = await sql`
@@ -47,7 +47,7 @@ export async function listUserCloudCredentials(
 
 export async function saveUserCloudCredentials(
   email: string,
-  provider: "gcp" | "aws" | "ghcr" | "dockerhub",
+  provider: "gcp" | "aws" | "ghcr" | "dockerhub" | "github",
   credentials: Record<string, string>
 ): Promise<void> {
   const encrypted = encrypt(JSON.stringify(credentials));
@@ -62,7 +62,7 @@ export async function saveUserCloudCredentials(
 
 export async function deleteUserCloudCredentials(
   email: string,
-  provider: "gcp" | "aws" | "ghcr" | "dockerhub"
+  provider: "gcp" | "aws" | "ghcr" | "dockerhub" | "github"
 ): Promise<void> {
   await sql`
     DELETE FROM user_cloud_credentials WHERE user_email = ${email} AND provider = ${provider}

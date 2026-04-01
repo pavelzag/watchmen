@@ -3,9 +3,10 @@
 import { useEffect, useState } from "react";
 import {
   Globe, Flame, Server, Database, Key, Shield, ChevronRight,
-  AlertTriangle, RefreshCw, Lock, User, Cloud, HardDrive,
+  AlertTriangle, RefreshCw, Lock, User, Cloud, HardDrive, GitPullRequest,
 } from "lucide-react";
 import type { AttackPath, AttackNode } from "@/lib/gcp/attack-paths";
+import RemediateModal from "./RemediateModal";
 
 // ─── Node icon / colour ───────────────────────────────────────────────────────
 
@@ -182,6 +183,7 @@ export default function AttackPathsPage() {
   const [error, setError] = useState<string | null>(null);
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "critical" | "high">("all");
+  const [showRemediate, setShowRemediate] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -218,15 +220,27 @@ export default function AttackPathsPage() {
             {fetchedAt && <span style={{ color: "var(--border-dim)" }}> · snapshot {new Date(fetchedAt).toLocaleTimeString()}</span>}
           </p>
         </div>
-        <button
-          onClick={load}
-          disabled={loading}
-          className="flex items-center gap-2 px-3 py-1.5 text-xs uppercase tracking-widest transition-all"
-          style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}
-        >
-          <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} />
-          {loading ? "Analyzing…" : "Re-analyze"}
-        </button>
+        <div className="flex items-center gap-2">
+          {paths.length > 0 && (
+            <button
+              onClick={() => setShowRemediate(true)}
+              className="flex items-center gap-2 px-3 py-1.5 text-xs uppercase tracking-widest transition-all"
+              style={{ border: "1px solid var(--green)", color: "var(--green)", background: "rgba(0,170,43,0.06)" }}
+            >
+              <GitPullRequest className="w-3 h-3" />
+              Fix with GitHub PR
+            </button>
+          )}
+          <button
+            onClick={load}
+            disabled={loading}
+            className="flex items-center gap-2 px-3 py-1.5 text-xs uppercase tracking-widest transition-all"
+            style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}
+          >
+            <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} />
+            {loading ? "Analyzing…" : "Re-analyze"}
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -295,6 +309,10 @@ export default function AttackPathsPage() {
             Traversing IAM graph…
           </p>
         </div>
+      )}
+
+      {showRemediate && (
+        <RemediateModal paths={paths} onClose={() => setShowRemediate(false)} />
       )}
     </div>
   );

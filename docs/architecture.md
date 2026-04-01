@@ -18,6 +18,8 @@ graph TD
         LogsAI["/api/logs/analyze\nAI log analysis"]
         Trace["/api/trace\nRequest tracing"]
         Proxy["/api/proxy\nOutbound HTTP proxy"]
+        AttackPaths["/api/attack-paths\nAttack chain analysis"]
+        GitHubPR["/api/github\nTF remediation + PR"]
     end
 
     subgraph Storage["Persistence"]
@@ -72,6 +74,8 @@ graph TD
     UI --> LogsAI
     UI --> Trace
     UI --> Proxy
+    UI --> AttackPaths
+    UI --> GitHubPR
 
     Scan --> PG
     Query --> PG
@@ -228,6 +232,48 @@ flowchart LR
 
 ---
 
+## GitHub PR remediation data flow
+
+The GitHub remediation feature follows two distinct request paths:
+
+**Repo discovery** — the browser calls `/api/github/repos`, which proxies to the GitHub API using the user's stored (AES-decrypted) Personal Access Token and returns the list of repositories the token has access to.
+
+**PR creation** — the browser calls `/api/github/terraform-pr` with the selected attack paths and target repo. The server:
+
+1. Lists all `.tf` files in the repo via the GitHub Contents API
+2. Searches file content for resource identifiers extracted from each attack path node (bucket names, firewall names, Cloud Run service names, SA emails, secret names)
+3. Passes each matching file's content to Gemini AI, which generates a minimal fix (restrictive IAM bindings, tighter `source_ranges`, downgraded SA roles)
+4. Commits each changed file to a new branch (`watchmen-fix-<timestamp>`) via the GitHub Git Data API
+5. Opens a pull request with a structured body listing each attack path fixed and its mitigations
+6. If Slack is configured in Settings → Alerts, sends a notification with the PR URL
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant API as /api/github
+    participant GH as GitHub API
+    participant AI as Gemini AI
+    participant SL as Slack
+
+    B->>API: GET /api/github/repos
+    API->>GH: List repos (token)
+    GH-->>API: Repo list
+    API-->>B: Repo list
+
+    B->>API: POST /api/github/terraform-pr\n(paths + repo)
+    API->>GH: List .tf files (Contents API)
+    GH-->>API: File contents
+    API->>AI: Generate fixes per file
+    AI-->>API: Patched file content
+    API->>GH: Commit files to new branch
+    API->>GH: Open pull request
+    GH-->>API: PR URL
+    API->>SL: Notify (if configured)
+    API-->>B: PR URL
+```
+
+---
+
 ## AI query pipeline
 
 ```mermaid
@@ -372,6 +418,9 @@ All SOC 2 and ISO 27001 control checks are pure functions in `lib/compliance/che
 | `lib/compliance/soc2.ts` | SOC 2 Type II report builder (18 controls) |
 | `lib/compliance/iso27001.ts` | ISO 27001:2022 report builder (18 controls) |
 | `lib/findings.ts` | `computeFindings()` — 12 GCP security rules, pure function |
+| `lib/gcp/attack-paths.ts` | `computeAttackPaths()` — correlates snapshot data into multi-step exploit chains |
+| `app/api/github/repos/route.ts` | Lists GitHub repos accessible with the user's stored token |
+| `app/api/github/terraform-pr/route.ts` | Finds matching TF files, calls Gemini for fixes, commits branch, opens PR, notifies Slack |
 | `services/request-processor/` | Go service — receives trace spans, exports to Cloud Trace |
 | `services/test-echo/` | Lightweight echo app for topology demos |
 | `fixtures/` | Mock JSON for development without cloud credentials |
