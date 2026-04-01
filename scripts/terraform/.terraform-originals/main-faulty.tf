@@ -53,7 +53,7 @@ resource "google_project_iam_member" "reporting_bq_viewer" {
 
 resource "google_project_iam_member" "cicd_editor" {
   project = var.project_id
-  role    = "roles/cloudbuild.builds.editor"
+  role    = "roles/editor"
   member  = "serviceAccount:${google_service_account.cicd.email}"
 }
 
@@ -191,6 +191,8 @@ resource "google_cloud_run_v2_service" "api" {
 
 # ── Cloud SQL ─────────────────────────────────────────────────────────────────
 # Cost: ~$9/month (db-f1-micro, zonal, no HA, no backups, 10 GB SSD).
+# Public IP with no authorized networks = reachable in theory but no access granted.
+# This will trigger a Watchmen security finding — intentional for demo purposes.
 resource "google_sql_database_instance" "test" {
   name             = "wm-test-sql"
   database_version = "MYSQL_8_0"
@@ -210,8 +212,7 @@ resource "google_sql_database_instance" "test" {
     }
 
     ip_configuration {
-      ipv4_enabled    = false
-      private_network = "projects/${var.project_id}/global/networks/default"
+      ipv4_enabled = true
     }
   }
 }
@@ -317,7 +318,7 @@ resource "google_compute_firewall" "allow_http_open" {
   network = "default"
 
   direction     = "INGRESS"
-  source_ranges = ["10.0.0.0/8"]
+  source_ranges = ["0.0.0.0/0"] # intentionally open — triggers Watchmen firewall finding
 
   allow {
     protocol = "tcp"

@@ -14,22 +14,22 @@ terraform {
 
 # Remove allUsers objectAdmin binding from the writable bucket
 resource "google_storage_bucket_iam_binding" "watchmen-remove-public-write-uploads" {
-  bucket  = "watchmen-test-488807-wm-attack-public-uploads"
-  role    = "roles/storage.objectAdmin"
+  bucket = "watchmen-test-488807-wm-attack-public-uploads"
+  role   = "roles/storage.objectAdmin"
   members = []
 }
 
 # Remove allUsers objectViewer binding from the writable bucket (defense in depth)
 resource "google_storage_bucket_iam_binding" "watchmen-remove-public-read-uploads" {
-  bucket  = "watchmen-test-488807-wm-attack-public-uploads"
-  role    = "roles/storage.objectViewer"
+  bucket = "watchmen-test-488807-wm-attack-public-uploads"
+  role   = "roles/storage.objectViewer"
   members = []
 }
 
 # Remove allUsers objectCreator binding from the writable bucket (defense in depth)
 resource "google_storage_bucket_iam_binding" "watchmen-remove-public-create-uploads" {
-  bucket  = "watchmen-test-488807-wm-attack-public-uploads"
-  role    = "roles/storage.objectCreator"
+  bucket = "watchmen-test-488807-wm-attack-public-uploads"
+  role   = "roles/storage.objectCreator"
   members = []
 }
 
@@ -48,8 +48,8 @@ resource "google_storage_bucket" "watchmen-harden-public-uploads-bucket" {
 
 # Ensure the CI/CD service account does NOT have objectAdmin on the writable bucket
 resource "google_storage_bucket_iam_binding" "watchmen-cicd-sa-no-admin-uploads" {
-  bucket  = "watchmen-test-488807-wm-attack-public-uploads"
-  role    = "roles/storage.objectAdmin"
+  bucket = "watchmen-test-488807-wm-attack-public-uploads"
+  role   = "roles/storage.objectAdmin"
   members = []
 
   depends_on = [
@@ -62,8 +62,8 @@ resource "google_storage_bucket_iam_binding" "watchmen-cicd-sa-no-admin-uploads"
 # ---------------------------------------------------------------------------
 
 resource "google_storage_bucket_iam_binding" "watchmen-escalation-sa-no-admin-uploads" {
-  bucket  = "watchmen-test-488807-wm-attack-public-uploads"
-  role    = "roles/storage.objectAdmin"
+  bucket = "watchmen-test-488807-wm-attack-public-uploads"
+  role   = "roles/storage.objectAdmin"
   members = []
 
   depends_on = [
@@ -90,8 +90,8 @@ resource "google_project_iam_binding" "watchmen-escalation-sa-no-project-editor"
 # ---------------------------------------------------------------------------
 
 resource "google_storage_bucket_iam_binding" "watchmen-remove-public-read-theinsite-images" {
-  bucket  = "theinsite-scraped-images"
-  role    = "roles/storage.objectViewer"
+  bucket = "theinsite-scraped-images"
+  role   = "roles/storage.objectViewer"
   members = []
 }
 
@@ -108,8 +108,8 @@ resource "google_storage_bucket" "watchmen-harden-theinsite-images-bucket" {
 # ---------------------------------------------------------------------------
 
 resource "google_storage_bucket_iam_binding" "watchmen-remove-public-read-attack-data" {
-  bucket  = "watchmen-test-488807-wm-attack-public-data"
-  role    = "roles/storage.objectViewer"
+  bucket = "watchmen-test-488807-wm-attack-public-data"
+  role   = "roles/storage.objectViewer"
   members = []
 }
 
@@ -305,38 +305,4 @@ resource "google_project_iam_binding" "watchmen-cicd-sa-no-project-owner" {
   project = "watchmen-test-488807"
   role    = "roles/owner"
   members = []
-}
-
-# ---------------------------------------------------------------------------
-# Fix 9: Restrict firewall rule "default-allow-rdp" - change source range from
-# 0.0.0.0/0 to internal only (10.0.0.0/8) to block internet RDP access on port 3389
-# ---------------------------------------------------------------------------
-
-resource "google_compute_firewall" "default-allow-rdp" {
-  name    = "default-allow-rdp"
-  network = "default"
-
-  allow {
-    protocol = "tcp"
-    ports    = ["3389"]
-  }
-
-  source_ranges = ["10.0.0.0/8"]
-}
-
-# ---------------------------------------------------------------------------
-# Fix 10: Restrict firewall rule "default-allow-ssh" - change source range from
-# 0.0.0.0/0 to internal only (10.0.0.0/8) to block internet SSH access on port 22
-# ---------------------------------------------------------------------------
-
-resource "google_compute_firewall" "default-allow-ssh" {
-  name    = "default-allow-ssh"
-  network = "default"
-
-  allow {
-    protocol = "tcp"
-    ports    = ["22"]
-  }
-
-  source_ranges = ["10.0.0.0/8"]
 }
