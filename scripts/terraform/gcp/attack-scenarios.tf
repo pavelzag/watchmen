@@ -31,11 +31,12 @@ resource "google_storage_bucket" "attack_public_data" {
   uniform_bucket_level_access = true
 }
 
-resource "google_storage_bucket_iam_member" "attack_public_data_allUsers" {
-  bucket = google_storage_bucket.attack_public_data.name
-  role   = "roles/storage.objectViewer"
-  member = "allUsers"
-}
+# Removed: Public read access for "allUsers"
+# resource "google_storage_bucket_iam_member" "attack_public_data_allUsers" {
+#   bucket = google_storage_bucket.attack_public_data.name
+#   role   = "roles/storage.objectViewer"
+#   member = "allUsers"
+# }
 
 # ── SCENARIO 2 ───────────────────────────────────────────────────────────────
 # Public bucket — allAuthenticatedUsers have object admin access
@@ -50,11 +51,12 @@ resource "google_storage_bucket" "attack_public_uploads" {
   uniform_bucket_level_access = true
 }
 
-resource "google_storage_bucket_iam_member" "attack_public_uploads_allAuth" {
-  bucket = google_storage_bucket.attack_public_uploads.name
-  role   = "roles/storage.objectAdmin"
-  member = "allAuthenticatedUsers"
-}
+# Removed: Public write access for "allAuthenticatedUsers"
+# resource "google_storage_bucket_iam_member" "attack_public_uploads_allAuth" {
+#   bucket = google_storage_bucket.attack_public_uploads.name
+#   role   = "roles/storage.objectAdmin"
+#   member = "allAuthenticatedUsers"
+# }
 
 # ── SCENARIO 3 ───────────────────────────────────────────────────────────────
 # SSH open to the internet — enables brute-force / credential stuffing attacks
@@ -65,7 +67,7 @@ resource "google_compute_firewall" "attack_open_ssh" {
   network = "default"
 
   direction     = "INGRESS"
-  source_ranges = ["0.0.0.0/0"]
+  source_ranges = ["10.0.0.0/8"] # Restricted from 0.0.0.0/0 to internal CIDR
 
   allow {
     protocol = "tcp"
@@ -82,7 +84,7 @@ resource "google_compute_firewall" "attack_open_rdp" {
   network = "default"
 
   direction     = "INGRESS"
-  source_ranges = ["0.0.0.0/0"]
+  source_ranges = ["10.0.0.0/8"] # Restricted from 0.0.0.0/0 to internal CIDR
 
   allow {
     protocol = "tcp"
@@ -99,7 +101,7 @@ resource "google_compute_firewall" "attack_open_db_ports" {
   network = "default"
 
   direction     = "INGRESS"
-  source_ranges = ["0.0.0.0/0"]
+  source_ranges = ["10.0.0.0/8"] # Restricted from 0.0.0.0/0 to internal CIDR
 
   allow {
     protocol = "tcp"
@@ -116,7 +118,7 @@ resource "google_compute_firewall" "attack_allow_all" {
   network = "default"
 
   direction     = "INGRESS"
-  source_ranges = ["0.0.0.0/0"]
+  source_ranges = ["10.0.0.0/8"] # Restricted from 0.0.0.0/0 to internal CIDR
 
   allow { protocol = "all" }
 }
@@ -352,13 +354,14 @@ resource "google_cloud_run_v2_service" "attack_public_internal_api" {
   depends_on = [google_project_iam_member.attack_escalation_editor]
 }
 
-resource "google_cloud_run_v2_service_iam_member" "attack_public_internal_api_allUsers" {
-  project  = var.project_id
-  location = var.region
-  name     = google_cloud_run_v2_service.attack_public_internal_api.name
-  role     = "roles/run.invoker"
-  member   = "allUsers"
-}
+# Removed: Unauthenticated invocations for "allUsers"
+# resource "google_cloud_run_v2_service_iam_member" "attack_public_internal_api_allUsers" {
+#   project  = var.project_id
+#   location = var.region
+#   name     = google_cloud_run_v2_service.attack_public_internal_api.name
+#   role     = "roles/run.invoker"
+#   member   = "allUsers"
+# }
 
 # ── SCENARIO 18 ──────────────────────────────────────────────────────────────
 # Cloud Run service with unauthenticated (allUsers) invocations allowed
@@ -387,13 +390,14 @@ resource "google_cloud_run_v2_service" "attack_public_api" {
   depends_on = [google_project_iam_member.attack_owner_iam]
 }
 
-resource "google_cloud_run_v2_service_iam_member" "attack_public_api_allUsers" {
-  project  = var.project_id
-  location = var.region
-  name     = google_cloud_run_v2_service.attack_public_api.name
-  role     = "roles/run.invoker"
-  member   = "allUsers"
-}
+# Removed: Unauthenticated invocations for "allUsers"
+# resource "google_cloud_run_v2_service_iam_member" "attack_public_api_allUsers" {
+#   project  = var.project_id
+#   location = var.region
+#   name     = google_cloud_run_v2_service.attack_public_api.name
+#   role     = "roles/run.invoker"
+#   member   = "allUsers"
+# }
 
 # ── SCENARIO 21 ──────────────────────────────────────────────────────────────
 # VM with external IP + privileged SA — completes the firewall → VM → SA chain.
