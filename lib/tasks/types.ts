@@ -1,4 +1,4 @@
-import type { RemediationTarget } from "@/lib/github/remediation-targets";
+import type { RemediationBatchSuggestion, RemediationTarget } from "@/lib/github/remediation-targets";
 import type { RemediationFileFailure, TfFilePatch } from "@/lib/github/terraform-remediation";
 
 export interface TaskProgressEvent {
@@ -46,6 +46,10 @@ export interface TaskResultMap {
     defaultBranch: string;
     patches: TfFilePatch[];
     failures: RemediationFileFailure[];
+    coveredTargetIds: string[];
+    uncoveredTargets: RemediationTarget[];
+    fullyAddressed: boolean;
+    suggestedBatches: RemediationBatchSuggestion[];
     summary: string;
     targets: RemediationTarget[];
   };
@@ -58,6 +62,10 @@ export interface TaskResultMap {
     patchCount: number;
     message?: string;
     failures: RemediationFileFailure[];
+    coveredTargetIds?: string[];
+    uncoveredTargets?: RemediationTarget[];
+    fullyAddressed?: boolean;
+    suggestedBatches?: RemediationBatchSuggestion[];
     targets: RemediationTarget[];
   };
 }

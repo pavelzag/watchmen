@@ -37,8 +37,12 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const body = (await req.json()) as { tasks?: AnyBackgroundTask[] };
-    const tasks = Array.isArray(body.tasks) ? body.tasks : [];
+    const body = (await req.json()) as { tasks?: AnyBackgroundTask[]; task?: AnyBackgroundTask };
+    const tasks = Array.isArray(body.tasks)
+      ? body.tasks
+      : body.task
+        ? [body.task]
+        : [];
     await ensureBackgroundTasksTable();
 
     for (const task of tasks) {

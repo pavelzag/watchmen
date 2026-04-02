@@ -1,6 +1,10 @@
 import { callAI, type AIProvider } from "@/lib/ai/client";
 import { searchTfFiles, getFileContent } from "@/lib/github/client";
-import type { RemediationTarget } from "@/lib/github/remediation-targets";
+import {
+  buildRemediationBatchSuggestions,
+  type RemediationBatchSuggestion,
+  type RemediationTarget,
+} from "@/lib/github/remediation-targets";
 import { debugError, debugLog, withDebugTiming } from "@/lib/debug";
 export type { RemediationTarget } from "@/lib/github/remediation-targets";
 
@@ -10,6 +14,7 @@ export interface TfFilePatch {
   fixedContent: string;
   sha: string;
   isNewFile?: boolean;
+  targetIdsCovered?: string[];
 }
 
 export type RemediationFailureReason =
@@ -31,6 +36,10 @@ export interface RemediationFileFailure {
 export interface RemediationPlan {
   patches: TfFilePatch[];
   failures: RemediationFileFailure[];
+  coveredTargetIds: string[];
+  uncoveredTargets: RemediationTarget[];
+  fullyAddressed: boolean;
+  suggestedBatches: RemediationBatchSuggestion[];
   summary: string;
 }
 
@@ -113,6 +122,11 @@ interface RemediateExistingFilesResult {
   failures: RemediationFileFailure[];
 }
 
+interface GeneratedFileResult {
+  content: string | null;
+  targetIdsCovered: string[];
+}
+
 const STRONGLY_DEPRIORITIZED_PATH_PATTERNS = [
   /(^|\/)test(s)?\//,
   /(^|\/)fixtures?\//,
@@ -121,6 +135,12 @@ const STRONGLY_DEPRIORITIZED_PATH_PATTERNS = [
   /faulty/,
   /\.terraform-originals\//,
 ];
+const EXCLUDED_PATH_PATTERNS = [
+  /(^|\/)backup(s)?\//,
+  /(^|\/)archive(s)?\//,
+  /(^|\/)snapshot(s)?\//,
+  /(^|\/)\d{4}-\d{2}-\d{2}[-_/]/,
+];
 
 const PATH_PREFERRED_BASENAMES = ["main.tf", "network.tf", "security.tf", "iam.tf", "firewall.tf"];
 const MAX_RELEVANT_FILES = 4;
@@ -128,13 +148,17 @@ const MAX_FETCHED_FILES = 20;
 const FETCH_BATCH_SIZE = 6;
 const FETCH_CONCURRENCY = 4;
 const MAX_FILES_TO_REMEDIATE = 3;
-const AI_CONCURRENCY = 2;
 const MAX_TARGETS_PER_FILE_PROMPT = 8;
 const MIN_TARGETS_PER_FILE_PROMPT = 2;
 const MAX_PROMPT_LENGTH = 20_000;
 const MAX_DESCRIPTION_LENGTH = 220;
 const MAX_PROMPT_DETAILS_PER_TARGET = 4;
 const MAX_MITIGATIONS_PER_TARGET = 3;
+const PRIMARY_AI_TIMEOUT_MS = 30_000;
+const SECONDARY_AI_TIMEOUT_MS = 18_000;
+const FALLBACK_AI_TIMEOUT_MS = 10_000;
+const MIN_TARGET_SCORE_FOR_FILE = 6;
+const MAX_FALLBACK_TARGETS = 5;
 
 async function mapWithConcurrency<T, R>(
   items: T[],
@@ -297,6 +321,56 @@ function getPathRelevanceScore(filePath: string, targets: RemediationTarget[]): 
   };
 }
 
+function isExcludedTerraformPath(filePath: string): boolean {
+  const normalizedPath = filePath.toLowerCase();
+  return EXCLUDED_PATH_PATTERNS.some((pattern) => pattern.test(normalizedPath));
+}
+
+function isBackupLikePath(filePath: string): boolean {
+  const normalizedPath = filePath.toLowerCase();
+  return /(^|\/)(backup|backups|archive|archives|snapshot|snapshots)(\/|$)/.test(normalizedPath);
+}
+
+function getCanonicalTerraformPath(filePath: string): string {
+  const segments = filePath.split("/");
+  if (!isBackupLikePath(filePath)) return filePath;
+
+  const preferredRoots = new Set(["gcp", "aws", "modules"]);
+  const rootIndex = segments.findIndex((segment, index) =>
+    index > 0 && (preferredRoots.has(segment.toLowerCase()) || segment.endsWith(".tf"))
+  );
+
+  if (rootIndex === -1) return filePath;
+  return segments.slice(rootIndex).join("/");
+}
+
+function comparePathPreference(a: string, b: string): number {
+  const aBackup = isBackupLikePath(a);
+  const bBackup = isBackupLikePath(b);
+  if (aBackup !== bBackup) return aBackup ? 1 : -1;
+
+  const aDepth = a.split("/").length;
+  const bDepth = b.split("/").length;
+  if (aDepth !== bDepth) return aDepth - bDepth;
+
+  if (a.length !== b.length) return a.length - b.length;
+  return a.localeCompare(b);
+}
+
+function dedupeTerraformPaths(tfPaths: string[]): string[] {
+  const bestByCanonical = new Map<string, string>();
+
+  for (const filePath of tfPaths) {
+    const canonicalPath = getCanonicalTerraformPath(filePath);
+    const currentBest = bestByCanonical.get(canonicalPath);
+    if (!currentBest || comparePathPreference(filePath, currentBest) < 0) {
+      bestByCanonical.set(canonicalPath, filePath);
+    }
+  }
+
+  return [...bestByCanonical.values()];
+}
+
 function getFileRelevanceScore(content: string, targets: RemediationTarget[]): { score: number; matchedTargetCount: number } {
   const normalizedContent = content.toLowerCase();
   let score = 0;
@@ -343,15 +417,66 @@ function getFinalCandidateScore(candidate: Pick<ScoredFile, "pathScore" | "conte
   return candidate.deprioritized ? score - 150 : score;
 }
 
+function inferredTargetPathHints(target: RemediationTarget): string[] {
+  const hints = new Set<string>();
+  if (target.resourceType) {
+    for (const hint of RESOURCE_PATH_HINTS[target.resourceType] ?? []) hints.add(hint);
+  }
+
+  for (const detail of target.promptDetails) {
+    const normalizedDetail = detail.toLowerCase();
+    if (normalizedDetail.includes("[iam]") || normalizedDetail.includes("service_account")) {
+      hints.add("iam");
+      hints.add("identity");
+    }
+    if (normalizedDetail.includes("[firewall_rule]") || normalizedDetail.includes("firewall")) {
+      hints.add("firewall");
+      hints.add("network");
+      hints.add("compute");
+    }
+    if (normalizedDetail.includes("[vm]") || normalizedDetail.includes("[compute") || normalizedDetail.includes("instance")) {
+      hints.add("compute");
+      hints.add("vm");
+    }
+  }
+
+  return [...hints];
+}
+
 function scoreTargetForFile(filePath: string, fileContent: string, target: RemediationTarget): number {
   const normalizedPath = filePath.toLowerCase();
   const normalizedContent = fileContent.toLowerCase();
   let score = 0;
+  if (target.autoRemediable === false) return 0;
+  const pathHints = inferredTargetPathHints(target);
+  const hasPathHintMatch = pathHints.some((hint) => normalizedPath.includes(hint));
+  const hasContentHintMatch = pathHints.some((hint) => normalizedContent.includes(hint));
 
-  if (target.resourceType) {
-    for (const hint of RESOURCE_PATH_HINTS[target.resourceType] ?? []) {
-      if (normalizedPath.includes(hint) || normalizedContent.includes(hint)) score += 4;
+  if (target.id.startsWith("secret_in_env:cloudrun:") && !normalizedPath.includes("cloud_run")) {
+    return 0;
+  }
+  if (target.id.startsWith("sql_public_ip:") && !(normalizedPath.includes("sql") || normalizedPath.includes("database"))) {
+    return 0;
+  }
+  if (target.id.startsWith("public_firewall:") && !(normalizedPath.includes("firewall") || normalizedPath.includes("compute") || normalizedPath.includes("network"))) {
+    return 0;
+  }
+  if (
+    (target.id.startsWith("sa_owner_editor:") || target.id.startsWith("user_owner_editor:") || target.id.startsWith("user-lateral:")) &&
+    !(normalizedPath.includes("iam") || normalizedPath.includes("identity"))
+  ) {
+    return 0;
+  }
+
+  if (pathHints.length > 0 && !hasPathHintMatch && !hasContentHintMatch) {
+    if (!target.resourceName || !normalizedPath.includes(target.resourceName.toLowerCase())) {
+      return 0;
     }
+  }
+
+  for (const hint of pathHints) {
+    if (normalizedPath.includes(hint)) score += 5;
+    if (normalizedContent.includes(hint)) score += 3;
   }
 
   for (const projectId of target.projectIds) {
@@ -371,6 +496,22 @@ function scoreTargetForFile(filePath: string, fileContent: string, target: Remed
   }
 
   return score;
+}
+
+function shouldAttemptFallbackForTargets(targets: RemediationTarget[]): boolean {
+  return targets.every((target) => {
+    if (target.resourceType) return true;
+    const detailBlob = target.promptDetails.join(" ").toLowerCase();
+    return (
+      detailBlob.includes("[iam]") ||
+      detailBlob.includes("[firewall_rule]") ||
+      detailBlob.includes("[storage_bucket]") ||
+      detailBlob.includes("[cloud_run]") ||
+      detailBlob.includes("[cloud_sql]") ||
+      detailBlob.includes("[vm]") ||
+      detailBlob.includes("[service_account]")
+    );
+  });
 }
 
 function buildPromptFromTargets(filePath: string, fileContent: string, targets: RemediationTarget[]): string {
@@ -404,7 +545,7 @@ function selectTargetsForFilePrompt(
       target,
       score: scoreTargetForFile(filePath, fileContent, target),
     }))
-    .filter((entry) => entry.score > 0)
+    .filter((entry) => entry.score >= MIN_TARGET_SCORE_FOR_FILE)
     .sort((a, b) => b.score - a.score);
 
   const fallbackTargets = rankedTargets.length > 0
@@ -574,7 +715,7 @@ async function generateNewSecurityFile(
   timeoutMs: number,
   scope = "github/terraform-remediation",
   onProgress?: BuildRemediationPlanOptions["onProgress"]
-): Promise<string | null> {
+): Promise<GeneratedFileResult> {
   try {
     const prompt = buildNewFilePrompt(targets);
     emitProgress(onProgress, {
@@ -582,10 +723,6 @@ async function generateNewSecurityFile(
       message: "Generating fallback Terraform security file",
       percent: 90,
       metadata: { targetCount: targets.length },
-    });
-    debugLog(scope, "generateFallbackFile:start", {
-      targetCount: targets.length,
-      promptLength: prompt.length,
     });
     const content = await withDebugTiming(scope, "generateFallbackFile", {
       targetCount: targets.length,
@@ -598,10 +735,16 @@ async function generateNewSecurityFile(
         ),
       ])
     );
-    return content.trim() || null;
+    return {
+      content: content.trim() || null,
+      targetIdsCovered: targets.map((target) => target.id),
+    };
   } catch (error) {
     debugError(scope, "generateFallbackFile failed", error, { targetCount: targets.length });
-    return null;
+    return {
+      content: null,
+      targetIdsCovered: [],
+    };
   }
 }
 
@@ -640,18 +783,25 @@ async function remediateExistingFiles(
 
   let completed = 0;
   const failures: RemediationFileFailure[] = [];
-  const results = await mapWithConcurrency(selected, AI_CONCURRENCY, async ({ filePath, pathScore, contentScore, finalScore, deprioritized }) => {
+  const results: Array<TfFilePatch | null> = [];
+  for (const [index, candidate] of selected.entries()) {
+    const { filePath, pathScore, contentScore, finalScore, deprioritized } = candidate;
     const file = fileMap.get(filePath);
-    if (!file) return null;
+    if (!file) {
+      results.push(null);
+      continue;
+    }
 
     const { content: originalContent, sha } = file;
     if (originalContent.length > 200_000) {
       debugLog(scope, "skipLargeFile", { filePath, size: originalContent.length });
-      return null;
+      results.push(null);
+      continue;
     }
 
     const promptSelection = selectTargetsForFilePrompt(filePath, originalContent, targets);
     const prompt = promptSelection.prompt;
+    const timeoutMsForFile = index === 0 ? timeoutMs : Math.min(timeoutMs, SECONDARY_AI_TIMEOUT_MS);
 
     debugLog(scope, "filePromptSelected", {
       filePath,
@@ -662,6 +812,8 @@ async function remediateExistingFiles(
       targetIdsUsed: promptSelection.targetIdsUsed,
       promptTrimmed: promptSelection.promptTrimmed,
       promptLength: promptSelection.promptLength,
+      isBackup: isBackupLikePath(filePath),
+      timeoutMs: timeoutMsForFile,
     });
 
     try {
@@ -677,11 +829,13 @@ async function remediateExistingFiles(
         targetCountUsed: promptSelection.targetCountUsed,
         targetIdsUsed: promptSelection.targetIdsUsed,
         promptTrimmed: promptSelection.promptTrimmed,
+        isBackup: isBackupLikePath(filePath),
+        timeoutMs: timeoutMsForFile,
       }, async () =>
         Promise.race([
           callAI(aiProvider, aiApiKey, prompt),
           new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error("AI timed out")), timeoutMs)
+            setTimeout(() => reject(new Error("AI timed out")), timeoutMsForFile)
           ),
         ])
       );
@@ -703,11 +857,18 @@ async function remediateExistingFiles(
       });
       if (trimmedFixed && trimmedFixed !== originalContent.trim()) {
         debugLog(scope, "aiRemediateFile:changed", { filePath });
-        return { path: filePath, originalContent, fixedContent: trimmedFixed, sha };
+        results.push({
+          path: filePath,
+          originalContent,
+          fixedContent: trimmedFixed,
+          sha,
+          targetIdsCovered: promptSelection.targetIdsUsed,
+        });
+        continue;
       }
 
       debugLog(scope, "aiRemediateFile:noChange", { filePath });
-      return null;
+      results.push(null);
     } catch (error) {
       const classifiedError = classifyAiRemediationError(error);
       failures.push({
@@ -731,13 +892,15 @@ async function remediateExistingFiles(
         filePath,
         reason: classifiedError.reason,
         retryable: classifiedError.retryable,
+        isBackup: isBackupLikePath(filePath),
+        timeoutMs: timeoutMsForFile,
       });
-      return null;
+      results.push(null);
     }
-  });
+  }
 
   return {
-    patches: results.filter((result): result is TfFilePatch => Boolean(result)),
+    patches: results.filter((result): result is NonNullable<typeof result> => Boolean(result)),
     failures,
   };
 }
@@ -752,17 +915,33 @@ export async function buildRemediationPlan(
   options: BuildRemediationPlanOptions = {}
 ): Promise<RemediationPlan> {
   const scope = options.scope ?? "github/terraform-remediation";
+  const manualReviewTargets = targets.filter((target) => target.autoRemediable === false);
+  const autoTargets = targets.filter((target) => target.autoRemediable !== false);
   emitProgress(options.onProgress, {
     stage: "start",
     message: "Starting remediation analysis",
     percent: 0,
-    metadata: { repo: `${owner}/${repo}`, targetCount: targets.length },
+    metadata: { repo: `${owner}/${repo}`, targetCount: targets.length, autoTargetCount: autoTargets.length, manualReviewCount: manualReviewTargets.length },
   });
   debugLog(scope, "buildRemediationPlan:start", {
     repo: `${owner}/${repo}`,
     targetCount: targets.length,
+    autoTargetCount: autoTargets.length,
+    manualReviewCount: manualReviewTargets.length,
     targetKinds: [...new Set(targets.map((target) => target.kind))],
   });
+
+  if (autoTargets.length === 0) {
+    return {
+      patches: [],
+      failures: [],
+      coveredTargetIds: [],
+      uncoveredTargets: targets,
+      fullyAddressed: false,
+      suggestedBatches: buildRemediationBatchSuggestions(targets),
+      summary: `Selected items require manual review and are not eligible for Terraform auto-remediation.${manualReviewTargets.length > 0 ? ` ${manualReviewTargets.length} item${manualReviewTargets.length === 1 ? "" : "s"} were classified as review-only.` : ""}`,
+    };
+  }
 
   const allTfPaths = await withDebugTiming(scope, "searchTfFiles", {
     repo: `${owner}/${repo}`,
@@ -773,11 +952,17 @@ export async function buildRemediationPlan(
     percent: 10,
     metadata: { totalPaths: allTfPaths.length },
   });
-  const tfPaths = allTfPaths.filter(
+  const nonGeneratedPaths = allTfPaths.filter(
     (path) => !path.includes(".terraform-originals/") && !path.endsWith("-faulty.tf")
+  );
+  const excludedPaths = nonGeneratedPaths.filter((path) => isExcludedTerraformPath(path));
+  const tfPaths = dedupeTerraformPaths(
+    nonGeneratedPaths.filter((path) => !isExcludedTerraformPath(path))
   );
   debugLog(scope, "searchTfFiles:filtered", {
     totalPaths: allTfPaths.length,
+    excludedPaths: excludedPaths.length,
+    dedupedAwayPaths: nonGeneratedPaths.length - excludedPaths.length - tfPaths.length,
     terraformPaths: tfPaths.length,
   });
 
@@ -785,6 +970,10 @@ export async function buildRemediationPlan(
       return {
         patches: [],
         failures: [],
+        coveredTargetIds: [],
+        uncoveredTargets: targets,
+        fullyAddressed: false,
+        suggestedBatches: buildRemediationBatchSuggestions(targets),
         summary: "No Terraform files found in this repository.",
       };
   }
@@ -807,7 +996,7 @@ export async function buildRemediationPlan(
     })),
   });
 
-  const AI_TIMEOUT_MS = 45_000;
+  const AI_TIMEOUT_MS = PRIMARY_AI_TIMEOUT_MS;
   const { fileMap, relevantFiles } = await fetchRelevantFiles(
     token,
     owner,
@@ -827,12 +1016,16 @@ export async function buildRemediationPlan(
   });
 
   if (relevantFiles.length === 0) {
-    const newFileContent = await generateNewSecurityFile(targets, aiProvider, aiApiKey, AI_TIMEOUT_MS, scope, options.onProgress);
-    if (!newFileContent) {
+    const fallback = await generateNewSecurityFile(autoTargets, aiProvider, aiApiKey, AI_TIMEOUT_MS, scope, options.onProgress);
+    if (!fallback.content) {
       return {
         patches: [],
         failures: [],
-        summary: "No Terraform files matched the selected findings or attack paths, and AI could not generate a fallback fix file.",
+        coveredTargetIds: [],
+        uncoveredTargets: [...autoTargets, ...manualReviewTargets],
+        fullyAddressed: false,
+        suggestedBatches: buildRemediationBatchSuggestions([...autoTargets, ...manualReviewTargets]),
+        summary: `No Terraform files matched the selected findings or attack paths, and AI could not generate a fallback fix file.${manualReviewTargets.length > 0 ? ` ${manualReviewTargets.length} item${manualReviewTargets.length === 1 ? "" : "s"} also require manual review.` : ""}`,
       };
     }
     return {
@@ -840,20 +1033,25 @@ export async function buildRemediationPlan(
         {
           path: "watchmen-security-fixes.tf",
           originalContent: "",
-          fixedContent: newFileContent,
+          fixedContent: fallback.content,
           sha: "",
           isNewFile: true,
+          targetIdsCovered: fallback.targetIdsCovered,
         },
       ],
       failures: [],
-      summary: "No existing Terraform files matched. Generated a new watchmen-security-fixes.tf with the requested remediations.",
+      coveredTargetIds: fallback.targetIdsCovered,
+      uncoveredTargets: manualReviewTargets,
+      fullyAddressed: manualReviewTargets.length === 0,
+      suggestedBatches: [],
+      summary: `No existing Terraform files matched. Generated a new watchmen-security-fixes.tf with the requested remediations.${manualReviewTargets.length > 0 ? ` ${manualReviewTargets.length} item${manualReviewTargets.length === 1 ? "" : "s"} still require manual review.` : ""}`,
     };
   }
 
   const { patches, failures } = await remediateExistingFiles(
     relevantFiles,
     fileMap,
-    targets,
+    autoTargets,
     aiProvider,
     aiApiKey,
     AI_TIMEOUT_MS,
@@ -861,25 +1059,93 @@ export async function buildRemediationPlan(
     options.onProgress
   );
 
-  if (patches.length === 0) {
-    const newFileContent = await generateNewSecurityFile(targets, aiProvider, aiApiKey, AI_TIMEOUT_MS, scope, options.onProgress);
-    if (newFileContent) {
-      return {
-        patches: [
-          {
-            path: "watchmen-security-fixes.tf",
-            originalContent: "",
-            fixedContent: newFileContent,
-            sha: "",
-            isNewFile: true,
-          },
-        ],
-        failures,
-        summary: "Matched Terraform files did not yield direct edits. Generated a new watchmen-security-fixes.tf as a fallback remediation.",
-      };
+  const coveredTargetIds = new Set<string>(
+    patches.flatMap((patch) => patch.targetIdsCovered ?? [])
+  );
+  let uncoveredTargets = autoTargets.filter((target) => !coveredTargetIds.has(target.id));
+
+  if (uncoveredTargets.length > 0) {
+    debugLog(scope, "uncoveredTargets:detected", {
+      uncoveredCount: uncoveredTargets.length,
+      uncoveredTargetIds: uncoveredTargets.map((target) => target.id),
+    });
+    emitProgress(options.onProgress, {
+      stage: "generate_fallback",
+      message: `Generating fallback remediation for ${uncoveredTargets.length} uncovered item${uncoveredTargets.length === 1 ? "" : "s"}`,
+      percent: 88,
+      metadata: { uncoveredTargetIds: uncoveredTargets.map((target) => target.id) },
+    });
+
+    if (uncoveredTargets.length > MAX_FALLBACK_TARGETS) {
+      debugLog(scope, "uncoveredTargets:fallbackSkippedTooLarge", {
+        uncoveredCountRemaining: uncoveredTargets.length,
+        maxFallbackTargets: MAX_FALLBACK_TARGETS,
+      });
+    } else if (shouldAttemptFallbackForTargets(uncoveredTargets)) {
+      const fallback = await generateNewSecurityFile(
+        uncoveredTargets,
+        aiProvider,
+        aiApiKey,
+        FALLBACK_AI_TIMEOUT_MS,
+        scope,
+        options.onProgress
+      );
+
+      if (fallback.content) {
+        patches.push({
+          path: "watchmen-security-fixes.tf",
+          originalContent: "",
+          fixedContent: fallback.content,
+          sha: "",
+          isNewFile: true,
+          targetIdsCovered: fallback.targetIdsCovered,
+        });
+        for (const targetId of fallback.targetIdsCovered) coveredTargetIds.add(targetId);
+      uncoveredTargets = autoTargets.filter((target) => !coveredTargetIds.has(target.id));
+        debugLog(scope, "uncoveredTargets:fallbackGenerated", {
+          uncoveredCountRemaining: uncoveredTargets.length,
+          generatedPath: "watchmen-security-fixes.tf",
+        });
+      } else {
+        debugLog(scope, "uncoveredTargets:fallbackFailed", {
+          uncoveredCountRemaining: uncoveredTargets.length,
+        });
+      }
+    } else {
+      debugLog(scope, "uncoveredTargets:fallbackSkipped", {
+        uncoveredCountRemaining: uncoveredTargets.length,
+        uncoveredTargetIds: uncoveredTargets.map((target) => target.id),
+      });
     }
   }
 
+  if (patches.length === 0) {
+    if (shouldAttemptFallbackForTargets(autoTargets)) {
+      const fallback = await generateNewSecurityFile(autoTargets, aiProvider, aiApiKey, FALLBACK_AI_TIMEOUT_MS, scope, options.onProgress);
+      if (fallback.content) {
+        return {
+          patches: [
+            {
+              path: "watchmen-security-fixes.tf",
+              originalContent: "",
+              fixedContent: fallback.content,
+              sha: "",
+              isNewFile: true,
+              targetIdsCovered: fallback.targetIdsCovered,
+            },
+          ],
+          failures,
+          coveredTargetIds: fallback.targetIdsCovered,
+          uncoveredTargets: manualReviewTargets,
+          fullyAddressed: manualReviewTargets.length === 0,
+          suggestedBatches: [],
+          summary: `Matched Terraform files did not yield direct edits. Generated a new watchmen-security-fixes.tf as a fallback remediation.${manualReviewTargets.length > 0 ? ` ${manualReviewTargets.length} item${manualReviewTargets.length === 1 ? "" : "s"} still require manual review.` : ""}`,
+        };
+      }
+    }
+  }
+
+  uncoveredTargets = [...uncoveredTargets, ...manualReviewTargets];
   const targetSummary = `${targets.length} item${targets.length === 1 ? "" : "s"}`;
   emitProgress(options.onProgress, {
     stage: "complete",
@@ -890,6 +1156,12 @@ export async function buildRemediationPlan(
   return {
     patches,
     failures,
-    summary: `Found ${patches.length} file${patches.length === 1 ? "" : "s"} to update across ${relevantFiles.length} matched Terraform file${relevantFiles.length === 1 ? "" : "s"} for ${targetSummary}.${failures.length > 0 ? ` ${failures.length} file${failures.length === 1 ? "" : "s"} failed during remediation.` : ""}`,
+    coveredTargetIds: [...coveredTargetIds],
+    uncoveredTargets,
+    fullyAddressed: uncoveredTargets.length === 0,
+    suggestedBatches: uncoveredTargets.length > 0 ? buildRemediationBatchSuggestions(uncoveredTargets) : [],
+    summary: uncoveredTargets.length === 0
+      ? `Found ${patches.length} file${patches.length === 1 ? "" : "s"} to update across ${relevantFiles.length} matched Terraform file${relevantFiles.length === 1 ? "" : "s"} for ${targetSummary}.${failures.length > 0 ? ` ${failures.length} file${failures.length === 1 ? "" : "s"} failed during remediation.` : ""}`
+      : `Prepared ${patches.length} patch${patches.length === 1 ? "" : "es"}, but ${uncoveredTargets.length} of ${targets.length} selected item${targets.length === 1 ? "" : "s"} remain uncovered.${failures.length > 0 ? ` ${failures.length} file${failures.length === 1 ? "" : "s"} failed during remediation.` : ""}`,
   };
 }

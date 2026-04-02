@@ -2,6 +2,25 @@ import type { AttackPath, AttackNode } from "@/lib/gcp/attack-paths";
 import type { SecurityFinding, SecurityFindingSeverity } from "@/lib/gcp/types";
 
 export type RemediationTargetKind = "attack_path" | "finding";
+export type RemediationBatchCategory =
+  | "iam"
+  | "firewall"
+  | "cloud_run"
+  | "cloud_sql"
+  | "storage"
+  | "service_accounts"
+  | "other";
+
+export interface RemediationBatchSuggestion {
+  id: string;
+  title: string;
+  reason: string;
+  category: RemediationBatchCategory;
+  targets: RemediationTarget[];
+}
+
+const MAX_BATCH_TARGETS = 8;
+const AUTO_SPLIT_TARGET_THRESHOLD = 10;
 
 export interface RemediationTarget {
   id: string;
@@ -15,6 +34,104 @@ export interface RemediationTarget {
   resourceName?: string;
   searchTerms: string[];
   promptDetails: string[];
+  autoRemediable?: boolean;
+}
+
+function categorizeTarget(target: RemediationTarget): RemediationBatchCategory {
+  const id = target.id.toLowerCase();
+  const title = target.title.toLowerCase();
+  const description = target.description.toLowerCase();
+  const resourceType = target.resourceType?.toLowerCase() ?? "";
+  const detailBlob = target.promptDetails.join(" ").toLowerCase();
+
+  if (resourceType === "firewall_rule" || id.includes("firewall") || title.includes("firewall")) {
+    return "firewall";
+  }
+  if (resourceType === "cloud_run" || id.includes("cloudrun") || title.includes("cloud run")) {
+    return "cloud_run";
+  }
+  if (resourceType === "cloud_sql" || id.includes("sql_") || title.includes("cloud sql")) {
+    return "cloud_sql";
+  }
+  if (resourceType === "storage_bucket" || id.includes("bucket") || title.includes("bucket")) {
+    return "storage";
+  }
+  if (
+    resourceType === "service_account" ||
+    id.startsWith("sa_not_in_list:") ||
+    title.includes("service account not in list")
+  ) {
+    return "service_accounts";
+  }
+  if (
+    resourceType === "iam" ||
+    id.includes("owner_editor") ||
+    id.includes("user_owner_editor") ||
+    id.includes("user-lateral") ||
+    title.includes("iam") ||
+    title.includes("lateral") ||
+    description.includes("iam") ||
+    detailBlob.includes("[iam]")
+  ) {
+    return "iam";
+  }
+
+  return "other";
+}
+
+function batchTitle(category: RemediationBatchCategory): string {
+  if (category === "iam") return "IAM issues";
+  if (category === "firewall") return "Firewall issues";
+  if (category === "cloud_run") return "Cloud Run issues";
+  if (category === "cloud_sql") return "Cloud SQL issues";
+  if (category === "storage") return "Storage issues";
+  if (category === "service_accounts") return "Service account inventory issues";
+  return "Other issues";
+}
+
+function batchReason(category: RemediationBatchCategory): string {
+  if (category === "iam") return "Least-privilege IAM fixes work better as a focused batch.";
+  if (category === "firewall") return "Firewall rules need targeted network-specific remediation.";
+  if (category === "cloud_run") return "Cloud Run secrets and exposure fixes are best handled separately.";
+  if (category === "cloud_sql") return "Cloud SQL changes should be reviewed as a dedicated batch.";
+  if (category === "storage") return "Bucket exposure changes fit a dedicated storage batch.";
+  if (category === "service_accounts") return "Service-account inventory findings usually require separate review.";
+  return "These issues are better handled in a smaller dedicated batch.";
+}
+
+export function buildRemediationBatchSuggestions(targets: RemediationTarget[]): RemediationBatchSuggestion[] {
+  const grouped = new Map<RemediationBatchCategory, RemediationTarget[]>();
+
+  for (const target of targets) {
+    const category = categorizeTarget(target);
+    const existing = grouped.get(category) ?? [];
+    existing.push(target);
+    grouped.set(category, existing);
+  }
+
+  return [...grouped.entries()]
+    .filter(([, groupedTargets]) => groupedTargets.length > 0)
+    .sort((a, b) => b[1].length - a[1].length)
+    .flatMap(([category, groupedTargets]) => {
+      const totalChunks = Math.ceil(groupedTargets.length / MAX_BATCH_TARGETS);
+      return Array.from({ length: totalChunks }, (_, index) => {
+        const chunkTargets = groupedTargets.slice(index * MAX_BATCH_TARGETS, (index + 1) * MAX_BATCH_TARGETS);
+        const chunkSuffix = totalChunks > 1 ? ` ${index + 1}/${totalChunks}` : "";
+        return {
+          id: `${category}:${chunkTargets.map((target) => target.id).join(",")}`,
+          title: `${batchTitle(category)}${chunkSuffix}`,
+          reason: batchReason(category),
+          category,
+          targets: chunkTargets,
+        };
+      });
+    });
+}
+
+export function shouldAutoSplitRemediationTargets(targets: RemediationTarget[]): boolean {
+  if (targets.length === 0) return false;
+  const suggestions = buildRemediationBatchSuggestions(targets);
+  return targets.length >= AUTO_SPLIT_TARGET_THRESHOLD || suggestions.length > 1;
 }
 
 const STOP_WORDS = new Set([
@@ -113,6 +230,7 @@ function describeAttackNode(node: AttackNode): string {
 }
 
 export function remediationTargetFromAttackPath(path: AttackPath): RemediationTarget {
+  const autoRemediable = !path.id.toLowerCase().startsWith("sa_not_in_list:");
   return {
     id: path.id,
     kind: "attack_path",
@@ -129,10 +247,12 @@ export function remediationTargetFromAttackPath(path: AttackPath): RemediationTa
       ...path.nodes.flatMap((node) => [node.label, node.detail, node.projectId, node.risk])
     ),
     promptDetails: path.nodes.map((node) => describeAttackNode(node)),
+    autoRemediable,
   };
 }
 
 export function remediationTargetFromFinding(finding: SecurityFinding): RemediationTarget {
+  const autoRemediable = !finding.id.toLowerCase().startsWith("sa_not_in_list:");
   return {
     id: finding.id,
     kind: "finding",
@@ -156,5 +276,6 @@ export function remediationTargetFromFinding(finding: SecurityFinding): Remediat
       `    - [${finding.resourceType}] ${finding.resourceName} (project: ${finding.projectId})`,
       finding.remediationHint ? `    - Hint: ${finding.remediationHint}` : "",
     ].filter(Boolean),
+    autoRemediable,
   };
 }

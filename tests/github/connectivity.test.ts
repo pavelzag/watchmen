@@ -99,6 +99,10 @@ function makePlan(overrides: Partial<RemediationPlan> = {}): RemediationPlan {
       },
     ],
     failures: [],
+    coveredTargetIds: ["finding-1"],
+    uncoveredTargets: [],
+    fullyAddressed: true,
+    suggestedBatches: [],
     summary: "Prepared 1 patch.",
     ...overrides,
   };
@@ -240,6 +244,10 @@ describe("GitHub connectivity routes", () => {
       expect(body).toMatchObject({
         patches: makePlan().patches,
         summary: "Prepared 1 patch.",
+        coveredTargetIds: ["finding-1"],
+        uncoveredTargets: [],
+        fullyAddressed: true,
+        suggestedBatches: [],
       });
       expect(mockBuildRemediationPlan).toHaveBeenCalledWith(
         "gh-token",
@@ -287,8 +295,34 @@ describe("GitHub connectivity routes", () => {
           patches: makePlan().patches,
           failures: [],
           summary: "Prepared 1 patch.",
+          coveredTargetIds: ["finding-1"],
+          uncoveredTargets: [],
+          fullyAddressed: true,
+          suggestedBatches: [],
         },
       ]);
+    });
+
+    it("auto-splits large mixed preview requests before AI analysis", async () => {
+      const manyTargets = Array.from({ length: 12 }, (_, index) => ({
+        ...TARGETS[0],
+        id: `finding-${index}`,
+        title: index < 6 ? `Firewall issue ${index}` : `Cloud Run secret ${index}`,
+        resourceType: index < 6 ? "firewall_rule" : "cloud_run",
+      })) as RemediationTarget[];
+
+      const response = await previewTerraformPr(jsonRequest("http://localhost/api/github/terraform-pr/preview", {
+        repoFullName: "owner/repo",
+        defaultBranch: "main",
+        targets: manyTargets,
+      }));
+      const body = await parseJson(response);
+
+      expect(response.status).toBe(200);
+      expect(body.summary).toEqual(expect.stringContaining("Split 12 selected items"));
+      expect(body.fullyAddressed).toBe(false);
+      expect(Array.isArray(body.suggestedBatches)).toBe(true);
+      expect(mockBuildRemediationPlan).not.toHaveBeenCalled();
     });
   });
 
@@ -382,12 +416,21 @@ describe("GitHub connectivity routes", () => {
         patchCount: 1,
         message: "Prepared 1 patch.",
         failures: [],
+        coveredTargetIds: ["finding-1"],
+        uncoveredTargets: [],
+        fullyAddressed: true,
+        suggestedBatches: [],
       });
     });
 
     it("returns a non-PR success payload when no patches are needed", async () => {
       mockBuildRemediationPlan.mockResolvedValue({
         patches: [],
+        failures: [],
+        coveredTargetIds: [],
+        uncoveredTargets: TARGETS,
+        fullyAddressed: false,
+        suggestedBatches: [],
         summary: "No Terraform files found in this repository.",
       });
 
@@ -403,7 +446,32 @@ describe("GitHub connectivity routes", () => {
         ok: true,
         message: "No Terraform files found in this repository.",
         patchCount: 0,
+        failures: [],
+        coveredTargetIds: [],
+        uncoveredTargets: TARGETS,
+        fullyAddressed: false,
+        suggestedBatches: [],
       });
+      expect(mockCreatePullRequest).not.toHaveBeenCalled();
+    });
+
+    it("rejects PR creation when some selected targets remain uncovered", async () => {
+      mockBuildRemediationPlan.mockResolvedValue(makePlan({
+        coveredTargetIds: [],
+        uncoveredTargets: TARGETS,
+        fullyAddressed: false,
+        summary: "Prepared 1 patch, but 1 selected item remains uncovered.",
+      }));
+
+      const response = await createTerraformPr(jsonRequest("http://localhost/api/github/terraform-pr", {
+        repoFullName: "owner/repo",
+        defaultBranch: "main",
+        targets: TARGETS,
+      }));
+      const body = await parseJson(response);
+
+      expect(response.status).toBe(422);
+      expect(String(body.error)).toContain("Refusing to open a partial remediation PR");
       expect(mockCreatePullRequest).not.toHaveBeenCalled();
     });
   });

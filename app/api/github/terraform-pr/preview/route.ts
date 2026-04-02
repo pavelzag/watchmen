@@ -3,8 +3,10 @@ import { auth } from "@/lib/auth";
 import { getUserCloudCredentials } from "@/lib/credentials";
 import { buildRemediationPlan } from "@/lib/github/terraform-remediation";
 import {
+  buildRemediationBatchSuggestions,
   remediationTargetFromAttackPath,
   remediationTargetFromFinding,
+  shouldAutoSplitRemediationTargets,
   type RemediationTarget,
 } from "@/lib/github/remediation-targets";
 import { debugError, debugLog, withDebugTiming } from "@/lib/debug";
@@ -59,6 +61,44 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "repoFullName must be in 'owner/repo' format" }, { status: 400 });
   }
 
+  if (shouldAutoSplitRemediationTargets(targets)) {
+    const suggestedBatches = buildRemediationBatchSuggestions(targets);
+    const splitResult = {
+      patches: [],
+      summary: `Split ${targets.length} selected items into ${suggestedBatches.length} smaller remediation batch${suggestedBatches.length === 1 ? "" : "es"}.`,
+      failures: [],
+      coveredTargetIds: [],
+      uncoveredTargets: targets,
+      fullyAddressed: false,
+      suggestedBatches,
+    };
+
+    debugLog(scope, "preview auto-split", {
+      repoFullName,
+      targetCount: targets.length,
+      batchCount: suggestedBatches.length,
+    });
+
+    if (body.stream) {
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode(`${JSON.stringify({ type: "result", ...splitResult })}\n`));
+          controller.close();
+        },
+      });
+
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "application/x-ndjson; charset=utf-8",
+          "Cache-Control": "no-cache, no-transform",
+        },
+      });
+    }
+
+    return NextResponse.json(splitResult);
+  }
+
   let creds: Record<string, string> | null = null;
   try {
     creds = await Promise.race([
@@ -100,8 +140,23 @@ export async function POST(req: NextRequest) {
       const encoder = new TextEncoder();
       const stream = new ReadableStream<Uint8Array>({
         start(controller) {
+          let closed = false;
           const send = (event: unknown) => {
-            controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+            if (closed) return;
+            try {
+              controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+            } catch {
+              closed = true;
+            }
+          };
+          const close = () => {
+            if (closed) return;
+            closed = true;
+            try {
+              controller.close();
+            } catch {
+              // Ignore double-close and late close races.
+            }
           };
 
           void (async () => {
@@ -122,13 +177,30 @@ export async function POST(req: NextRequest) {
                   onProgress: (progress) => send({ type: "progress", progress }),
                 }
               ));
-              send({ type: "result", patches: plan.patches, summary: plan.summary, failures: plan.failures });
-              controller.close();
+              if (plan.patches.length === 0) {
+                debugLog(scope, "no patches generated", {
+                  repoFullName,
+                  summary: plan.summary,
+                  targetCount: targets.length,
+                  suggestedBatchCount: plan.suggestedBatches.length,
+                });
+              }
+              send({
+                type: "result",
+                patches: plan.patches,
+                summary: plan.summary,
+                failures: plan.failures,
+                coveredTargetIds: plan.coveredTargetIds,
+                uncoveredTargets: plan.uncoveredTargets,
+                fullyAddressed: plan.fullyAddressed,
+                suggestedBatches: plan.suggestedBatches,
+              });
+              close();
             } catch (err) {
               debugError(scope, "streamed preview generation failed", err, { email, repoFullName, targetCount: targets.length });
               const msg = err instanceof Error ? err.message : "Analysis failed";
               send({ type: "error", error: msg });
-              controller.close();
+              close();
             }
           })();
         },
@@ -147,7 +219,23 @@ export async function POST(req: NextRequest) {
       targetCount: targets.length,
       aiProvider: aiKey.provider,
     }, () => buildRemediationPlan(creds.token, owner, repo, targets, aiKey.provider, aiKey.key, { scope }));
-    return NextResponse.json({ patches: plan.patches, summary: plan.summary, failures: plan.failures });
+    if (plan.patches.length === 0) {
+      debugLog(scope, "no patches generated", {
+        repoFullName,
+        summary: plan.summary,
+        targetCount: targets.length,
+        suggestedBatchCount: plan.suggestedBatches.length,
+      });
+    }
+    return NextResponse.json({
+      patches: plan.patches,
+      summary: plan.summary,
+      failures: plan.failures,
+      coveredTargetIds: plan.coveredTargetIds,
+      uncoveredTargets: plan.uncoveredTargets,
+      fullyAddressed: plan.fullyAddressed,
+      suggestedBatches: plan.suggestedBatches,
+    });
   } catch (err) {
     debugError(scope, "preview generation failed", err, { email, repoFullName, targetCount: targets.length });
     console.error("[api/github/terraform-pr/preview] error:", err);

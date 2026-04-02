@@ -113,6 +113,8 @@ describe("buildRemediationPlan", () => {
     expect(plan.patches).toHaveLength(1);
     expect(plan.patches[0].path).toBe("main.tf");
     expect(plan.patches[0].originalContent).not.toBe(plan.patches[0].fixedContent);
+    expect(plan.fullyAddressed).toBe(true);
+    expect(plan.uncoveredTargets).toEqual([]);
   });
 
   it("matches findings directly without converting them into fake attack paths", async () => {
@@ -140,6 +142,7 @@ resource "google_compute_firewall" "fw-open-ssh" {
 
     expect(plan.patches).toHaveLength(1);
     expect(plan.patches[0].path).toBe("firewall.tf");
+    expect(plan.fullyAddressed).toBe(true);
   });
 
   it("skips files where AI returns identical content", async () => {
@@ -163,6 +166,7 @@ resource "google_compute_firewall" "fw-open-ssh" {
 
     expect(plan.patches).toHaveLength(1);
     expect(plan.patches[0].isNewFile).toBe(true);
+    expect(plan.fullyAddressed).toBe(true);
   });
 
   it("generates a new fix file when no Terraform file matches the selected targets", async () => {
@@ -185,6 +189,7 @@ resource "google_compute_firewall" "fw-open-ssh" {
     expect(plan.patches).toHaveLength(1);
     expect(plan.patches[0].path).toBe("watchmen-security-fixes.tf");
     expect(plan.patches[0].isNewFile).toBe(true);
+    expect(plan.fullyAddressed).toBe(true);
   });
 
   it("calls AI with prompt context for findings and attack paths", async () => {
@@ -257,6 +262,41 @@ resource "google_compute_firewall" "scenario-fw-open-ssh" {
     expect(plan.patches[0].path).toBe("gcp/main.tf");
   });
 
+  it("ignores backup snapshot Terraform paths when a live path exists", async () => {
+    const liveMainTf = `
+resource "google_compute_firewall" "fw-open-ssh" {
+  name          = "fw-open-ssh"
+  source_ranges = ["0.0.0.0/0"]
+}
+`.trim();
+
+    mockSearchTfFiles.mockResolvedValue([
+      "backup/2026-04-02-watchmen-test-live-snapshot/gcp/main.tf",
+      "backup/2026-04-02-watchmen-test-live-snapshot/gcp/watchmen-test-fixes/main.tf",
+      "gcp/main.tf",
+    ]);
+    mockGetFileContent.mockImplementation(async (_token, _owner, _repo, filePath) => {
+      if (filePath !== "gcp/main.tf") {
+        throw new Error(`Unexpected backup path fetched: ${filePath}`);
+      }
+      return { content: liveMainTf, sha: "sha-live-main" };
+    });
+    mockCallAI.mockResolvedValue(liveMainTf.replace('["0.0.0.0/0"]', '["10.0.0.0/8"]'));
+
+    const plan = await buildRemediationPlan(
+      TOKEN,
+      OWNER,
+      REPO,
+      [remediationTargetFromFinding(makeFinding())],
+      PROVIDER,
+      API_KEY
+    );
+
+    expect(plan.patches).toHaveLength(1);
+    expect(plan.patches[0].path).toBe("gcp/main.tf");
+    expect(mockGetFileContent).toHaveBeenCalledTimes(1);
+  });
+
   it("limits each file prompt to the most relevant findings", async () => {
     const manyFindings = Array.from({ length: 20 }, (_, index) =>
       remediationTargetFromFinding(
@@ -295,9 +335,191 @@ resource "google_compute_firewall" "fw-open-ssh" {
       API_KEY
     );
 
-    expect(mockCallAI).toHaveBeenCalledTimes(1);
+    expect(mockCallAI.mock.calls.length).toBeGreaterThanOrEqual(1);
     const prompt = mockCallAI.mock.calls[0][2];
     expect(prompt).toContain("fw-open-ssh");
     expect(prompt).not.toContain("Firewall issue 19");
+  });
+
+  it("reports uncovered targets when only part of the selection yields patches", async () => {
+    mockSearchTfFiles.mockResolvedValue(["gcp/main.tf"]);
+    mockGetFileContent.mockResolvedValue({
+      content: `
+resource "google_compute_firewall" "fw-open-ssh" {
+  name          = "fw-open-ssh"
+  source_ranges = ["0.0.0.0/0"]
+}
+`.trim(),
+      sha: "sha-main",
+    });
+    mockCallAI
+      .mockResolvedValueOnce(`
+resource "google_compute_firewall" "fw-open-ssh" {
+  name          = "fw-open-ssh"
+  source_ranges = ["10.0.0.0/8"]
+}
+`.trim())
+      .mockResolvedValueOnce("");
+
+    const plan = await buildRemediationPlan(
+      TOKEN,
+      OWNER,
+      REPO,
+      [
+        remediationTargetFromFinding(makeFinding()),
+        remediationTargetFromFinding(makeFinding({
+          id: "sa_not_in_list:service-123@compute-system.iam.gserviceaccount.com",
+          title: "Service account not in approved list",
+          description: "Unexpected service account detected.",
+          resourceType: "service_account",
+          resourceName: "service-123@compute-system.iam.gserviceaccount.com",
+          remediationHint: "Review whether this service account should remain active.",
+        })),
+      ],
+      PROVIDER,
+      API_KEY
+    );
+
+    expect(plan.fullyAddressed).toBe(false);
+    expect(plan.coveredTargetIds).toContain("public_firewall:proj-1:fw-open-ssh");
+    expect(plan.uncoveredTargets.map((target) => target.id)).toContain("sa_not_in_list:service-123@compute-system.iam.gserviceaccount.com");
+  });
+
+  it("filters unrelated targets out of a file prompt", async () => {
+    mockSearchTfFiles.mockResolvedValue(["gcp/iam.tf"]);
+    mockGetFileContent.mockResolvedValue({
+      content: `
+resource "google_project_iam_member" "viewer" {
+  project = "proj-1"
+  role    = "roles/viewer"
+  member  = "user:test@example.com"
+}
+`.trim(),
+      sha: "sha-iam",
+    });
+    mockCallAI.mockResolvedValue(`
+resource "google_project_iam_member" "viewer" {
+  project = "proj-1"
+  role    = "roles/viewer"
+  member  = "user:test@example.com"
+}
+`.trim());
+
+    await buildRemediationPlan(
+      TOKEN,
+      OWNER,
+      REPO,
+      [
+        remediationTargetFromFinding(makeFinding()),
+        remediationTargetFromAttackPath(makeAttackPath({
+          id: "user-lateral:test@example.com",
+          title: "User lateral movement through IAM",
+          description: "User test@example.com can pivot through broad IAM access.",
+          mitigations: ["Reduce IAM privileges."],
+          nodes: [
+            {
+              id: "user:test@example.com",
+              kind: "entry",
+              resourceType: "iam",
+              label: "test@example.com",
+              detail: "User has project IAM access",
+              projectId: "proj-1",
+              risk: "Lateral movement",
+            },
+          ],
+        })),
+      ],
+      PROVIDER,
+      API_KEY
+    );
+
+    const prompt = mockCallAI.mock.calls[0][2];
+    expect(prompt).toContain("User lateral movement through IAM");
+    expect(prompt).not.toContain("Firewall Rule Open to the Internet");
+  });
+
+  it("skips fallback generation for abstract uncovered targets", async () => {
+    mockSearchTfFiles.mockResolvedValue(["gcp/iam.tf"]);
+    mockGetFileContent.mockResolvedValue({
+      content: `
+resource "google_project_iam_member" "viewer" {
+  project = "proj-1"
+  role    = "roles/viewer"
+  member  = "user:test@example.com"
+}
+`.trim(),
+      sha: "sha-iam",
+    });
+    mockCallAI.mockResolvedValue(`
+resource "google_project_iam_member" "viewer" {
+  project = "proj-1"
+  role    = "roles/viewer"
+  member  = "user:test@example.com"
+}
+`.trim());
+
+    const plan = await buildRemediationPlan(
+      TOKEN,
+      OWNER,
+      REPO,
+      [
+        remediationTargetFromAttackPath(makeAttackPath({
+          id: "abstract-risk",
+          title: "Abstract lateral risk",
+          description: "A risky identity graph exists.",
+          mitigations: ["Investigate manually."],
+          nodes: [
+            {
+              id: "abstract",
+              kind: "entry",
+              resourceType: "unknown",
+              label: "abstract-node",
+              detail: "No concrete Terraform resource",
+              projectId: "proj-1",
+              risk: "Unknown",
+            },
+          ],
+        })),
+      ],
+      PROVIDER,
+      API_KEY
+    );
+
+    expect(plan.fullyAddressed).toBe(false);
+    expect(plan.uncoveredTargets).toHaveLength(1);
+    expect(mockCallAI).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks sa_not_in_list targets as manual review only", async () => {
+    mockSearchTfFiles.mockResolvedValue(["gcp/compute.tf"]);
+    mockGetFileContent.mockResolvedValue({
+      content: `
+resource "google_compute_instance" "vm" {
+  name = "vm"
+}
+`.trim(),
+      sha: "sha-compute",
+    });
+
+    const plan = await buildRemediationPlan(
+      TOKEN,
+      OWNER,
+      REPO,
+      [
+        remediationTargetFromFinding(makeFinding({
+          id: "sa_not_in_list:service-123@compute-system.iam.gserviceaccount.com",
+          title: "Service account not in approved list",
+          description: "Unexpected service account detected.",
+          resourceType: "service_account",
+          resourceName: "service-123@compute-system.iam.gserviceaccount.com",
+        })),
+      ],
+      PROVIDER,
+      API_KEY
+    );
+
+    expect(plan.fullyAddressed).toBe(false);
+    expect(plan.summary).toContain("manual review");
+    expect(mockCallAI).not.toHaveBeenCalled();
   });
 });

@@ -22,6 +22,10 @@ import {
 } from "@/lib/github/remediation-targets";
 import type { RemediationPlan, RemediationProgressEvent } from "@/lib/github/terraform-remediation";
 
+class IncompleteRemediationError extends Error {
+  statusCode = 422;
+}
+
 interface RequestBody {
   repoFullName: string;
   defaultBranch: string;
@@ -80,6 +84,13 @@ async function executeCreatePrFlow(
     return { remediationPlan, pr: { html_url: "", number: 0 } };
   }
 
+  if (!remediationPlan.fullyAddressed) {
+    const uncoveredTitles = remediationPlan.uncoveredTargets.map((target) => target.title);
+    throw new IncompleteRemediationError(
+      `Refusing to open a partial remediation PR. ${remediationPlan.uncoveredTargets.length} selected item${remediationPlan.uncoveredTargets.length === 1 ? "" : "s"} remain uncovered: ${uncoveredTitles.join(", ")}`
+    );
+  }
+
   onProgress?.({
     stage: "create_branch",
     message: `Creating branch from ${defaultBranch}`,
@@ -95,7 +106,8 @@ async function executeCreatePrFlow(
     createBranch(token, owner, repo, branchName, headSha)
   );
 
-  const targetTitles = targets.map((target) => target.title).join(", ");
+  const addressedTargets = targets.filter((target) => remediationPlan.coveredTargetIds.includes(target.id));
+  const targetTitles = addressedTargets.map((target) => target.title).join(", ");
   let completed = 0;
   const totalOps = remediationPlan.patches.reduce((sum, patch) => sum + (patch.isNewFile ? 1 : 2), 0);
 
@@ -152,7 +164,7 @@ async function executeCreatePrFlow(
     }
   }
 
-  const targetDetails = targets
+  const targetDetails = addressedTargets
     .map(
       (target) =>
         `### ${target.severity === "critical" ? "🔴" : target.severity === "high" ? "🟠" : "🟡"} ${target.title}\n${target.description}\n\n**Context:** ${target.kind === "attack_path" ? "Attack path" : "Finding"}\n\n**Mitigations applied:**\n${(target.mitigations.length > 0 ? target.mitigations : ["AI-generated least-privilege remediation"]).map((m) => `- ${m}`).join("\n")}`
@@ -229,7 +241,7 @@ ${targetDetails}
               type: "section",
               text: {
                 type: "mrkdwn",
-                text: `*Security items addressed:*\n${targets.map((target) => `• ${target.title}`).join("\n")}`,
+                text: `*Security items addressed:*\n${addressedTargets.map((target) => `• ${target.title}`).join("\n")}`,
               },
             },
             {
@@ -254,13 +266,14 @@ ${targetDetails}
 
   onProgress?.({
     stage: "complete",
-    message: `Pull request #${pr.number} created${remediationPlan.failures.length > 0 ? ` with ${remediationPlan.failures.length} failed file${remediationPlan.failures.length === 1 ? "" : "s"}` : ""}`,
+      message: `Pull request #${pr.number} created${remediationPlan.failures.length > 0 ? ` with ${remediationPlan.failures.length} failed file${remediationPlan.failures.length === 1 ? "" : "s"}` : ""}`,
     percent: 100,
     metadata: {
       prNumber: pr.number,
       prUrl: pr.html_url,
       patchCount: remediationPlan.patches.length,
       failureCount: remediationPlan.failures.length,
+      coveredTargetCount: remediationPlan.coveredTargetIds.length,
     },
   });
 
@@ -349,7 +362,24 @@ export async function POST(req: NextRequest) {
       const encoder = new TextEncoder();
       const stream = new ReadableStream<Uint8Array>({
         start(controller) {
-          const send = (event: unknown) => sendStreamEvent(controller, encoder, event);
+          let closed = false;
+          const send = (event: unknown) => {
+            if (closed) return;
+            try {
+              sendStreamEvent(controller, encoder, event);
+            } catch {
+              closed = true;
+            }
+          };
+          const close = () => {
+            if (closed) return;
+            closed = true;
+            try {
+              controller.close();
+            } catch {
+              // Ignore double-close and late close races.
+            }
+          };
           void (async () => {
             try {
               const { remediationPlan, pr } = await executeCreatePrFlow(
@@ -364,6 +394,10 @@ export async function POST(req: NextRequest) {
                   message: remediationPlan.summary,
                   patchCount: 0,
                   failures: remediationPlan.failures,
+                  coveredTargetIds: remediationPlan.coveredTargetIds,
+                  uncoveredTargets: remediationPlan.uncoveredTargets,
+                  fullyAddressed: remediationPlan.fullyAddressed,
+                  suggestedBatches: remediationPlan.suggestedBatches,
                 });
               } else {
                 send({
@@ -374,14 +408,18 @@ export async function POST(req: NextRequest) {
                   patchCount: remediationPlan.patches.length,
                   message: remediationPlan.summary,
                   failures: remediationPlan.failures,
+                  coveredTargetIds: remediationPlan.coveredTargetIds,
+                  uncoveredTargets: remediationPlan.uncoveredTargets,
+                  fullyAddressed: remediationPlan.fullyAddressed,
+                  suggestedBatches: remediationPlan.suggestedBatches,
                 });
               }
-              controller.close();
+              close();
             } catch (err) {
               debugError(scope, "streamed terraform remediation PR flow failed", err, { email, repoFullName, defaultBranch, targetCount: targets.length });
               const msg = err instanceof Error ? err.message : "Failed to create PR";
               send({ type: "error", error: msg });
-              controller.close();
+              close();
             }
           })();
         },
@@ -413,6 +451,10 @@ export async function POST(req: NextRequest) {
         message: remediationPlan.summary,
         patchCount: 0,
         failures: remediationPlan.failures,
+        coveredTargetIds: remediationPlan.coveredTargetIds,
+        uncoveredTargets: remediationPlan.uncoveredTargets,
+        fullyAddressed: remediationPlan.fullyAddressed,
+        suggestedBatches: remediationPlan.suggestedBatches,
       });
     }
 
@@ -423,11 +465,19 @@ export async function POST(req: NextRequest) {
       patchCount: remediationPlan.patches.length,
       message: remediationPlan.summary,
       failures: remediationPlan.failures,
+      coveredTargetIds: remediationPlan.coveredTargetIds,
+      uncoveredTargets: remediationPlan.uncoveredTargets,
+      fullyAddressed: remediationPlan.fullyAddressed,
+      suggestedBatches: remediationPlan.suggestedBatches,
     });
   } catch (err) {
     debugError(scope, "terraform remediation PR flow failed", err, { email, repoFullName, defaultBranch, targetCount: targets.length });
     console.error("[api/github/terraform-pr] error:", err);
     const msg = err instanceof Error ? err.message : "Failed to create PR";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    const status =
+      err instanceof IncompleteRemediationError
+        ? err.statusCode
+        : 500;
+    return NextResponse.json({ error: msg }, { status });
   }
 }

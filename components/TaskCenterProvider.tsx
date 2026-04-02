@@ -26,6 +26,7 @@ interface TaskCenterContextValue {
   startAwsScan: (params?: TaskParamsMap["aws_scan"]) => string;
   startAttackPathAnalysis: () => string;
   startTerraformPreview: (params: TaskParamsMap["terraform_preview"]) => string;
+  startTerraformPreviewBatch: (paramsList: TaskParamsMap["terraform_preview"][]) => string[];
   startTerraformPr: (params: TaskParamsMap["terraform_pr"]) => string;
   dismissTask: (taskId: string) => void;
   clearFinishedTasks: () => void;
@@ -34,8 +35,7 @@ interface TaskCenterContextValue {
 const TaskCenterContext = createContext<TaskCenterContextValue | null>(null);
 
 const MAX_PROGRESS_ENTRIES = 12;
-const TASK_SYNC_DEBOUNCE_MS = 4000;
-const TASK_SYNC_THROTTLE_MS = 15000;
+const PREVIEW_BATCH_CONCURRENCY = 2;
 
 function taskTitle(kind: BackgroundTaskKind, params: TaskParamsMap[BackgroundTaskKind]): string {
   if (kind === "gcp_scan") return "GCP Cloud Scan";
@@ -67,6 +67,10 @@ function normalizeTask(task: AnyBackgroundTask): AnyBackgroundTask {
       result: {
         ...task.result,
         failures: task.result.failures ?? [],
+        coveredTargetIds: task.result.coveredTargetIds ?? [],
+        uncoveredTargets: task.result.uncoveredTargets ?? [],
+        fullyAddressed: task.result.fullyAddressed ?? true,
+        suggestedBatches: task.result.suggestedBatches ?? [],
       },
     };
   }
@@ -77,6 +81,10 @@ function normalizeTask(task: AnyBackgroundTask): AnyBackgroundTask {
       result: {
         ...task.result,
         failures: task.result.failures ?? [],
+        coveredTargetIds: task.result.coveredTargetIds ?? [],
+        uncoveredTargets: task.result.uncoveredTargets ?? [],
+        fullyAddressed: task.result.fullyAddressed ?? true,
+        suggestedBatches: task.result.suggestedBatches ?? [],
       },
     };
   }
@@ -114,9 +122,7 @@ async function consumeNdjson<K extends BackgroundTaskKind>(
 export function TaskCenterProvider({ children }: { children: React.ReactNode }) {
   const [tasks, setTasks] = useState<AnyBackgroundTask[]>([]);
   const hasHydratedRef = useRef(false);
-  const syncTimeoutRef = useRef<number | null>(null);
   const previousTasksRef = useRef<AnyBackgroundTask[]>([]);
-  const lastSyncedAtRef = useRef(0);
 
   const mergeTasks = useCallback((localTasks: AnyBackgroundTask[], remoteTasks: AnyBackgroundTask[]) => {
     const merged = new Map<string, AnyBackgroundTask>();
@@ -189,6 +195,37 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
     void runner(task.id, pushProgress, succeed, fail);
     return task.id;
   }, [tasks, updateTask]);
+
+  const runTerraformPreviewTask = useCallback(async (
+    params: TaskParamsMap["terraform_preview"],
+    pushProgress: (event: TaskProgressEvent) => void,
+    succeed: (result: TaskResultMap["terraform_preview"]) => void,
+    fail: (error: string) => void
+  ) => {
+    try {
+      const response = await fetch("/api/github/terraform-pr/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...params, stream: true }),
+      });
+
+      if (!response.ok && !response.body) {
+        const data = await response.json().catch(() => ({})) as { error?: string };
+        throw new Error(data.error ?? "Analysis failed");
+      }
+
+      await consumeNdjson<"terraform_preview">(response, (event) => {
+        if (event.type === "progress") pushProgress(event.progress);
+        else if (event.type === "error") fail(event.error);
+        else {
+          const { type: _type, ...result } = event;
+          succeed({ ...result, targets: params.targets, repoFullName: params.repoFullName, defaultBranch: params.defaultBranch });
+        }
+      });
+    } catch (error) {
+      fail(error instanceof Error ? error.message : "Analysis failed");
+    }
+  }, []);
 
   const startGcpScan = useCallback((params: TaskParamsMap["gcp_scan"] = {}) => {
     return enqueueTask("gcp_scan", params, async (_taskId, pushProgress, succeed, fail) => {
@@ -271,31 +308,67 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
 
   const startTerraformPreview = useCallback((params: TaskParamsMap["terraform_preview"]) => {
     return enqueueTask("terraform_preview", params, async (_taskId, pushProgress, succeed, fail) => {
-      try {
-        const response = await fetch("/api/github/terraform-pr/preview", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...params, stream: true }),
-        });
-
-        if (!response.ok && !response.body) {
-          const data = await response.json().catch(() => ({})) as { error?: string };
-          throw new Error(data.error ?? "Analysis failed");
-        }
-
-        await consumeNdjson<"terraform_preview">(response, (event) => {
-          if (event.type === "progress") pushProgress(event.progress);
-          else if (event.type === "error") fail(event.error);
-          else {
-            const { type: _type, ...result } = event;
-            succeed({ ...result, targets: params.targets, repoFullName: params.repoFullName, defaultBranch: params.defaultBranch });
-          }
-        });
-      } catch (error) {
-        fail(error instanceof Error ? error.message : "Analysis failed");
-      }
+      await runTerraformPreviewTask(params, pushProgress, succeed, fail);
     });
-  }, [enqueueTask]);
+  }, [enqueueTask, runTerraformPreviewTask]);
+
+  const startTerraformPreviewBatch = useCallback((paramsList: TaskParamsMap["terraform_preview"][]) => {
+    if (paramsList.length === 0) return [];
+
+    const createdTasks = paramsList.map((params) => newTask("terraform_preview", params));
+    setTasks((current) => [...createdTasks as AnyBackgroundTask[], ...current]);
+    let nextIndex = 0;
+    let activeCount = 0;
+
+    const startNext = () => {
+      if (nextIndex >= createdTasks.length || activeCount >= PREVIEW_BATCH_CONCURRENCY) return;
+      const task = createdTasks[nextIndex++];
+      activeCount += 1;
+
+      const pushProgress = (event: TaskProgressEvent) => {
+        updateTask(task.id, (currentTask) => ({
+          ...currentTask,
+          status: "running",
+          updatedAt: new Date().toISOString(),
+          percent: event.percent ?? currentTask.percent,
+          progress: [...currentTask.progress.slice(-(MAX_PROGRESS_ENTRIES - 1)), event],
+        } as AnyBackgroundTask));
+      };
+
+      const succeed = (result: TaskResultMap["terraform_preview"]) => {
+        updateTask(task.id, (currentTask) => ({
+          ...currentTask,
+          status: "completed",
+          updatedAt: new Date().toISOString(),
+          percent: 100,
+          result,
+        } as AnyBackgroundTask));
+      };
+
+      const fail = (error: string) => {
+        updateTask(task.id, (currentTask) => ({
+          ...currentTask,
+          status: "failed",
+          updatedAt: new Date().toISOString(),
+          error,
+        } as AnyBackgroundTask));
+      };
+
+      setTimeout(() => {
+        void runTerraformPreviewTask(task.params, pushProgress, succeed, fail)
+          .finally(() => {
+            activeCount -= 1;
+            startNext();
+          });
+      }, 0);
+    };
+
+    for (let index = 0; index < Math.min(PREVIEW_BATCH_CONCURRENCY, createdTasks.length); index += 1) {
+      startNext();
+    }
+
+    return createdTasks.map((task) => task.id);
+  }, [runTerraformPreviewTask, updateTask]);
 
   const startTerraformPr = useCallback((params: TaskParamsMap["terraform_pr"]) => {
     return enqueueTask("terraform_pr", params, async (_taskId, pushProgress, succeed, fail) => {
@@ -383,7 +456,6 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
     }
 
     if (!hasHydratedRef.current) return;
-    if (syncTimeoutRef.current) window.clearTimeout(syncTimeoutRef.current);
     const previousTasks = previousTasksRef.current;
     const previousById = new Map(previousTasks.map((task) => [task.id, task]));
     const hasStructuralChange = previousTasks.length !== tasks.length;
@@ -392,24 +464,27 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
       if (!previous) return false;
       return previous.status !== task.status && (task.status === "completed" || task.status === "failed");
     });
-    const now = Date.now();
-    const shouldSyncSoon = hasStructuralChange || hasTerminalTransition || now - lastSyncedAtRef.current > TASK_SYNC_THROTTLE_MS;
-    const delay = shouldSyncSoon ? 250 : TASK_SYNC_DEBOUNCE_MS;
+    previousTasksRef.current = tasks;
 
-    syncTimeoutRef.current = window.setTimeout(() => {
-      void fetch("/api/tasks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tasks }),
-      }).then(() => {
-        lastSyncedAtRef.current = Date.now();
-        previousTasksRef.current = tasks;
-      }).catch(() => {});
-    }, delay);
+    if (!hasStructuralChange && !hasTerminalTransition) {
+      return;
+    }
 
-    return () => {
-      if (syncTimeoutRef.current) window.clearTimeout(syncTimeoutRef.current);
-    };
+    const changedTasks = tasks.filter((task) => {
+      const previous = previousById.get(task.id);
+      if (!previous) return true;
+      return previous.updatedAt !== task.updatedAt || previous.status !== task.status;
+    });
+
+    if (changedTasks.length === 0) {
+      return;
+    }
+
+    void fetch("/api/tasks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tasks: changedTasks }),
+    }).catch(() => {});
   }, [tasks]);
 
   const value = useMemo<TaskCenterContextValue>(() => ({
@@ -418,6 +493,7 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
     startAwsScan,
     startAttackPathAnalysis,
     startTerraformPreview,
+    startTerraformPreviewBatch,
     startTerraformPr,
     dismissTask,
     clearFinishedTasks,
@@ -427,6 +503,7 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
     startAwsScan,
     startAttackPathAnalysis,
     startTerraformPreview,
+    startTerraformPreviewBatch,
     startTerraformPr,
     dismissTask,
     clearFinishedTasks,

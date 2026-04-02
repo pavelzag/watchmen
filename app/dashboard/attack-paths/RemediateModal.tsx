@@ -2,7 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { X, ChevronRight, Loader2, ExternalLink, AlertTriangle, Check } from "lucide-react";
-import type { RemediationTarget } from "@/lib/github/remediation-targets";
+import {
+  type RemediationBatchSuggestion,
+  type RemediationTarget,
+} from "@/lib/github/remediation-targets";
 import type { RemediationProgressEvent, TfFilePatch } from "@/lib/github/terraform-remediation";
 import CopyTextButton from "@/components/CopyTextButton";
 import { useTaskCenter } from "@/components/TaskCenterProvider";
@@ -158,14 +161,18 @@ export default function RemediateModal({ targets, onClose }: Props) {
   const [analysisProgress, setAnalysisProgress] = useState<RemediationProgressEvent[]>([]);
   const [analysisPercent, setAnalysisPercent] = useState(0);
   const [analysisSummary, setAnalysisSummary] = useState<string | null>(null);
+  const [analysisFullyAddressed, setAnalysisFullyAddressed] = useState(true);
+  const [analysisUncoveredTargets, setAnalysisUncoveredTargets] = useState<RemediationTarget[]>([]);
+  const [analysisSuggestedBatches, setAnalysisSuggestedBatches] = useState<RemediationBatchSuggestion[]>([]);
   const [creationProgress, setCreationProgress] = useState<RemediationProgressEvent[]>([]);
   const [creationPercent, setCreationPercent] = useState(0);
   const [creationSummary, setCreationSummary] = useState<string | null>(null);
   const [analysisTaskId, setAnalysisTaskId] = useState<string | null>(null);
   const [creationTaskId, setCreationTaskId] = useState<string | null>(null);
-  const { tasks, startTerraformPreview, startTerraformPr } = useTaskCenter();
+  const { tasks, startTerraformPreview, startTerraformPreviewBatch, startTerraformPr } = useTaskCenter();
 
   const selectedTargets = targets.filter((target) => selectedPathIds.has(target.id));
+  const isSplitSuggestion = analysisSuggestedBatches.length > 0 && patches.length === 0;
 
   // ── Step 1 helpers ────────────────────────────────────────────────────────
 
@@ -208,6 +215,9 @@ export default function RemediateModal({ targets, onClose }: Props) {
     setAnalysisProgress([]);
     setAnalysisPercent(0);
     setAnalysisSummary(null);
+    setAnalysisFullyAddressed(true);
+    setAnalysisUncoveredTargets([]);
+    setAnalysisSuggestedBatches([]);
     const taskId = startTerraformPreview({
       repoFullName: selectedRepo.full_name,
       defaultBranch: selectedRepo.default_branch,
@@ -260,6 +270,9 @@ export default function RemediateModal({ targets, onClose }: Props) {
       setNoChanges(!task.result.patches || task.result.patches.length === 0);
       setPatches(task.result.patches ?? []);
       setAnalysisSummary(task.result.summary ?? null);
+      setAnalysisFullyAddressed(task.result.fullyAddressed ?? true);
+      setAnalysisUncoveredTargets(task.result.uncoveredTargets ?? []);
+      setAnalysisSuggestedBatches(task.result.suggestedBatches ?? []);
       setStep("preview");
     } else if (task.status === "failed") {
       setErrorMsg(task.error ?? "Unknown error during analysis");
@@ -290,6 +303,19 @@ export default function RemediateModal({ targets, onClose }: Props) {
       setStep("error");
     }
   }, [creationTaskId, tasks]);
+
+  function startSuggestedBatchPreviews() {
+    if (!selectedRepo || analysisSuggestedBatches.length === 0) return;
+    const paramsList = analysisSuggestedBatches.map((batch) => ({
+      repoFullName: selectedRepo.full_name,
+      defaultBranch: selectedRepo.default_branch,
+      targets: batch.targets,
+    }));
+    onClose();
+    setTimeout(() => {
+      startTerraformPreviewBatch(paramsList);
+    }, 0);
+  }
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -340,7 +366,7 @@ export default function RemediateModal({ targets, onClose }: Props) {
                     ? `${patches.filter(p => !p.isNewFile).length} file(s) changed, 1 new file created`
                     : `${patches.length} file${patches.length === 1 ? "" : "s"} will be changed`
               )}
-              {step === "preview" && patches.length === 0 && "No changes needed"}
+              {step === "preview" && !analysisSummary && patches.length === 0 && "No changes needed"}
               {step === "creating" && (creationSummary ?? "Opening pull request…")}
               {step === "done" && "Pull request created"}
               {step === "error" && "Something went wrong"}
@@ -532,15 +558,82 @@ export default function RemediateModal({ targets, onClose }: Props) {
           {/* ── Step 4: preview ──────────────────────────────────────── */}
           {step === "preview" && (
             <>
-              {noChanges || patches.length === 0 ? (
+              {isSplitSuggestion ? (
+                <div className="flex items-start gap-3 p-4" style={{ border: "1px solid #f59e0b44", background: "#1a1206" }}>
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "#f59e0b" }} />
+                  <div className="flex-1 space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <p style={{ fontFamily: "monospace", fontSize: 11, color: "#fbbf24", lineHeight: 1.6 }}>
+                        {analysisSummary}
+                      </p>
+                      <CopyTextButton
+                        text={analysisSummary ?? "Split remediation into smaller batches."}
+                        label="Copy"
+                        className="text-[10px] font-mono"
+                        style={{ color: "#fbbf24" }}
+                      />
+                    </div>
+                    <p style={{ fontFamily: "monospace", fontSize: 10, color: "#9ca3af", lineHeight: 1.6 }}>
+                      This is not an error. Watchmen is suggesting smaller remediation previews because the selection is too large or spans multiple categories.
+                    </p>
+                    <div className="space-y-1">
+                      {analysisSuggestedBatches.map((batch) => (
+                        <p key={batch.id} style={{ fontFamily: "monospace", fontSize: 10, color: "#d1d5db" }}>
+                          - {batch.title} ({batch.targets.length})
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : noChanges || patches.length === 0 ? (
                 <div className="flex items-start gap-3 p-4" style={{ border: "1px solid var(--border-dim)", background: "rgba(0,170,43,0.04)" }}>
                   <Check className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "var(--green)" }} />
-                  <p style={{ fontFamily: "monospace", fontSize: 11, color: "#9ca3af", lineHeight: 1.6 }}>
-                    No Terraform files matched the selected resources, or no changes were needed.
-                  </p>
+                  <div className="flex-1 flex items-start justify-between gap-3">
+                    <p style={{ fontFamily: "monospace", fontSize: 11, color: "#9ca3af", lineHeight: 1.6 }}>
+                      No Terraform files matched the selected resources, or no changes were needed.
+                    </p>
+                    <CopyTextButton
+                      text={analysisSummary ?? "No Terraform files matched the selected resources, or no changes were needed."}
+                      label="Copy"
+                      className="text-[10px] font-mono"
+                      style={{ color: "var(--green)" }}
+                    />
+                  </div>
                 </div>
               ) : (
                 <div className="space-y-5">
+                  {!analysisFullyAddressed && analysisUncoveredTargets.length > 0 && (
+                    <div className="flex items-start gap-3 p-4" style={{ border: "1px solid #f59e0b44", background: "#1a1206" }}>
+                      <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "#f59e0b" }} />
+                      <div className="space-y-2">
+                        <p style={{ fontFamily: "monospace", fontSize: 11, color: "#fbbf24", fontWeight: 700 }}>
+                          Not all selected issues were covered
+                        </p>
+                        <p style={{ fontFamily: "monospace", fontSize: 10, color: "#9ca3af", lineHeight: 1.6 }}>
+                          Watchmen found patches for part of the request, but {analysisUncoveredTargets.length} selected item{analysisUncoveredTargets.length === 1 ? "" : "s"} remain uncovered. PR creation is disabled until all selected items can be addressed.
+                        </p>
+                        <div className="space-y-1">
+                          {analysisUncoveredTargets.slice(0, 8).map((target) => (
+                            <p key={target.id} style={{ fontFamily: "monospace", fontSize: 10, color: "#d1d5db" }}>
+                              - {target.title}
+                            </p>
+                          ))}
+                        </div>
+                        {analysisSuggestedBatches.length > 0 && (
+                          <div className="space-y-1 pt-1">
+                            <p style={{ fontFamily: "monospace", fontSize: 9, color: "#6b7280", letterSpacing: 2 }}>
+                              // SUGGESTED BATCHES
+                            </p>
+                            {analysisSuggestedBatches.map((batch) => (
+                              <p key={batch.id} style={{ fontFamily: "monospace", fontSize: 10, color: "#d1d5db" }}>
+                                - {batch.title} ({batch.targets.length})
+                              </p>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                   {patches.map((patch) => (
                     <div key={patch.path}>
                       <div className="flex items-center gap-2 mb-1.5">
@@ -616,9 +709,17 @@ export default function RemediateModal({ targets, onClose }: Props) {
               {noChanges || !prUrl ? (
                 <div className="flex items-start gap-3 p-4" style={{ border: "1px solid var(--border-dim)", background: "rgba(0,170,43,0.04)" }}>
                   <Check className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "var(--green)" }} />
-                  <p style={{ fontFamily: "monospace", fontSize: 11, color: "#9ca3af", lineHeight: 1.6 }}>
-                    No changes were needed — your Terraform files already address these findings or attack paths, or no matching resources were found.
-                  </p>
+                  <div className="flex-1 flex items-start justify-between gap-3">
+                    <p style={{ fontFamily: "monospace", fontSize: 11, color: "#9ca3af", lineHeight: 1.6 }}>
+                      No changes were needed — your Terraform files already address these findings or attack paths, or no matching resources were found.
+                    </p>
+                    <CopyTextButton
+                      text={creationSummary ?? "No changes were needed — your Terraform files already address these findings or attack paths, or no matching resources were found."}
+                      label="Copy"
+                      className="text-[10px] font-mono"
+                      style={{ color: "var(--green)" }}
+                    />
+                  </div>
                 </div>
               ) : (
                 <div className="p-4 space-y-3" style={{ border: "1px solid rgba(0,170,43,0.4)", background: "rgba(0,170,43,0.05)" }}>
@@ -754,16 +855,20 @@ export default function RemediateModal({ targets, onClose }: Props) {
                 Analyze <ChevronRight className="w-3 h-3" />
               </button>
             )}
-            {step === "preview" && patches.length > 0 && (
+            {step === "preview" && (patches.length > 0 || isSplitSuggestion) && (
               <button
-                onClick={createPr}
+                onClick={analysisFullyAddressed ? createPr : startSuggestedBatchPreviews}
                 className="flex items-center gap-2 text-xs font-mono font-bold px-5 py-2 transition-all"
-                style={{ background: "var(--green)", color: "var(--bg)" }}
+                style={
+                  analysisFullyAddressed
+                    ? { background: "var(--green)", color: "var(--bg)" }
+                    : { border: "1px solid #f59e0b44", color: "#fbbf24", background: "#1a1206" }
+                }
               >
-                Create PR <ChevronRight className="w-3 h-3" />
+                {analysisFullyAddressed ? "Create PR" : "Create Batch Tasks"} <ChevronRight className="w-3 h-3" />
               </button>
             )}
-            {step === "preview" && patches.length === 0 && (
+            {step === "preview" && patches.length === 0 && !isSplitSuggestion && (
               <button
                 onClick={onClose}
                 className="text-xs font-mono px-4 py-2"

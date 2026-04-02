@@ -15,7 +15,7 @@ function statusColor(status: string): string {
 }
 
 export default function TasksPage() {
-  const { tasks, clearFinishedTasks, dismissTask, startTerraformPr } = useTaskCenter();
+  const { tasks, clearFinishedTasks, dismissTask, startTerraformPreviewBatch, startTerraformPr } = useTaskCenter();
   const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(new Set());
 
   function toggleExpanded(taskId: string) {
@@ -27,14 +27,17 @@ export default function TasksPage() {
     });
   }
 
-  function renderTargetDetails(targets: RemediationTarget[]) {
+  function renderTargetDetails(targets: RemediationTarget[], uncoveredTargetIds: Set<string> = new Set()) {
     return (
       <div className="space-y-3">
         {targets.map((target) => (
           <div
             key={target.id}
             className="space-y-2 p-3"
-            style={{ border: "1px solid var(--border-dim)", background: "#050505" }}
+            style={{
+              border: uncoveredTargetIds.has(target.id) ? "1px solid #f59e0b44" : "1px solid var(--border-dim)",
+              background: uncoveredTargetIds.has(target.id) ? "#1a1206" : "#050505",
+            }}
           >
             <div className="flex items-center gap-2 flex-wrap">
               <span style={{ fontFamily: "monospace", fontSize: 9, letterSpacing: 2, color: "var(--green)" }}>
@@ -43,6 +46,11 @@ export default function TasksPage() {
               <span style={{ fontFamily: "monospace", fontSize: 9, color: "var(--text-muted)" }}>
                 [{target.kind === "attack_path" ? "PATH" : "FINDING"}]
               </span>
+              {uncoveredTargetIds.has(target.id) && (
+                <span style={{ fontFamily: "monospace", fontSize: 9, color: "#fbbf24" }}>
+                  [UNCOVERED]
+                </span>
+              )}
             </div>
             <p style={{ fontFamily: "monospace", fontSize: 11, color: "#e5e7eb" }}>{target.title}</p>
             <p style={{ fontFamily: "monospace", fontSize: 10, color: "var(--text-muted)", lineHeight: 1.6 }}>
@@ -216,6 +224,17 @@ export default function TasksPage() {
                     {result.summary}
                   </span>
                 </div>
+                <CopyTextButton
+                  text={result.summary}
+                  label="Copy summary"
+                  className="text-[10px] font-mono"
+                  style={{ color: "var(--green)" }}
+                />
+                {!result.fullyAddressed && (result.uncoveredTargets?.length ?? 0) > 0 && (
+                  <p style={{ fontFamily: "monospace", fontSize: 10, color: "#fbbf24" }}>
+                    {result.uncoveredTargets.length} selected item{result.uncoveredTargets.length === 1 ? "" : "s"} remain uncovered. PR creation is disabled for this preview.
+                  </p>
+                )}
                 {failures.length > 0 && (
                   <p style={{ fontFamily: "monospace", fontSize: 10, color: "#fbbf24" }}>
                     {failures.length} candidate file{failures.length === 1 ? "" : "s"} failed during remediation.
@@ -229,18 +248,42 @@ export default function TasksPage() {
                   ))}
                 </div>
                 <button
-                  onClick={() =>
-                    startTerraformPr({
-                      repoFullName: result.repoFullName,
-                      defaultBranch: result.defaultBranch,
-                      targets: result.targets,
-                    })
-                  }
+                  onClick={() => {
+                    if (result.fullyAddressed) {
+                      startTerraformPr({
+                        repoFullName: result.repoFullName,
+                        defaultBranch: result.defaultBranch,
+                        targets: result.targets,
+                      });
+                      return;
+                    }
+
+                    startTerraformPreviewBatch(
+                      (result.suggestedBatches ?? []).map((batch) => ({
+                        repoFullName: result.repoFullName,
+                        defaultBranch: result.defaultBranch,
+                        targets: batch.targets,
+                      }))
+                    );
+                  }}
                   className="px-3 py-1.5 text-xs uppercase tracking-widest"
-                  style={{ border: "1px solid var(--green)", color: "var(--green)", background: "rgba(0,170,43,0.06)" }}
+                  style={
+                    result.fullyAddressed
+                      ? { border: "1px solid var(--green)", color: "var(--green)", background: "rgba(0,170,43,0.06)" }
+                      : { border: "1px solid #f59e0b44", color: "#fbbf24", background: "#1a1206" }
+                  }
                 >
-                  Create PR
+                  {result.fullyAddressed ? "Create PR" : "Create Batch Tasks"}
                 </button>
+                {!result.fullyAddressed && (result.suggestedBatches?.length ?? 0) > 0 && (
+                  <div className="space-y-1">
+                    {result.suggestedBatches.map((batch) => (
+                      <p key={batch.id} style={{ fontFamily: "monospace", fontSize: 10, color: "#9ca3af" }}>
+                        - {batch.title} ({batch.targets.length})
+                      </p>
+                    ))}
+                  </div>
+                )}
               </div>
               );
             })()}
@@ -262,9 +305,17 @@ export default function TasksPage() {
                   </span>
                 </div>
                 {task.result.message && (
-                  <p style={{ fontFamily: "monospace", fontSize: 10, color: "var(--text-muted)" }}>
-                    {task.result.message}
-                  </p>
+                  <div className="flex items-start justify-between gap-3">
+                    <p style={{ fontFamily: "monospace", fontSize: 10, color: "var(--text-muted)" }}>
+                      {task.result.message}
+                    </p>
+                    <CopyTextButton
+                      text={task.result.message}
+                      label="Copy message"
+                      className="text-[10px] font-mono"
+                      style={{ color: "var(--green)" }}
+                    />
+                  </div>
                 )}
                 {task.result.prUrl && (
                   <Link
@@ -301,14 +352,20 @@ export default function TasksPage() {
                     {task.kind === "terraform_preview"
                       ? task.result && (
                         <div className="space-y-3">
-                          {renderTargetDetails(task.result.targets)}
+                          {renderTargetDetails(
+                            task.result.targets,
+                            new Set((task.result.uncoveredTargets ?? []).map((target) => target.id))
+                          )}
                           {renderFailures(task.result.failures ?? [])}
                         </div>
                       )
                       : task.kind === "terraform_pr"
                         ? task.result && (
                           <div className="space-y-3">
-                            {renderTargetDetails(task.result.targets)}
+                            {renderTargetDetails(
+                              task.result.targets,
+                              new Set((task.result.uncoveredTargets ?? []).map((target) => target.id))
+                            )}
                             {renderFailures(task.result.failures ?? [])}
                           </div>
                         )
