@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useTaskCenter } from "@/components/TaskCenterProvider";
 
 interface Props {
   onScanComplete: () => void;
@@ -14,6 +15,8 @@ type Cloud = "gcp" | "aws";
 export default function ScanCloudButton({ onScanComplete, variant = "terminal" }: Props) {
   const [clouds, setClouds] = useState<Cloud[]>([]);
   const [scanning, setScanning] = useState(false);
+  const [taskIds, setTaskIds] = useState<string[]>([]);
+  const { tasks, startGcpScan, startAwsScan } = useTaskCenter();
 
   useEffect(() => {
     // GCP is always available via Google OAuth session token.
@@ -29,25 +32,31 @@ export default function ScanCloudButton({ onScanComplete, variant = "terminal" }
       .catch(() => setClouds(active));
   }, []);
 
+  async function scan() {
+    setScanning(true);
+    const nextTaskIds = clouds.map((cloud) =>
+      cloud === "gcp" ? startGcpScan() : startAwsScan()
+    );
+    setTaskIds(nextTaskIds);
+  }
+
+  useEffect(() => {
+    if (taskIds.length === 0) return;
+    const startedTasks = tasks.filter((task) => taskIds.includes(task.id));
+    if (startedTasks.length === 0) return;
+    const allFinished = startedTasks.every((task) => task.status === "completed" || task.status === "failed");
+    if (!allFinished) return;
+
+    setScanning(false);
+    onScanComplete();
+    setTaskIds([]);
+  }, [taskIds, tasks, onScanComplete]);
+
   if (clouds.length === 0) return null;
 
   const label = clouds.length === 2
     ? "SCAN CLOUD"
     : clouds[0] === "gcp" ? "SCAN GCP" : "SCAN AWS";
-
-  async function scan() {
-    setScanning(true);
-    try {
-      await Promise.all(
-        clouds.map((cloud) =>
-          fetch(cloud === "gcp" ? "/api/scan" : "/api/aws/scan", { method: "POST" })
-        )
-      );
-    } finally {
-      setScanning(false);
-      onScanComplete();
-    }
-  }
 
   if (variant === "modern") {
     return (

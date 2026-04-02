@@ -1,9 +1,12 @@
+/** @jest-environment node */
+
 import {
   listRepos,
   getDefaultBranchSha,
   searchTfFiles,
   getFileContent,
   createBranch,
+  createFile,
   updateFile,
   createPullRequest,
 } from "@/lib/github/client";
@@ -95,6 +98,39 @@ describe("GitHub client", () => {
 
       expect(files).toEqual(["main.tf", "modules/vpc/main.tf"]);
     });
+
+    it("uses the repository default branch when no branch is provided", async () => {
+      const treeData = {
+        tree: [{ path: "infra/main.tf", type: "blob" }],
+        truncated: false,
+      };
+
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ default_branch: "main" }),
+          text: async () => "",
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ object: { sha: "sha-main" } }),
+          text: async () => "",
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => treeData,
+          text: async () => "",
+        });
+
+      const files = await searchTfFiles(TOKEN, OWNER, REPO);
+
+      expect(files).toEqual(["infra/main.tf"]);
+      expect((global.fetch as jest.Mock).mock.calls[0][0]).toContain(`/repos/${OWNER}/${REPO}`);
+    });
   });
 
   // ── 4. getFileContent ──────────────────────────────────────────────────────
@@ -143,7 +179,27 @@ describe("GitHub client", () => {
     });
   });
 
-  // ── 6. updateFile ──────────────────────────────────────────────────────────
+  // ── 6. createFile ─────────────────────────────────────────────────────────
+  describe("createFile", () => {
+    it("sends PUT without sha for a new file", async () => {
+      global.fetch = mockFetch({}, true, 201);
+
+      await createFile(TOKEN, OWNER, REPO, "generated.tf", 'resource "x" "y" {}', "add file", "fix/security");
+
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+      const [url, init] = (global.fetch as jest.Mock).mock.calls[0];
+      expect(url).toContain(`repos/${OWNER}/${REPO}/contents/generated.tf`);
+      expect((init as RequestInit).method).toBe("PUT");
+
+      const body = JSON.parse((init as RequestInit).body as string);
+      expect(body.branch).toBe("fix/security");
+      expect(body.message).toBe("add file");
+      expect(body.sha).toBeUndefined();
+      expect(body.content).toBe(Buffer.from('resource "x" "y" {}', "utf-8").toString("base64"));
+    });
+  });
+
+  // ── 7. updateFile ──────────────────────────────────────────────────────────
   describe("updateFile", () => {
     it("sends PUT with base64-encoded content", async () => {
       global.fetch = mockFetch({});
@@ -161,7 +217,7 @@ describe("GitHub client", () => {
     });
   });
 
-  // ── 7. createPullRequest ───────────────────────────────────────────────────
+  // ── 8. createPullRequest ───────────────────────────────────────────────────
   describe("createPullRequest", () => {
     it("returns number and html_url from the API response", async () => {
       global.fetch = mockFetch({ number: 42, html_url: "https://github.com/owner/repo/pull/42" });
@@ -177,7 +233,7 @@ describe("GitHub client", () => {
     });
   });
 
-  // ── 8. Error handling ──────────────────────────────────────────────────────
+  // ── 9. Error handling ──────────────────────────────────────────────────────
   describe("error handling", () => {
     it("throws an error containing the status code on non-ok responses", async () => {
       global.fetch = jest.fn().mockResolvedValue({

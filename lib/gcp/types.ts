@@ -187,6 +187,25 @@ export interface CloudTrace {
   spans: TraceSpan[];
 }
 
+export type GcpScanWarningCode =
+  | "api_not_enabled"
+  | "permission_denied"
+  | "unauthenticated"
+  | "not_found"
+  | "timeout"
+  | "rate_limited"
+  | "transient_network"
+  | "unknown";
+
+export interface GcpScanWarning {
+  service: string;
+  projectId: string;
+  code: GcpScanWarningCode;
+  message: string;
+  retryable: boolean;
+  detail?: string;
+}
+
 export interface GcpSnapshot {
   snapshotId: string;
   projects: ProjectIamPolicy[];
@@ -201,5 +220,6 @@ export interface GcpSnapshot {
   secrets: Secret[];
   firewallRules: FirewallRule[];
   loadBalancers: GcpLoadBalancer[];
+  scanWarnings: GcpScanWarning[];
   fetchedAt: string;
 }

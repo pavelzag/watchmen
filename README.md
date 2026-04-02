@@ -112,7 +112,8 @@ psql postgresql://postgres:dev@localhost:5432/watchmen < scripts/migrate.sql
 ```
 
 ```bash
-npm run dev   # → http://localhost:3000
+npm run dev         # normal mode
+npm run dev:debug   # debug mode with structured server logs
 ```
 
 Sign in with the **Enter Demo** button. Go to **Settings → AI Keys** to add a Gemini, Claude, or OpenAI key to enable natural-language queries and AI recommendations.
@@ -229,6 +230,8 @@ watchmen/
 | `GCP_ORG_ID` | — | Enumerate all org projects automatically |
 | `USE_MOCK_DATA` | — | `true` → use fixture data (no cloud API calls) |
 | `DEMO_MODE` | — | `true` → auto sign-in, fixture data, no OAuth needed |
+| `WATCHMEN_DEBUG` | — | `true` or `1` → enable structured debug logs and timing in key API flows |
+| `NEXT_PUBLIC_WATCHMEN_DEBUG` | — | `true` or `1` → expose debug mode to browser code when needed |
 | `PROCESSOR_URL` | — | Internal processor service URL (Kubernetes only) |
 
 \* Not required in `DEMO_MODE=true`.

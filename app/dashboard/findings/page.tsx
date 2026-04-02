@@ -10,8 +10,8 @@ import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
 import { linkifyText } from "@/lib/utils/linkify";
 import type { ResourceItem } from "@/lib/claude/query-processor";
 import RemediateModal from "@/app/dashboard/attack-paths/RemediateModal";
-import type { AttackPath } from "@/lib/gcp/attack-paths";
 import ScanCloudButton from "@/components/ScanCloudButton";
+import { remediationTargetFromFinding } from "@/lib/github/remediation-targets";
 
 const SEVERITY_CONFIG: Record<SecurityFindingSeverity, { label: string; color: string; bg: string; border: string; dot: string }> = {
   critical: {
@@ -222,27 +222,6 @@ function FindingCard({ finding, cfg }: { finding: SecurityFinding; cfg: typeof S
   );
 }
 
-function findingToAttackPath(f: SecurityFinding): AttackPath {
-  return {
-    id: f.id,
-    severity: f.severity === "critical" ? "critical" : "high",
-    title: f.title,
-    description: f.description,
-    mitigations: f.remediationHint ? [f.remediationHint] : [],
-    nodes: [
-      {
-        id: `${f.resourceType}:${f.resourceName}`,
-        kind: "target",
-        resourceType: f.resourceType,
-        label: f.resourceName,
-        detail: f.projectId,
-        projectId: f.projectId,
-        risk: f.description,
-      },
-    ],
-  };
-}
-
 export default function FindingsPage() {
   const [findings, setFindings] = useState<SecurityFinding[]>([]);
   const [loading, setLoading] = useState(true);
@@ -383,7 +362,7 @@ export default function FindingsPage() {
 
       {showRemediate && (
         <RemediateModal
-          paths={findings.map(findingToAttackPath)}
+          targets={findings.map(remediationTargetFromFinding)}
           onClose={() => setShowRemediate(false)}
         />
       )}

@@ -4,32 +4,21 @@ import { useState, useEffect, useCallback } from "react";
 import AwsSnapshotStats from "@/components/AwsSnapshotStats";
 import { getDemoCredentials, getDemoAwsSnapshot, setDemoAwsSnapshot } from "@/lib/demo-credentials";
 import type { AwsSnapshot } from "@/lib/aws/types";
+import { useTaskCenter } from "@/components/TaskCenterProvider";
 
 export default function AwsDashboardClient() {
   const [scanVersion, setScanVersion] = useState(0);
   const [scanning, setScanning] = useState(false);
   const [demoSnapshot, setDemoSnapshot] = useState<AwsSnapshot | null>(() => getDemoAwsSnapshot() as AwsSnapshot | null);
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const { tasks, startAwsScan } = useTaskCenter();
 
   const triggerScan = useCallback(async () => {
+    const demoCreds = getDemoCredentials();
+    const taskId = startAwsScan(demoCreds.aws ? { demoCredentials: { aws: demoCreds.aws } } : {});
+    setActiveTaskId(taskId);
     setScanning(true);
-    try {
-      const demoCreds = getDemoCredentials();
-      const body = demoCreds.aws ? { demoCredentials: { aws: demoCreds.aws } } : {};
-      const res = await fetch("/api/aws/scan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json().catch(() => ({})) as { snapshot?: AwsSnapshot };
-      if (data.snapshot) {
-        setDemoAwsSnapshot(data.snapshot);
-        setDemoSnapshot(data.snapshot);
-      }
-      setScanVersion((v) => v + 1);
-    } finally {
-      setScanning(false);
-    }
-  }, []);
+  }, [startAwsScan]);
 
   useEffect(() => {
     if (getDemoCredentials().aws) {
@@ -48,6 +37,26 @@ export default function AwsDashboardClient() {
     const id = setInterval(triggerScan, 10 * 60 * 1000);
     return () => clearInterval(id);
   }, [triggerScan]);
+
+  useEffect(() => {
+    if (!activeTaskId) return;
+    const task = tasks.find((item) => item.id === activeTaskId);
+    if (!task) return;
+    if (task.status === "running" || task.status === "queued") {
+      setScanning(true);
+      return;
+    }
+
+    setScanning(false);
+
+    if (task.status === "completed" && task.kind === "aws_scan") {
+      if (task.result?.snapshot) {
+        setDemoAwsSnapshot(task.result.snapshot as AwsSnapshot);
+        setDemoSnapshot(task.result.snapshot as AwsSnapshot);
+      }
+      setScanVersion((v) => v + 1);
+    }
+  }, [activeTaskId, tasks]);
 
   return (
     <div className="min-h-screen p-4 flex flex-col" style={{ background: "#090909" }}>

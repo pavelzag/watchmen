@@ -11,6 +11,7 @@ import { getSecrets } from "./secretsmanager";
 import { getSecurityGroups } from "./securitygroups";
 import { getLoadBalancers } from "./elb";
 import type { AwsSnapshot } from "./types";
+import type { TaskProgressEvent } from "@/lib/tasks/types";
 
 export * from "./types";
 
@@ -19,9 +20,44 @@ export * from "./types";
  * Switch between real and mock via USE_MOCK_AWS_DATA=true env var.
  * Pass options to use explicit credentials instead of the default credential chain.
  */
-export async function fetchAwsSnapshot(options?: AwsCredentials & { forceMock?: boolean }): Promise<AwsSnapshot> {
+function emitProgress(
+  onProgress: ((event: TaskProgressEvent) => void) | undefined,
+  event: TaskProgressEvent
+): void {
+  onProgress?.(event);
+}
+
+export async function fetchAwsSnapshot(
+  options?: AwsCredentials & { forceMock?: boolean; onProgress?: (event: TaskProgressEvent) => void }
+): Promise<AwsSnapshot> {
   const mock = useMockAwsData(options?.forceMock);
   const creds = options;
+  let completedServices = 0;
+  const totalServices = 12;
+
+  emitProgress(options?.onProgress, {
+    stage: "scan_services",
+    message: `Scanning ${totalServices} AWS service areas`,
+    completed: 0,
+    total: totalServices,
+    percent: 10,
+    metadata: { mock },
+  });
+
+  async function runLoader<T>(resource: string, message: string, fn: () => Promise<T>): Promise<T> {
+    const result = await fn();
+    completedServices += 1;
+    emitProgress(options?.onProgress, {
+      stage: "scan_services",
+      message,
+      completed: completedServices,
+      total: totalServices,
+      percent: 10 + Math.round((completedServices / totalServices) * 80),
+      metadata: { resource },
+    });
+    return result;
+  }
+
   const [
     iamUsers,
     iamRoles,
@@ -36,18 +72,18 @@ export async function fetchAwsSnapshot(options?: AwsCredentials & { forceMock?: 
     securityGroups,
     loadBalancers,
   ] = await Promise.all([
-    getIamUsers(creds, mock),
-    getIamRoles(creds, mock),
-    getS3Buckets(creds, mock),
-    getEksClusters(creds, mock),
-    getEc2Instances(creds, mock),
-    getLambdaFunctions(creds, mock),
-    getRdsInstances(creds, mock),
-    getRedshiftClusters(creds, mock),
-    getSnsTopics(creds, mock),
-    getSecrets(creds, mock),
-    getSecurityGroups(creds, mock),
-    getLoadBalancers(creds, mock),
+    runLoader("iamUsers", "Loading IAM users", () => getIamUsers(creds, mock)),
+    runLoader("iamRoles", "Loading IAM roles", () => getIamRoles(creds, mock)),
+    runLoader("s3Buckets", "Loading S3 buckets", () => getS3Buckets(creds, mock)),
+    runLoader("eksClusters", "Loading EKS clusters", () => getEksClusters(creds, mock)),
+    runLoader("ec2Instances", "Loading EC2 instances", () => getEc2Instances(creds, mock)),
+    runLoader("lambdaFunctions", "Loading Lambda functions", () => getLambdaFunctions(creds, mock)),
+    runLoader("rdsInstances", "Loading RDS instances", () => getRdsInstances(creds, mock)),
+    runLoader("redshiftClusters", "Loading Redshift clusters", () => getRedshiftClusters(creds, mock)),
+    runLoader("snsTopics", "Loading SNS topics", () => getSnsTopics(creds, mock)),
+    runLoader("secrets", "Loading Secrets Manager secrets", () => getSecrets(creds, mock)),
+    runLoader("securityGroups", "Loading security groups", () => getSecurityGroups(creds, mock)),
+    runLoader("loadBalancers", "Loading load balancers", () => getLoadBalancers(creds, mock)),
   ]);
 
   const accounts = [...new Set([
@@ -72,6 +108,13 @@ export async function fetchAwsSnapshot(options?: AwsCredentials & { forceMock?: 
     ...s3Buckets.map((b) => b.region),
     ...securityGroups.map((sg) => sg.region),
   ])].filter(Boolean);
+
+  emitProgress(options?.onProgress, {
+    stage: "finalize_snapshot",
+    message: "Finalizing AWS snapshot",
+    percent: 95,
+    metadata: { accountCount: accounts.length, regionCount: regions.length },
+  });
 
   return {
     snapshotId: crypto.randomUUID(),

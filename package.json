@@ -4,11 +4,13 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:debug": "WATCHMEN_DEBUG=true NEXT_PUBLIC_WATCHMEN_DEBUG=true next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
     "type-check": "tsc --noEmit",
     "test": "jest",
+    "test:github": "node --localstorage-file=/tmp/watchmen-jest-localstorage ./node_modules/jest/bin/jest.js tests/github/client.test.ts tests/github/connectivity.test.ts tests/github/ghcr-scanning.test.ts tests/github/terraform-remediation.test.ts --runInBand --detectOpenHandles",
     "test:watch": "jest --watch"
   },
   "dependencies": {

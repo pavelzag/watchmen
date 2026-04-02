@@ -1,5 +1,5 @@
 import { google } from "googleapis";
-import { initGoogleAuth, useMockData, logFetchWarning } from "./client";
+import { initGoogleAuth, useMockData, logFetchWarning, withProjectRetry } from "./client";
 import type { GcpLoadBalancer } from "./types";
 
 async function getMockLoadBalancers(): Promise<GcpLoadBalancer[]> {
@@ -31,7 +31,9 @@ async function getRealLoadBalancers(projectIds: string[]): Promise<GcpLoadBalanc
 
             // 1. Global Forwarding Rules
             try {
-                const globalRes = await compute.globalForwardingRules.list({ project: projectId });
+                const globalRes = await withProjectRetry("loadbalancing", projectId, () =>
+                    compute.globalForwardingRules.list({ project: projectId })
+                );
                 for (const rule of globalRes.data.items ?? []) {
                     lbs.push({
                         name: rule.name ?? "",
@@ -42,12 +44,14 @@ async function getRealLoadBalancers(projectIds: string[]): Promise<GcpLoadBalanc
                     });
                 }
             } catch (err) {
-                console.warn(`Failed to fetch global LBs for ${projectId}`);
+                logFetchWarning("loadbalancing", projectId, err);
             }
 
             // 2. Regional Forwarding Rules (Aggregated)
             try {
-                const regionalRes = await compute.forwardingRules.aggregatedList({ project: projectId });
+                const regionalRes = await withProjectRetry("loadbalancing", projectId, () =>
+                    compute.forwardingRules.aggregatedList({ project: projectId })
+                );
                 for (const [regionKey, regionData] of Object.entries(regionalRes.data.items ?? {})) {
                     const region = regionKey.replace("regions/", "");
                     for (const rule of regionData.forwardingRules ?? []) {
@@ -62,7 +66,7 @@ async function getRealLoadBalancers(projectIds: string[]): Promise<GcpLoadBalanc
                     }
                 }
             } catch (err) {
-                console.warn(`Failed to fetch regional LBs for ${projectId}`);
+                logFetchWarning("loadbalancing", projectId, err);
             }
 
             return lbs;

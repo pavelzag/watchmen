@@ -13,14 +13,262 @@ import { buildRemediationPlan } from "@/lib/github/terraform-remediation";
 import { resolveAI, type AIProvider } from "@/lib/ai/client";
 import { postToSlack } from "@/lib/alerting";
 import type { AttackPath } from "@/lib/gcp/attack-paths";
+import type { SecurityFinding } from "@/lib/gcp/types";
+import { debugError, debugLog, withDebugTiming } from "@/lib/debug";
+import {
+  remediationTargetFromAttackPath,
+  remediationTargetFromFinding,
+  type RemediationTarget,
+} from "@/lib/github/remediation-targets";
+import type { RemediationPlan, RemediationProgressEvent } from "@/lib/github/terraform-remediation";
 
 interface RequestBody {
   repoFullName: string;
   defaultBranch: string;
-  paths: AttackPath[];
+  paths?: AttackPath[];
+  findings?: SecurityFinding[];
+  targets?: RemediationTarget[];
+  stream?: boolean;
+}
+
+function sendStreamEvent(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  encoder: TextEncoder,
+  event: unknown
+) {
+  controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+}
+
+async function executeCreatePrFlow(
+  params: {
+    email: string;
+    token: string;
+    owner: string;
+    repo: string;
+    repoFullName: string;
+    defaultBranch: string;
+    targets: RemediationTarget[];
+    aiKey: { provider: AIProvider; key: string };
+  },
+  onProgress?: (progress: RemediationProgressEvent) => void
+): Promise<{ remediationPlan: RemediationPlan; pr: { html_url: string; number: number } }> {
+  const { email, token, owner, repo, repoFullName, defaultBranch, targets, aiKey } = params;
+  const scope = "api/github/terraform-pr:POST";
+
+  onProgress?.({
+    stage: "build_plan",
+    message: "Building remediation plan",
+    percent: 5,
+    metadata: { repoFullName, targetCount: targets.length },
+  });
+
+  const remediationPlan = await withDebugTiming(scope, "buildRemediationPlan", {
+    repoFullName,
+    targetCount: targets.length,
+    aiProvider: aiKey.provider,
+  }, () => buildRemediationPlan(
+    token,
+    owner,
+    repo,
+    targets,
+    aiKey.provider,
+    aiKey.key,
+    { scope, onProgress }
+  ));
+
+  if (remediationPlan.patches.length === 0) {
+    return { remediationPlan, pr: { html_url: "", number: 0 } };
+  }
+
+  onProgress?.({
+    stage: "create_branch",
+    message: `Creating branch from ${defaultBranch}`,
+    percent: 78,
+    metadata: { defaultBranch },
+  });
+  const headSha = await withDebugTiming(scope, "getDefaultBranchSha", { repoFullName, defaultBranch }, () =>
+    getDefaultBranchSha(token, owner, repo, defaultBranch)
+  );
+
+  const branchName = `watchmen-fix-${Date.now()}`;
+  await withDebugTiming(scope, "createBranch", { repoFullName, branchName }, () =>
+    createBranch(token, owner, repo, branchName, headSha)
+  );
+
+  const targetTitles = targets.map((target) => target.title).join(", ");
+  let completed = 0;
+  const totalOps = remediationPlan.patches.reduce((sum, patch) => sum + (patch.isNewFile ? 1 : 2), 0);
+
+  for (const patch of remediationPlan.patches) {
+    onProgress?.({
+      stage: "commit_files",
+      message: `Applying ${patch.path}`,
+      completed,
+      total: totalOps,
+      percent: 82 + Math.round((completed / Math.max(totalOps, 1)) * 10),
+      metadata: { path: patch.path, isNewFile: patch.isNewFile },
+    });
+
+    if (patch.isNewFile) {
+      await withDebugTiming(scope, "createFile", { repoFullName, path: patch.path, branchName }, () =>
+        createFile(
+          token, owner, repo, patch.path, patch.fixedContent,
+          `fix: generate ${patch.path} to remediate "${targetTitles}"`,
+          branchName
+        )
+      );
+      completed += 1;
+    } else {
+      const rootDir = patch.path.includes("/") ? patch.path.slice(0, patch.path.lastIndexOf("/") + 1) : "";
+      const filename = patch.path.slice(rootDir.length).replace(/-faulty(\.tf)$/, "$1").replace(/\.tf$/, "-faulty.tf");
+      const faultyPath = `${rootDir}.terraform-originals/${filename}`;
+
+      await withDebugTiming(scope, "preserveOriginalFile", { repoFullName, path: faultyPath, branchName }, () =>
+        createFile(
+          token, owner, repo, faultyPath, patch.originalContent,
+          `chore: preserve original ${patch.path} as ${faultyPath}`,
+          branchName
+        )
+      );
+      completed += 1;
+
+      onProgress?.({
+        stage: "commit_files",
+        message: `Updating ${patch.path}`,
+        completed,
+        total: totalOps,
+        percent: 82 + Math.round((completed / Math.max(totalOps, 1)) * 10),
+        metadata: { path: patch.path, preservedOriginal: true },
+      });
+
+      await withDebugTiming(scope, "updateFile", { repoFullName, path: patch.path, branchName }, () =>
+        updateFile(
+          token, owner, repo, patch.path, patch.fixedContent, patch.sha,
+          `fix: remediate "${targetTitles}" in ${patch.path}`,
+          branchName
+        )
+      );
+      completed += 1;
+    }
+  }
+
+  const targetDetails = targets
+    .map(
+      (target) =>
+        `### ${target.severity === "critical" ? "🔴" : target.severity === "high" ? "🟠" : "🟡"} ${target.title}\n${target.description}\n\n**Context:** ${target.kind === "attack_path" ? "Attack path" : "Finding"}\n\n**Mitigations applied:**\n${(target.mitigations.length > 0 ? target.mitigations : ["AI-generated least-privilege remediation"]).map((m) => `- ${m}`).join("\n")}`
+    )
+    .join("\n\n---\n\n");
+
+  const changedFiles = remediationPlan.patches
+    .map((p) => {
+      if (p.isNewFile) return `- \`${p.path}\` — new file generated`;
+      const rootDir = p.path.includes("/") ? p.path.slice(0, p.path.lastIndexOf("/") + 1) : "";
+      const filename = p.path.slice(rootDir.length).replace(/-faulty(\.tf)$/, "$1").replace(/\.tf$/, "-faulty.tf");
+      const faulty = `${rootDir}.terraform-originals/${filename}`;
+      return `- \`${p.path}\` — fixed _(original preserved as \`${faulty}\`)_`;
+    })
+    .join("\n");
+
+  const prBody = `## Watchmen Security Remediation
+
+This pull request was automatically generated by [Watchmen](https://watchmen.app) to address the following attack paths detected in your cloud infrastructure.
+
+### Files Changed
+${changedFiles}
+
+---
+
+${targetDetails}
+
+---
+
+> **Note:** Review all changes carefully before merging. The AI-generated fixes apply the principle of least privilege but may need adjustment for your specific environment.`;
+
+  onProgress?.({
+    stage: "open_pull_request",
+    message: "Opening GitHub pull request",
+    percent: 94,
+    metadata: { branchName },
+  });
+  const pr = await withDebugTiming(scope, "createPullRequest", { repoFullName, branchName }, () =>
+    createPullRequest(
+      token,
+      owner,
+      repo,
+      `fix(security): remediate ${targets.length} security item${targets.length === 1 ? "" : "s"} [Watchmen]`,
+      prBody,
+      branchName,
+      defaultBranch
+    )
+  );
+
+  onProgress?.({
+    stage: "notify",
+    message: "Sending notifications",
+    percent: 97,
+    metadata: { prNumber: pr.number },
+  });
+  try {
+    const alertResult = await sql`
+      SELECT slack_bot_token, slack_channel_id FROM alert_rules WHERE user_email = ${email}
+    `;
+    if (alertResult.rows.length > 0) {
+      const { slack_bot_token, slack_channel_id } = alertResult.rows[0];
+      if (slack_bot_token && slack_channel_id) {
+        const slackPayload = {
+          text: `🔧 *Watchmen Security PR Created*`,
+          blocks: [
+            {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: `🔧 *Watchmen Security PR Created*\n<${pr.html_url}|PR #${pr.number}> — ${remediationPlan.patches.length} Terraform file${remediationPlan.patches.length === 1 ? "" : "s"} updated in \`${repoFullName}\``,
+              },
+            },
+            {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: `*Security items addressed:*\n${targets.map((target) => `• ${target.title}`).join("\n")}`,
+              },
+            },
+            {
+              type: "actions",
+              elements: [
+                {
+                  type: "button",
+                  text: { type: "plain_text", text: "View Pull Request" },
+                  url: pr.html_url,
+                  style: "primary",
+                },
+              ],
+            },
+          ],
+        };
+        await postToSlack(slack_bot_token, slack_channel_id, slackPayload);
+      }
+    }
+  } catch {
+    // Slack notification failure is non-fatal
+  }
+
+  onProgress?.({
+    stage: "complete",
+    message: `Pull request #${pr.number} created${remediationPlan.failures.length > 0 ? ` with ${remediationPlan.failures.length} failed file${remediationPlan.failures.length === 1 ? "" : "s"}` : ""}`,
+    percent: 100,
+    metadata: {
+      prNumber: pr.number,
+      prUrl: pr.html_url,
+      patchCount: remediationPlan.patches.length,
+      failureCount: remediationPlan.failures.length,
+    },
+  });
+
+  return { remediationPlan, pr };
 }
 
 export async function POST(req: NextRequest) {
+  const scope = "api/github/terraform-pr:POST";
   // Auth
   const session = await auth();
   if (!session?.user?.email) {
@@ -36,11 +284,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 
-  const { repoFullName, defaultBranch, paths } = body;
+  const { repoFullName, defaultBranch } = body;
+  const targets = Array.isArray(body.targets)
+    ? body.targets
+    : Array.isArray(body.findings)
+      ? body.findings.map(remediationTargetFromFinding)
+      : Array.isArray(body.paths)
+        ? body.paths.map(remediationTargetFromAttackPath)
+        : [];
 
-  if (!repoFullName || !defaultBranch || !paths?.length) {
+  if (!repoFullName || !defaultBranch || targets.length === 0) {
     return NextResponse.json(
-      { error: "repoFullName, defaultBranch, and paths are required" },
+      { error: "repoFullName, defaultBranch, and at least one remediation target are required" },
       { status: 400 }
     );
   }
@@ -70,6 +325,13 @@ export async function POST(req: NextRequest) {
     );
   }
   const token = creds.token;
+  debugLog(scope, "request received", {
+    email,
+    repoFullName,
+    defaultBranch,
+    targetCount: targets.length,
+    targetKinds: [...new Set(targets.map((target) => target.kind))],
+  });
 
   // Resolve AI provider and key (user's configured key, or server demo fallback)
   let aiKey: { provider: AIProvider; key: string };
@@ -83,143 +345,75 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    // Build remediation plan (AI-powered)
-    const remediationPlan = await buildRemediationPlan(token, owner, repo, paths, aiKey.provider, aiKey.key);
+    if (body.stream) {
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const send = (event: unknown) => sendStreamEvent(controller, encoder, event);
+          void (async () => {
+            try {
+              const { remediationPlan, pr } = await executeCreatePrFlow(
+                { email, token, owner, repo, repoFullName, defaultBranch, targets, aiKey },
+                (progress) => send({ type: "progress", progress })
+              );
+
+              if (remediationPlan.patches.length === 0) {
+                send({
+                  type: "result",
+                  ok: true,
+                  message: remediationPlan.summary,
+                  patchCount: 0,
+                  failures: remediationPlan.failures,
+                });
+              } else {
+                send({
+                  type: "result",
+                  ok: true,
+                  prUrl: pr.html_url,
+                  prNumber: pr.number,
+                  patchCount: remediationPlan.patches.length,
+                  message: remediationPlan.summary,
+                  failures: remediationPlan.failures,
+                });
+              }
+              controller.close();
+            } catch (err) {
+              debugError(scope, "streamed terraform remediation PR flow failed", err, { email, repoFullName, defaultBranch, targetCount: targets.length });
+              const msg = err instanceof Error ? err.message : "Failed to create PR";
+              send({ type: "error", error: msg });
+              controller.close();
+            }
+          })();
+        },
+      });
+
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "application/x-ndjson; charset=utf-8",
+          "Cache-Control": "no-cache, no-transform",
+        },
+      });
+    }
+
+    const { remediationPlan, pr } = await executeCreatePrFlow({
+      email,
+      token,
+      owner,
+      repo,
+      repoFullName,
+      defaultBranch,
+      targets,
+      aiKey,
+    });
 
     if (remediationPlan.patches.length === 0) {
+      debugLog(scope, "no patches generated", { repoFullName, summary: remediationPlan.summary });
       return NextResponse.json({
         ok: true,
         message: remediationPlan.summary,
         patchCount: 0,
+        failures: remediationPlan.failures,
       });
-    }
-
-    // Get HEAD SHA of default branch
-    const headSha = await getDefaultBranchSha(token, owner, repo, defaultBranch);
-
-    // Create a new branch
-    const branchName = `watchmen-fix-${Date.now()}`;
-    await createBranch(token, owner, repo, branchName, headSha);
-
-    // Commit each changed file:
-    //  1. Save the original as <name>-faulty.tf for reference
-    //  2. Overwrite the original path with the fixed content
-    const attackPathTitles = paths.map((p) => p.title).join(", ");
-    const faultyPaths: string[] = [];
-
-    for (const patch of remediationPlan.patches) {
-      if (patch.isNewFile) {
-        await createFile(
-          token, owner, repo, patch.path, patch.fixedContent,
-          `fix: generate ${patch.path} to remediate "${attackPathTitles}"`,
-          branchName
-        );
-      } else {
-        const dir = patch.path.includes("/") ? patch.path.slice(0, patch.path.lastIndexOf("/") + 1) : "";
-        const basename = patch.path.slice(dir.length).replace(/\.tf$/, "-faulty.tf");
-        const faultyPath = `${dir}.terraform-originals/${basename}`;
-        faultyPaths.push(faultyPath);
-
-        await createFile(
-          token, owner, repo, faultyPath, patch.originalContent,
-          `chore: preserve original ${patch.path} as ${faultyPath}`,
-          branchName
-        );
-        await updateFile(
-          token, owner, repo, patch.path, patch.fixedContent, patch.sha,
-          `fix: remediate "${attackPathTitles}" in ${patch.path}`,
-          branchName
-        );
-      }
-    }
-
-    // Build PR body
-    const pathDetails = paths
-      .map(
-        (p) =>
-          `### ${p.severity === "critical" ? "🔴" : "🟠"} ${p.title}\n${p.description}\n\n**Mitigations applied:**\n${p.mitigations.map((m) => `- ${m}`).join("\n")}`
-      )
-      .join("\n\n---\n\n");
-
-    const changedFiles = remediationPlan.patches
-      .map((p) => {
-        if (p.isNewFile) return `- \`${p.path}\` — new file generated`;
-        const dir = p.path.includes("/") ? p.path.slice(0, p.path.lastIndexOf("/") + 1) : "";
-        const basename = p.path.slice(dir.length).replace(/\.tf$/, "-faulty.tf");
-        const faulty = `${dir}.terraform-originals/${basename}`;
-        return `- \`${p.path}\` — fixed _(original preserved as \`${faulty}\`)_`;
-      })
-      .join("\n");
-
-    const prBody = `## Watchmen Security Remediation
-
-This pull request was automatically generated by [Watchmen](https://watchmen.app) to address the following attack paths detected in your cloud infrastructure.
-
-### Files Changed
-${changedFiles}
-
----
-
-${pathDetails}
-
----
-
-> **Note:** Review all changes carefully before merging. The AI-generated fixes apply the principle of least privilege but may need adjustment for your specific environment.`;
-
-    // Open pull request
-    const pr = await createPullRequest(
-      token,
-      owner,
-      repo,
-      `fix(security): remediate ${paths.length} attack path${paths.length === 1 ? "" : "s"} [Watchmen]`,
-      prBody,
-      branchName,
-      defaultBranch
-    );
-
-    // Try to notify via Slack (best-effort)
-    try {
-      const alertResult = await sql`
-        SELECT slack_bot_token, slack_channel_id FROM alert_rules WHERE user_email = ${email}
-      `;
-      if (alertResult.rows.length > 0) {
-        const { slack_bot_token, slack_channel_id } = alertResult.rows[0];
-        if (slack_bot_token && slack_channel_id) {
-          const slackPayload = {
-            text: `🔧 *Watchmen Security PR Created*`,
-            blocks: [
-              {
-                type: "section",
-                text: {
-                  type: "mrkdwn",
-                  text: `🔧 *Watchmen Security PR Created*\n<${pr.html_url}|PR #${pr.number}> — ${remediationPlan.patches.length} Terraform file${remediationPlan.patches.length === 1 ? "" : "s"} updated in \`${repoFullName}\``,
-                },
-              },
-              {
-                type: "section",
-                text: {
-                  type: "mrkdwn",
-                  text: `*Attack paths addressed:*\n${paths.map((p) => `• ${p.title}`).join("\n")}`,
-                },
-              },
-              {
-                type: "actions",
-                elements: [
-                  {
-                    type: "button",
-                    text: { type: "plain_text", text: "View Pull Request" },
-                    url: pr.html_url,
-                    style: "primary",
-                  },
-                ],
-              },
-            ],
-          };
-          await postToSlack(slack_bot_token, slack_channel_id, slackPayload);
-        }
-      }
-    } catch {
-      // Slack notification failure is non-fatal
     }
 
     return NextResponse.json({
@@ -227,8 +421,11 @@ ${pathDetails}
       prUrl: pr.html_url,
       prNumber: pr.number,
       patchCount: remediationPlan.patches.length,
+      message: remediationPlan.summary,
+      failures: remediationPlan.failures,
     });
   } catch (err) {
+    debugError(scope, "terraform remediation PR flow failed", err, { email, repoFullName, defaultBranch, targetCount: targets.length });
     console.error("[api/github/terraform-pr] error:", err);
     const msg = err instanceof Error ? err.message : "Failed to create PR";
     return NextResponse.json({ error: msg }, { status: 500 });

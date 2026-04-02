@@ -1,5 +1,5 @@
 import { google } from "googleapis";
-import { initGoogleAuth, useMockData, logFetchWarning } from "./client";
+import { initGoogleAuth, useMockData, logFetchWarning, withProjectRetry } from "./client";
 import type { FirewallRule } from "./types";
 
 async function getMockFirewallRules(): Promise<FirewallRule[]> {
@@ -13,7 +13,7 @@ async function getRealFirewallRules(projectIds: string[]): Promise<FirewallRule[
 
   const results = await Promise.allSettled(
     projectIds.map(async (projectId) => {
-      const res = await compute.firewalls.list({ project: projectId });
+      const res = await withProjectRetry("firewall", projectId, () => compute.firewalls.list({ project: projectId }));
       return (res.data.items ?? []).map((rule): FirewallRule => ({
         name: rule.name ?? "",
         projectId,

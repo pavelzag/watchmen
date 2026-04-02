@@ -1,5 +1,5 @@
 import { google } from "googleapis";
-import { initGoogleAuth, useMockData, logFetchWarning } from "./client";
+import { initGoogleAuth, useMockData, logFetchWarning, withProjectRetry } from "./client";
 import type { GkeCluster } from "./types";
 
 async function getMockClusters(): Promise<GkeCluster[]> {
@@ -14,16 +14,20 @@ async function getRealClusters(projectIds: string[]): Promise<GkeCluster[]> {
 
   const results = await Promise.allSettled(
     projectIds.map(async (projectId) => {
-      const res = await container.projects.locations.clusters.list({
-        parent: `projects/${projectId}/locations/-`,
-      });
+      const res = await withProjectRetry("gke", projectId, () =>
+        container.projects.locations.clusters.list({
+          parent: `projects/${projectId}/locations/-`,
+        })
+      );
       const clusters = res.data.clusters ?? [];
 
       // Fetch project-level IAM once, then filter container.* roles per cluster
-      const policyRes = await crm.projects.getIamPolicy({
-        resource: projectId,
-        requestBody: {},
-      });
+      const policyRes = await withProjectRetry("gke", projectId, () =>
+        crm.projects.getIamPolicy({
+          resource: projectId,
+          requestBody: {},
+        })
+      );
       const containerBindings = (policyRes.data.bindings ?? [])
         .filter((b) => b.role?.startsWith("roles/container"))
         .map((b) => ({ role: b.role ?? "", members: b.members ?? [] }));

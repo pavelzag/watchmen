@@ -1,5 +1,5 @@
 import { google } from "googleapis";
-import { initGoogleAuth, useMockData, logFetchWarning } from "./client";
+import { initGoogleAuth, useMockData, logFetchWarning, withProjectRetry } from "./client";
 import type { BigQueryDataset } from "./types";
 
 async function getMockBigQueryDatasets(): Promise<BigQueryDataset[]> {
@@ -13,7 +13,7 @@ async function getRealBigQueryDatasets(projectIds: string[]): Promise<BigQueryDa
 
   const results = await Promise.allSettled(
     projectIds.map(async (projectId) => {
-      const res = await bq.datasets.list({ projectId });
+      const res = await withProjectRetry("bigquery", projectId, () => bq.datasets.list({ projectId }));
       const datasets: BigQueryDataset[] = [];
 
       for (const ds of res.data.datasets ?? []) {

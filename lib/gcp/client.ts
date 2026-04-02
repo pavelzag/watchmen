@@ -1,7 +1,9 @@
 import { google } from "googleapis";
+import type { GcpScanWarning, GcpScanWarningCode } from "./types";
 
 let _initialized = false;
 let _userAuthInitialized = false;
+let _scanWarnings: GcpScanWarning[] = [];
 
 /**
  * Initializes googleapis with the service account credentials globally.
@@ -81,31 +83,191 @@ export async function discoverUserProjectIds(accessToken: string): Promise<strin
   }
 }
 
-/**
- * Logs a per-project fetch failure.
- * "API not enabled" errors are expected for projects that don't use a service — logged at info.
- * Anything else (permissions, network, etc.) is logged at warn.
- */
-export function logFetchWarning(fetcher: string, projectId: string, reason: unknown) {
-  const msg = (reason instanceof Error ? reason.message : String(reason)).split("\n")[0];
-  const isExpected =
-    msg.includes("has not been used") ||
-    msg.includes("is disabled") ||
-    msg.includes("not enabled") ||
-    msg.includes("has not enabled") ||
-    msg.includes("BigQuery is not enabled");
-  const isAuthError =
-    msg.includes("Invalid Credentials") ||
-    msg.includes("invalid_grant") ||
-    msg.includes("Token has been expired") ||
-    msg.includes("UNAUTHENTICATED");
-  if (isExpected) {
-    console.info(`[${fetcher}] skipping ${projectId}: API not enabled`);
-  } else if (isAuthError) {
-    console.error(`[${fetcher}] AUTH ERROR for ${projectId} — session token expired or missing scope: ${msg}`);
-  } else {
-    console.warn(`[${fetcher}] ${projectId} warning:`, reason);
+function firstLine(value: string): string {
+  return value.split("\n")[0]?.trim() ?? value.trim();
+}
+
+function stringifyReason(reason: unknown): string {
+  if (reason instanceof Error) {
+    const parts = [reason.name, reason.message, (reason as Error & { code?: string }).code]
+      .filter(Boolean)
+      .join(": ");
+    return firstLine(parts || reason.message || reason.name);
   }
+
+  if (typeof reason === "string") return firstLine(reason);
+
+  if (reason && typeof reason === "object") {
+    const maybeMessage = (reason as { message?: string }).message;
+    const maybeCode = (reason as { code?: string }).code;
+    const maybeStatus = (reason as { response?: { status?: number } }).response?.status;
+    const joined = [maybeMessage, maybeCode, maybeStatus ? `status ${maybeStatus}` : ""]
+      .filter(Boolean)
+      .join(" · ");
+    if (joined) return firstLine(joined);
+    try {
+      return firstLine(JSON.stringify(reason));
+    } catch {
+      return "Unknown error";
+    }
+  }
+
+  return String(reason);
+}
+
+function classifyGcpFetchError(reason: unknown): { code: GcpScanWarningCode; retryable: boolean; detail: string } {
+  const detail = stringifyReason(reason);
+  const normalized = detail.toLowerCase();
+  const errorCode = ((reason as { code?: string } | undefined)?.code ?? "").toUpperCase();
+  const status = (reason as { response?: { status?: number } } | undefined)?.response?.status;
+
+  if (
+    normalized.includes("has not been used") ||
+    normalized.includes("is disabled") ||
+    normalized.includes("not enabled") ||
+    normalized.includes("has not enabled")
+  ) {
+    return { code: "api_not_enabled", retryable: false, detail };
+  }
+
+  if (
+    status === 403 ||
+    normalized.includes("permission denied") ||
+    normalized.includes("does not have") ||
+    normalized.includes("access denied") ||
+    normalized.includes("insufficient authentication scopes")
+  ) {
+    return { code: "permission_denied", retryable: false, detail };
+  }
+
+  if (
+    status === 401 ||
+    normalized.includes("invalid credentials") ||
+    normalized.includes("invalid_grant") ||
+    normalized.includes("token has been expired") ||
+    normalized.includes("unauthenticated")
+  ) {
+    return { code: "unauthenticated", retryable: false, detail };
+  }
+
+  if (status === 404 || normalized.includes("not found")) {
+    return { code: "not_found", retryable: false, detail };
+  }
+
+  if (
+    errorCode === "ETIMEDOUT" ||
+    errorCode === "ESOCKETTIMEDOUT" ||
+    normalized.includes("timed out") ||
+    normalized.includes("timeout")
+  ) {
+    return { code: "timeout", retryable: true, detail };
+  }
+
+  if (status === 429 || normalized.includes("rate limit") || normalized.includes("too many requests")) {
+    return { code: "rate_limited", retryable: true, detail };
+  }
+
+  if (
+    errorCode === "ECONNRESET" ||
+    errorCode === "ENOTFOUND" ||
+    errorCode === "EAI_AGAIN" ||
+    normalized.includes("socket hang up") ||
+    normalized.includes("fetch failed")
+  ) {
+    return { code: "transient_network", retryable: true, detail };
+  }
+
+  if (status && status >= 500) {
+    return { code: "transient_network", retryable: true, detail };
+  }
+
+  return { code: "unknown", retryable: false, detail };
+}
+
+function humanMessage(fetcher: string, projectId: string, code: GcpScanWarningCode): string {
+  switch (code) {
+    case "api_not_enabled":
+      return `${fetcher} skipped for ${projectId}: API not enabled.`;
+    case "permission_denied":
+      return `${fetcher} skipped for ${projectId}: this identity does not have permission to access that service.`;
+    case "unauthenticated":
+      return `${fetcher} skipped for ${projectId}: credentials are missing, expired, or missing required scopes.`;
+    case "not_found":
+      return `${fetcher} skipped for ${projectId}: project or service endpoint was not found.`;
+    case "timeout":
+      return `${fetcher} could not be checked for ${projectId}: the request timed out.`;
+    case "rate_limited":
+      return `${fetcher} could not be checked for ${projectId}: the API rate limit was hit.`;
+    case "transient_network":
+      return `${fetcher} could not be checked for ${projectId}: a transient network error occurred.`;
+    default:
+      return `${fetcher} could not be checked for ${projectId}: an unexpected error occurred.`;
+  }
+}
+
+export function resetGcpScanWarnings(): void {
+  _scanWarnings = [];
+}
+
+export function getGcpScanWarnings(): GcpScanWarning[] {
+  return [..._scanWarnings];
+}
+
+export function logFetchWarning(fetcher: string, projectId: string, reason: unknown): GcpScanWarning {
+  const { code, retryable, detail } = classifyGcpFetchError(reason);
+  const warning: GcpScanWarning = {
+    service: fetcher,
+    projectId,
+    code,
+    retryable,
+    message: humanMessage(fetcher, projectId, code),
+    detail,
+  };
+  _scanWarnings.push(warning);
+
+  if (code === "api_not_enabled") {
+    console.info(`[${fetcher}] skipping ${projectId}: API not enabled`);
+  } else if (code === "permission_denied") {
+    console.info(`[${fetcher}] skipping ${projectId}: permission denied`);
+  } else if (code === "unauthenticated") {
+    console.error(`[${fetcher}] auth error for ${projectId}: ${detail}`);
+  } else if (retryable) {
+    console.warn(`[${fetcher}] ${projectId}: temporary failure (${code})`);
+  } else {
+    console.warn(`[${fetcher}] ${projectId}: ${code}`);
+  }
+
+  return warning;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function withProjectRetry<T>(
+  fetcher: string,
+  projectId: string,
+  fn: () => Promise<T>,
+  attempts = 3
+): Promise<T> {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      const classification = classifyGcpFetchError(error);
+      const canRetry = classification.retryable && attempt < attempts;
+      if (!canRetry) break;
+
+      const backoffMs = attempt * 750;
+      console.info(`[${fetcher}] retrying ${projectId} after ${classification.code} (${attempt}/${attempts})`);
+      await delay(backoffMs);
+    }
+  }
+
+  throw lastError;
 }
 
 export function useMockData(forced?: boolean): boolean {

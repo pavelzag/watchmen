@@ -5,6 +5,7 @@ import NavbarAskButton from "./NavbarAskButton";
 import NavbarCloudTabs from "./NavbarCloudTabs";
 import NavbarSubNav from "./NavbarSubNav";
 import NavbarLink from "./NavbarLink";
+import NavbarTasksButton from "./NavbarTasksButton";
 
 export default async function Navbar() {
   const session = await auth();
@@ -46,6 +47,7 @@ export default async function Navbar() {
 
         {/* Right: ask button + user + logout */}
         <div className="flex items-center gap-3 shrink-0">
+          <NavbarTasksButton />
           <NavbarAskButton />
           {session?.user && (
             <>
@@ -78,6 +80,7 @@ export default async function Navbar() {
         <NavbarLink href="/dashboard/attack-paths" icon={<Swords className="w-3 h-3" />} label="ATTACK PATHS" />
         {/* IAC DRIFT hidden for now — feature retained at /dashboard/iac-drift */}
         <NavbarLink href="/dashboard/container-scan" icon={<Container className="w-3 h-3" />} label="CONTAINERS" />
+        <NavbarLink href="/dashboard/tasks" icon={<IterationCw className="w-3 h-3" />} label="TASKS" />
         <NavbarLink href="/dashboard/history" icon={<Clock className="w-3 h-3" />} label="HISTORY" />
         <NavbarLink href="/dashboard/compliance" icon={<ClipboardCheck className="w-3 h-3" />} label="COMPLIANCE" />
         <NavbarLink href="/dashboard/settings" icon={<Settings className="w-3 h-3" />} label="SETTINGS" />
@@ -85,5 +88,4 @@ export default async function Navbar() {
     </header>
   );
 }
-
 

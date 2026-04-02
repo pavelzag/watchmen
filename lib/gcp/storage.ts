@@ -1,5 +1,5 @@
 import { google } from "googleapis";
-import { initGoogleAuth, useMockData, logFetchWarning } from "./client";
+import { initGoogleAuth, useMockData, logFetchWarning, withProjectRetry } from "./client";
 import type { StorageBucket } from "./types";
 
 async function getMockBuckets(): Promise<StorageBucket[]> {
@@ -13,7 +13,7 @@ async function getRealBuckets(projectIds: string[]): Promise<StorageBucket[]> {
 
   const results = await Promise.allSettled(
     projectIds.map(async (projectId) => {
-      const listRes = await storage.buckets.list({ project: projectId });
+      const listRes = await withProjectRetry("storage", projectId, () => storage.buckets.list({ project: projectId }));
       const buckets = listRes.data.items ?? [];
 
       const withPolicies = await Promise.allSettled(

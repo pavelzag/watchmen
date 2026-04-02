@@ -8,6 +8,8 @@ import {
 import type { AttackPath, AttackNode } from "@/lib/gcp/attack-paths";
 import RemediateModal from "./RemediateModal";
 import ScanCloudButton from "@/components/ScanCloudButton";
+import { remediationTargetFromAttackPath } from "@/lib/github/remediation-targets";
+import { useTaskCenter } from "@/components/TaskCenterProvider";
 
 // ─── Node icon / colour ───────────────────────────────────────────────────────
 
@@ -185,24 +187,40 @@ export default function AttackPathsPage() {
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "critical" | "high">("all");
   const [showRemediate, setShowRemediate] = useState(false);
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const { tasks, startAttackPathAnalysis } = useTaskCenter();
 
-  async function load() {
+  function load() {
     setLoading(true);
     setError(null);
-    try {
-      const res = await fetch("/api/attack-paths");
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed to load");
-      setPaths(data.paths);
-      setFetchedAt(data.fetchedAt);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Unknown error");
-    } finally {
-      setLoading(false);
-    }
+    const taskId = startAttackPathAnalysis();
+    setActiveTaskId(taskId);
   }
 
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    if (!activeTaskId) return;
+    const task = tasks.find((item) => item.id === activeTaskId);
+    if (!task) return;
+    if (task.status === "running" || task.status === "queued") {
+      setLoading(true);
+      return;
+    }
+
+    if (task.status === "failed") {
+      setLoading(false);
+      setError(task.error ?? "Unknown error");
+      return;
+    }
+
+    if (task.status === "completed" && task.kind === "attack_paths" && task.result?.paths) {
+      setPaths(task.result.paths as AttackPath[]);
+      setFetchedAt(task.result.fetchedAt ?? null);
+      setLoading(false);
+      setError(null);
+    }
+  }, [activeTaskId, tasks]);
 
   const visible = paths.filter((p) => filter === "all" || p.severity === filter);
   const critCount = paths.filter((p) => p.severity === "critical").length;
@@ -314,7 +332,7 @@ export default function AttackPathsPage() {
       )}
 
       {showRemediate && (
-        <RemediateModal paths={paths} onClose={() => setShowRemediate(false)} />
+        <RemediateModal targets={paths.map(remediationTargetFromAttackPath)} onClose={() => setShowRemediate(false)} />
       )}
     </div>
   );

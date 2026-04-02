@@ -109,3 +109,26 @@ export async function ensureGlobalUsageTable(): Promise<void> {
     ON CONFLICT (id) DO NOTHING
   `;
 }
+
+/**
+ * Ensures the background task table exists.
+ */
+export async function ensureBackgroundTasksTable(): Promise<void> {
+  await sql`
+    CREATE TABLE IF NOT EXISTS user_background_tasks (
+      user_email   TEXT NOT NULL,
+      task_id      TEXT NOT NULL,
+      task_kind    TEXT NOT NULL,
+      task_status  TEXT NOT NULL,
+      task_data    JSONB NOT NULL,
+      dismissed    BOOLEAN NOT NULL DEFAULT FALSE,
+      updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (user_email, task_id)
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_user_background_tasks_lookup
+      ON user_background_tasks (user_email, dismissed, updated_at DESC)
+  `;
+}

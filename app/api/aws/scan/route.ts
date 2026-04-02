@@ -4,6 +4,22 @@ import { fetchAwsSnapshot } from "@/lib/aws";
 import { sql, ensureAwsSnapshotTable } from "@/lib/db";
 import { useMockAwsData } from "@/lib/aws/client";
 import { getUserCloudCredentials } from "@/lib/credentials";
+import type { TaskProgressEvent } from "@/lib/tasks/types";
+
+function sendStreamEvent(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  encoder: TextEncoder,
+  event: unknown
+) {
+  controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+}
+
+function emitProgress(
+  onProgress: ((event: TaskProgressEvent) => void) | undefined,
+  event: TaskProgressEvent
+) {
+  onProgress?.(event);
+}
 
 export async function POST(req: NextRequest) {
   const session = await auth();
@@ -17,52 +33,67 @@ export async function POST(req: NextRequest) {
   }
 
   // Demo user with browser-supplied credentials → real scan, no DB credential storage
-  const body = await req.json().catch(() => ({}));
-  type DemoBody = { demoCredentials?: { aws?: { accessKeyId?: string; secretAccessKey?: string; region?: string } } };
-  const demoCreds = (body as DemoBody)?.demoCredentials?.aws;
+  const body = await req.json().catch(() => ({})) as {
+    stream?: boolean;
+    demoCredentials?: { aws?: { accessKeyId?: string; secretAccessKey?: string; region?: string } };
+  };
+  const demoCreds = body?.demoCredentials?.aws;
 
-  if (session.isDemoUser && demoCreds?.accessKeyId && demoCreds?.secretAccessKey) {
-    try {
+  const runScan = async (onProgress?: (event: TaskProgressEvent) => void) => {
+    if (session.isDemoUser && demoCreds?.accessKeyId && demoCreds?.secretAccessKey) {
+      emitProgress(onProgress, {
+        stage: "start",
+        message: "Starting AWS scan with supplied demo credentials",
+        percent: 0,
+      });
       const snapshot = await fetchAwsSnapshot({
         accessKeyId: demoCreds.accessKeyId,
         secretAccessKey: demoCreds.secretAccessKey,
         region: demoCreds.region,
+        onProgress,
       });
-      // Return inline — never written to DB so other demo sessions can't see it
-      return NextResponse.json({ ok: true, snapshot, fetchedAt: snapshot.fetchedAt });
-    } catch (err) {
-      console.error("[api/aws/scan] POST demo-real error:", err);
-      return NextResponse.json({ error: "AWS scan failed with provided credentials." }, { status: 500 });
+      return { ok: true as const, snapshot, fetchedAt: snapshot.fetchedAt };
     }
-  }
 
-  // Mock mode: return fixture data
-  if (useMockAwsData() || session.isDemoUser) {
-    try {
-      const snapshot = await fetchAwsSnapshot({ forceMock: true });
-      return NextResponse.json({ ok: true, fetchedAt: snapshot.fetchedAt });
-    } catch (err) {
-      console.error("[api/aws/scan] POST mock error:", err);
-      return NextResponse.json({ error: "Failed to load mock AWS data." }, { status: 500 });
+    if (useMockAwsData() || session.isDemoUser) {
+      emitProgress(onProgress, {
+        stage: "start",
+        message: "Starting mock AWS scan",
+        percent: 0,
+      });
+      const snapshot = await fetchAwsSnapshot({ forceMock: true, onProgress });
+      return { ok: true as const, fetchedAt: snapshot.fetchedAt };
     }
-  }
 
-  const awsCreds = await getUserCloudCredentials(email, "aws");
-  if (!awsCreds) {
-    return NextResponse.json(
-      {
+    const awsCreds = await getUserCloudCredentials(email, "aws");
+    if (!awsCreds) {
+      return {
+        ok: false as const,
         error: "No AWS credentials configured. Go to Settings → Cloud Credentials.",
         credentialsRequired: true,
-      },
-      { status: 422 }
-    );
-  }
+        status: 422,
+      };
+    }
 
-  try {
+    emitProgress(onProgress, {
+      stage: "start",
+      message: "Starting live AWS scan",
+      percent: 0,
+      metadata: { region: awsCreds.region ?? "default" },
+    });
+
     const snapshot = await fetchAwsSnapshot({
       accessKeyId: awsCreds.accessKeyId,
       secretAccessKey: awsCreds.secretAccessKey,
       region: awsCreds.region,
+      onProgress,
+    });
+
+    emitProgress(onProgress, {
+      stage: "persist_snapshot",
+      message: "Persisting AWS snapshot",
+      percent: 97,
+      metadata: { snapshotId: snapshot.snapshotId },
     });
 
     await ensureAwsSnapshotTable();
@@ -74,7 +105,46 @@ export async function POST(req: NextRequest) {
             fetched_at = EXCLUDED.fetched_at
     `;
 
-    return NextResponse.json({ ok: true, fetchedAt: snapshot.fetchedAt });
+    return { ok: true as const, fetchedAt: snapshot.fetchedAt };
+  };
+
+  if (body.stream) {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const send = (event: unknown) => sendStreamEvent(controller, encoder, event);
+        void (async () => {
+          try {
+            const result = await runScan((progress) => send({ type: "progress", progress }));
+            if (!result.ok) send({ type: "error", error: result.error, credentialsRequired: result.credentialsRequired });
+            else send({ type: "result", ...result });
+          } catch (err) {
+            console.error("[api/aws/scan] streamed POST error:", err);
+            send({ type: "error", error: "AWS scan failed. Check server logs." });
+          } finally {
+            controller.close();
+          }
+        })();
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "application/x-ndjson; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+      },
+    });
+  }
+
+  try {
+    const result = await runScan();
+    if (!result.ok) {
+      return NextResponse.json(
+        { error: result.error, credentialsRequired: result.credentialsRequired },
+        { status: result.status }
+      );
+    }
+    return NextResponse.json(result);
   } catch (err) {
     console.error("[api/aws/scan] POST error:", err);
     return NextResponse.json({ error: "AWS scan failed. Check server logs." }, { status: 500 });

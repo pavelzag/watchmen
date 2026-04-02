@@ -1,5 +1,5 @@
 import { google } from "googleapis";
-import { initGoogleAuth, useMockData, logFetchWarning } from "./client";
+import { initGoogleAuth, useMockData, logFetchWarning, withProjectRetry } from "./client";
 import type { VM } from "./types";
 
 async function getMockVMs(): Promise<VM[]> {
@@ -13,7 +13,7 @@ async function getRealVMs(projectIds: string[]): Promise<VM[]> {
 
   const results = await Promise.allSettled(
     projectIds.map(async (projectId) => {
-      const res = await compute.instances.aggregatedList({ project: projectId });
+      const res = await withProjectRetry("vms", projectId, () => compute.instances.aggregatedList({ project: projectId }));
       const items = res.data.items ?? {};
       const vms: VM[] = [];
 

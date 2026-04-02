@@ -1,5 +1,8 @@
 import type { Config } from 'jest';
+import { createRequire } from 'node:module';
 import nextJest from 'next/jest.js';
+
+const require = createRequire(import.meta.url);
 
 const createJestConfig = nextJest({
     // Provide the path to your Next.js app to load next.config.js and .env files in your test environment

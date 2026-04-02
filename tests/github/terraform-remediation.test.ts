@@ -1,7 +1,17 @@
-import { buildRemediationPlan } from "@/lib/github/terraform-remediation";
+/** @jest-environment node */
+
+import {
+  buildRemediationPlan,
+  clearRemediationCaches,
+} from "@/lib/github/terraform-remediation";
+import {
+  remediationTargetFromAttackPath,
+  remediationTargetFromFinding,
+} from "@/lib/github/remediation-targets";
 import { searchTfFiles, getFileContent } from "@/lib/github/client";
 import { callAI } from "@/lib/ai/client";
 import type { AttackPath } from "@/lib/gcp/attack-paths";
+import type { SecurityFinding } from "@/lib/gcp/types";
 
 jest.mock("@/lib/github/client");
 jest.mock("@/lib/ai/client");
@@ -9,8 +19,6 @@ jest.mock("@/lib/ai/client");
 const mockSearchTfFiles = searchTfFiles as jest.MockedFunction<typeof searchTfFiles>;
 const mockGetFileContent = getFileContent as jest.MockedFunction<typeof getFileContent>;
 const mockCallAI = callAI as jest.MockedFunction<typeof callAI>;
-
-// ─── Fixture helpers ──────────────────────────────────────────────────────────
 
 function makeAttackPath(overrides: Partial<AttackPath> = {}): AttackPath {
   return {
@@ -43,10 +51,25 @@ function makeAttackPath(overrides: Partial<AttackPath> = {}): AttackPath {
   };
 }
 
+function makeFinding(overrides: Partial<SecurityFinding> = {}): SecurityFinding {
+  return {
+    id: "public_firewall:proj-1:fw-open-ssh",
+    severity: "critical",
+    title: "Firewall Rule Open to the Internet",
+    description: "Rule fw-open-ssh allows tcp:22 traffic from 0.0.0.0/0.",
+    resourceName: "fw-open-ssh",
+    projectId: "proj-1",
+    resourceType: "firewall_rule",
+    remediationHint: 'Restrict source ranges on rule "fw-open-ssh".',
+    ...overrides,
+  };
+}
+
 const TOKEN = "test-token";
 const OWNER = "owner";
 const REPO = "repo";
-const GEMINI_KEY = "gemini-key";
+const PROVIDER = "google";
+const API_KEY = "google-key";
 
 const ORIGINAL_MAIN_TF = `
 resource "google_storage_bucket" "my-public-bucket" {
@@ -60,115 +83,221 @@ resource "google_storage_bucket" "my-public-bucket" {
 
 const FIXED_MAIN_TF = `
 resource "google_storage_bucket" "my-public-bucket" {
-  name = "my-public-bucket"
+  name                     = "my-public-bucket"
+  public_access_prevention = "enforced"
 }
 `.trim();
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
-
 describe("buildRemediationPlan", () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    jest.resetAllMocks();
+    clearRemediationCaches();
   });
 
-  // ── 1. Finds relevant files and returns patches ────────────────────────────
-  it("finds relevant files and returns patches when AI produces different content", async () => {
-    const outputsTf = `output "bucket_name" { value = "unrelated-output" }`;
-
+  it("finds relevant files and returns patches when an attack path matches Terraform", async () => {
     mockSearchTfFiles.mockResolvedValue(["main.tf", "outputs.tf"]);
     mockGetFileContent
       .mockResolvedValueOnce({ content: ORIGINAL_MAIN_TF, sha: "sha-main" })
-      .mockResolvedValueOnce({ content: outputsTf, sha: "sha-outputs" });
+      .mockResolvedValueOnce({ content: 'output "bucket_name" { value = "unrelated-output" }', sha: "sha-outputs" });
     mockCallAI.mockResolvedValue(FIXED_MAIN_TF);
 
-    const path = makeAttackPath();
-    const plan = await buildRemediationPlan(TOKEN, OWNER, REPO, [path], GEMINI_KEY);
+    const plan = await buildRemediationPlan(
+      TOKEN,
+      OWNER,
+      REPO,
+      [remediationTargetFromAttackPath(makeAttackPath())],
+      PROVIDER,
+      API_KEY
+    );
 
     expect(plan.patches).toHaveLength(1);
     expect(plan.patches[0].path).toBe("main.tf");
     expect(plan.patches[0].originalContent).not.toBe(plan.patches[0].fixedContent);
   });
 
-  // ── 2. Skips files where AI returns identical content ─────────────────────
+  it("matches findings directly without converting them into fake attack paths", async () => {
+    const firewallTf = `
+resource "google_compute_firewall" "fw-open-ssh" {
+  name          = "fw-open-ssh"
+  project       = "proj-1"
+  source_ranges = ["0.0.0.0/0"]
+}
+`.trim();
+    const fixedFirewallTf = firewallTf.replace('["0.0.0.0/0"]', '["10.0.0.0/8"]');
+
+    mockSearchTfFiles.mockResolvedValue(["firewall.tf"]);
+    mockGetFileContent.mockResolvedValue({ content: firewallTf, sha: "sha-firewall" });
+    mockCallAI.mockResolvedValue(fixedFirewallTf);
+
+    const plan = await buildRemediationPlan(
+      TOKEN,
+      OWNER,
+      REPO,
+      [remediationTargetFromFinding(makeFinding())],
+      PROVIDER,
+      API_KEY
+    );
+
+    expect(plan.patches).toHaveLength(1);
+    expect(plan.patches[0].path).toBe("firewall.tf");
+  });
+
   it("skips files where AI returns identical content", async () => {
     mockSearchTfFiles.mockResolvedValue(["main.tf"]);
-    mockGetFileContent.mockResolvedValue({ content: ORIGINAL_MAIN_TF, sha: "sha-main" });
-    // AI returns the exact same content (trimmed)
-    mockCallAI.mockResolvedValue(ORIGINAL_MAIN_TF);
-
-    const path = makeAttackPath();
-    const plan = await buildRemediationPlan(TOKEN, OWNER, REPO, [path], GEMINI_KEY);
-
-    expect(plan.patches).toHaveLength(0);
-  });
-
-  // ── 3. Handles multiple attack paths across multiple files ─────────────────
-  it("returns patches for multiple relevant files across multiple attack paths", async () => {
-    const bucketTf = `resource "google_storage_bucket" "my-public-bucket" { name = "my-public-bucket" }`;
-    const firewallTf = `resource "google_compute_firewall" "fw-open-ssh" { name = "fw-open-ssh" }`;
-
-    const fixedBucketTf = `resource "google_storage_bucket" "my-public-bucket" { name = "my-public-bucket" /* fixed */ }`;
-    const fixedFirewallTf = `resource "google_compute_firewall" "fw-open-ssh" { name = "fw-open-ssh" /* fixed */ }`;
-
-    mockSearchTfFiles.mockResolvedValue(["bucket.tf", "firewall.tf"]);
-    mockGetFileContent
-      .mockResolvedValueOnce({ content: bucketTf, sha: "sha-bucket" })
-      .mockResolvedValueOnce({ content: firewallTf, sha: "sha-firewall" });
+    mockGetFileContent.mockImplementation(async (_token, _owner, _repo, filePath) => {
+      expect(filePath).toBe("main.tf");
+      return { content: ORIGINAL_MAIN_TF, sha: "sha-main" };
+    });
     mockCallAI
-      .mockResolvedValueOnce(fixedBucketTf)
-      .mockResolvedValueOnce(fixedFirewallTf);
+      .mockResolvedValueOnce(ORIGINAL_MAIN_TF)
+      .mockResolvedValueOnce('resource "google_storage_bucket_iam_binding" "generated" {}');
 
-    const bucketPath = makeAttackPath({
-      id: "bucket-read:my-public-bucket",
-      nodes: [
-        { id: "bucket:my-public-bucket", kind: "pivot", resourceType: "storage_bucket", label: "my-public-bucket", detail: "", projectId: "proj-1", risk: "" },
-      ],
-    });
+    const plan = await buildRemediationPlan(
+      TOKEN,
+      OWNER,
+      REPO,
+      [remediationTargetFromAttackPath(makeAttackPath())],
+      PROVIDER,
+      API_KEY
+    );
 
-    const fwPath = makeAttackPath({
-      id: "fw-vm-sa:fw-open-ssh:my-vm",
-      title: "Internet → Open Firewall → VM → Privileged SA",
-      nodes: [
-        { id: "fw:fw-open-ssh", kind: "entry", resourceType: "firewall_rule", label: "fw-open-ssh", detail: "", projectId: "proj-1", risk: "" },
-      ],
-    });
-
-    const plan = await buildRemediationPlan(TOKEN, OWNER, REPO, [bucketPath, fwPath], GEMINI_KEY);
-
-    expect(plan.patches).toHaveLength(2);
+    expect(plan.patches).toHaveLength(1);
+    expect(plan.patches[0].isNewFile).toBe(true);
   });
 
-  // ── 4. Returns empty patches when no TF files match any resource ───────────
-  it("returns empty patches and a defined summary when no TF file matches attack path resources", async () => {
-    const unrelatedTf = `resource "google_project" "my_project" { name = "some-other-project" }`;
-
+  it("generates a new fix file when no Terraform file matches the selected targets", async () => {
     mockSearchTfFiles.mockResolvedValue(["unrelated.tf"]);
-    mockGetFileContent.mockResolvedValue({ content: unrelatedTf, sha: "sha-unrelated" });
+    mockGetFileContent.mockResolvedValue({
+      content: 'resource "google_project" "my_project" { name = "some-other-project" }',
+      sha: "sha-unrelated",
+    });
+    mockCallAI.mockResolvedValue('resource "google_project_iam_binding" "fix" {}');
 
-    const path = makeAttackPath();
-    const plan = await buildRemediationPlan(TOKEN, OWNER, REPO, [path], GEMINI_KEY);
+    const plan = await buildRemediationPlan(
+      TOKEN,
+      OWNER,
+      REPO,
+      [remediationTargetFromAttackPath(makeAttackPath())],
+      PROVIDER,
+      API_KEY
+    );
 
-    expect(plan.patches).toHaveLength(0);
-    expect(plan.summary).toBeDefined();
-    expect(typeof plan.summary).toBe("string");
-    // AI should not have been called since no files matched
-    expect(mockCallAI).not.toHaveBeenCalled();
+    expect(plan.patches).toHaveLength(1);
+    expect(plan.patches[0].path).toBe("watchmen-security-fixes.tf");
+    expect(plan.patches[0].isNewFile).toBe(true);
   });
 
-  // ── 5. Calls AI with the attack path title in the prompt ──────────────────
-  it("calls AI with a prompt containing the attack path title", async () => {
+  it("calls AI with prompt context for findings and attack paths", async () => {
     mockSearchTfFiles.mockResolvedValue(["main.tf"]);
-    mockGetFileContent.mockResolvedValue({ content: ORIGINAL_MAIN_TF, sha: "sha-main" });
+    mockGetFileContent.mockImplementation(async (_token, _owner, _repo, filePath) => {
+      expect(filePath).toBe("main.tf");
+      return { content: ORIGINAL_MAIN_TF, sha: "sha-main" };
+    });
     mockCallAI.mockResolvedValue(FIXED_MAIN_TF);
 
-    const path = makeAttackPath({
-      title: "Public Readable Bucket → Direct Data Exposure",
+    await buildRemediationPlan(
+      TOKEN,
+      OWNER,
+      REPO,
+      [
+        remediationTargetFromAttackPath(makeAttackPath()),
+        remediationTargetFromFinding(makeFinding()),
+      ],
+      PROVIDER,
+      API_KEY
+    );
+
+    expect(mockCallAI.mock.calls.length).toBeGreaterThanOrEqual(1);
+    const prompts = mockCallAI.mock.calls.map(([, , prompt]) => prompt);
+    expect(prompts.some((prompt) => prompt.includes("Public Readable Bucket"))).toBe(true);
+    expect(prompts.some((prompt) => prompt.includes("Firewall Rule Open to the Internet"))).toBe(true);
+    expect(prompts.some((prompt) => prompt.includes("fw-open-ssh"))).toBe(true);
+  });
+
+  it("prefers real infrastructure files over faulty test scenario files", async () => {
+    const realMainTf = `
+resource "google_compute_firewall" "fw-open-ssh" {
+  name          = "fw-open-ssh"
+  source_ranges = ["0.0.0.0/0"]
+}
+`.trim();
+    const scenarioTf = `
+resource "google_compute_firewall" "scenario-fw-open-ssh" {
+  name          = "scenario-fw-open-ssh"
+  source_ranges = ["0.0.0.0/0"]
+}
+`.trim();
+
+    mockSearchTfFiles.mockResolvedValue([
+      "gcp/attack-scenarios.tf",
+      "gcp/faulty-test/security-issues-test.tf",
+      "gcp/main.tf",
+    ]);
+    mockGetFileContent.mockImplementation(async (_token, _owner, _repo, filePath) => {
+      if (filePath === "gcp/main.tf") return { content: realMainTf, sha: "sha-main" };
+      return { content: scenarioTf, sha: `sha-${filePath}` };
+    });
+    mockCallAI.mockImplementation(async (_provider, _key, prompt) => {
+      if (prompt.includes("File: gcp/main.tf")) {
+        return realMainTf.replace('["0.0.0.0/0"]', '["10.0.0.0/8"]');
+      }
+      return scenarioTf;
     });
 
-    await buildRemediationPlan(TOKEN, OWNER, REPO, [path], GEMINI_KEY);
+    const plan = await buildRemediationPlan(
+      TOKEN,
+      OWNER,
+      REPO,
+      [remediationTargetFromFinding(makeFinding())],
+      PROVIDER,
+      API_KEY
+    );
+
+    expect(plan.patches).toHaveLength(1);
+    expect(plan.patches[0].path).toBe("gcp/main.tf");
+  });
+
+  it("limits each file prompt to the most relevant findings", async () => {
+    const manyFindings = Array.from({ length: 20 }, (_, index) =>
+      remediationTargetFromFinding(
+        makeFinding({
+          id: `public_firewall:proj-1:fw-open-ssh-${index}`,
+          title: `Firewall issue ${index}`,
+          description: `Rule fw-open-ssh-${index} allows tcp:22 traffic from 0.0.0.0/0 and should be remediated immediately.`,
+          resourceName: index < 10 ? "fw-open-ssh" : `other-rule-${index}`,
+        })
+      )
+    );
+
+    mockSearchTfFiles.mockResolvedValue(["gcp/main.tf"]);
+    mockGetFileContent.mockResolvedValue({
+      content: `
+resource "google_compute_firewall" "fw-open-ssh" {
+  name          = "fw-open-ssh"
+  source_ranges = ["0.0.0.0/0"]
+}
+`.trim(),
+      sha: "sha-main",
+    });
+    mockCallAI.mockResolvedValue(`
+resource "google_compute_firewall" "fw-open-ssh" {
+  name          = "fw-open-ssh"
+  source_ranges = ["10.0.0.0/8"]
+}
+`.trim());
+
+    await buildRemediationPlan(
+      TOKEN,
+      OWNER,
+      REPO,
+      manyFindings,
+      PROVIDER,
+      API_KEY
+    );
 
     expect(mockCallAI).toHaveBeenCalledTimes(1);
-    const [, , prompt] = mockCallAI.mock.calls[0];
-    expect(prompt).toContain("Public Readable Bucket → Direct Data Exposure");
+    const prompt = mockCallAI.mock.calls[0][2];
+    expect(prompt).toContain("fw-open-ssh");
+    expect(prompt).not.toContain("Firewall issue 19");
   });
 });

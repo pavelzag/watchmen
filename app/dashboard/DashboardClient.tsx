@@ -9,6 +9,7 @@ import { Trash2 } from "lucide-react";
 import { saveSnapshot } from "@/lib/snapshot-history";
 import type { GcpSnapshot } from "@/lib/gcp/types";
 import { getDemoCredentials, getDemoGcpSnapshot, setDemoGcpSnapshot } from "@/lib/demo-credentials";
+import { useTaskCenter } from "@/components/TaskCenterProvider";
 
 export default function DashboardClient() {
   const [results, setResults] = useState<QueryResult[]>([]);
@@ -17,32 +18,15 @@ export default function DashboardClient() {
   const [hasAiKey, setHasAiKey] = useState<boolean | null>(null);
   const [gcpCredsRequired, setGcpCredsRequired] = useState(false);
   const [demoSnapshot, setDemoSnapshot] = useState<object | null>(() => getDemoGcpSnapshot());
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const { tasks, startGcpScan } = useTaskCenter();
 
   const triggerScan = useCallback(async () => {
+    const demoCreds = getDemoCredentials();
+    const taskId = startGcpScan(demoCreds.gcp ? { demoCredentials: { gcp: demoCreds.gcp } } : {});
+    setActiveTaskId(taskId);
     setScanning(true);
-    try {
-      const demoCreds = getDemoCredentials();
-      const body = demoCreds.gcp ? { demoCredentials: { gcp: demoCreds.gcp } } : {};
-      const res = await fetch("/api/scan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json().catch(() => ({})) as { credentialsRequired?: boolean; snapshot?: object };
-      if (res.status === 422 && data.credentialsRequired) {
-        setGcpCredsRequired(true);
-        return;
-      }
-      if (data.snapshot) {
-        setDemoGcpSnapshot(data.snapshot);
-        setDemoSnapshot(data.snapshot);
-      }
-      setGcpCredsRequired(false);
-      setScanVersion((v) => v + 1);
-    } finally {
-      setScanning(false);
-    }
-  }, []);
+  }, [startGcpScan]);
 
   useEffect(() => {
     fetch("/api/settings/keys")
@@ -70,6 +54,33 @@ export default function DashboardClient() {
     const id = setInterval(triggerScan, 10 * 60 * 1000);
     return () => clearInterval(id);
   }, [triggerScan]);
+
+  useEffect(() => {
+    if (!activeTaskId) return;
+    const task = tasks.find((item) => item.id === activeTaskId);
+    if (!task) return;
+    if (task.status === "running" || task.status === "queued") {
+      setScanning(true);
+      return;
+    }
+
+    setScanning(false);
+
+    if (task.status === "completed" && task.kind === "gcp_scan") {
+      if (task.result?.snapshot) {
+        setDemoGcpSnapshot(task.result.snapshot);
+        setDemoSnapshot(task.result.snapshot);
+      }
+      if (task.result?.credentialsRequired) {
+        setGcpCredsRequired(true);
+      } else {
+        setGcpCredsRequired(false);
+        setScanVersion((v) => v + 1);
+      }
+    } else if (task.status === "failed") {
+      setGcpCredsRequired(false);
+    }
+  }, [activeTaskId, tasks]);
 
   function handleResult(result: QueryResult) {
     setResults((prev) => [result, ...prev]);

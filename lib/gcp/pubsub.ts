@@ -1,5 +1,5 @@
 import { google } from "googleapis";
-import { initGoogleAuth, useMockData, logFetchWarning } from "./client";
+import { initGoogleAuth, useMockData, logFetchWarning, withProjectRetry } from "./client";
 import type { PubSubTopic } from "./types";
 
 async function getMockPubSubTopics(): Promise<PubSubTopic[]> {
@@ -13,9 +13,11 @@ async function getRealPubSubTopics(projectIds: string[]): Promise<PubSubTopic[]>
 
   const results = await Promise.allSettled(
     projectIds.map(async (projectId) => {
-      const res = await pubsub.projects.topics.list({
-        project: `projects/${projectId}`,
-      });
+      const res = await withProjectRetry("pubsub", projectId, () =>
+        pubsub.projects.topics.list({
+          project: `projects/${projectId}`,
+        })
+      );
       const topics: PubSubTopic[] = [];
 
       for (const topic of res.data.topics ?? []) {

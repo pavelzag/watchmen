@@ -1,5 +1,5 @@
 import { google } from "googleapis";
-import { initGoogleAuth, useMockData, logFetchWarning } from "./client";
+import { initGoogleAuth, useMockData, logFetchWarning, withProjectRetry } from "./client";
 import type { CloudRunService } from "./types";
 
 async function getMockCloudRunServices(): Promise<CloudRunService[]> {
@@ -13,9 +13,11 @@ async function getRealCloudRunServices(projectIds: string[]): Promise<CloudRunSe
 
   const results = await Promise.allSettled(
     projectIds.map(async (projectId) => {
-      const res = await run.projects.locations.services.list({
-        parent: `projects/${projectId}/locations/-`,
-      });
+      const res = await withProjectRetry("cloudrun", projectId, () =>
+        run.projects.locations.services.list({
+          parent: `projects/${projectId}/locations/-`,
+        })
+      );
       const services: CloudRunService[] = [];
       for (const svc of res.data.items ?? []) {
         const nameParts = (svc.metadata?.name ?? "").split("/");

@@ -1,5 +1,5 @@
 import { google } from "googleapis";
-import { initGoogleAuth, useMockData, logFetchWarning } from "./client";
+import { initGoogleAuth, useMockData, logFetchWarning, withProjectRetry } from "./client";
 import type { ProjectIamPolicy, ServiceAccount } from "./types";
 
 async function getMockProjectPolicies(): Promise<ProjectIamPolicy[]> {
@@ -21,8 +21,8 @@ async function getRealProjectPolicies(
   const results = await Promise.allSettled(
     projectIds.map(async (projectId): Promise<ProjectIamPolicy> => {
       const [policyRes, projectRes] = await Promise.all([
-        crm.projects.getIamPolicy({ resource: projectId, requestBody: {} }),
-        crm.projects.get({ projectId }),
+        withProjectRetry("iam/policies", projectId, () => crm.projects.getIamPolicy({ resource: projectId, requestBody: {} })),
+        withProjectRetry("iam/policies", projectId, () => crm.projects.get({ projectId })),
       ]);
       return {
         projectId,
@@ -51,9 +51,11 @@ async function getRealServiceAccounts(
 
   const results = await Promise.allSettled(
     projectIds.map(async (projectId) => {
-      const res = await iam.projects.serviceAccounts.list({
-        name: `projects/${projectId}`,
-      });
+      const res = await withProjectRetry("iam/service-accounts", projectId, () =>
+        iam.projects.serviceAccounts.list({
+          name: `projects/${projectId}`,
+        })
+      );
       return (res.data.accounts ?? []).map(
         (sa): ServiceAccount => ({
           name: sa.name ?? "",

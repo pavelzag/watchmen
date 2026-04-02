@@ -1,4 +1,4 @@
-import { getProjectIds, getProjectIdsForOrg, initGoogleAuth, initGoogleAuthFromKey, initUserAuth, discoverUserProjectIds, useMockData } from "./client";
+import { getProjectIds, getProjectIdsForOrg, initGoogleAuth, initGoogleAuthFromKey, initUserAuth, discoverUserProjectIds, useMockData, getGcpScanWarnings, resetGcpScanWarnings } from "./client";
 import { getProjectPolicies, getServiceAccounts } from "./iam";
 import { getStorageBuckets } from "./storage";
 import { getGkeClusters } from "./gke";
@@ -11,6 +11,7 @@ import { getSecrets } from "./secretmanager";
 import { getFirewallRules } from "./firewall";
 import { getLoadBalancers } from "./loadbalancing";
 import type { GcpSnapshot } from "./types";
+import type { TaskProgressEvent } from "@/lib/tasks/types";
 
 export * from "./types";
 
@@ -19,8 +20,21 @@ export * from "./types";
  * Switch between real and mock via USE_MOCK_DATA=true env var.
  * Pass options.accessToken to use per-user OAuth instead of the service account.
  */
-export async function fetchGcpSnapshot(options?: { accessToken?: string; serviceAccountKey?: string; forceMock?: boolean }): Promise<GcpSnapshot> {
+function emitProgress(
+  onProgress: ((event: TaskProgressEvent) => void) | undefined,
+  event: TaskProgressEvent
+): void {
+  onProgress?.(event);
+}
+
+export async function fetchGcpSnapshot(options?: {
+  accessToken?: string;
+  serviceAccountKey?: string;
+  forceMock?: boolean;
+  onProgress?: (event: TaskProgressEvent) => void;
+}): Promise<GcpSnapshot> {
   const mock = useMockData(options?.forceMock);
+  resetGcpScanWarnings();
 
   let projectIds: string[];
 
@@ -42,6 +56,37 @@ export async function fetchGcpSnapshot(options?: { accessToken?: string; service
     );
   }
 
+  emitProgress(options?.onProgress, {
+    stage: "discover_projects",
+    message: `Resolved ${projectIds.length} GCP project${projectIds.length === 1 ? "" : "s"}`,
+    percent: 10,
+    metadata: { projectCount: projectIds.length, mock },
+  });
+
+  let completedServices = 0;
+  const totalServices = 12;
+  emitProgress(options?.onProgress, {
+    stage: "scan_services",
+    message: `Scanning ${totalServices} GCP service areas`,
+    completed: 0,
+    total: totalServices,
+    percent: 15,
+  });
+
+  async function runLoader<T>(resource: string, message: string, fn: () => Promise<T>): Promise<T> {
+    const result = await fn();
+    completedServices += 1;
+    emitProgress(options?.onProgress, {
+      stage: "scan_services",
+      message,
+      completed: completedServices,
+      total: totalServices,
+      percent: 15 + Math.round((completedServices / totalServices) * 70),
+      metadata: { resource },
+    });
+    return result;
+  }
+
   const [
     projects,
     serviceAccounts,
@@ -56,18 +101,18 @@ export async function fetchGcpSnapshot(options?: { accessToken?: string; service
     firewallRules,
     loadBalancers,
   ] = await Promise.all([
-    getProjectPolicies(projectIds, mock),
-    getServiceAccounts(projectIds, mock),
-    getStorageBuckets(projectIds, mock),
-    getGkeClusters(projectIds, mock),
-    getVMs(projectIds, mock),
-    getCloudRunServices(projectIds, mock),
-    getCloudSqlInstances(projectIds, mock),
-    getBigQueryDatasets(projectIds, mock),
-    getPubSubTopics(projectIds, mock),
-    getSecrets(projectIds, mock),
-    getFirewallRules(projectIds, mock),
-    getLoadBalancers(projectIds, mock),
+    runLoader("projects", "Loading IAM project policies", () => getProjectPolicies(projectIds, mock)),
+    runLoader("serviceAccounts", "Loading service accounts", () => getServiceAccounts(projectIds, mock)),
+    runLoader("storageBuckets", "Loading storage buckets", () => getStorageBuckets(projectIds, mock)),
+    runLoader("gkeClusters", "Loading GKE clusters", () => getGkeClusters(projectIds, mock)),
+    runLoader("vms", "Loading virtual machines", () => getVMs(projectIds, mock)),
+    runLoader("cloudRunServices", "Loading Cloud Run services", () => getCloudRunServices(projectIds, mock)),
+    runLoader("cloudSqlInstances", "Loading Cloud SQL instances", () => getCloudSqlInstances(projectIds, mock)),
+    runLoader("bigqueryDatasets", "Loading BigQuery datasets", () => getBigQueryDatasets(projectIds, mock)),
+    runLoader("pubsubTopics", "Loading Pub/Sub topics", () => getPubSubTopics(projectIds, mock)),
+    runLoader("secrets", "Loading secrets", () => getSecrets(projectIds, mock)),
+    runLoader("firewallRules", "Loading firewall rules", () => getFirewallRules(projectIds, mock)),
+    runLoader("loadBalancers", "Loading load balancers", () => getLoadBalancers(projectIds, mock)),
   ]);
 
   // Enrich SA roles from project IAM bindings.
@@ -93,6 +138,13 @@ export async function fetchGcpSnapshot(options?: { accessToken?: string; service
     }
   }
 
+  emitProgress(options?.onProgress, {
+    stage: "finalize_snapshot",
+    message: "Finalizing GCP snapshot",
+    percent: 95,
+    metadata: { projectCount: projectIds.length },
+  });
+
   return {
     snapshotId: crypto.randomUUID(),
     projects,
@@ -107,6 +159,7 @@ export async function fetchGcpSnapshot(options?: { accessToken?: string; service
     secrets,
     firewallRules,
     loadBalancers,
+    scanWarnings: getGcpScanWarnings(),
     fetchedAt: new Date().toISOString(),
   };
 }
