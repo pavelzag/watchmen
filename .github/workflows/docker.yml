@@ -7,6 +7,22 @@ on:
       - "v*"          # e.g. v1.0.0 → image tagged as 1.0.0
   pull_request:
     branches: [main]  # builds but does NOT push on PRs
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish, for example v0.4.0 or 0.4.0"
+        required: true
+        type: string
+      publish_latest:
+        description: "Also tag this image as latest"
+        required: true
+        default: true
+        type: boolean
+      create_github_release:
+        description: "Create a GitHub Release for this version"
+        required: true
+        default: true
+        type: boolean
 
 env:
   REGISTRY: ghcr.io
@@ -18,7 +34,7 @@ jobs:
     runs-on: ubuntu-latest
 
     permissions:
-      contents: read
+      contents: write  # needed to create GitHub Releases
       packages: write   # needed to push to ghcr.io
 
     steps:
@@ -53,10 +69,52 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Prepare release metadata
+        id: release
+        shell: bash
+        run: |
+          tag=""
+          publish_latest="false"
+          create_github_release="false"
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            tag="${{ inputs.version }}"
+            publish_latest="${{ inputs.publish_latest }}"
+            create_github_release="${{ inputs.create_github_release }}"
+          elif [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            tag="${GITHUB_REF_NAME}"
+            publish_latest="true"
+            create_github_release="true"
+          fi
+
+          if [[ -z "${tag}" ]]; then
+            {
+              echo "publish_latest=${publish_latest}"
+              echo "create_github_release=${create_github_release}"
+            } >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          version="${tag#v}"
+          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Version must look like v0.4.0 or 0.4.0"
+            exit 1
+          fi
+
+          IFS=. read -r major minor _ <<< "${version}"
+          {
+            echo "tag=v${version}"
+            echo "version=${version}"
+            echo "major_minor=${major}.${minor}"
+            echo "major=${major}"
+            echo "publish_latest=${publish_latest}"
+            echo "create_github_release=${create_github_release}"
+          } >> "${GITHUB_OUTPUT}"
+
       # ── Derive image tags and OCI labels from Git metadata ────────────────
       # Tags produced:
       #   push to main  → ghcr.io/yourorg/watchmen:main, :sha-<short>
       #   push v1.2.3   → ghcr.io/yourorg/watchmen:1.2.3, :1.2, :1, :latest
+      #   manual v1.2.3 → ghcr.io/yourorg/watchmen:1.2.3, :1.2, :1, optional :latest
       #   PR            → ghcr.io/yourorg/watchmen:pr-42 (built only, not pushed)
       - name: Extract Docker metadata
         id: meta
@@ -66,9 +124,10 @@ jobs:
           tags: |
             type=ref,event=branch
             type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
+            type=raw,value=${{ steps.release.outputs.version }},enable=${{ steps.release.outputs.version != '' }}
+            type=raw,value=${{ steps.release.outputs.major_minor }},enable=${{ steps.release.outputs.version != '' }}
+            type=raw,value=${{ steps.release.outputs.major }},enable=${{ steps.release.outputs.version != '' }}
+            type=raw,value=latest,enable=${{ steps.release.outputs.publish_latest == 'true' }}
             type=sha,prefix=sha-,format=short
 
       # ── Build (and push when not a PR) ───────────────────────────────────
@@ -84,3 +143,18 @@ jobs:
           cache-to: type=gha,mode=max
           # Build for both amd64 (most servers) and arm64 (Apple Silicon / GKE Arm nodes)
           platforms: linux/amd64,linux/arm64
+
+      - name: Create GitHub Release
+        if: steps.release.outputs.version != '' && github.event_name != 'pull_request' && steps.release.outputs.create_github_release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Watchmen ${{ steps.release.outputs.tag }}
+          generate_release_notes: true
+          body: |
+            Docker image:
+
+            ```sh
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.release.outputs.version }}
+            ```
