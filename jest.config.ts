@@ -1,8 +1,5 @@
 import type { Config } from 'jest';
-import { createRequire } from 'node:module';
 import nextJest from 'next/jest.js';
-
-const require = createRequire(import.meta.url);
 
 const createJestConfig = nextJest({
     // Provide the path to your Next.js app to load next.config.js and .env files in your test environment
@@ -20,7 +17,7 @@ const config: Config = {
         '^@/(.*)$': '<rootDir>/$1',
         // Force jest to use commonjs version of lucide-react 
         // because next/jest ignores node_modules by default
-        '^lucide-react$': require.resolve('lucide-react'),
+        '^lucide-react$': '<rootDir>/node_modules/lucide-react/dist/cjs/lucide-react.js',
     },
     modulePathIgnorePatterns: ['<rootDir>/.next/'],
 };
