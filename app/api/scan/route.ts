@@ -6,6 +6,7 @@ import { useMockData } from "@/lib/gcp/client";
 import { getUserCloudCredentials } from "@/lib/credentials";
 import { debugError, debugLog, withDebugTiming } from "@/lib/debug";
 import type { TaskProgressEvent } from "@/lib/tasks/types";
+import type { GcpSnapshot } from "@/lib/gcp/types";
 
 function sendStreamEvent(
   controller: ReadableStreamDefaultController<Uint8Array>,
@@ -22,8 +23,28 @@ function emitProgress(
   onProgress?.(event);
 }
 
+function summarizeGcpSnapshot(snapshot: GcpSnapshot): Record<string, number | string> {
+  return {
+    projects: snapshot.projects.length,
+    serviceAccounts: snapshot.serviceAccounts.length,
+    storageBuckets: snapshot.storageBuckets.length,
+    gkeClusters: snapshot.gkeClusters.length,
+    vms: snapshot.vms.length,
+    cloudRunServices: snapshot.cloudRunServices.length,
+    cloudSqlInstances: snapshot.cloudSqlInstances.length,
+    bigqueryDatasets: snapshot.bigqueryDatasets.length,
+    pubsubTopics: snapshot.pubsubTopics.length,
+    secrets: snapshot.secrets.length,
+    firewallRules: snapshot.firewallRules.length,
+    loadBalancers: snapshot.loadBalancers.length,
+    scanWarnings: snapshot.scanWarnings.length,
+  };
+}
+
 export async function POST(req: NextRequest) {
   const scope = "api/scan:POST";
+  const scanId = crypto.randomUUID().slice(0, 8);
+  const startedAt = Date.now();
   const session = await auth();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -50,20 +71,50 @@ export async function POST(req: NextRequest) {
     hasDemoGcpKey: Boolean(demoGcpKey),
     useMockData: useMockData(),
   });
+  console.info(`[api/scan:${scanId}] POST start`, {
+    email,
+    stream: Boolean(body.stream),
+    isDemoUser: Boolean(session.isDemoUser),
+    hasDemoCredentials: Boolean(demoGcpKey),
+    mockData: useMockData(),
+  });
 
   const runScan = async (onProgress?: (event: TaskProgressEvent) => void) => {
+    const emit = (event: TaskProgressEvent) => {
+      console.info(`[api/scan:${scanId}] progress`, {
+        stage: event.stage,
+        message: event.message,
+        completed: event.completed,
+        total: event.total,
+        percent: event.percent,
+        metadata: event.metadata,
+      });
+      emitProgress(onProgress, event);
+    };
+
     if (session.isDemoUser && demoGcpKey) {
-      emitProgress(onProgress, {
+      emit({
         stage: "start",
         message: "Starting GCP scan with supplied demo credentials",
         percent: 0,
       });
       const snapshot = await withDebugTiming(scope, "fetchGcpSnapshot.demo", { email }, () =>
-        fetchGcpSnapshot({ serviceAccountKey: demoGcpKey, onProgress })
+        fetchGcpSnapshot({ serviceAccountKey: demoGcpKey, onProgress: emit })
       );
+      const snapshotSummary = {
+        ...summarizeGcpSnapshot(snapshot),
+        credentialMode: "demo_service_account",
+      };
+      console.info(`[api/scan:${scanId}] POST complete`, {
+        mode: "demo_credentials",
+        durationMs: Date.now() - startedAt,
+        fetchedAt: snapshot.fetchedAt,
+        ...snapshotSummary,
+      });
       return {
         ok: true as const,
         fetchedAt: snapshot.fetchedAt,
+        snapshotSummary,
         snapshot: {
           ...snapshot,
           users: extractUsers(snapshot),
@@ -75,21 +126,30 @@ export async function POST(req: NextRequest) {
 
     const isDemo = session.isDemoUser || session.user?.email === "demo@watchmen.dev";
     if (useMockData() || isDemo) {
-      emitProgress(onProgress, {
+      emit({
         stage: "start",
         message: "Starting mock GCP scan",
         percent: 0,
       });
       const snapshot = await withDebugTiming(scope, "fetchGcpSnapshot.mock", { email, isDemo }, () =>
-        fetchGcpSnapshot({ forceMock: true, onProgress })
+        fetchGcpSnapshot({ forceMock: true, onProgress: emit })
       );
-      return { ok: true as const, fetchedAt: snapshot.fetchedAt };
+      const snapshotSummary = summarizeGcpSnapshot(snapshot);
+      snapshotSummary.credentialMode = "mock";
+      console.info(`[api/scan:${scanId}] POST complete`, {
+        mode: "mock",
+        durationMs: Date.now() - startedAt,
+        fetchedAt: snapshot.fetchedAt,
+        ...snapshotSummary,
+      });
+      return { ok: true as const, fetchedAt: snapshot.fetchedAt, snapshotSummary };
     }
 
     const gcpCreds = await getUserCloudCredentials(email, "gcp");
     const accessToken = session.accessToken;
 
     if (!gcpCreds && !accessToken) {
+      console.info(`[api/scan:${scanId}] no GCP credentials configured`, { email });
       return {
         ok: false as const,
         error: "No GCP credentials configured (Service Account or Session Login Required).",
@@ -98,7 +158,7 @@ export async function POST(req: NextRequest) {
       };
     }
 
-    emitProgress(onProgress, {
+    emit({
       stage: "start",
       message: "Starting live GCP scan",
       percent: 0,
@@ -114,11 +174,11 @@ export async function POST(req: NextRequest) {
       fetchGcpSnapshot({
         serviceAccountKey: gcpCreds?.serviceAccountKey as string | undefined,
         accessToken: !gcpCreds ? (accessToken as string | undefined) : undefined,
-        onProgress,
+        onProgress: emit,
       })
     );
 
-    emitProgress(onProgress, {
+    emit({
       stage: "persist_snapshot",
       message: "Persisting GCP snapshot",
       percent: 97,
@@ -136,7 +196,19 @@ export async function POST(req: NextRequest) {
       `;
     });
 
-    return { ok: true as const, fetchedAt: snapshot.fetchedAt };
+    const credentialMode = gcpCreds ? "service_account" : accessToken ? "session_access_token" : "none";
+    const snapshotSummary = {
+      ...summarizeGcpSnapshot(snapshot),
+      credentialMode,
+    };
+    console.info(`[api/scan:${scanId}] POST complete`, {
+      mode: "live",
+      durationMs: Date.now() - startedAt,
+      fetchedAt: snapshot.fetchedAt,
+      ...snapshotSummary,
+    });
+
+    return { ok: true as const, fetchedAt: snapshot.fetchedAt, snapshotSummary };
   };
 
   if (body.stream) {
@@ -148,7 +220,7 @@ export async function POST(req: NextRequest) {
           try {
             const result = await runScan((progress) => send({ type: "progress", progress }));
             if (!result.ok) {
-              send({ type: "error", error: result.error, credentialsRequired: result.credentialsRequired });
+              send({ type: "error", scanId, error: result.error, credentialsRequired: result.credentialsRequired });
             } else {
               send({ type: "result", ...result });
             }
@@ -156,6 +228,7 @@ export async function POST(req: NextRequest) {
             debugError(scope, "streamed scan failed", err, { email });
             send({ type: "error", error: "Scan failed. Check server logs." });
           } finally {
+            console.info(`[api/scan:${scanId}] stream closed`, { durationMs: Date.now() - startedAt });
             controller.close();
           }
         })();

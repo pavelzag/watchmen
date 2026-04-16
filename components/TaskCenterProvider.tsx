@@ -30,11 +30,15 @@ interface TaskCenterContextValue {
   startTerraformPr: (params: TaskParamsMap["terraform_pr"]) => string;
   dismissTask: (taskId: string) => void;
   clearFinishedTasks: () => void;
+  clearAllTasks: () => void;
 }
 
 const TaskCenterContext = createContext<TaskCenterContextValue | null>(null);
 
 const MAX_PROGRESS_ENTRIES = 12;
+const MAX_FINISHED_TASKS = 50;
+const MAX_TOTAL_TASKS = 75;
+const STALE_ACTIVE_TASK_MS = 2 * 60 * 60 * 1000;
 const PREVIEW_BATCH_CONCURRENCY = 2;
 
 function taskTitle(kind: BackgroundTaskKind, params: TaskParamsMap[BackgroundTaskKind]): string {
@@ -60,9 +64,25 @@ function newTask<K extends BackgroundTaskKind>(kind: K, params: TaskParamsMap[K]
   };
 }
 
+function isActiveTask(task: AnyBackgroundTask): boolean {
+  return task.status === "running" || task.status === "queued";
+}
+
+function markStaleTask(task: AnyBackgroundTask): AnyBackgroundTask {
+  if (!isActiveTask(task)) return task;
+  const updatedAt = new Date(task.updatedAt).getTime();
+  if (!Number.isFinite(updatedAt) || Date.now() - updatedAt < STALE_ACTIVE_TASK_MS) return task;
+
+  return {
+    ...task,
+    status: "failed",
+    error: task.error ?? "Task was restored from an old session and is no longer running.",
+  } as AnyBackgroundTask;
+}
+
 function normalizeTask(task: AnyBackgroundTask): AnyBackgroundTask {
   if (task.kind === "terraform_preview" && task.result) {
-    return {
+    return markStaleTask({
       ...task,
       result: {
         ...task.result,
@@ -72,11 +92,11 @@ function normalizeTask(task: AnyBackgroundTask): AnyBackgroundTask {
         fullyAddressed: task.result.fullyAddressed ?? true,
         suggestedBatches: task.result.suggestedBatches ?? [],
       },
-    };
+    } as AnyBackgroundTask);
   }
 
   if (task.kind === "terraform_pr" && task.result) {
-    return {
+    return markStaleTask({
       ...task,
       result: {
         ...task.result,
@@ -86,10 +106,19 @@ function normalizeTask(task: AnyBackgroundTask): AnyBackgroundTask {
         fullyAddressed: task.result.fullyAddressed ?? true,
         suggestedBatches: task.result.suggestedBatches ?? [],
       },
-    };
+    } as AnyBackgroundTask);
   }
 
-  return task;
+  return markStaleTask(task);
+}
+
+function pruneTasks(tasks: AnyBackgroundTask[]): AnyBackgroundTask[] {
+  const sorted = [...tasks].sort(
+    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+  );
+  const active = sorted.filter(isActiveTask);
+  const finished = sorted.filter((task) => task.status === "completed" || task.status === "failed");
+  return [...active, ...finished.slice(0, MAX_FINISHED_TASKS)].slice(0, MAX_TOTAL_TASKS);
 }
 
 async function consumeNdjson<K extends BackgroundTaskKind>(
@@ -133,9 +162,7 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
         merged.set(task.id, task);
       }
     }
-    return [...merged.values()].sort(
-      (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-    );
+    return pruneTasks([...merged.values()]);
   }, []);
 
   const updateTask = useCallback((taskId: string, updater: (task: AnyBackgroundTask) => AnyBackgroundTask) => {
@@ -161,7 +188,7 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
     }
 
     const task = newTask(kind, params);
-    setTasks((current) => [task as AnyBackgroundTask, ...current]);
+    setTasks((current) => pruneTasks([task as AnyBackgroundTask, ...current]));
 
     const pushProgress = (event: TaskProgressEvent) => {
       updateTask(task.id, (currentTask) => ({
@@ -243,7 +270,7 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
 
         await consumeNdjson<"gcp_scan">(response, (event) => {
           if (event.type === "progress") pushProgress(event.progress);
-          else if (event.type === "error") fail(event.error);
+          else if (event.type === "error") fail(event.scanId ? `[api/scan:${event.scanId}] ${event.error}` : event.error);
           else {
             const { type: _type, ...result } = event;
             succeed(result);
@@ -271,7 +298,7 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
 
         await consumeNdjson<"aws_scan">(response, (event) => {
           if (event.type === "progress") pushProgress(event.progress);
-          else if (event.type === "error") fail(event.error);
+          else if (event.type === "error") fail(event.scanId ? `[api/aws/scan:${event.scanId}] ${event.error}` : event.error);
           else {
             const { type: _type, ...result } = event;
             succeed(result);
@@ -316,7 +343,7 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
     if (paramsList.length === 0) return [];
 
     const createdTasks = paramsList.map((params) => newTask("terraform_preview", params));
-    setTasks((current) => [...createdTasks as AnyBackgroundTask[], ...current]);
+    setTasks((current) => pruneTasks([...createdTasks as AnyBackgroundTask[], ...current]));
     let nextIndex = 0;
     let activeCount = 0;
 
@@ -408,11 +435,25 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
   }, []);
 
   const clearFinishedTasks = useCallback(() => {
-    setTasks((current) => current.filter((task) => task.status === "running" || task.status === "queued"));
+    setTasks((current) => current.filter(isActiveTask));
     void fetch("/api/tasks", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ clearFinished: true }),
+    }).catch(() => {});
+  }, []);
+
+  const clearAllTasks = useCallback(() => {
+    setTasks([]);
+    try {
+      window.localStorage.removeItem(TASK_STORAGE_KEY);
+    } catch {
+      // Ignore storage failures.
+    }
+    void fetch("/api/tasks", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clearAll: true }),
     }).catch(() => {});
   }, []);
 
@@ -422,7 +463,7 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
       const stored = window.localStorage.getItem(TASK_STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored) as AnyBackgroundTask[];
-        if (!cancelled && Array.isArray(parsed)) setTasks(parsed.map(normalizeTask));
+        if (!cancelled && Array.isArray(parsed)) setTasks(pruneTasks(parsed.map(normalizeTask)));
       }
     } catch {
       // Ignore corrupted local task cache.
@@ -450,7 +491,7 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(TASK_STORAGE_KEY, JSON.stringify(tasks));
+      window.localStorage.setItem(TASK_STORAGE_KEY, JSON.stringify(pruneTasks(tasks)));
     } catch {
       // Ignore storage failures.
     }
@@ -497,6 +538,7 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
     startTerraformPr,
     dismissTask,
     clearFinishedTasks,
+    clearAllTasks,
   }), [
     tasks,
     startGcpScan,
@@ -507,6 +549,7 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
     startTerraformPr,
     dismissTask,
     clearFinishedTasks,
+    clearAllTasks,
   ]);
 
   return (

@@ -16,9 +16,18 @@ interface AwsSnapshotStatsProps {
   onSyncRequest?: () => void;
   isSyncing?: boolean;
   overrideSnapshot?: AwsSnapshot | null;
+  syncDisabled?: boolean;
+  syncDisabledReason?: string;
 }
 
-export default function AwsSnapshotStats({ scanVersion, onSyncRequest, isSyncing, overrideSnapshot }: AwsSnapshotStatsProps) {
+export default function AwsSnapshotStats({
+  scanVersion,
+  onSyncRequest,
+  isSyncing,
+  overrideSnapshot,
+  syncDisabled,
+  syncDisabledReason,
+}: AwsSnapshotStatsProps) {
   const [snap, setSnap] = useState<AwsSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -113,12 +122,14 @@ export default function AwsSnapshotStats({ scanVersion, onSyncRequest, isSyncing
         {onSyncRequest && (
           <button
             onClick={onSyncRequest}
-            disabled={isSyncing || loading}
+            disabled={isSyncing || loading || syncDisabled}
+            title={syncDisabled ? syncDisabledReason : undefined}
             className="flex items-center gap-1 text-xs uppercase tracking-widest transition-colors px-2 py-1"
             style={{
               border: "1px solid #005c16",
-              color: isSyncing ? "#ffaa00" : "#00aa2b",
+              color: syncDisabled ? "#5c3b00" : isSyncing ? "#ffaa00" : "#00aa2b",
               background: "transparent",
+              cursor: syncDisabled ? "not-allowed" : "pointer",
             }}
           >
             <RefreshCw className={`w-3 h-3 ${isSyncing ? "animate-spin" : ""}`} />

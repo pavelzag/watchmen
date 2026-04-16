@@ -10,7 +10,6 @@ import { useRouter } from "next/navigation";
 import { computeFindings } from "@/lib/findings";
 import type { GcpSnapshot } from "@/lib/gcp/types";
 import ScanProgress from "@/components/ScanProgress";
-import CopyTextButton from "@/components/CopyTextButton";
 
 interface Stats {
   users: string[];
@@ -34,9 +33,18 @@ interface SnapshotStatsProps {
   onSyncRequest?: () => void;
   isSyncing?: boolean;
   overrideSnapshot?: object | null;
+  syncDisabled?: boolean;
+  syncDisabledReason?: string;
 }
 
-export default function SnapshotStats({ scanVersion, onSyncRequest, isSyncing, overrideSnapshot }: SnapshotStatsProps) {
+export default function SnapshotStats({
+  scanVersion,
+  onSyncRequest,
+  isSyncing,
+  overrideSnapshot,
+  syncDisabled,
+  syncDisabledReason,
+}: SnapshotStatsProps) {
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -101,15 +109,8 @@ export default function SnapshotStats({ scanVersion, onSyncRequest, isSyncing, o
   const allTiles = stats ? buildTiles(stats) : [];
 
   const findings = stats?._snap ? computeFindings(stats._snap) : [];
-  const scanWarnings = stats?._snap?.scanWarnings ?? [];
   const criticalCount = findings.filter((f) => f.severity === "critical").length;
   const highCount = findings.filter((f) => f.severity === "high").length;
-  const accessRelatedWarnings = scanWarnings.filter((warning) =>
-    warning.code === "permission_denied" || warning.code === "unauthenticated"
-  );
-  const transientWarnings = scanWarnings.filter((warning) =>
-    warning.code === "timeout" || warning.code === "rate_limited" || warning.code === "transient_network"
-  );
 
   function handleGridKey(e: React.KeyboardEvent) {
     if (allTiles.length === 0) return;
@@ -137,12 +138,14 @@ export default function SnapshotStats({ scanVersion, onSyncRequest, isSyncing, o
         {onSyncRequest && (
           <button
             onClick={onSyncRequest}
-            disabled={isSyncing || loading}
+            disabled={isSyncing || loading || syncDisabled}
+            title={syncDisabled ? syncDisabledReason : undefined}
             className="flex items-center gap-1 text-xs uppercase tracking-widest transition-colors px-2 py-1"
             style={{
               border: "1px solid #005c16",
-              color: isSyncing ? "#ffaa00" : "#00aa2b",
+              color: syncDisabled ? "#5c3b00" : isSyncing ? "#ffaa00" : "#00aa2b",
               background: "transparent",
+              cursor: syncDisabled ? "not-allowed" : "pointer",
             }}
           >
             <RefreshCw className={`w-3 h-3 ${isSyncing ? "animate-spin" : ""}`} />
@@ -186,67 +189,6 @@ export default function SnapshotStats({ scanVersion, onSyncRequest, isSyncing, o
 
       {stats && (
         <>
-          {scanWarnings.length > 0 && (
-            <div
-              className="px-3 py-3 space-y-2 text-xs"
-              style={{ border: "1px solid #665500", background: "#0f0c00", color: "#f5d76e" }}
-            >
-              <div className="flex items-center justify-between gap-3 flex-wrap">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span>// PARTIAL SCAN COVERAGE</span>
-                  {accessRelatedWarnings.length > 0 && (
-                    <span style={{ border: "1px solid #f5d76e55", padding: "2px 6px" }}>
-                      {accessRelatedWarnings.length} access-related
-                    </span>
-                  )}
-                  {transientWarnings.length > 0 && (
-                    <span style={{ border: "1px solid #f5d76e55", padding: "2px 6px" }}>
-                      {transientWarnings.length} temporary
-                    </span>
-                  )}
-                </div>
-                <span style={{ color: "#bfa94d" }}>
-                  {scanWarnings.length} warning{scanWarnings.length === 1 ? "" : "s"}
-                </span>
-              </div>
-              <div className="space-y-1">
-                {scanWarnings.slice(0, 5).map((warning, index) => (
-                  <div key={`${warning.service}-${warning.projectId}-${index}`} className="flex items-start justify-between gap-3">
-                    <div className="flex-1">
-                      <span style={{ color: "#f5d76e" }}>{warning.message}</span>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span style={{ color: "#8a7a39", whiteSpace: "nowrap" }}>
-                        [{warning.service}]
-                      </span>
-                      <CopyTextButton
-                        text={[warning.message, warning.detail].filter(Boolean).join("\n\n")}
-                        label="Copy"
-                        className="flex items-center gap-1 text-[10px] font-mono"
-                        style={{ color: "#f5d76e" }}
-                      />
-                    </div>
-                  </div>
-                ))}
-                {scanWarnings.length > 5 && (
-                  <p style={{ color: "#8a7a39" }}>
-                    …and {scanWarnings.length - 5} more project/service warning{scanWarnings.length - 5 === 1 ? "" : "s"}.
-                  </p>
-                )}
-              </div>
-              <div className="pt-1">
-                <Link
-                  href="/dashboard/scan-coverage"
-                  className="inline-flex items-center gap-1 uppercase tracking-widest"
-                  style={{ color: "#f5d76e" }}
-                >
-                  [VIEW FULL SCAN COVERAGE]
-                  <ChevronRight className="w-3 h-3" />
-                </Link>
-              </div>
-            </div>
-          )}
-
           {/* Findings alert */}
           {findings.length > 0 && (
             <Link

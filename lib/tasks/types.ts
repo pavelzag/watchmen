@@ -24,6 +24,7 @@ export interface TaskResultMap {
     ok: boolean;
     fetchedAt?: string;
     snapshot?: object;
+    snapshotSummary?: Record<string, number | string>;
     credentialsRequired?: boolean;
     error?: string;
   };
@@ -31,6 +32,7 @@ export interface TaskResultMap {
     ok: boolean;
     fetchedAt?: string;
     snapshot?: object;
+    snapshotSummary?: Record<string, number | string>;
     credentialsRequired?: boolean;
     error?: string;
   };
@@ -116,4 +118,6 @@ export interface StreamProgressEnvelope {
 export interface StreamErrorEnvelope {
   type: "error";
   error: string;
+  scanId?: string;
+  credentialsRequired?: boolean;
 }

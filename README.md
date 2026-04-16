@@ -1,11 +1,82 @@
 # Watchmen
 
+Current version: **v0.4.0**
+
 Cloud security posture management, compliance, and live request tracing — for AWS and GCP — in a single dashboard.
 
 Watchmen scans your cloud infrastructure for misconfigurations, runs SOC 2 Type II and ISO 27001:2022 compliance checks, answers natural-language questions about your environment, and lets you watch live Kubernetes request traffic flow in real time.
 
 ---
 
+## v0.4.0 — changes since v0.3.0
+
+This release focuses on making Watchmen more usable as a real multi-cloud operator console: better AWS/GCP parity, clearer scan status, faster navigation, safer task cleanup, and more resilient auth and cloud API handling.
+
+### Multi-cloud views
+
+- Added AWS/GCP filters to **Findings**, so the main findings page can show all cloud issues together or focus on one provider.
+- Added AWS/GCP filters to **Attack Path Analysis**.
+- Added AWS/GCP filters to **Compliance**, including recalculated score, counts, CSV export, and project breakdown for the selected provider.
+- Normalized AWS findings into shared multi-cloud UI models where useful, while keeping GCP-specific remediation flows scoped to GCP.
+- Fixed merged compliance category collisions by namespacing internal category/control IDs by provider (`gcp:*`, `aws:*`) while keeping readable `CC6`, `CC6.1.a`, etc. labels in the UI.
+- Added visible GCP/AWS badges in multi-cloud Compliance and Findings screens.
+
+### Scan experience and logs
+
+- Added richer **AWS sync logs** in the UI, including credential checks, request lifecycle events, scan IDs, active task state, and snapshot summaries.
+- Brought **GCP sync logs** closer to the AWS logging experience.
+- Manual sync buttons now fetch fresh scan data and surface progress in the logs section.
+- Added no-credentials handling for AWS with clear settings links instead of silent long-running scans.
+- Added matching no-credentials UX patterns for GCP where applicable.
+- Added structured server-side scan logging with scan IDs for AWS and GCP scan routes.
+- Hid noisy partial scan coverage warnings from the main GCP dashboard while keeping full scan coverage available in the dedicated coverage screen.
+
+### Task center reliability
+
+- Added **Clear All Tasks** behavior in the dashboard and task center.
+- Added pruning for old finished tasks to prevent task menu buildup.
+- Added stale active task handling so restored old sessions do not show ancient tasks as still running.
+- Improved task error envelopes for GCP/AWS scan streams with scan IDs and credential-required metadata.
+
+### Keyboard navigation
+
+- Added global dashboard shortcuts:
+  - `G` -> GCP
+  - `A` -> AWS
+  - `T` -> Tasks
+  - `R` -> Trace
+  - `F` -> Findings
+  - `P` -> Attack Paths
+  - `D` -> Containers
+  - `C` -> Compliance
+  - `H` -> History
+  - `S` -> Settings
+- Added `?` shortcut help modal.
+- Added a centered shortcut confirmation badge so route changes feel registered immediately.
+- Made shortcut handling more reliable by using document-level capture and ignoring typing targets.
+
+### Authentication and API resilience
+
+- Hardened Google token refresh handling so expired or unreachable refresh flows redirect cleanly instead of causing retry loops.
+- Added friendlier login notices for expired sessions and sign-in failures.
+- Reduced noisy auth refresh stack traces and preserved actionable error state.
+- Fixed GCP API error parsing when Google returns numeric error codes.
+- Added a regression test for numeric GCP API error classification.
+- Normalized BigQuery dataset metadata handling to avoid runtime type errors.
+
+### UI polish
+
+- Improved AWS and GCP dashboard sync behavior to avoid repeated scan loops.
+- Added clearer settings links when cloud credentials are missing.
+- Kept AWS-specific and GCP-specific remediation boundaries explicit in shared views.
+- Updated visible app version text to **v0.4.0**.
+
+### Verification
+
+- TypeScript type-check passes with `npm run type-check`.
+- Added `lib/gcp/client.test.ts` for the numeric Google API error regression.
+
+---
 
 ## Features
 

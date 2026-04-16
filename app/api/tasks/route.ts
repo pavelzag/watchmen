@@ -82,8 +82,17 @@ export async function DELETE(req: NextRequest) {
   }
 
   try {
-    const body = (await req.json().catch(() => ({}))) as { ids?: string[]; clearFinished?: boolean };
+    const body = (await req.json().catch(() => ({}))) as { ids?: string[]; clearAll?: boolean; clearFinished?: boolean };
     await ensureBackgroundTasksTable();
+
+    if (body.clearAll) {
+      await sql`
+        UPDATE user_background_tasks
+        SET dismissed = TRUE, updated_at = NOW()
+        WHERE user_email = ${email}
+      `;
+      return NextResponse.json({ ok: true });
+    }
 
     if (body.clearFinished) {
       await sql`

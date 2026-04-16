@@ -17,6 +17,8 @@ const ALLOWED_EMAILS = (process.env.ALLOWED_EMAILS ?? "")
 // Leave empty to skip domain restriction and rely on ALLOWED_EMAILS only.
 const ALLOWED_DOMAIN = process.env.ALLOWED_DOMAIN ?? "";
 
+const REFRESH_ACCESS_TOKEN_ERROR = "RefreshAccessTokenError";
+
 function isAllowed(email: string): boolean {
   if (ALLOWED_EMAILS.includes(email)) return true;
   if (ALLOWED_DOMAIN && email.endsWith(`@${ALLOWED_DOMAIN}`)) return true;
@@ -25,7 +27,28 @@ function isAllowed(email: string): boolean {
   return false;
 }
 
+function describeRefreshError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === "object") {
+    const maybeError = err as { error?: unknown; error_description?: unknown };
+    const parts = [maybeError.error, maybeError.error_description].filter(
+      (part): part is string => typeof part === "string" && part.length > 0
+    );
+    if (parts.length) return parts.join(": ");
+  }
+  return "Unknown token refresh error";
+}
+
 async function refreshAccessToken(token: JWT): Promise<JWT> {
+  if (!token.refreshToken) {
+    console.warn("[auth] Cannot refresh access token: missing refresh token");
+    return {
+      ...token,
+      accessToken: undefined,
+      error: REFRESH_ACCESS_TOKEN_ERROR,
+    };
+  }
+
   try {
     const res = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
@@ -34,7 +57,7 @@ async function refreshAccessToken(token: JWT): Promise<JWT> {
         client_id: process.env.GOOGLE_CLIENT_ID!,
         client_secret: process.env.GOOGLE_CLIENT_SECRET!,
         grant_type: "refresh_token",
-        refresh_token: token.refreshToken!,
+        refresh_token: token.refreshToken,
       }),
     });
 
@@ -47,10 +70,15 @@ async function refreshAccessToken(token: JWT): Promise<JWT> {
       expiresAt: Math.floor(Date.now() / 1000) + refreshed.expires_in,
       // keep existing refresh token if no new one returned
       refreshToken: refreshed.refresh_token ?? token.refreshToken,
+      error: undefined,
     };
   } catch (err) {
-    console.error("[auth] Failed to refresh access token:", err);
-    return { ...token, error: "RefreshAccessTokenError" };
+    console.warn(`[auth] Failed to refresh access token: ${describeRefreshError(err)}`);
+    return {
+      ...token,
+      accessToken: undefined,
+      error: REFRESH_ACCESS_TOKEN_ERROR,
+    };
   }
 }
 

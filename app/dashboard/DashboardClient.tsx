@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import QueryBox, { type QueryResult } from "@/components/QueryBox";
 import ResultCard from "@/components/ResultCard";
@@ -19,14 +19,44 @@ export default function DashboardClient() {
   const [gcpCredsRequired, setGcpCredsRequired] = useState(false);
   const [demoSnapshot, setDemoSnapshot] = useState<object | null>(() => getDemoGcpSnapshot());
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
-  const { tasks, startGcpScan } = useTaskCenter();
+  const [syncLog, setSyncLog] = useState<string[]>([]);
+  const { tasks, startGcpScan, clearFinishedTasks, clearAllTasks } = useTaskCenter();
+  const hasLoadedInitialSnapshotRef = useRef(false);
+  const scanRequestCountRef = useRef(0);
+  const taskCount = tasks.length;
+  const finishedTaskCount = tasks.filter((task) => task.status === "completed" || task.status === "failed").length;
 
-  const triggerScan = useCallback(async () => {
+  const appendSyncLog = useCallback((message: string, detail?: Record<string, unknown>) => {
+    const suffix = detail ? ` ${JSON.stringify(detail)}` : "";
+    const line = `${new Date().toLocaleTimeString()} ${message}${suffix}`;
+    setSyncLog((current) => [line, ...current].slice(0, 8));
+  }, []);
+
+  const triggerScan = useCallback((reason = "manual") => {
+    scanRequestCountRef.current += 1;
+    const requestNumber = scanRequestCountRef.current;
     const demoCreds = getDemoCredentials();
+    if (reason === "manual") setSyncLog([]);
+    if (!demoCreds.gcp && gcpCredsRequired) {
+      appendSyncLog("[gcp-dashboard] scan blocked: no GCP credentials configured", { reason });
+      console.info("[gcp-dashboard] scan blocked: no GCP credentials configured", { reason });
+      setScanning(false);
+      return;
+    }
     const taskId = startGcpScan(demoCreds.gcp ? { demoCredentials: { gcp: demoCreds.gcp } } : {});
+    appendSyncLog(`[gcp-dashboard] scan requested #${requestNumber}`, {
+      reason,
+      taskId,
+      hasDemoCredentials: Boolean(demoCreds.gcp),
+    });
+    console.info(`[gcp-dashboard] scan requested #${requestNumber}`, {
+      reason,
+      taskId,
+      hasDemoCredentials: Boolean(demoCreds.gcp),
+    });
     setActiveTaskId(taskId);
     setScanning(true);
-  }, [startGcpScan]);
+  }, [appendSyncLog, gcpCredsRequired, startGcpScan]);
 
   useEffect(() => {
     fetch("/api/settings/keys")
@@ -36,22 +66,53 @@ export default function DashboardClient() {
   }, []);
 
   useEffect(() => {
+    if (hasLoadedInitialSnapshotRef.current) return;
+    hasLoadedInitialSnapshotRef.current = true;
+
     // If demo credentials are already stored in sessionStorage, trigger a real scan immediately
     if (getDemoCredentials().gcp) {
-      triggerScan();
+      setGcpCredsRequired(false);
+      triggerScan("initial_demo_credentials");
       return;
     }
-    fetch("/api/scan")
+    let hasGcpServiceAccount = false;
+    console.info("[gcp-dashboard] loading cached GCP snapshot");
+    appendSyncLog("[gcp-dashboard] checking GCP credentials");
+    fetch("/api/settings/credentials")
+      .then((r) => r.json())
+      .then((data: { credentials?: { provider: string }[] }) => {
+        hasGcpServiceAccount = (data.credentials ?? []).some((credential) => credential.provider === "gcp");
+        appendSyncLog("[gcp-dashboard] GCP credential state", {
+          serviceAccountConfigured: hasGcpServiceAccount,
+          googleSessionFallback: true,
+        });
+        return fetch("/api/scan");
+      })
       .then((r) => r.json())
       .then((data) => {
-        if (!data.snapshot) triggerScan();
+        appendSyncLog("[gcp-dashboard] cached GCP snapshot loaded", {
+          hasSnapshot: Boolean(data.snapshot),
+          fetchedAt: data.fetchedAt ?? data.snapshot?.fetchedAt ?? null,
+        });
+        console.info("[gcp-dashboard] cached GCP snapshot loaded", {
+          hasSnapshot: Boolean(data.snapshot),
+          fetchedAt: data.fetchedAt ?? data.snapshot?.fetchedAt ?? null,
+        });
+        if (!data.snapshot && !hasGcpServiceAccount) {
+          appendSyncLog("[gcp-dashboard] no saved GCP service account; sync will use Google session if available");
+        }
+        if (!data.snapshot) triggerScan("initial_missing_snapshot");
         if (data.snapshot?.snapshotId) saveSnapshot(data.snapshot as GcpSnapshot);
       })
-      .catch(() => { });
-  }, [triggerScan]);
+      .catch((error) => {
+        appendSyncLog("[gcp-dashboard] failed to load GCP snapshot", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+  }, [appendSyncLog, triggerScan]);
 
   useEffect(() => {
-    const id = setInterval(triggerScan, 10 * 60 * 1000);
+    const id = setInterval(() => triggerScan("interval_10m"), 10 * 60 * 1000);
     return () => clearInterval(id);
   }, [triggerScan]);
 
@@ -59,6 +120,19 @@ export default function DashboardClient() {
     if (!activeTaskId) return;
     const task = tasks.find((item) => item.id === activeTaskId);
     if (!task) return;
+    console.info("[gcp-dashboard] active GCP task status", {
+      taskId: task.id,
+      status: task.status,
+      percent: task.percent,
+      progressCount: task.progress.length,
+      latestMessage: task.progress.at(-1)?.message ?? null,
+    });
+    appendSyncLog("[gcp-dashboard] active GCP task status", {
+      taskId: task.id,
+      status: task.status,
+      percent: task.percent,
+      latestMessage: task.progress.at(-1)?.message ?? null,
+    });
     if (task.status === "running" || task.status === "queued") {
       setScanning(true);
       return;
@@ -77,10 +151,22 @@ export default function DashboardClient() {
         setGcpCredsRequired(false);
         setScanVersion((v) => v + 1);
       }
-    } else if (task.status === "failed") {
-      setGcpCredsRequired(false);
+      appendSyncLog("[gcp-dashboard] fresh GCP data fetched", {
+        fetchedAt: task.result?.fetchedAt ?? null,
+        ...(task.result?.snapshotSummary ?? {}),
+      });
+    } else if (task.status === "failed" && task.kind === "gcp_scan") {
+      const noCredentials = task.error?.toLowerCase().includes("no gcp credentials") ||
+        task.error?.toLowerCase().includes("session login required") ||
+        task.error?.toLowerCase().includes("session expired");
+      if (noCredentials) {
+        setGcpCredsRequired(true);
+        appendSyncLog(task.error ?? "[api/scan] no GCP credentials configured", { taskId: task.id });
+      } else {
+        setGcpCredsRequired(false);
+      }
     }
-  }, [activeTaskId, tasks]);
+  }, [activeTaskId, appendSyncLog, tasks]);
 
   function handleResult(result: QueryResult) {
     setResults((prev) => [result, ...prev]);
@@ -91,10 +177,35 @@ export default function DashboardClient() {
       <div className="max-w-4xl mx-auto w-full space-y-4 flex-1">
         <SnapshotStats
           scanVersion={scanVersion}
-          onSyncRequest={triggerScan}
+          onSyncRequest={() => triggerScan("manual")}
           isSyncing={scanning}
           overrideSnapshot={demoSnapshot}
+          syncDisabled={gcpCredsRequired}
+          syncDisabledReason="Add GCP credentials in Settings or sign in again before syncing GCP."
         />
+        {gcpCredsRequired && (
+          <div
+            className="px-3 py-2 text-xs font-mono"
+            style={{ border: "1px solid #5c3b00", background: "#0d0905", color: "#ffb020" }}
+          >
+            // WARN: No GCP credentials configured.{" "}
+            <Link href="/dashboard/settings" style={{ color: "#ffb020", textDecoration: "underline" }}>
+              [ADD GCP CREDENTIALS]
+            </Link>
+          </div>
+        )}
+        {syncLog.length > 0 && (
+          <div className="p-3 space-y-1" style={{ border: "1px solid var(--border-dim)", background: "#050505" }}>
+            <p className="text-[10px] uppercase tracking-widest font-mono" style={{ color: "var(--border-dim)" }}>
+              // GCP sync log
+            </p>
+            {syncLog.map((line, index) => (
+              <p key={`${line}-${index}`} className="text-[10px] font-mono break-all" style={{ color: index === 0 ? "#e5e7eb" : "#6b7280" }}>
+                {line}
+              </p>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Status bar */}
@@ -113,6 +224,26 @@ export default function DashboardClient() {
           )}
         </div>
         <div className="flex items-center gap-3 text-xs" style={{ color: "#005c16" }}>
+          {finishedTaskCount > 0 && (
+            <button
+              type="button"
+              onClick={clearFinishedTasks}
+              className="uppercase"
+              style={{ color: "#ffaa00" }}
+            >
+              [CLEAR {finishedTaskCount} FINISHED]
+            </button>
+          )}
+          {taskCount > 0 && (
+            <button
+              type="button"
+              onClick={clearAllTasks}
+              className="uppercase"
+              style={{ color: "var(--text-muted)" }}
+            >
+              [CLEAR ALL TASKS]
+            </button>
+          )}
           <span style={{ color: scanning ? "#ffaa00" : "#005c16" }}>
             {scanning ? "// SYNCING GCP..." : "// SYSTEM ONLINE"}
           </span>

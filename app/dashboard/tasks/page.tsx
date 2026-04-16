@@ -15,7 +15,7 @@ function statusColor(status: string): string {
 }
 
 export default function TasksPage() {
-  const { tasks, clearFinishedTasks, dismissTask, startTerraformPreviewBatch, startTerraformPr } = useTaskCenter();
+  const { tasks, clearFinishedTasks, clearAllTasks, dismissTask, startTerraformPreviewBatch, startTerraformPr } = useTaskCenter();
   const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(new Set());
 
   function toggleExpanded(taskId: string) {
@@ -119,13 +119,22 @@ export default function TasksPage() {
             Long-running scans, analysis, and remediation tasks continue here while you navigate elsewhere.
           </p>
         </div>
-        <button
-          onClick={clearFinishedTasks}
-          className="px-3 py-1.5 text-xs uppercase tracking-widest"
-          style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}
-        >
-          Clear Finished
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={clearFinishedTasks}
+            className="px-3 py-1.5 text-xs uppercase tracking-widest"
+            style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}
+          >
+            Clear Finished
+          </button>
+          <button
+            onClick={clearAllTasks}
+            className="px-3 py-1.5 text-xs uppercase tracking-widest"
+            style={{ border: "1px solid #5c1600", color: "#f87171" }}
+          >
+            Clear All
+          </button>
+        </div>
       </div>
 
       {tasks.length === 0 && (

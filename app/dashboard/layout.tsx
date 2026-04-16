@@ -13,6 +13,7 @@ export default async function DashboardLayout({
 }) {
   const session = await auth();
   if (!session) redirect("/login");
+  if (session.error === "RefreshAccessTokenError") redirect("/login?expired=1");
 
   return (
     <CloudShellProvider>

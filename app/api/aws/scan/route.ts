@@ -5,6 +5,7 @@ import { sql, ensureAwsSnapshotTable } from "@/lib/db";
 import { useMockAwsData } from "@/lib/aws/client";
 import { getUserCloudCredentials } from "@/lib/credentials";
 import type { TaskProgressEvent } from "@/lib/tasks/types";
+import type { AwsSnapshot } from "@/lib/aws/types";
 
 function sendStreamEvent(
   controller: ReadableStreamDefaultController<Uint8Array>,
@@ -21,7 +22,28 @@ function emitProgress(
   onProgress?.(event);
 }
 
+function summarizeAwsSnapshot(snapshot: AwsSnapshot): Record<string, number | string> {
+  return {
+    accounts: snapshot.accounts.length,
+    regions: snapshot.regions.length,
+    iamUsers: snapshot.iamUsers.length,
+    iamRoles: snapshot.iamRoles.length,
+    s3Buckets: snapshot.s3Buckets.length,
+    eksClusters: snapshot.eksClusters.length,
+    ec2Instances: snapshot.ec2Instances.length,
+    lambdaFunctions: snapshot.lambdaFunctions.length,
+    rdsInstances: snapshot.rdsInstances.length,
+    redshiftClusters: snapshot.redshiftClusters.length,
+    snsTopics: snapshot.snsTopics.length,
+    secrets: snapshot.secrets.length,
+    securityGroups: snapshot.securityGroups.length,
+    loadBalancers: snapshot.loadBalancers.length,
+  };
+}
+
 export async function POST(req: NextRequest) {
+  const scanId = crypto.randomUUID().slice(0, 8);
+  const startedAt = Date.now();
   const session = await auth();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -38,10 +60,29 @@ export async function POST(req: NextRequest) {
     demoCredentials?: { aws?: { accessKeyId?: string; secretAccessKey?: string; region?: string } };
   };
   const demoCreds = body?.demoCredentials?.aws;
+  console.info(`[api/aws/scan:${scanId}] POST start`, {
+    email,
+    stream: Boolean(body.stream),
+    isDemoUser: Boolean(session.isDemoUser),
+    hasDemoCredentials: Boolean(demoCreds?.accessKeyId && demoCreds?.secretAccessKey),
+    mockData: useMockAwsData(),
+  });
 
   const runScan = async (onProgress?: (event: TaskProgressEvent) => void) => {
+    const emit = (event: TaskProgressEvent) => {
+      console.info(`[api/aws/scan:${scanId}] progress`, {
+        stage: event.stage,
+        message: event.message,
+        completed: event.completed,
+        total: event.total,
+        percent: event.percent,
+        metadata: event.metadata,
+      });
+      emitProgress(onProgress, event);
+    };
+
     if (session.isDemoUser && demoCreds?.accessKeyId && demoCreds?.secretAccessKey) {
-      emitProgress(onProgress, {
+      emit({
         stage: "start",
         message: "Starting AWS scan with supplied demo credentials",
         percent: 0,
@@ -50,23 +91,38 @@ export async function POST(req: NextRequest) {
         accessKeyId: demoCreds.accessKeyId,
         secretAccessKey: demoCreds.secretAccessKey,
         region: demoCreds.region,
-        onProgress,
+        onProgress: emit,
       });
-      return { ok: true as const, snapshot, fetchedAt: snapshot.fetchedAt };
+      const snapshotSummary = summarizeAwsSnapshot(snapshot);
+      console.info(`[api/aws/scan:${scanId}] POST complete`, {
+        mode: "demo_credentials",
+        durationMs: Date.now() - startedAt,
+        fetchedAt: snapshot.fetchedAt,
+        ...snapshotSummary,
+      });
+      return { ok: true as const, snapshot, fetchedAt: snapshot.fetchedAt, snapshotSummary };
     }
 
     if (useMockAwsData() || session.isDemoUser) {
-      emitProgress(onProgress, {
+      emit({
         stage: "start",
         message: "Starting mock AWS scan",
         percent: 0,
       });
-      const snapshot = await fetchAwsSnapshot({ forceMock: true, onProgress });
-      return { ok: true as const, fetchedAt: snapshot.fetchedAt };
+      const snapshot = await fetchAwsSnapshot({ forceMock: true, onProgress: emit });
+      const snapshotSummary = summarizeAwsSnapshot(snapshot);
+      console.info(`[api/aws/scan:${scanId}] POST complete`, {
+        mode: "mock",
+        durationMs: Date.now() - startedAt,
+        fetchedAt: snapshot.fetchedAt,
+        ...snapshotSummary,
+      });
+      return { ok: true as const, fetchedAt: snapshot.fetchedAt, snapshotSummary };
     }
 
     const awsCreds = await getUserCloudCredentials(email, "aws");
     if (!awsCreds) {
+      console.info(`[api/aws/scan:${scanId}] no AWS credentials configured`, { email });
       return {
         ok: false as const,
         error: "No AWS credentials configured. Go to Settings → Cloud Credentials.",
@@ -75,7 +131,7 @@ export async function POST(req: NextRequest) {
       };
     }
 
-    emitProgress(onProgress, {
+    emit({
       stage: "start",
       message: "Starting live AWS scan",
       percent: 0,
@@ -86,10 +142,10 @@ export async function POST(req: NextRequest) {
       accessKeyId: awsCreds.accessKeyId,
       secretAccessKey: awsCreds.secretAccessKey,
       region: awsCreds.region,
-      onProgress,
+      onProgress: emit,
     });
 
-    emitProgress(onProgress, {
+    emit({
       stage: "persist_snapshot",
       message: "Persisting AWS snapshot",
       percent: 97,
@@ -105,7 +161,15 @@ export async function POST(req: NextRequest) {
             fetched_at = EXCLUDED.fetched_at
     `;
 
-    return { ok: true as const, fetchedAt: snapshot.fetchedAt };
+    const snapshotSummary = summarizeAwsSnapshot(snapshot);
+    console.info(`[api/aws/scan:${scanId}] POST complete`, {
+      mode: "live",
+      durationMs: Date.now() - startedAt,
+      fetchedAt: snapshot.fetchedAt,
+      ...snapshotSummary,
+    });
+
+    return { ok: true as const, fetchedAt: snapshot.fetchedAt, snapshotSummary };
   };
 
   if (body.stream) {
@@ -116,12 +180,13 @@ export async function POST(req: NextRequest) {
         void (async () => {
           try {
             const result = await runScan((progress) => send({ type: "progress", progress }));
-            if (!result.ok) send({ type: "error", error: result.error, credentialsRequired: result.credentialsRequired });
+            if (!result.ok) send({ type: "error", scanId, error: result.error, credentialsRequired: result.credentialsRequired });
             else send({ type: "result", ...result });
           } catch (err) {
             console.error("[api/aws/scan] streamed POST error:", err);
             send({ type: "error", error: "AWS scan failed. Check server logs." });
           } finally {
+            console.info(`[api/aws/scan:${scanId}] stream closed`, { durationMs: Date.now() - startedAt });
             controller.close();
           }
         })();
@@ -152,6 +217,8 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET() {
+  const requestId = crypto.randomUUID().slice(0, 8);
+  const startedAt = Date.now();
   const session = await auth();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -162,10 +229,20 @@ export async function GET() {
     return NextResponse.json({ error: "No user email in session." }, { status: 400 });
   }
 
+  console.info(`[api/aws/scan:${requestId}] GET start`, {
+    email,
+    isDemoUser: Boolean(session.isDemoUser),
+    mockData: useMockAwsData(),
+  });
+
   // Demo user: always return mock — real snapshots are returned inline from POST and cached in sessionStorage
   if (session.isDemoUser) {
     try {
       const snapshot = await fetchAwsSnapshot({ forceMock: true });
+      console.info(`[api/aws/scan:${requestId}] GET mock complete`, {
+        durationMs: Date.now() - startedAt,
+        fetchedAt: snapshot.fetchedAt,
+      });
       return NextResponse.json({ snapshot, fetchedAt: snapshot.fetchedAt });
     } catch (err) {
       console.error("[api/aws/scan] GET mock error:", err);
@@ -176,6 +253,10 @@ export async function GET() {
   if (useMockAwsData()) {
     try {
       const snapshot = await fetchAwsSnapshot({ forceMock: true });
+      console.info(`[api/aws/scan:${requestId}] GET mock complete`, {
+        durationMs: Date.now() - startedAt,
+        fetchedAt: snapshot.fetchedAt,
+      });
       return NextResponse.json({ snapshot, fetchedAt: snapshot.fetchedAt });
     } catch (err) {
       console.error("[api/aws/scan] GET mock error:", err);
@@ -190,10 +271,15 @@ export async function GET() {
     `;
 
     if (result.rows.length === 0) {
+      console.info(`[api/aws/scan:${requestId}] GET no snapshot`, { durationMs: Date.now() - startedAt });
       return NextResponse.json({ snapshot: null, fetchedAt: null });
     }
 
     const row = result.rows[0];
+    console.info(`[api/aws/scan:${requestId}] GET snapshot complete`, {
+      durationMs: Date.now() - startedAt,
+      fetchedAt: row.fetched_at,
+    });
     return NextResponse.json({ snapshot: row.snapshot, fetchedAt: row.fetched_at });
   } catch (err) {
     console.error("[api/aws/scan] GET error:", err);

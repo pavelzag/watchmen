@@ -10,11 +10,13 @@ const DEMO_MODE = process.env.DEMO_MODE === "true";
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ signout?: string }>;
+  searchParams: Promise<{ error?: string; expired?: string; signout?: string }>;
 }) {
-  const session = await auth();
-  if (session) redirect("/dashboard");
-  const { signout } = await searchParams;
+  const { error, expired, signout } = await searchParams;
+  if (expired !== "1" && !error) {
+    const session = await auth();
+    if (session && session.error !== "RefreshAccessTokenError") redirect("/dashboard");
+  }
 
   return (
     <div
@@ -68,6 +70,24 @@ export default async function LoginPage({
                 : "query your GCP and AWS cloud security using natural language"}
             </p>
           </div>
+
+          {expired === "1" && !DEMO_MODE && (
+            <div
+              className="p-3 text-xs"
+              style={{ border: "1px solid #5c3b00", background: "#0d0905", color: "#ffb020" }}
+            >
+              // session expired; continue with Google to reconnect
+            </div>
+          )}
+
+          {error && !DEMO_MODE && (
+            <div
+              className="p-3 text-xs"
+              style={{ border: "1px solid #5c3b00", background: "#0d0905", color: "#ffb020" }}
+            >
+              // sign-in failed; check server network access to Google OAuth
+            </div>
+          )}
 
           {DEMO_MODE ? (
             <>
@@ -147,7 +167,7 @@ export default async function LoginPage({
         {/* Bottom decoration */}
         <div className="mt-4 flex items-center justify-center gap-2 text-xs" style={{ color: "#003010" }}>
           <ShieldAlert className="w-3 h-3" />
-          <span>WATCHMEN v0.3.0 · CLOUD SECURITY EXPLORER</span>
+          <span>WATCHMEN v0.4.0 · CLOUD SECURITY EXPLORER</span>
         </div>
       </div>
       <Footer />

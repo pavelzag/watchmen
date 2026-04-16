@@ -6,6 +6,8 @@ import { ArrowLeft, ShieldAlert, ShieldCheck, RefreshCw, Sparkles, Loader2, Chev
 import { cn } from "@/lib/utils";
 import { computeFindings } from "@/lib/findings";
 import type { GcpSnapshot, SecurityFinding, SecurityFindingSeverity } from "@/lib/gcp/types";
+import { computeAwsFindings } from "@/lib/aws-findings";
+import type { AwsSecurityFinding, AwsSnapshot } from "@/lib/aws/types";
 import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
 import { linkifyText } from "@/lib/utils/linkify";
 import type { ResourceItem } from "@/lib/claude/query-processor";
@@ -45,6 +47,26 @@ const SEVERITY_CONFIG: Record<SecurityFindingSeverity, { label: string; color: s
 };
 
 type Filter = "all" | SecurityFindingSeverity;
+type CloudFilter = "all" | "gcp" | "aws";
+type CloudFinding = SecurityFinding & {
+  cloud: "gcp" | "aws";
+  region?: string;
+};
+
+function awsFindingToCloudFinding(finding: AwsSecurityFinding): CloudFinding {
+  return {
+    id: `aws:${finding.id}`,
+    severity: finding.severity,
+    title: finding.title,
+    description: finding.description,
+    resourceName: finding.resourceName,
+    projectId: finding.accountId,
+    resourceType: finding.resourceType,
+    remediationHint: finding.remediationHint,
+    cloud: "aws",
+    region: finding.region,
+  };
+}
 
 function SeverityBadge({ severity }: { severity: SecurityFindingSeverity }) {
   const cfg = SEVERITY_CONFIG[severity];
@@ -61,10 +83,10 @@ function escapeHtml(s: string): string {
 }
 
 // Minimal markdown renderer for AI recommendations
-function renderMd(text: string, finding: SecurityFinding): string {
+function renderMd(text: string, finding: CloudFinding): string {
   // We manufacture a resource item for the primary finding resource to ensure it's always linkable
   const resources: ResourceItem[] = [
-    { name: finding.resourceName, projectId: finding.projectId, type: finding.resourceType as any, cloud: "gcp" }
+    { name: finding.resourceName, projectId: finding.projectId, type: finding.resourceType as any, cloud: finding.cloud }
   ];
 
   const html = escapeHtml(text)
@@ -98,9 +120,10 @@ interface RecState {
   error: string | null;
 }
 
-function FindingCard({ finding, cfg }: { finding: SecurityFinding; cfg: typeof SEVERITY_CONFIG[SecurityFindingSeverity] }) {
+function FindingCard({ finding, cfg }: { finding: CloudFinding; cfg: typeof SEVERITY_CONFIG[SecurityFindingSeverity] }) {
   const [rec, setRec] = useState<RecState>({ loading: false, text: null, error: null });
   const [open, setOpen] = useState(false);
+  const canAskAI = finding.cloud === "gcp";
 
   async function askAI() {
     setRec({ loading: true, text: null, error: null });
@@ -131,8 +154,17 @@ function FindingCard({ finding, cfg }: { finding: SecurityFinding; cfg: typeof S
       <div className="p-4 space-y-2">
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-2 flex-wrap">
+            <span className={cn(
+              "px-2 py-0.5 rounded-full text-[10px] font-bold border uppercase tracking-wider",
+              finding.cloud === "aws"
+                ? "bg-orange-500/10 text-orange-300 border-orange-500/30"
+                : "bg-sky-500/10 text-sky-300 border-sky-500/30"
+            )}>
+              {finding.cloud}
+            </span>
             <SeverityBadge severity={finding.severity} />
             <span className="text-xs text-slate-500 font-mono">{finding.resourceType}</span>
+            {finding.region && <span className="text-xs text-slate-600 font-mono">{finding.region}</span>}
           </div>
           <span className="px-1.5 py-0.5 rounded text-xs bg-slate-700/60 text-slate-300 font-mono shrink-0">
             {finding.projectId}
@@ -140,9 +172,11 @@ function FindingCard({ finding, cfg }: { finding: SecurityFinding; cfg: typeof S
         </div>
         <p className="text-sm font-semibold text-white uppercase tracking-tight flex items-center gap-2">
           {finding.title}
-          <button onClick={askAI} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-violet-400" title="Explain with AI">
-            <Sparkles className="w-3 h-3" />
-          </button>
+          {canAskAI && (
+            <button onClick={askAI} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-violet-400" title="Explain with AI">
+              <Sparkles className="w-3 h-3" />
+            </button>
+          )}
         </p>
         <p className="text-xs text-slate-400 leading-relaxed group-hover:text-slate-300 transition-colors">
           {finding.description}
@@ -158,6 +192,7 @@ function FindingCard({ finding, cfg }: { finding: SecurityFinding; cfg: typeof S
       </div>
 
       {/* AI recommendation area */}
+      {canAskAI && (
       <div className="border-t border-slate-700/50">
         <div className="px-4 py-2 flex items-center justify-between gap-2">
           <button
@@ -218,15 +253,17 @@ function FindingCard({ finding, cfg }: { finding: SecurityFinding; cfg: typeof S
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }
 
 export default function FindingsPage() {
-  const [findings, setFindings] = useState<SecurityFinding[]>([]);
+  const [findings, setFindings] = useState<CloudFinding[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
+  const [cloudFilter, setCloudFilter] = useState<CloudFilter>("all");
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
   const [showRemediate, setShowRemediate] = useState(false);
 
@@ -234,11 +271,34 @@ export default function FindingsPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/gcp/snapshot");
-      if (!res.ok) throw new Error("Failed to load GCP data");
-      const snap: GcpSnapshot = await res.json();
-      setFindings(computeFindings(snap));
-      setFetchedAt(snap.fetchedAt);
+      const [gcpResult, awsResult] = await Promise.allSettled([
+        fetch("/api/gcp/snapshot"),
+        fetch("/api/aws/snapshot"),
+      ]);
+
+      const nextFindings: CloudFinding[] = [];
+      const fetchedAts: string[] = [];
+      const errors: string[] = [];
+
+      if (gcpResult.status === "fulfilled" && gcpResult.value.ok) {
+        const snap: GcpSnapshot = await gcpResult.value.json();
+        nextFindings.push(...computeFindings(snap).map((finding) => ({ ...finding, cloud: "gcp" as const })));
+        if (snap.fetchedAt) fetchedAts.push(snap.fetchedAt);
+      } else if (gcpResult.status === "rejected" || (gcpResult.status === "fulfilled" && gcpResult.value.status !== 404)) {
+        errors.push("Failed to load GCP data");
+      }
+
+      if (awsResult.status === "fulfilled" && awsResult.value.ok) {
+        const snap: AwsSnapshot = await awsResult.value.json();
+        nextFindings.push(...computeAwsFindings(snap).map(awsFindingToCloudFinding));
+        if (snap.fetchedAt) fetchedAts.push(snap.fetchedAt);
+      } else if (awsResult.status === "rejected" || (awsResult.status === "fulfilled" && awsResult.value.status !== 404)) {
+        errors.push("Failed to load AWS data");
+      }
+
+      setFindings(nextFindings);
+      setFetchedAt(fetchedAts.sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] ?? null);
+      if (errors.length > 0 && nextFindings.length === 0) throw new Error(errors.join("; "));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
     } finally {
@@ -250,15 +310,23 @@ export default function FindingsPage() {
 
   const severities: SecurityFindingSeverity[] = ["critical", "high", "medium", "low"];
 
-  const counts = {
+  const cloudCounts = {
     all: findings.length,
-    critical: findings.filter((f) => f.severity === "critical").length,
-    high: findings.filter((f) => f.severity === "high").length,
-    medium: findings.filter((f) => f.severity === "medium").length,
-    low: findings.filter((f) => f.severity === "low").length,
+    gcp: findings.filter((f) => f.cloud === "gcp").length,
+    aws: findings.filter((f) => f.cloud === "aws").length,
   };
 
-  const displayed = filter === "all" ? findings : findings.filter((f) => f.severity === filter);
+  const cloudFiltered = cloudFilter === "all" ? findings : findings.filter((f) => f.cloud === cloudFilter);
+  const counts = {
+    all: cloudFiltered.length,
+    critical: cloudFiltered.filter((f) => f.severity === "critical").length,
+    high: cloudFiltered.filter((f) => f.severity === "high").length,
+    medium: cloudFiltered.filter((f) => f.severity === "medium").length,
+    low: cloudFiltered.filter((f) => f.severity === "low").length,
+  };
+
+  const displayed = filter === "all" ? cloudFiltered : cloudFiltered.filter((f) => f.severity === filter);
+  const gcpRemediableFindings = displayed.filter((f) => f.cloud === "gcp");
   const bySeverity = severities
     .map((sev) => ({
       severity: sev,
@@ -279,17 +347,17 @@ export default function FindingsPage() {
           <h1 className="text-lg font-semibold text-white">Security Findings</h1>
           {!loading && (
             <span className="px-2 py-0.5 rounded-full text-xs bg-slate-700 text-slate-300">
-              {counts.all} total
+              {findings.length} total
             </span>
           )}
         </div>
-        {!loading && findings.length > 0 && (
+        {!loading && gcpRemediableFindings.length > 0 && (
           <button
             onClick={() => setShowRemediate(true)}
             className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-violet-500/40 text-violet-400 hover:bg-violet-500/10 transition-colors"
           >
             <GitPullRequest className="w-3.5 h-3.5" />
-            Fix with GitHub PR
+            Fix GCP with GitHub PR
           </button>
         )}
         <ScanCloudButton onScanComplete={load} variant="modern" />
@@ -314,6 +382,30 @@ export default function FindingsPage() {
       )}
 
       {/* Filter tabs */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {([
+          { key: "all", label: "All clouds" },
+          { key: "gcp", label: "GCP" },
+          { key: "aws", label: "AWS" },
+        ] as const).map((cloud) => (
+          <button
+            key={cloud.key}
+            onClick={() => {
+              setCloudFilter(cloud.key);
+              setFilter("all");
+            }}
+            className={cn(
+              "px-3 py-1.5 rounded-lg text-xs font-medium border transition-all duration-150 uppercase tracking-wider",
+              cloudFilter === cloud.key
+                ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/30"
+                : "text-slate-400 bg-slate-800/40 border-slate-700/50 hover:border-slate-600"
+            )}
+          >
+            {cloud.label} <span className="opacity-70">({cloudCounts[cloud.key]})</span>
+          </button>
+        ))}
+      </div>
+
       <div className="flex items-center gap-2 flex-wrap">
         {(["all", ...severities] as Filter[]).map((f) => {
           const cfg = f === "all" ? null : SEVERITY_CONFIG[f];
@@ -356,13 +448,20 @@ export default function FindingsPage() {
         <div className="text-center py-20">
           <ShieldCheck className="w-12 h-12 text-emerald-400 mx-auto mb-3" />
           <p className="text-slate-300 font-medium">No security findings detected</p>
-          <p className="text-slate-500 text-sm mt-1">Your GCP environment looks clean based on the current snapshot.</p>
+          <p className="text-slate-500 text-sm mt-1">Your cloud environments look clean based on the current snapshots.</p>
+        </div>
+      )}
+
+      {!loading && findings.length > 0 && displayed.length === 0 && (
+        <div className="text-center py-16">
+          <ShieldCheck className="w-10 h-10 text-emerald-400 mx-auto mb-3" />
+          <p className="text-slate-300 font-medium">No findings match the selected filters</p>
         </div>
       )}
 
       {showRemediate && (
         <RemediateModal
-          targets={findings.map(remediationTargetFromFinding)}
+          targets={gcpRemediableFindings.map(remediationTargetFromFinding)}
           onClose={() => setShowRemediate(false)}
         />
       )}

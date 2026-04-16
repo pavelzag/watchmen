@@ -1,6 +1,6 @@
 {
   "name": "watchmen",
-  "version": "0.5.0",
+  "version": "0.4.0",
   "private": true,
   "scripts": {
     "dev": "next dev",

@@ -6,12 +6,21 @@ import {
   AlertTriangle, RefreshCw, Lock, User, Cloud, HardDrive, GitPullRequest,
 } from "lucide-react";
 import type { AttackPath, AttackNode } from "@/lib/gcp/attack-paths";
+import type { AwsSecurityFinding, AwsSnapshot } from "@/lib/aws/types";
+import { computeAwsFindings } from "@/lib/aws-findings";
 import RemediateModal from "./RemediateModal";
 import ScanCloudButton from "@/components/ScanCloudButton";
 import { remediationTargetFromAttackPath } from "@/lib/github/remediation-targets";
 import { useTaskCenter } from "@/components/TaskCenterProvider";
 
 // ─── Node icon / colour ───────────────────────────────────────────────────────
+
+type CloudAttackPath = AttackPath & {
+  cloud: "gcp" | "aws";
+  region?: string;
+};
+
+type CloudFilter = "all" | "gcp" | "aws";
 
 function nodeIcon(resourceType: string) {
   const cls = "w-4 h-4 shrink-0";
@@ -22,6 +31,12 @@ function nodeIcon(resourceType: string) {
     case "cloud_run":     return <Cloud       className={cls} />;
     case "service_account": return <Key      className={cls} />;
     case "storage_bucket": return <HardDrive className={cls} />;
+    case "s3_bucket":      return <HardDrive className={cls} />;
+    case "ec2_instance":   return <Server      className={cls} />;
+    case "rds_instance":   return <Database    className={cls} />;
+    case "security_group": return <Flame       className={cls} />;
+    case "iam_user":       return <User        className={cls} />;
+    case "iam_role":       return <Key         className={cls} />;
     case "secret":
     case "secrets":       return <Lock        className={cls} />;
     case "project":       return <Shield      className={cls} />;
@@ -36,6 +51,47 @@ const KIND_STYLES: Record<AttackNode["kind"], { border: string; bg: string; text
   pivot:  { border: "#f59e0b", bg: "#1a1206", text: "#fbbf24", badge: "PIVOT" },
   target: { border: "#a855f7", bg: "#12061a", text: "#c084fc", badge: "TARGET" },
 };
+
+function awsFindingToAttackPath(finding: AwsSecurityFinding): CloudAttackPath {
+  return {
+    id: `aws:${finding.id}`,
+    cloud: "aws",
+    region: finding.region,
+    severity: finding.severity === "critical" ? "critical" : "high",
+    title: `AWS: ${finding.title}`,
+    description: finding.description,
+    nodes: [
+      {
+        id: `aws-account:${finding.accountId}`,
+        kind: "entry",
+        resourceType: "project",
+        label: finding.accountId,
+        detail: "AWS account",
+        projectId: finding.accountId,
+        risk: "Cloud account boundary",
+      },
+      {
+        id: `aws-resource:${finding.resourceType}:${finding.resourceName}`,
+        kind: "pivot",
+        resourceType: finding.resourceType,
+        label: finding.resourceName,
+        detail: finding.region ?? finding.resourceType.replace(/_/g, " "),
+        projectId: finding.accountId,
+        risk: finding.title,
+      },
+      {
+        id: `aws-target:${finding.accountId}`,
+        kind: "target",
+        resourceType: "project",
+        label: `Account ${finding.accountId}`,
+        detail: "Potential account impact",
+        projectId: finding.accountId,
+        risk: finding.severity === "critical" ? "Critical AWS exposure" : "High AWS exposure",
+      },
+    ],
+    mitigations: finding.remediationHint ? [finding.remediationHint] : ["Review and remediate this AWS finding."],
+  };
+}
 
 const SEV_STYLES = {
   critical: { border: "#ef4444", label: "CRITICAL", color: "#ef4444", bg: "#1a0606" },
@@ -89,7 +145,7 @@ function NodeCard({ node }: { node: AttackNode }) {
 
 // ─── Attack path card ─────────────────────────────────────────────────────────
 
-function PathCard({ path, index }: { path: AttackPath; index: number }) {
+function PathCard({ path, index }: { path: CloudAttackPath; index: number }) {
   const [open, setOpen] = useState(false);
   const s = SEV_STYLES[path.severity];
 
@@ -108,6 +164,20 @@ function PathCard({ path, index }: { path: AttackPath; index: number }) {
           }}
         >
           {s.label}
+        </div>
+        <div
+          style={{
+            fontSize: 9, letterSpacing: 2, fontFamily: "monospace",
+            color: path.cloud === "aws" ? "#f59e0b" : "#38bdf8",
+            border: `1px solid ${path.cloud === "aws" ? "#f59e0b55" : "#38bdf855"}`,
+            background: path.cloud === "aws" ? "#1a1206" : "#06121a",
+            padding: "2px 8px",
+            whiteSpace: "nowrap",
+            marginTop: 2,
+            textTransform: "uppercase",
+          }}
+        >
+          {path.cloud}
         </div>
         <div className="flex-1 min-w-0">
           <p style={{ fontSize: 12, fontWeight: 700, color: "#e5e7eb", fontFamily: "monospace", marginBottom: 4 }}>
@@ -181,18 +251,38 @@ function PathCard({ path, index }: { path: AttackPath; index: number }) {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AttackPathsPage() {
-  const [paths, setPaths] = useState<AttackPath[]>([]);
+  const [gcpPaths, setGcpPaths] = useState<CloudAttackPath[]>([]);
+  const [awsPaths, setAwsPaths] = useState<CloudAttackPath[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "critical" | "high">("all");
+  const [cloudFilter, setCloudFilter] = useState<CloudFilter>("all");
   const [showRemediate, setShowRemediate] = useState(false);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const { tasks, startAttackPathAnalysis } = useTaskCenter();
 
+  async function loadAwsPaths() {
+    try {
+      const res = await fetch("/api/aws/snapshot");
+      if (!res.ok) {
+        if (res.status === 404) setAwsPaths([]);
+        return;
+      }
+      const snap: AwsSnapshot = await res.json();
+      const nextAwsPaths = computeAwsFindings(snap)
+        .filter((finding) => finding.severity === "critical" || finding.severity === "high")
+        .map(awsFindingToAttackPath);
+      setAwsPaths(nextAwsPaths);
+    } catch {
+      setAwsPaths([]);
+    }
+  }
+
   function load() {
     setLoading(true);
     setError(null);
+    void loadAwsPaths();
     const taskId = startAttackPathAnalysis();
     setActiveTaskId(taskId);
   }
@@ -215,16 +305,24 @@ export default function AttackPathsPage() {
     }
 
     if (task.status === "completed" && task.kind === "attack_paths" && task.result?.paths) {
-      setPaths(task.result.paths as AttackPath[]);
+      setGcpPaths((task.result.paths as AttackPath[]).map((path) => ({ ...path, cloud: "gcp" as const })));
       setFetchedAt(task.result.fetchedAt ?? null);
       setLoading(false);
       setError(null);
     }
   }, [activeTaskId, tasks]);
 
-  const visible = paths.filter((p) => filter === "all" || p.severity === filter);
-  const critCount = paths.filter((p) => p.severity === "critical").length;
-  const highCount = paths.filter((p) => p.severity === "high").length;
+  const paths = [...gcpPaths, ...awsPaths];
+  const cloudCounts = {
+    all: paths.length,
+    gcp: gcpPaths.length,
+    aws: awsPaths.length,
+  };
+  const cloudFiltered = cloudFilter === "all" ? paths : paths.filter((path) => path.cloud === cloudFilter);
+  const visible = cloudFiltered.filter((p) => filter === "all" || p.severity === filter);
+  const critCount = cloudFiltered.filter((p) => p.severity === "critical").length;
+  const highCount = cloudFiltered.filter((p) => p.severity === "high").length;
+  const gcpRemediablePaths = visible.filter((path) => path.cloud === "gcp");
 
   return (
     <div className="space-y-6">
@@ -240,14 +338,14 @@ export default function AttackPathsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {paths.length > 0 && (
+          {gcpRemediablePaths.length > 0 && (
             <button
               onClick={() => setShowRemediate(true)}
               className="flex items-center gap-2 px-3 py-1.5 text-xs uppercase tracking-widest transition-all"
               style={{ border: "1px solid var(--green)", color: "var(--green)", background: "rgba(0,170,43,0.06)" }}
             >
               <GitPullRequest className="w-3 h-3" />
-              Fix with GitHub PR
+              Fix GCP with GitHub PR
             </button>
           )}
           <ScanCloudButton onScanComplete={load} variant="terminal" />
@@ -274,7 +372,7 @@ export default function AttackPathsPage() {
           {/* Stats */}
           <div className="grid grid-cols-3 gap-3">
             {[
-              { label: "Total Paths", value: paths.length, color: "var(--green)" },
+              { label: "Total Paths", value: cloudFiltered.length, color: "var(--green)" },
               { label: "Critical", value: critCount, color: "#ef4444" },
               { label: "High", value: highCount, color: "#f59e0b" },
             ].map(({ label, value, color }) => (
@@ -285,7 +383,32 @@ export default function AttackPathsPage() {
             ))}
           </div>
 
-          {/* Filter */}
+          {/* Cloud filter */}
+          <div className="flex gap-1 flex-wrap">
+            {([
+              { key: "all", label: "ALL CLOUDS", count: cloudCounts.all },
+              { key: "gcp", label: "GCP", count: cloudCounts.gcp },
+              { key: "aws", label: "AWS", count: cloudCounts.aws },
+            ] as const).map((item) => (
+              <button
+                key={item.key}
+                onClick={() => {
+                  setCloudFilter(item.key);
+                  setFilter("all");
+                }}
+                style={{
+                  fontFamily: "monospace", fontSize: 10, letterSpacing: 2, padding: "4px 14px",
+                  border: cloudFilter === item.key ? "1px solid var(--green)" : "1px solid var(--border-dim)",
+                  color: cloudFilter === item.key ? "var(--green)" : "var(--text-muted)",
+                  background: "transparent", textTransform: "uppercase",
+                }}
+              >
+                {item.label} ({item.count})
+              </button>
+            ))}
+          </div>
+
+          {/* Severity filter */}
           <div className="flex gap-1">
             {(["all", "critical", "high"] as const).map((f) => (
               <button
@@ -298,15 +421,27 @@ export default function AttackPathsPage() {
                   background: "transparent", textTransform: "uppercase",
                 }}
               >
-                {f === "all" ? `ALL (${paths.length})` : f === "critical" ? `CRITICAL (${critCount})` : `HIGH (${highCount})`}
+                {f === "all" ? `ALL (${cloudFiltered.length})` : f === "critical" ? `CRITICAL (${critCount})` : `HIGH (${highCount})`}
               </button>
             ))}
           </div>
 
           {/* Paths */}
-          <div>
-            {visible.map((path, i) => <PathCard key={path.id} path={path} index={i} />)}
-          </div>
+          {visible.length > 0 ? (
+            <div>
+              {visible.map((path, i) => <PathCard key={path.id} path={path} index={i} />)}
+            </div>
+          ) : (
+            <div
+              className="flex flex-col items-center justify-center py-16 gap-3"
+              style={{ border: "1px solid var(--border-dim)" }}
+            >
+              <AlertTriangle className="w-7 h-7" style={{ color: "var(--green)" }} />
+              <p style={{ color: "var(--text-muted)", fontFamily: "monospace", fontSize: 12 }}>
+                No attack paths match the selected filters.
+              </p>
+            </div>
+          )}
         </>
       )}
 
@@ -332,7 +467,7 @@ export default function AttackPathsPage() {
       )}
 
       {showRemediate && (
-        <RemediateModal targets={paths.map(remediationTargetFromAttackPath)} onClose={() => setShowRemediate(false)} />
+        <RemediateModal targets={gcpRemediablePaths.map(remediationTargetFromAttackPath)} onClose={() => setShowRemediate(false)} />
       )}
     </div>
   );

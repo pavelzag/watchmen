@@ -17,16 +17,16 @@ async function getRealBigQueryDatasets(projectIds: string[]): Promise<BigQueryDa
       const datasets: BigQueryDataset[] = [];
 
       for (const ds of res.data.datasets ?? []) {
-        const datasetId = ds.datasetReference?.datasetId ?? "";
+        const datasetId = String(ds.datasetReference?.datasetId ?? "");
         let bindings: { role: string; members: string[] }[] = [];
         try {
           const iamRes = await bq.datasets.get({ projectId, datasetId });
           bindings = (iamRes.data.access ?? []).map((entry) => ({
-            role: entry.role ?? "",
+            role: String(entry.role ?? ""),
             members: entry.userByEmail
-              ? [`user:${entry.userByEmail}`]
+              ? [`user:${String(entry.userByEmail)}`]
               : entry.specialGroup
-                ? [entry.specialGroup]
+                ? [String(entry.specialGroup)]
                 : [],
           }));
         } catch {
@@ -36,7 +36,7 @@ async function getRealBigQueryDatasets(projectIds: string[]): Promise<BigQueryDa
         datasets.push({
           datasetId,
           projectId,
-          location: ds.location ?? "",
+          location: String(ds.location ?? ""),
           iamPolicy: { bindings },
         });
       }

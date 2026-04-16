@@ -9,7 +9,20 @@ import { runSoc2 } from "@/lib/compliance/soc2";
 import { runIso27001 } from "@/lib/compliance/iso27001";
 import { runAwsSoc2 } from "@/lib/compliance/aws-soc2"; // Added AWS
 import { runAwsIso27001 } from "@/lib/compliance/aws-iso27001"; // Added AWS
-import type { ComplianceReport } from "@/lib/compliance/types";
+import type { ComplianceCategory, ComplianceReport } from "@/lib/compliance/types";
+
+function namespaceCategories(categories: ComplianceCategory[], cloud: "gcp" | "aws"): ComplianceCategory[] {
+  const cloudLabel = cloud.toUpperCase();
+  return categories.map((category) => ({
+    ...category,
+    id: `${cloud}:${category.id}`,
+    name: `${cloudLabel} ${category.name}`,
+    controls: category.controls.map((control) => ({
+      ...control,
+      id: `${cloud}:${control.id}`,
+    })),
+  }));
+}
 
 export async function GET(req: NextRequest) {
   const session = await auth();
@@ -54,8 +67,12 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "No snapshots yet." }, { status: 404 });
     }
 
-    // Merge whichever reports are available
     const reports = [gcpReport, awsReport].filter(Boolean) as ComplianceReport[];
+    const categories = [
+      ...(gcpReport ? namespaceCategories(gcpReport.categories, "gcp") : []),
+      ...(awsReport ? namespaceCategories(awsReport.categories, "aws") : []),
+    ];
+
     report = {
       standard: reports.map((r) => r.standard).join(" & "),
       generatedAt: new Date().toISOString(),
@@ -65,7 +82,7 @@ export async function GET(req: NextRequest) {
       warningControls: reports.reduce((s, r) => s + r.warningControls, 0),
       suppressedControls: reports.reduce((s, r) => s + r.suppressedControls, 0),
       score: 0, // Recalculated below
-      categories: reports.flatMap((r) => r.categories),
+      categories,
     };
 
     // Recalculate score
@@ -86,9 +103,15 @@ export async function GET(req: NextRequest) {
           );
           for (const category of report.categories) {
             for (const control of category.controls) {
-              if (control.status !== "pass" && suppressMap.has(control.id)) {
+              const legacyControlId = control.id.replace(/^(gcp|aws):/, "");
+              const suppressionId = suppressMap.has(control.id)
+                ? control.id
+                : control.id.startsWith("gcp:") && suppressMap.has(legacyControlId)
+                  ? legacyControlId
+                  : null;
+              if (control.status !== "pass" && suppressionId) {
                 control.status = "suppressed";
-                control.justification = suppressMap.get(control.id);
+                control.justification = suppressMap.get(suppressionId);
               }
             }
           }

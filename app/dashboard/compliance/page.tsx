@@ -135,8 +135,19 @@ const ISO27001_URL: Record<string, string> = {
 };
 
 function controlRefUrl(controlId: string, standard: Standard): string | undefined {
-  const base = controlId.replace(/\.[a-z]$/, "");
+  const rawControlId = controlId.replace(/^(gcp|aws):/, "");
+  const base = rawControlId.replace(/\.[a-z]$/, "");
   return standard === "soc2" ? SOC2_AICPA_URL[base] : ISO27001_URL[base];
+}
+
+function baseControlId(controlId: string): string {
+  return controlId.replace(/^(gcp|aws):/, "");
+}
+
+function cloudPrefix(id: string): "GCP" | "AWS" | null {
+  if (id.startsWith("gcp:")) return "GCP";
+  if (id.startsWith("aws:")) return "AWS";
+  return null;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -345,7 +356,9 @@ function ControlCard({
 
   const statusCfg = STATUS_CONFIG[control.status];
   const impactCfg = IMPACT_CONFIG[control.impact];
-  const resourcePage = CONTROL_RESOURCE_PAGE[control.id];
+  const rawControlId = baseControlId(control.id);
+  const controlCloud = cloudPrefix(control.id);
+  const resourcePage = CONTROL_RESOURCE_PAGE[rawControlId];
   const refUrl = controlRefUrl(control.id, standard);
 
   async function askAI() {
@@ -412,6 +425,16 @@ function ControlCard({
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-2 flex-wrap">
             <StatusBadge status={control.status} />
+            {controlCloud && (
+              <span className={cn(
+                "px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border",
+                controlCloud === "AWS"
+                  ? "bg-orange-500/10 text-orange-300 border-orange-500/30"
+                  : "bg-sky-500/10 text-sky-300 border-sky-500/30"
+              )}>
+                {controlCloud}
+              </span>
+            )}
             {refUrl ? (
               <a
                 href={refUrl}
@@ -420,11 +443,11 @@ function ControlCard({
                 title={standard === "iso27001" ? "View ISO 27001:2022 Annex A control" : "View AICPA Trust Services Criteria"}
                 className="px-1.5 py-0.5 rounded text-xs font-mono bg-slate-700/60 text-slate-300 hover:bg-slate-600/60 hover:text-white transition-colors underline decoration-slate-600 underline-offset-2"
               >
-                {control.id}
+                {rawControlId}
               </a>
             ) : (
               <span className="px-1.5 py-0.5 rounded text-xs font-mono bg-slate-700/60 text-slate-300">
-                {control.id}
+                {rawControlId}
               </span>
             )}
             <span className={cn("text-xs font-medium", impactCfg.color)}>
@@ -586,6 +609,7 @@ function ControlCard({
 // ── Filter types ──────────────────────────────────────────────────────────
 
 type StatusFilter = "all" | "fail" | "warning" | "suppressed";
+type CloudFilter = "all" | "gcp" | "aws";
 
 function CategorySection({
   category,
@@ -611,6 +635,8 @@ function CategorySection({
   const score = total === 0 ? 100 : Math.round((passing / total) * 100);
   const [expanded, setExpanded] = useState(true);
   const isExpanded = forceExpand || expanded;
+  const categoryCloud = cloudPrefix(category.id);
+  const rawCategoryId = category.id.replace(/^(gcp|aws):/, "");
 
   if (visibleControls.length === 0) return null;
 
@@ -622,8 +648,20 @@ function CategorySection({
       >
         <div className="flex items-center gap-3 min-w-0">
           <span className="px-2 py-0.5 rounded text-xs font-mono bg-slate-700 text-slate-200 shrink-0">
-            {category.id}
+            {rawCategoryId}
           </span>
+          {categoryCloud && (
+            <span
+              className={cn(
+                "px-2 py-0.5 rounded text-[10px] font-mono font-bold border shrink-0",
+                categoryCloud === "AWS"
+                  ? "bg-orange-500/10 text-orange-300 border-orange-500/30"
+                  : "bg-sky-500/10 text-sky-300 border-sky-500/30"
+              )}
+            >
+              {categoryCloud}
+            </span>
+          )}
           <div className="text-left min-w-0">
             <p className="text-sm font-semibold text-white truncate">{category.name}</p>
             <p className="text-xs text-slate-500 hidden sm:block truncate">{category.description}</p>
@@ -679,6 +717,7 @@ export default function CompliancePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<StatusFilter>("all");
+  const [cloudFilter, setCloudFilter] = useState<CloudFilter>("all");
   const [history, setHistory] = useState<HistoryPoint[]>([]);
   const [isPrinting, setIsPrinting] = useState(false);
 
@@ -749,16 +788,48 @@ export default function CompliancePage() {
     setTimeout(() => window.print(), 50);
   }, []);
 
-  const allControls = report?.categories.flatMap((c) => c.controls) ?? [];
+  const cloudFilteredCategories = report?.categories.filter((category) => {
+    if (cloudFilter === "all") return true;
+    return category.id.startsWith(`${cloudFilter}:`);
+  }) ?? [];
+  const allControls = cloudFilteredCategories.flatMap((c) => c.controls);
+  const cloudCounts: Record<CloudFilter, number> = {
+    all: report?.categories.flatMap((c) => c.controls).length ?? 0,
+    gcp: report?.categories.filter((c) => c.id.startsWith("gcp:")).flatMap((c) => c.controls).length ?? 0,
+    aws: report?.categories.filter((c) => c.id.startsWith("aws:")).flatMap((c) => c.controls).length ?? 0,
+  };
   const filterCounts: Record<StatusFilter, number> = {
     all: allControls.length,
     fail: allControls.filter((c) => c.status === "fail").length,
     warning: allControls.filter((c) => c.status === "warning").length,
     suppressed: allControls.filter((c) => c.status === "suppressed").length,
   };
+  const visiblePassing = allControls.filter((c) => c.status === "pass").length;
+  const visibleFailing = allControls.filter((c) => c.status === "fail").length;
+  const visibleWarnings = allControls.filter((c) => c.status === "warning").length;
+  const visibleSuppressed = allControls.filter((c) => c.status === "suppressed").length;
+  const visibleScore = allControls.length === 0
+    ? 100
+    : Math.round(((visiblePassing + visibleSuppressed + visibleWarnings * 0.5) / allControls.length) * 100);
+  const visibleReport = report
+    ? {
+        ...report,
+        totalControls: allControls.length,
+        passingControls: visiblePassing,
+        failingControls: visibleFailing,
+        warningControls: visibleWarnings,
+        suppressedControls: visibleSuppressed,
+        score: visibleScore,
+        categories: cloudFilteredCategories,
+      }
+    : null;
+  const hasVisibleCategories = cloudFilteredCategories.some((category) => {
+    if (filter === "all") return category.controls.length > 0;
+    return category.controls.some((control) => control.status === filter);
+  });
 
   const scoreColor = report
-    ? report.score >= 80 ? "text-emerald-400" : report.score >= 60 ? "text-amber-400" : "text-red-400"
+    ? visibleScore >= 80 ? "text-emerald-400" : visibleScore >= 60 ? "text-amber-400" : "text-red-400"
     : "text-slate-400";
 
   return (
@@ -774,7 +845,7 @@ export default function CompliancePage() {
           <h1 className="text-lg font-semibold text-white">Compliance</h1>
           {report && (
             <span className="px-2 py-0.5 rounded-full text-xs bg-slate-700 text-slate-300">
-              {report.totalControls} controls
+              {allControls.length} controls
             </span>
           )}
         </div>
@@ -782,7 +853,7 @@ export default function CompliancePage() {
           {report && (
             <>
               <button
-                onClick={() => exportCsv(report)}
+                onClick={() => visibleReport && exportCsv(visibleReport)}
                 className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors px-2.5 py-1.5 rounded-lg hover:bg-slate-800"
               >
                 <Download className="w-3.5 h-3.5" />
@@ -813,7 +884,7 @@ export default function CompliancePage() {
         {STANDARDS.map((s) => (
           <button
             key={s.id}
-            onClick={() => { setStandard(s.id); setFilter("all"); }}
+            onClick={() => { setStandard(s.id); setFilter("all"); setCloudFilter("all"); }}
             className={cn(
               "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all",
               standard === s.id
@@ -860,45 +931,45 @@ export default function CompliancePage() {
           <div className="flex items-center gap-6 flex-wrap">
             {/* Ring + score */}
             <div className="relative flex items-center justify-center w-24 h-24 shrink-0">
-              <ScoreRing score={report.score} />
+              <ScoreRing score={visibleScore} />
               <span className={cn("absolute text-2xl font-bold tabular-nums", scoreColor)}>
-                {report.score}
+                {visibleScore}
               </span>
             </div>
 
             <div className="space-y-2 flex-1 min-w-0">
               <div>
-                <p className={cn("text-3xl font-bold tabular-nums", scoreColor)}>{report.score}%</p>
+                <p className={cn("text-3xl font-bold tabular-nums", scoreColor)}>{visibleScore}%</p>
                 <p className="text-sm text-slate-400 mt-0.5">
-                  {report.standard} Compliance Score
+                  {cloudFilter === "all" ? report.standard : `${cloudFilter.toUpperCase()} ${report.standard}`} Compliance Score
                 </p>
               </div>
               <div className="flex items-center gap-4 flex-wrap text-xs">
                 <span className="flex items-center gap-1.5 text-emerald-400">
                   <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                  {report.passingControls} passing
+                  {visiblePassing} passing
                 </span>
                 <span className="flex items-center gap-1.5 text-red-400">
                   <span className="w-2 h-2 rounded-full bg-red-400" />
-                  {report.failingControls} failing
+                  {visibleFailing} failing
                 </span>
                 <span className="flex items-center gap-1.5 text-amber-400">
                   <span className="w-2 h-2 rounded-full bg-amber-400" />
-                  {report.warningControls} warnings
+                  {visibleWarnings} warnings
                 </span>
-                {report.suppressedControls > 0 && (
+                {visibleSuppressed > 0 && (
                   <span className="flex items-center gap-1.5 text-slate-400">
                     <span className="w-2 h-2 rounded-full bg-slate-500" />
-                    {report.suppressedControls} suppressed
+                    {visibleSuppressed} suppressed
                   </span>
                 )}
               </div>
             </div>
 
-            {report.failingControls > 0 && (
+            {visibleFailing > 0 && (
               <div className="px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/20 text-xs text-red-300 shrink-0">
-                <span className="font-semibold">{report.failingControls} control{report.failingControls !== 1 ? "s" : ""}</span>
-                {" "}require{report.failingControls === 1 ? "s" : ""} immediate attention
+                <span className="font-semibold">{visibleFailing} control{visibleFailing !== 1 ? "s" : ""}</span>
+                {" "}require{visibleFailing === 1 ? "s" : ""} immediate attention
               </div>
             )}
           </div>
@@ -909,6 +980,33 @@ export default function CompliancePage() {
       )}
 
       {/* Filter tabs */}
+      {report && !loading && (
+        <div className="flex items-center gap-1 flex-wrap print:hidden">
+          {([
+            { key: "all", label: "All clouds" },
+            { key: "gcp", label: "GCP" },
+            { key: "aws", label: "AWS" },
+          ] as const).map((cloud) => (
+            <button
+              key={cloud.key}
+              onClick={() => {
+                setCloudFilter(cloud.key);
+                setFilter("all");
+              }}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all border uppercase tracking-wider",
+                cloudFilter === cloud.key
+                  ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
+                  : "text-slate-500 border-slate-700/50 hover:text-slate-300 hover:border-slate-600"
+              )}
+            >
+              {cloud.label}
+              <span className="text-[10px] font-mono opacity-70">{cloudCounts[cloud.key]}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {report && !loading && (
         <div className="flex items-center gap-1 flex-wrap print:hidden">
           {(["all", "fail", "warning", "suppressed"] as StatusFilter[]).map((f) => (
@@ -938,7 +1036,7 @@ export default function CompliancePage() {
       {/* Categories */}
       {!loading && report && (
         <div className="space-y-4">
-          {report.categories.map((cat) => (
+          {cloudFilteredCategories.map((cat) => (
             <CategorySection
               key={cat.id}
               category={cat}
@@ -949,11 +1047,17 @@ export default function CompliancePage() {
               onRevoked={handleRevoked}
             />
           ))}
+          {!hasVisibleCategories && (
+            <div className="text-center py-16 rounded-xl border border-slate-700/50">
+              <ClipboardCheck className="w-10 h-10 text-emerald-400 mx-auto mb-3" />
+              <p className="text-slate-300 font-medium">No controls match the selected filters</p>
+            </div>
+          )}
         </div>
       )}
 
       {/* Per-project breakdown */}
-      {!loading && report && <ProjectBreakdown report={report} />}
+      {!loading && visibleReport && <ProjectBreakdown report={visibleReport} />}
 
       {/* Skeleton for categories */}
       {loading && (

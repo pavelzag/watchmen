@@ -99,7 +99,7 @@ function stringifyReason(reason: unknown): string {
 
   if (reason && typeof reason === "object") {
     const maybeMessage = (reason as { message?: string }).message;
-    const maybeCode = (reason as { code?: string }).code;
+    const maybeCode = (reason as { code?: unknown }).code;
     const maybeStatus = (reason as { response?: { status?: number } }).response?.status;
     const joined = [maybeMessage, maybeCode, maybeStatus ? `status ${maybeStatus}` : ""]
       .filter(Boolean)
@@ -118,8 +118,11 @@ function stringifyReason(reason: unknown): string {
 function classifyGcpFetchError(reason: unknown): { code: GcpScanWarningCode; retryable: boolean; detail: string } {
   const detail = stringifyReason(reason);
   const normalized = detail.toLowerCase();
-  const errorCode = ((reason as { code?: string } | undefined)?.code ?? "").toUpperCase();
-  const status = (reason as { response?: { status?: number } } | undefined)?.response?.status;
+  const rawErrorCode = (reason as { code?: unknown } | undefined)?.code;
+  const errorCode = typeof rawErrorCode === "string" ? rawErrorCode.toUpperCase() : "";
+  const status =
+    (reason as { response?: { status?: number } } | undefined)?.response?.status ??
+    (typeof rawErrorCode === "number" ? rawErrorCode : undefined);
 
   if (
     normalized.includes("has not been used") ||
