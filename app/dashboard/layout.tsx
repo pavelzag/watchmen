@@ -18,7 +18,7 @@ export default async function DashboardLayout({
   return (
     <CloudShellProvider>
       <TaskCenterProvider>
-        <PostLoginSplash />
+        <PostLoginSplash showShortcutModal={!!session.isDemoUser} />
         <div className="min-h-screen" style={{ background: "#090909" }}>
           {session.isDemoUser && (
             <div

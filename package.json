@@ -6,7 +6,7 @@
     "dev": "next dev",
     "dev:debug": "WATCHMEN_DEBUG=true NEXT_PUBLIC_WATCHMEN_DEBUG=true next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "node .next/standalone/server.js",
     "lint": "next lint",
     "type-check": "tsc --noEmit",
     "test": "jest",

@@ -39,7 +39,13 @@ function randomHex(bytes = 8) {
   ).join(" ");
 }
 
-export default function SplashScreen({ mode = "signin" }: { mode?: "signin" | "signout" }) {
+export default function SplashScreen({
+  mode = "signin",
+  onDone,
+}: {
+  mode?: "signin" | "signout";
+  onDone?: () => void;
+}) {
   const STATUS_LINES = mode === "signout" ? STATUS_SIGNOUT : STATUS_SIGNIN;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [visible, setVisible] = useState(true);
@@ -50,6 +56,11 @@ export default function SplashScreen({ mode = "signin" }: { mode?: "signin" | "s
   const [glitchSlice, setGlitchSlice] = useState({ top: 30, height: 10, offset: 0 });
   const [noiseLines, setNoiseLines] = useState<{ top: number; left: number; w: number; opacity: number }[]>([]);
   const [hexRows, setHexRows] = useState<string[]>([]);
+  const onDoneRef = useRef(onDone);
+
+  useEffect(() => {
+    onDoneRef.current = onDone;
+  }, [onDone]);
 
   /* ── Matrix rain ────────────────────────────────────────────────────── */
   useEffect(() => {
@@ -139,6 +150,9 @@ export default function SplashScreen({ mode = "signin" }: { mode?: "signin" | "s
       setTimeout(() => setGlitch(false), 120);
     }, 600);
 
+    let fadeTimer: ReturnType<typeof setTimeout> | null = null;
+    let doneTimer: ReturnType<typeof setTimeout> | null = null;
+
     // Progress counter — ~4 s to reach 100%, then 1.2 s pause, then 1 s fade = ~6 s total
     const progressTimer = setInterval(() => {
       p += Math.random() * 1.8 + 0.5;   // avg ≈ 1.4 per tick @ 70 ms → ~5 ticks/s → ~14%/s → ~7 s raw; clamp gives ≈4 s
@@ -149,8 +163,11 @@ export default function SplashScreen({ mode = "signin" }: { mode?: "signin" | "s
         clearInterval(glitchTimer);
         clearInterval(hexTimer);
         setStatusIdx(STATUS_LINES.length - 1);
-        setTimeout(() => setFading(true), 1200);
-        setTimeout(() => setVisible(false), 2200);
+        fadeTimer = setTimeout(() => setFading(true), 1200);
+        doneTimer = setTimeout(() => {
+          setVisible(false);
+          onDoneRef.current?.();
+        }, 2200);
         return;
       }
       setProgress(Math.min(Math.round(p), 100));
@@ -163,8 +180,10 @@ export default function SplashScreen({ mode = "signin" }: { mode?: "signin" | "s
       clearInterval(noiseTimer);
       clearInterval(glitchTimer);
       clearInterval(hexTimer);
+      if (fadeTimer) clearTimeout(fadeTimer);
+      if (doneTimer) clearTimeout(doneTimer);
     };
-  }, []);
+  }, [STATUS_LINES.length, mode]);
 
   if (!visible) return null;
 
