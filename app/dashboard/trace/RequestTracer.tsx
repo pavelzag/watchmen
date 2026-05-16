@@ -25,6 +25,41 @@ const ANIM_PULSE_MS = 260;  // ms node stays "active" before "done"
 
 type NodeType = "internet" | "lb" | "gke" | "cloudrun" | "cloudsql" | "vm" | "sidecar";
 type NodeStatus = "idle" | "active" | "done" | "error";
+type LiveScope = "active" | "all";
+type LiveMonitorTarget =
+  | {
+      kind: "gke";
+      projectId: string;
+      container: string;
+      pathIds: Set<string>;
+    }
+  | {
+      kind: "cloudrun";
+      projectId: string;
+      service: string;
+      region?: string;
+      pathIds: Set<string>;
+    }
+  | {
+      kind: "vm";
+      projectId: string;
+      instance: string;
+      region?: string;
+      pathIds: Set<string>;
+    };
+
+interface LiveEvent {
+  id: string;
+  ts: string;
+  label: string;
+  kind: LiveMonitorTarget["kind"];
+  projectId: string;
+  method?: string;
+  path?: string;
+  status?: number;
+  latency?: string;
+  count: number;
+}
 
 interface GraphNode {
   id: string;
@@ -35,6 +70,7 @@ interface GraphNode {
   projectId?: string;
   region?: string;   // Cloud Run region or GCE zone — used for log filtering
   matchUrl?: string; // Cloud Run URL or LB IP
+  resourceName?: string; // Exact service/instance name for log lookups
   container?: string; // sidecar: k8s container name
   parentId?: string;  // sidecar: parent GKE node id
 }
@@ -174,6 +210,7 @@ function buildTopology(
       projectId: svc.projectId,
       region: svc.region,
       matchUrl: svc.url,
+      resourceName: svc.name,
     });
     edges.push({ from: "internet", to: id });
   });
@@ -189,6 +226,7 @@ function buildTopology(
       projectId: vm.projectId,
       region: zone,
       matchUrl: vm.externalIp ?? undefined,
+      resourceName: vm.name,
     });
     const parentLbs = lbs
       .map((lb, li) => ({ lb, id: `lb-${li}` }))
@@ -250,6 +288,85 @@ function inferActivePath(url: string, nodes: GraphNode[], edges: GraphEdge[]): S
   // No match → only "internet" stays active (unknown path, don't light up unrelated nodes)
 
   return active;
+}
+
+function buildPathForNode(nodeId: string, edges: GraphEdge[]): Set<string> {
+  const path = new Set<string>(["internet"]);
+  const addDownstream = (id: string) => {
+    if (path.has(id)) return;
+    path.add(id);
+    edges.filter(e => e.from === id).forEach(e => addDownstream(e.to));
+  };
+  const addUpstream = (id: string) => {
+    edges.filter(e => e.to === id).forEach(e => {
+      path.add(e.from);
+      addUpstream(e.from);
+    });
+  };
+  addDownstream(nodeId);
+  addUpstream(nodeId);
+  return path;
+}
+
+function liveTargetKey(target: LiveMonitorTarget): string {
+  if (target.kind === "gke") return `gke:${target.projectId}:${target.container}`;
+  if (target.kind === "cloudrun") return `cloudrun:${target.projectId}:${target.region ?? ""}:${target.service}`;
+  return `vm:${target.projectId}:${target.region ?? ""}:${target.instance}`;
+}
+
+function buildLiveLogParams(target: LiveMonitorTarget, after: string): URLSearchParams {
+  const params = new URLSearchParams({
+    projectId: target.projectId,
+    after,
+    limit: "20",
+  });
+  if (target.kind === "gke") {
+    params.set("container", target.container);
+  } else if (target.kind === "cloudrun") {
+    params.set("resourceType", "cloud_run_revision");
+    params.set("service", target.service);
+    if (target.region) params.set("region", target.region);
+  } else if (target.kind === "vm") {
+    params.set("resourceType", "gce_instance");
+    params.set("instance", target.instance);
+    if (target.region) params.set("region", target.region);
+  }
+  return params;
+}
+
+function liveTargetLabel(target: LiveMonitorTarget): string {
+  if (target.kind === "gke") return `GKE · ${target.container}`;
+  if (target.kind === "cloudrun") return `RUN · ${target.service}`;
+  return `VM · ${target.instance}`;
+}
+
+function toLiveEvent(target: LiveMonitorTarget, entries: LogEntry[]): LiveEvent | null {
+  if (entries.length === 0) return null;
+  const latest = entries.reduce((a, b) => a.timestamp > b.timestamp ? a : b);
+  const parsed = !latest.httpRequest
+    ? (parseReqLog(latest.message) ?? parseNginxLog(latest.message) ?? parseEnvoyLog(latest.message))
+    : null;
+  const method = latest.httpRequest?.method ?? parsed?.method ?? undefined;
+  const path = latest.httpRequest
+    ? (() => {
+        try { return new URL(latest.httpRequest!.url).pathname; }
+        catch { return latest.httpRequest!.url; }
+      })()
+    : ("path" in (parsed ?? {}) ? parsed?.path : undefined);
+  const status = latest.httpRequest?.status ?? ("status" in (parsed ?? {}) ? parsed?.status : undefined);
+  const latency = latest.httpRequest?.latency ?? ("latencyMs" in (parsed ?? {}) && parsed ? `${parsed.latencyMs}ms` : undefined);
+  return {
+    id: `${liveTargetKey(target)}:${latest.timestamp}:${entries.length}`,
+    ts: latest.timestamp,
+    label: liveTargetLabel(target),
+    kind: target.kind,
+    projectId: target.projectId,
+    method,
+    path,
+    status,
+    latency,
+    count: entries.length,
+  };
 }
 
 // ─── Layout calculation ───────────────────────────────────────────────────────
@@ -729,11 +846,11 @@ function NodeDetail({
     const params = new URLSearchParams({ projectId: node.projectId, limit: "80" });
     if (node.type === "cloudrun") {
       params.set("resourceType", "cloud_run_revision");
-      params.set("service", node.label.toLowerCase());
+      params.set("service", node.resourceName ?? node.label.toLowerCase());
       if (node.region) params.set("region", node.region);
     } else if (node.type === "vm") {
       params.set("resourceType", "gce_instance");
-      params.set("instance", node.label.toLowerCase());
+      params.set("instance", node.resourceName ?? node.label.toLowerCase());
       if (node.region) params.set("region", node.region);
     } else if (node.type === "sidecar") {
       params.set("resourceType", "k8s_container");
@@ -1458,12 +1575,14 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
   // Live monitoring
   const [liveMode, setLiveMode] = useState(false);
+  const [liveScope, setLiveScope] = useState<LiveScope>("active");
   const [liveAnimEnabled, setLiveAnimEnabled] = useState(true);
   const liveAnimEnabledRef = useRef(true);
   const liveModeRef = useRef(false);
-  const liveLastTs = useRef("");
+  const liveLastTsByTarget = useRef<Record<string, string>>({});
   const liveTimestamps = useRef<number[]>([]);   // sliding window of request timestamps
   const [liveRps, setLiveRps] = useState<number | null>(null);
+  const [liveEvents, setLiveEvents] = useState<LiveEvent[]>([]);
 
   // Demo simulation
   const [demoRps, setDemoRps] = useState<number | null>(null);
@@ -1600,6 +1719,127 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     });
     return base;
   }, [url, nodes, edges]);
+
+  const liveMonitorTarget = useMemo<LiveMonitorTarget | null>(() => {
+    const buildGkeTarget = (pathNodeIds: Set<string>) => {
+      const gkeNode = nodes.find(n => pathNodeIds.has(n.id) && n.type === "gke" && n.projectId);
+      if (!gkeNode) return null;
+      const containers = nodeContainers[gkeNode.id] ?? [];
+      const container = SIDECAR_ORDER.find(c => containers.includes(c)) ?? containers[0];
+      if (!container) return null;
+      return {
+        kind: "gke" as const,
+        projectId: gkeNode.projectId!,
+        container,
+        pathIds: pathNodeIds,
+      };
+    };
+
+    const buildCloudRunTarget = (pathNodeIds: Set<string>) => {
+      const runNode = nodes.find(
+        n => pathNodeIds.has(n.id) && n.type === "cloudrun" && n.projectId && n.resourceName
+      );
+      if (!runNode) return null;
+      return {
+        kind: "cloudrun" as const,
+        projectId: runNode.projectId!,
+        service: runNode.resourceName!,
+        region: runNode.region,
+        pathIds: pathNodeIds,
+      };
+    };
+
+    const buildVmTarget = (pathNodeIds: Set<string>) => {
+      const vmNode = nodes.find(
+        n => pathNodeIds.has(n.id) && n.type === "vm" && n.projectId && n.resourceName
+      );
+      if (!vmNode) return null;
+      return {
+        kind: "vm" as const,
+        projectId: vmNode.projectId!,
+        instance: vmNode.resourceName!,
+        region: vmNode.region,
+        pathIds: pathNodeIds,
+      };
+    };
+
+    const pickTarget = (pathNodeIds: Set<string>) =>
+      buildGkeTarget(pathNodeIds) ??
+      buildCloudRunTarget(pathNodeIds) ??
+      buildVmTarget(pathNodeIds);
+
+    if (activePath.size > 1) {
+      const matchedTarget = pickTarget(new Set(activePath));
+      if (matchedTarget) return matchedTarget;
+    }
+
+    for (const node of nodes) {
+      if (
+        (node.type === "gke" && node.projectId) ||
+        (node.type === "cloudrun" && node.projectId && node.resourceName) ||
+        (node.type === "vm" && node.projectId && node.resourceName)
+      ) {
+        const fallbackTarget = pickTarget(buildPathForNode(node.id, edges));
+        if (fallbackTarget) return fallbackTarget;
+      }
+    }
+
+    return null;
+  }, [activePath, edges, nodeContainers, nodes]);
+
+  const allLiveMonitorTargets = useMemo<LiveMonitorTarget[]>(() => {
+    const targets: LiveMonitorTarget[] = [];
+    const seen = new Set<string>();
+
+    const addTarget = (target: LiveMonitorTarget | null) => {
+      if (!target) return;
+      const key = liveTargetKey(target);
+      if (seen.has(key)) return;
+      seen.add(key);
+      targets.push(target);
+    };
+
+    nodes.forEach(node => {
+      if (
+        (node.type === "gke" && node.projectId) ||
+        (node.type === "cloudrun" && node.projectId && node.resourceName) ||
+        (node.type === "vm" && node.projectId && node.resourceName)
+      ) {
+        const pathNodeIds = buildPathForNode(node.id, edges);
+        const target =
+          node.type === "gke"
+            ? (() => {
+                const containers = nodeContainers[node.id] ?? [];
+                const container = SIDECAR_ORDER.find(c => containers.includes(c)) ?? containers[0];
+                if (!container) return null;
+                return {
+                  kind: "gke" as const,
+                  projectId: node.projectId!,
+                  container,
+                  pathIds: pathNodeIds,
+                };
+              })()
+            : node.type === "cloudrun"
+              ? {
+                  kind: "cloudrun" as const,
+                  projectId: node.projectId!,
+                  service: node.resourceName!,
+                  region: node.region,
+                  pathIds: pathNodeIds,
+                }
+              : {
+                  kind: "vm" as const,
+                  projectId: node.projectId!,
+                  instance: node.resourceName!,
+                  region: node.region,
+                  pathIds: pathNodeIds,
+                };
+        addTarget(target);
+      }
+    });
+
+    return targets;
+  }, [edges, nodeContainers, nodes]);
 
   // ── BFS pulse animation (shared by handleSend and live mode) ────────────────
   // colDelay: ms between waves (default = ANIM_COL_DELAY); resetAfterMs: if >0 fade to idle
@@ -1754,42 +1994,66 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   useEffect(() => {
     liveModeRef.current = liveMode;
     if (!liveMode) {
-      liveLastTs.current = "";
+      liveLastTsByTarget.current = {};
       liveTimestamps.current = [];
       setLiveRps(null);
+      setLiveEvents([]);
       return;
     }
 
-    // Find a GKE node with known containers to poll
-    const gkeNode = nodes.find(n => n.type === "gke" && n.projectId);
-    const containers = gkeNode ? (nodeContainers[gkeNode.id] ?? []) : [];
-    // Prefer the first sidecar in processing order (istio-proxy → nginx → …)
-    const pollContainer = SIDECAR_ORDER.find(c => containers.includes(c)) ?? containers[0];
-    if (!gkeNode || !pollContainer) return;
+    const targets = liveScope === "all"
+      ? allLiveMonitorTargets
+      : (liveMonitorTarget ? [liveMonitorTarget] : []);
+    if (targets.length === 0) return;
 
-    // Animate the full topology path (all known nodes)
-    const allNodeIds = new Set(nodes.map(n => n.id));
-
-    liveLastTs.current = new Date().toISOString();
+    const startTs = new Date().toISOString();
+    targets.forEach(target => {
+      const key = liveTargetKey(target);
+      if (!liveLastTsByTarget.current[key]) {
+        liveLastTsByTarget.current[key] = startTs;
+      }
+    });
     let busy = false;
 
     const poll = async () => {
       if (!liveModeRef.current || busy) return;
-      const params = new URLSearchParams({
-        projectId: gkeNode.projectId!,
-        container: pollContainer,
-        after: liveLastTs.current,
-        limit: "20",
-      });
       try {
-        const data = await fetch(`/api/gcp/logs?${params}`).then(r => r.json());
-        const entries: LogEntry[] = data.entries ?? [];
-        if (entries.length > 0) {
-          const latest = entries.reduce((a, b) => a.timestamp > b.timestamp ? a : b);
-          liveLastTs.current = latest.timestamp;
+        const results = await Promise.all(
+          targets.map(async (target) => {
+            const key = liveTargetKey(target);
+            const after = liveLastTsByTarget.current[key] ?? startTs;
+            const params = buildLiveLogParams(target, after);
+            const data = await fetch(`/api/gcp/logs?${params}`).then(r => r.json());
+            const entries: LogEntry[] = data.entries ?? [];
+            if (entries.length > 0) {
+              const latest = entries.reduce((a, b) => a.timestamp > b.timestamp ? a : b);
+              liveLastTsByTarget.current[key] = latest.timestamp;
+            }
+            return { target, entries };
+          })
+        );
 
-          // ── RPS calculation using a 10s sliding window of server-side timestamps ──
-          entries.forEach(e => {
+        const allEntries = results.flatMap(result => result.entries);
+        if (allEntries.length > 0) {
+          const newEvents = results
+            .map(result => toLiveEvent(result.target, result.entries))
+            .filter((event): event is LiveEvent => !!event)
+            .sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
+          if (newEvents.length > 0) {
+            setLiveEvents(prev => {
+              const merged = [...newEvents, ...prev];
+              const deduped: LiveEvent[] = [];
+              const seen = new Set<string>();
+              for (const event of merged) {
+                if (seen.has(event.id)) continue;
+                seen.add(event.id);
+                deduped.push(event);
+                if (deduped.length >= 24) break;
+              }
+              return deduped;
+            });
+          }
+          allEntries.forEach(e => {
             if (e.timestamp) liveTimestamps.current.push(new Date(e.timestamp).getTime());
           });
           const maxTs = Math.max(...liveTimestamps.current);
@@ -1799,12 +2063,26 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
           if (liveAnimEnabledRef.current) {
             busy = true;
-            // Scale pulse count to traffic volume: 1 pulse per ~5 requests, max 4
-            const pulses = Math.min(Math.max(1, Math.round(entries.length / 5)), 4);
-            for (let p = 0; p < pulses; p++) {
-              if (!liveModeRef.current) break;
-              if (p > 0) await sleep(350);
-              await runBfsAnimation(allNodeIds, { colDelay: 160, resetAfterMs: 700 });
+            const targetsWithHits = results.filter(result => result.entries.length > 0);
+            if (targets.length === 1) {
+              const [{ target, entries }] = targetsWithHits;
+              if (target) {
+                const pulses = Math.min(Math.max(1, Math.round(entries.length / 5)), 4);
+                for (let p = 0; p < pulses; p++) {
+                  if (!liveModeRef.current) break;
+                  if (p > 0) await sleep(350);
+                  await runBfsAnimation(target.pathIds, { colDelay: 160, resetAfterMs: 700 });
+                }
+              }
+            } else {
+              const animatedTargets = targetsWithHits
+                .sort((a, b) => b.entries.length - a.entries.length)
+                .slice(0, 6);
+              for (let i = 0; i < animatedTargets.length; i++) {
+                if (!liveModeRef.current) break;
+                if (i > 0) await sleep(220);
+                await runBfsAnimation(animatedTargets[i].target.pathIds, { colDelay: 140, resetAfterMs: 700 });
+              }
             }
             busy = false;
           }
@@ -1815,7 +2093,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     const id = setInterval(poll, 2000);
     poll(); // immediate first check
     return () => { clearInterval(id); };
-  }, [liveMode, nodes, nodeContainers, runBfsAnimation]);
+  }, [allLiveMonitorTargets, liveMode, liveMonitorTarget, liveScope, runBfsAnimation]);
 
   // ── Send request ────────────────────────────────────────────────────────────
   const handleSend = useCallback(async () => {
@@ -2040,7 +2318,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
           ))}
           <div className="flex items-center gap-0.5 px-2 border-l border-slate-800/30 shrink-0">
             {/* Live monitor toggle */}
-            {nodes.some(n => n.type === "sidecar") && (
+            {liveMonitorTarget && (
               <>
                 <button
                   onClick={() => {
@@ -2056,15 +2334,30 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                       ? "border-emerald-600 text-emerald-400 bg-emerald-900/20"
                       : "border-slate-700 text-slate-600 hover:border-slate-500 hover:text-slate-400"
                   )}
-                >
-                  <Activity size={8} className={liveMode ? "animate-pulse" : ""} />
-                  LIVE
-                  {liveMode && liveRps !== null && (
-                    <span className="font-mono text-emerald-300">
-                      {liveRps >= 10 ? liveRps.toFixed(0) : liveRps.toFixed(1)}/s
-                    </span>
-                  )}
-                </button>
+                  >
+                    <Activity size={8} className={liveMode ? "animate-pulse" : ""} />
+                    LIVE
+                    {liveMode && liveRps !== null && (
+                      <span className="font-mono text-emerald-300">
+                        {liveRps >= 10 ? liveRps.toFixed(0) : liveRps.toFixed(1)}/s
+                      </span>
+                    )}
+                  </button>
+                {allLiveMonitorTargets.length > 1 && (
+                  <button
+                    onClick={() => setLiveScope(scope => scope === "all" ? "active" : "all")}
+                    title={liveScope === "all" ? "Watching all monitorable endpoints" : "Watch all monitorable endpoints"}
+                    className={cn(
+                      "flex items-center gap-1 text-[8px] px-1.5 py-0.5 border transition-colors tracking-widest",
+                      liveScope === "all"
+                        ? "border-emerald-800 text-emerald-500 bg-emerald-950/30"
+                        : "border-slate-700 text-slate-600 hover:border-slate-500 hover:text-slate-400"
+                    )}
+                  >
+                    <Globe size={8} />
+                    ALL
+                  </button>
+                )}
                 {liveMode && (
                   <button
                     onClick={() => {
@@ -2454,6 +2747,53 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                 )}
               </div>
             </div>
+
+            {liveMode && liveEvents.length > 0 && (
+              <div className="shrink-0 border-b border-slate-800/50 bg-[#060906]">
+                <div className="px-3 py-1.5 flex items-center justify-between">
+                  <span className="text-[9px] uppercase tracking-widest text-slate-500">Live Events</span>
+                  <span className="text-[8px] text-slate-600">{liveScope === "all" ? "All endpoints" : "Active path"}</span>
+                </div>
+                <div className="max-h-40 overflow-y-auto px-3 pb-2 flex flex-col gap-1">
+                  {liveEvents.map(event => {
+                    const statusClass = !event.status
+                      ? "text-slate-500"
+                      : event.status < 300
+                        ? "text-emerald-400"
+                        : event.status < 400
+                          ? "text-sky-400"
+                          : event.status < 500
+                            ? "text-amber-400"
+                            : "text-red-400";
+                    const methodClass = event.method ? (METHOD_COLOR[event.method] ?? "text-slate-400") : "text-slate-500";
+                    const ts = event.ts
+                      ? new Date(event.ts).toLocaleTimeString([], {
+                          hour12: false,
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          second: "2-digit",
+                        })
+                      : "";
+                    return (
+                      <div key={event.id} className="border border-slate-800/60 bg-[#0a0d0a] px-2 py-1.5 text-[10px]">
+                        <div className="flex items-center gap-2">
+                          <span className="text-slate-700 shrink-0 w-14">{ts}</span>
+                          <span className="text-emerald-500 shrink-0 text-[8px] uppercase tracking-widest">{event.label}</span>
+                          <span className="text-slate-600 shrink-0 truncate">{event.projectId}</span>
+                          {event.count > 1 && <span className="ml-auto text-[8px] text-slate-500">+{event.count - 1}</span>}
+                        </div>
+                        <div className="mt-0.5 flex items-center gap-2">
+                          {event.method ? <span className={cn("shrink-0 w-10 font-bold", methodClass)}>{event.method}</span> : <span className="shrink-0 w-10 text-slate-700">LOG</span>}
+                          {event.status !== undefined && <span className={cn("shrink-0 w-8", statusClass)}>{event.status}</span>}
+                          <span className="text-slate-300 truncate flex-1">{event.path ?? "Request observed"}</span>
+                          {event.latency && <span className="text-slate-600 shrink-0">{event.latency}</span>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             <div className="flex-1 overflow-y-auto p-3 text-[11px] font-mono">
               {!response && !sending && (
