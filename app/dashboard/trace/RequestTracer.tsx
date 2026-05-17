@@ -1580,6 +1580,8 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const liveAnimEnabledRef = useRef(true);
   const liveModeRef = useRef(false);
   const liveLastTsByTarget = useRef<Record<string, string>>({});
+  const livePollCursorRef = useRef(0);
+  const liveCooldownUntilRef = useRef(0);
   const liveTimestamps = useRef<number[]>([]);   // sliding window of request timestamps
   const [liveRps, setLiveRps] = useState<number | null>(null);
   const [liveEvents, setLiveEvents] = useState<LiveEvent[]>([]);
@@ -1592,6 +1594,8 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
   // Fullscreen graph
   const [graphFullscreen, setGraphFullscreen] = useState(false);
+  const liveSummaryRef = useRef<HTMLDivElement>(null);
+  const liveConsoleRef = useRef<HTMLDivElement>(null);
 
   // Zoom / pan
   const [zoom, setZoom] = useState(1);
@@ -1841,6 +1845,25 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     return targets;
   }, [edges, nodeContainers, nodes]);
 
+  const liveEventsOrdered = useMemo(
+    () => [...liveEvents].sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime()),
+    [liveEvents]
+  );
+  const liveEventsRecent = useMemo(
+    () => liveEventsOrdered.slice(-6),
+    [liveEventsOrdered]
+  );
+
+  useEffect(() => {
+    if (!liveMode || liveEventsOrdered.length === 0) return;
+    if (liveSummaryRef.current) {
+      liveSummaryRef.current.scrollTop = liveSummaryRef.current.scrollHeight;
+    }
+    if (liveConsoleRef.current) {
+      liveConsoleRef.current.scrollTop = liveConsoleRef.current.scrollHeight;
+    }
+  }, [liveEventsOrdered, liveMode]);
+
   // ── BFS pulse animation (shared by handleSend and live mode) ────────────────
   // colDelay: ms between waves (default = ANIM_COL_DELAY); resetAfterMs: if >0 fade to idle
   const runBfsAnimation = useCallback(async (
@@ -1995,19 +2018,21 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     liveModeRef.current = liveMode;
     if (!liveMode) {
       liveLastTsByTarget.current = {};
+      livePollCursorRef.current = 0;
+      liveCooldownUntilRef.current = 0;
       liveTimestamps.current = [];
       setLiveRps(null);
       setLiveEvents([]);
       return;
     }
 
-    const targets = liveScope === "all"
+    const allTargets = liveScope === "all"
       ? allLiveMonitorTargets
       : (liveMonitorTarget ? [liveMonitorTarget] : []);
-    if (targets.length === 0) return;
+    if (allTargets.length === 0) return;
 
     const startTs = new Date().toISOString();
-    targets.forEach(target => {
+    allTargets.forEach(target => {
       const key = liveTargetKey(target);
       if (!liveLastTsByTarget.current[key]) {
         liveLastTsByTarget.current[key] = startTs;
@@ -2017,21 +2042,44 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
     const poll = async () => {
       if (!liveModeRef.current || busy) return;
+      if (Date.now() < liveCooldownUntilRef.current) return;
+      const targets = liveScope === "all"
+        ? (() => {
+            const batchSize = 2;
+            const start = livePollCursorRef.current % allTargets.length;
+            const batch = Array.from({ length: Math.min(batchSize, allTargets.length) }, (_, i) => allTargets[(start + i) % allTargets.length]);
+            livePollCursorRef.current = (start + batch.length) % allTargets.length;
+            return batch;
+          })()
+        : allTargets;
       try {
         const results = await Promise.all(
           targets.map(async (target) => {
             const key = liveTargetKey(target);
             const after = liveLastTsByTarget.current[key] ?? startTs;
             const params = buildLiveLogParams(target, after);
-            const data = await fetch(`/api/gcp/logs?${params}`).then(r => r.json());
+            const res = await fetch(`/api/gcp/logs?${params}`);
+            const data = await res.json().catch(() => ({}));
+            if (res.status === 429 || data?.code === "rate_limited") {
+              const retryAfterSec = Number(data?.retryAfterSec ?? 30);
+              liveCooldownUntilRef.current = Date.now() + retryAfterSec * 1000;
+              return { target, entries: [] as LogEntry[], rateLimited: true };
+            }
+            if (!res.ok) {
+              return { target, entries: [] as LogEntry[], rateLimited: false };
+            }
             const entries: LogEntry[] = data.entries ?? [];
             if (entries.length > 0) {
               const latest = entries.reduce((a, b) => a.timestamp > b.timestamp ? a : b);
               liveLastTsByTarget.current[key] = latest.timestamp;
             }
-            return { target, entries };
+            return { target, entries, rateLimited: false };
           })
         );
+
+        if (results.some(result => result.rateLimited)) {
+          return;
+        }
 
         const allEntries = results.flatMap(result => result.entries);
         if (allEntries.length > 0) {
@@ -2090,7 +2138,8 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       } catch { /* ignore polling errors */ }
     };
 
-    const id = setInterval(poll, 2000);
+    const pollIntervalMs = liveScope === "all" ? 8000 : 3000;
+    const id = setInterval(poll, pollIntervalMs);
     poll(); // immediate first check
     return () => { clearInterval(id); };
   }, [allLiveMonitorTargets, liveMode, liveMonitorTarget, liveScope, runBfsAnimation]);
@@ -2711,7 +2760,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       </div>
 
       {/* ── Right: Detail / Response panel ───────────────────────────── */}
-      {!graphFullscreen && <div className="w-[260px] shrink-0 flex flex-col border border-slate-800/50 bg-[#070b07] min-h-0">
+      {!graphFullscreen && <div className="w-[340px] shrink-0 flex flex-col border border-slate-800/50 bg-[#070b07] min-h-0">
 
         {selectedNode ? (
           // ── Node detail view ──────────────────────────────────────────
@@ -2749,13 +2798,13 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
             </div>
 
             {liveMode && liveEvents.length > 0 && (
-              <div className="shrink-0 border-b border-slate-800/50 bg-[#060906]">
+              <div className="shrink-0 border-b border-slate-800/50 bg-[#060906] flex flex-col">
                 <div className="px-3 py-1.5 flex items-center justify-between">
                   <span className="text-[9px] uppercase tracking-widest text-slate-500">Live Events</span>
                   <span className="text-[8px] text-slate-600">{liveScope === "all" ? "All endpoints" : "Active path"}</span>
                 </div>
-                <div className="max-h-40 overflow-y-auto px-3 pb-2 flex flex-col gap-1">
-                  {liveEvents.map(event => {
+                <div ref={liveSummaryRef} className="max-h-28 overflow-auto px-3 pb-2 font-mono text-[10px]">
+                  {liveEventsRecent.map(event => {
                     const statusClass = !event.status
                       ? "text-slate-500"
                       : event.status < 300
@@ -2774,19 +2823,19 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                           second: "2-digit",
                         })
                       : "";
+                    const countText = event.count > 1 ? ` (+${event.count - 1})` : "";
+                    const pathText = event.path ?? "Request observed";
                     return (
-                      <div key={event.id} className="border border-slate-800/60 bg-[#0a0d0a] px-2 py-1.5 text-[10px]">
-                        <div className="flex items-center gap-2">
-                          <span className="text-slate-700 shrink-0 w-14">{ts}</span>
-                          <span className="text-emerald-500 shrink-0 text-[8px] uppercase tracking-widest">{event.label}</span>
-                          <span className="text-slate-600 shrink-0 truncate">{event.projectId}</span>
-                          {event.count > 1 && <span className="ml-auto text-[8px] text-slate-500">+{event.count - 1}</span>}
-                        </div>
-                        <div className="mt-0.5 flex items-center gap-2">
-                          {event.method ? <span className={cn("shrink-0 w-10 font-bold", methodClass)}>{event.method}</span> : <span className="shrink-0 w-10 text-slate-700">LOG</span>}
-                          {event.status !== undefined && <span className={cn("shrink-0 w-8", statusClass)}>{event.status}</span>}
-                          <span className="text-slate-300 truncate flex-1">{event.path ?? "Request observed"}</span>
-                          {event.latency && <span className="text-slate-600 shrink-0">{event.latency}</span>}
+                      <div key={event.id} className="w-full border-b border-slate-800/30 py-1 last:border-b-0">
+                        <div className="whitespace-pre-wrap break-all text-slate-300">
+                          <span className="text-slate-700">{ts}</span>{" "}
+                          <span className="text-emerald-500">{event.label}</span>{" "}
+                          <span className="text-slate-600">[{event.projectId}]</span>{" "}
+                          {event.method ? <span className={cn("font-bold", methodClass)}>{event.method}</span> : <span className="text-slate-500">LOG</span>}{" "}
+                          {event.status !== undefined && <span className={statusClass}>{event.status}</span>}{" "}
+                          <span>{pathText}</span>
+                          {event.latency ? <> <span className="text-slate-600">{event.latency}</span></> : null}
+                          {countText ? <> <span className="text-slate-500">{countText}</span></> : null}
                         </div>
                       </div>
                     );
@@ -2796,7 +2845,55 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
             )}
 
             <div className="flex-1 overflow-y-auto p-3 text-[11px] font-mono">
+              {liveMode && liveEvents.length > 0 && !response && !sending && (
+                <div className="h-full min-h-0 flex flex-col">
+                  <div className="shrink-0 flex items-center justify-between pb-2 border-b border-slate-800/40">
+                    <span className="text-[10px] uppercase tracking-widest text-slate-500">Live Console</span>
+                    <span className="text-[8px] text-slate-600">tail -f</span>
+                  </div>
+                  <div ref={liveConsoleRef} className="flex-1 min-h-0 overflow-auto pt-2 text-[10px] leading-5">
+                    {liveEventsOrdered.map(event => {
+                      const statusClass = !event.status
+                        ? "text-slate-500"
+                        : event.status < 300
+                          ? "text-emerald-400"
+                          : event.status < 400
+                            ? "text-sky-400"
+                            : event.status < 500
+                              ? "text-amber-400"
+                              : "text-red-400";
+                      const methodClass = event.method ? (METHOD_COLOR[event.method] ?? "text-slate-400") : "text-slate-500";
+                      const ts = event.ts
+                        ? new Date(event.ts).toLocaleTimeString([], {
+                            hour12: false,
+                            hour: "2-digit",
+                            minute: "2-digit",
+                            second: "2-digit",
+                          })
+                        : "";
+                      const countText = event.count > 1 ? ` (+${event.count - 1})` : "";
+                      const pathText = event.path ?? "Request observed";
+                      return (
+                        <div key={`console-${event.id}`} className="border-b border-slate-800/20 py-1.5 last:border-b-0">
+                          <div className="whitespace-pre-wrap break-all text-slate-300">
+                            <span className="text-slate-700">{ts}</span>{" "}
+                            <span className="text-emerald-500">{event.label}</span>{" "}
+                            <span className="text-slate-600">[{event.projectId}]</span>{" "}
+                            {event.method ? <span className={cn("font-bold", methodClass)}>{event.method}</span> : <span className="text-slate-500">LOG</span>}{" "}
+                            {event.status !== undefined && <span className={statusClass}>{event.status}</span>}{" "}
+                            <span>{pathText}</span>
+                            {event.latency ? <> <span className="text-slate-600">{event.latency}</span></> : null}
+                            {countText ? <> <span className="text-slate-500">{countText}</span></> : null}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {!response && !sending && (
+                !(liveMode && liveEvents.length > 0) &&
                 <p className="text-slate-600 text-[10px]">
                   Click a node for details, or send a request to see the response.
                 </p>

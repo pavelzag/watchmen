@@ -160,6 +160,18 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ entries, count: entries.length, _filter: filterStr });
   } catch (err: any) {
+    const status = Number(err?.status ?? err?.code ?? 500);
+    if (status === 429) {
+      console.warn("[api/gcp/logs] rate limited");
+      return NextResponse.json(
+        {
+          error: "Cloud Logging rate limit exceeded.",
+          code: "rate_limited",
+          retryAfterSec: 30,
+        },
+        { status: 429 }
+      );
+    }
     console.error("[api/gcp/logs]", err);
     return NextResponse.json({ error: err.message ?? "Failed to fetch logs" }, { status: 500 });
   }

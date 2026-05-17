@@ -13,8 +13,11 @@ Options:
   --email EMAIL           Snapshot owner email to read from user_snapshots
   --db-url URL            Override POSTGRES_URL instead of reading .env.local
   --intervals CSV         Round delays in seconds, default: 1,2,5,10,15,20
+  --fixed-interval SEC    Use the same sleep after every round
+  --duration SEC          Keep polling for roughly this many seconds
   --timeout SECONDS       Per-request curl timeout, default: 10
   --method METHOD         HTTP method, default: GET
+  --repeat N              Requests per endpoint in each round, default: 1
   --header 'K: V'         Extra header, repeatable
   --path PATH             Append path to each Cloud Run base URL
   --rounds N              Override round count; uses first N intervals
@@ -23,14 +26,18 @@ Examples:
   scripts/poll-cloudrun-endpoints.sh --email you@example.com
   scripts/poll-cloudrun-endpoints.sh --email you@example.com --path /healthz
   scripts/poll-cloudrun-endpoints.sh --email you@example.com --intervals 1,3,7,15
+  scripts/poll-cloudrun-endpoints.sh --email you@example.com --fixed-interval 2 --duration 300 --repeat 3
 EOF
 }
 
 EMAIL=""
 DB_URL=""
 INTERVALS_CSV="1,2,5,10,15,20"
+FIXED_INTERVAL=""
+DURATION=""
 TIMEOUT="10"
 METHOD="GET"
+REPEAT="1"
 PATH_SUFFIX=""
 ROUNDS=""
 HEADERS=()
@@ -49,12 +56,24 @@ while [[ $# -gt 0 ]]; do
       INTERVALS_CSV="${2:-}"
       shift 2
       ;;
+    --fixed-interval)
+      FIXED_INTERVAL="${2:-}"
+      shift 2
+      ;;
+    --duration)
+      DURATION="${2:-}"
+      shift 2
+      ;;
     --timeout)
       TIMEOUT="${2:-}"
       shift 2
       ;;
     --method)
       METHOD="${2:-}"
+      shift 2
+      ;;
+    --repeat)
+      REPEAT="${2:-}"
       shift 2
       ;;
     --header)
@@ -104,9 +123,8 @@ if [[ -n "$PATH_SUFFIX" && "${PATH_SUFFIX:0:1}" != "/" ]]; then
   PATH_SUFFIX="/$PATH_SUFFIX"
 fi
 
-IFS=',' read -r -a INTERVALS <<< "$INTERVALS_CSV"
-if [[ ${#INTERVALS[@]} -eq 0 ]]; then
-  echo "No intervals provided" >&2
+if ! [[ "$REPEAT" =~ ^[0-9]+$ ]] || [[ "$REPEAT" -lt 1 ]]; then
+  echo "--repeat must be a positive integer" >&2
   exit 1
 fi
 
@@ -115,7 +133,46 @@ if [[ -n "$ROUNDS" ]]; then
     echo "--rounds must be a positive integer" >&2
     exit 1
   fi
-  INTERVALS=("${INTERVALS[@]:0:$ROUNDS}")
+fi
+
+if [[ -n "$FIXED_INTERVAL" ]]; then
+  if ! [[ "$FIXED_INTERVAL" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    echo "--fixed-interval must be a positive number" >&2
+    exit 1
+  fi
+fi
+
+if [[ -n "$DURATION" ]]; then
+  if ! [[ "$DURATION" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    echo "--duration must be a positive number" >&2
+    exit 1
+  fi
+fi
+
+INTERVALS=()
+if [[ -n "$FIXED_INTERVAL" ]]; then
+  rounds_to_run="${ROUNDS:-}"
+  if [[ -z "$rounds_to_run" ]]; then
+    if [[ -n "$DURATION" ]]; then
+      rounds_to_run="$(awk -v d="$DURATION" -v i="$FIXED_INTERVAL" 'BEGIN { r = int((d / i) + 0.999999); if (r < 1) r = 1; print r }')"
+    else
+      rounds_to_run="30"
+    fi
+  fi
+  i=0
+  while [[ "$i" -lt "$rounds_to_run" ]]; do
+    INTERVALS+=("$FIXED_INTERVAL")
+    i=$((i + 1))
+  done
+else
+  IFS=',' read -r -a INTERVALS <<< "$INTERVALS_CSV"
+  if [[ ${#INTERVALS[@]} -eq 0 ]]; then
+    echo "No intervals provided" >&2
+    exit 1
+  fi
+  if [[ -n "$ROUNDS" ]]; then
+    INTERVALS=("${INTERVALS[@]:0:$ROUNDS}")
+  fi
 fi
 
 ENDPOINT_ROWS=()
@@ -161,6 +218,7 @@ fi
 
 echo "Found ${#ENDPOINT_ROWS[@]} Cloud Run endpoint(s) for $EMAIL"
 echo "Intervals: ${INTERVALS[*]} seconds"
+echo "Requests per endpoint per round: $REPEAT"
 echo
 
 round=1
@@ -171,16 +229,25 @@ for interval in "${INTERVALS[@]}"; do
   for row in "${ENDPOINT_ROWS[@]}"; do
     IFS=$'\t' read -r name project_id region url <<< "$row"
     target="${url%/}${PATH_SUFFIX}"
-    sep='?'
-    if [[ "$target" == *\?* ]]; then
-      sep='&'
-    fi
-    request_url="${target}${sep}watchmen_trace_probe=$(date +%s)-${RANDOM}"
+    req=1
+    while [[ "$req" -le "$REPEAT" ]]; do
+      sep='?'
+      if [[ "$target" == *\?* ]]; then
+        sep='&'
+      fi
+      request_url="${target}${sep}watchmen_trace_probe=$(date +%s)-${RANDOM}-${round}-${req}"
 
-    printf '%s [%s/%s] %s -> ' "$name" "$project_id" "$region" "$request_url"
-    if ! curl "${CURL_ARGS[@]}" "$request_url"; then
-      echo "status=ERR"
-    fi
+      if [[ "$REPEAT" -gt 1 ]]; then
+        printf '%s [%s/%s] #%s %s -> ' "$name" "$project_id" "$region" "$req" "$request_url"
+      else
+        printf '%s [%s/%s] %s -> ' "$name" "$project_id" "$region" "$request_url"
+      fi
+
+      if ! curl "${CURL_ARGS[@]}" "$request_url"; then
+        echo "status=ERR"
+      fi
+      req=$((req + 1))
+    done
   done
 
   if [[ "$round" -lt "${#INTERVALS[@]}" ]]; then
