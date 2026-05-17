@@ -21,6 +21,31 @@ type responseRecorder struct {
 	status int
 }
 
+type requestLog struct {
+	Type      string            `json:"type"`
+	RemoteIP  string            `json:"remoteIp"`
+	Method    string            `json:"method"`
+	Path      string            `json:"path"`
+	Status    int               `json:"status"`
+	LatencyMs int64             `json:"latencyMs"`
+	Headers   map[string]string `json:"headers,omitempty"`
+	Body      string            `json:"body,omitempty"`
+}
+
+func sanitizeHeaders(headers http.Header) map[string]string {
+	out := make(map[string]string)
+	for key, values := range headers {
+		lower := strings.ToLower(key)
+		switch lower {
+		case "authorization", "cookie", "set-cookie", "x-api-key":
+			out[key] = "[redacted]"
+		default:
+			out[key] = strings.Join(values, ", ")
+		}
+	}
+	return out
+}
+
 func (rr *responseRecorder) WriteHeader(code int) {
 	rr.status = code
 	rr.ResponseWriter.WriteHeader(code)
@@ -54,11 +79,29 @@ func logMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(rr, r)
 
 		ms := time.Since(start).Milliseconds()
-		if bodySnip != "" {
-			log.Printf("[req] %s  %s %s  →  %d  (%dms)  body=%s", ip, r.Method, r.URL.Path, rr.status, ms, bodySnip)
-		} else {
-			log.Printf("[req] %s  %s %s  →  %d  (%dms)", ip, r.Method, r.URL.Path, rr.status, ms)
+		payload := requestLog{
+			Type:      "request",
+			RemoteIP:  ip,
+			Method:    r.Method,
+			Path:      r.URL.Path,
+			Status:    rr.status,
+			LatencyMs: ms,
+			Headers:   sanitizeHeaders(r.Header),
 		}
+		if bodySnip != "" {
+			payload.Body = bodySnip
+		}
+
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			if bodySnip != "" {
+				log.Printf("[req] %s  %s %s  →  %d  (%dms)  body=%s", ip, r.Method, r.URL.Path, rr.status, ms, bodySnip)
+			} else {
+				log.Printf("[req] %s  %s %s  →  %d  (%dms)", ip, r.Method, r.URL.Path, rr.status, ms)
+			}
+			return
+		}
+		log.Print(string(raw))
 	})
 }
 

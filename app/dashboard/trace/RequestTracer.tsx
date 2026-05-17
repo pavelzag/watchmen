@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Globe, Server, Box, Database, Play, Loader2,
@@ -26,6 +27,7 @@ const ANIM_PULSE_MS = 260;  // ms node stays "active" before "done"
 type NodeType = "internet" | "lb" | "gke" | "cloudrun" | "cloudsql" | "vm" | "sidecar";
 type NodeStatus = "idle" | "active" | "done" | "error";
 type LiveScope = "active" | "all";
+type EndpointFilter = "all" | "compute" | "k8s" | "cloudrun";
 type LiveMonitorTarget =
   | {
       kind: "gke";
@@ -54,6 +56,7 @@ interface LiveEvent {
   label: string;
   kind: LiveMonitorTarget["kind"];
   projectId: string;
+  focusNodeId?: string;
   method?: string;
   path?: string;
   status?: number;
@@ -96,6 +99,36 @@ interface ProxyResponse {
   body?: string;
   error?: string;
   headers?: Record<string, string>;
+}
+
+function HoverTooltip({
+  children,
+  content,
+  align = "left",
+}: {
+  children: ReactNode;
+  content: ReactNode;
+  align?: "left" | "right";
+}) {
+  return (
+    <div className="group relative min-w-0">
+      {children}
+      <div
+        className={cn(
+          "pointer-events-none absolute z-30 top-full mt-2 w-max max-w-[320px] rounded-md border border-emerald-900/50 bg-[#071009]/96 px-3 py-2 text-[9px] leading-relaxed text-slate-200 shadow-[0_14px_40px_rgba(0,0,0,0.45)] backdrop-blur-md opacity-0 translate-y-1.5 transition-[opacity,transform] duration-75 group-hover:opacity-100 group-hover:translate-y-0 whitespace-pre-wrap break-words",
+          align === "right" ? "right-0" : "left-0"
+        )}
+      >
+        <div
+          className={cn(
+            "absolute -top-1.5 h-3 w-3 rotate-45 border-l border-t border-emerald-900/50 bg-[#071009]/96",
+            align === "right" ? "right-3" : "left-3"
+          )}
+        />
+        {content}
+      </div>
+    </div>
+  );
 }
 
 // ─── Topology builder ─────────────────────────────────────────────────────────
@@ -340,7 +373,25 @@ function liveTargetLabel(target: LiveMonitorTarget): string {
   return `VM · ${target.instance}`;
 }
 
-function toLiveEvent(target: LiveMonitorTarget, entries: LogEntry[]): LiveEvent | null {
+function resolveLiveTargetNodeId(target: LiveMonitorTarget, nodes: GraphNode[]): string | undefined {
+  if (target.kind === "gke") {
+    return nodes.find(
+      n => target.pathIds.has(n.id) && n.type === "sidecar" && n.projectId === target.projectId && n.container === target.container
+    )?.id ?? nodes.find(
+      n => target.pathIds.has(n.id) && n.type === "gke" && n.projectId === target.projectId
+    )?.id;
+  }
+  if (target.kind === "cloudrun") {
+    return nodes.find(
+      n => target.pathIds.has(n.id) && n.type === "cloudrun" && n.projectId === target.projectId && n.resourceName === target.service
+    )?.id;
+  }
+  return nodes.find(
+    n => target.pathIds.has(n.id) && n.type === "vm" && n.projectId === target.projectId && n.resourceName === target.instance
+  )?.id;
+}
+
+function toLiveEvent(target: LiveMonitorTarget, entries: LogEntry[], nodes: GraphNode[]): LiveEvent | null {
   if (entries.length === 0) return null;
   const latest = entries.reduce((a, b) => a.timestamp > b.timestamp ? a : b);
   const parsed = !latest.httpRequest
@@ -361,6 +412,7 @@ function toLiveEvent(target: LiveMonitorTarget, entries: LogEntry[]): LiveEvent 
     label: liveTargetLabel(target),
     kind: target.kind,
     projectId: target.projectId,
+    focusNodeId: resolveLiveTargetNodeId(target, nodes),
     method,
     path,
     status,
@@ -369,7 +421,7 @@ function toLiveEvent(target: LiveMonitorTarget, entries: LogEntry[]): LiveEvent 
   };
 }
 
-function toDemoLiveEvent(target: LiveMonitorTarget, ts: string, count: number): LiveEvent {
+function toDemoLiveEvent(target: LiveMonitorTarget, ts: string, count: number, nodes: GraphNode[]): LiveEvent {
   const method = Math.random() < 0.8 ? "GET" : "POST";
   const paths = ["/", "/healthz", "/index", "/api/trace", "/api/status"];
   const path = paths[Math.floor(Math.random() * paths.length)];
@@ -382,12 +434,170 @@ function toDemoLiveEvent(target: LiveMonitorTarget, ts: string, count: number): 
     label: liveTargetLabel(target),
     kind: target.kind,
     projectId: target.projectId,
+    focusNodeId: resolveLiveTargetNodeId(target, nodes),
     method,
     path,
     status,
     latency: `${latencyMs}ms`,
     count,
   };
+}
+
+function buildRouteToNode(nodeId: string, edges: GraphEdge[]): string[] {
+  const path: string[] = [];
+  const visited = new Set<string>();
+
+  const visit = (id: string) => {
+    if (visited.has(id)) return;
+    visited.add(id);
+    const parent = edges.find(edge => edge.to === id);
+    if (parent) visit(parent.from);
+    path.push(id);
+  };
+
+  visit(nodeId);
+  return path;
+}
+
+function liveEventStatusHint(event: LiveEvent): string {
+  if (event.status === undefined) return "Request observed, but the log line did not expose an HTTP status.";
+  if (event.status >= 500) return "5xx usually means the workload handled the request but failed while processing it or talking to an upstream dependency.";
+  if (event.status === 404) return "404 suggests the request reached the service, but the application route was not registered for that path.";
+  if (event.status === 403) return "403 usually means the request hit the workload, but auth, ingress policy, or app-level authorization blocked it.";
+  if (event.status >= 400) return "4xx means the service received the request and rejected it before completing the intended application flow.";
+  if (event.status >= 300) return "3xx indicates the request was accepted and redirected elsewhere.";
+  return "2xx indicates the request reached the target workload and completed successfully.";
+}
+
+function activeTargetNodeFromPath(pathIds: Set<string>, nodes: GraphNode[]): GraphNode | null {
+  return (
+    nodes.find(node => pathIds.has(node.id) && node.type === "sidecar") ??
+    nodes.find(node => pathIds.has(node.id) && node.type === "cloudrun") ??
+    nodes.find(node => pathIds.has(node.id) && node.type === "vm") ??
+    nodes.find(node => pathIds.has(node.id) && node.type === "gke") ??
+    null
+  );
+}
+
+function LiveEventDetail({
+  event,
+  nodes,
+  edges,
+  onClose,
+  onSelectNode,
+}: {
+  event: LiveEvent;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  onClose: () => void;
+  onSelectNode: (node: GraphNode) => void;
+}) {
+  const focusNode = event.focusNodeId ? nodes.find(node => node.id === event.focusNodeId) ?? null : null;
+  const routeIds = event.focusNodeId ? buildRouteToNode(event.focusNodeId, edges) : [];
+  const routeNodes = routeIds
+    .map(routeId => nodes.find(node => node.id === routeId) ?? null)
+    .filter((node): node is GraphNode => !!node);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/65 p-4 backdrop-blur-sm">
+      <motion.div
+        initial={{ opacity: 0, y: 12, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 12, scale: 0.98 }}
+        transition={{ duration: 0.14, ease: "easeOut" }}
+        className="flex h-[min(78vh,760px)] w-[min(760px,100%)] min-h-0 flex-col overflow-hidden rounded-lg border border-slate-700/70 bg-[#070b07]/96 shadow-2xl shadow-black/60"
+        style={{ fontFamily: "var(--font-mono, monospace)" }}
+      >
+        <div className="shrink-0 flex items-start justify-between gap-3 border-b border-slate-800/40 px-4 py-3">
+          <div>
+            <div className="text-[10px] uppercase tracking-widest text-slate-500">Observed Request</div>
+            <div className="mt-1 text-[11px] text-emerald-400 font-semibold">{event.label}</div>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-sm border border-slate-800 px-2 py-1 text-[9px] text-slate-500 transition-colors hover:border-slate-600 hover:text-slate-300"
+          >
+            Close
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-auto px-4 py-3 space-y-3">
+          <div className="grid grid-cols-2 gap-2 text-[10px]">
+            <div className="border border-slate-800/60 bg-[#0a0d0a] px-2.5 py-2">
+              <div className="text-[8px] uppercase tracking-widest text-slate-600">Timestamp</div>
+              <div className="mt-1 text-slate-200">{new Date(event.ts).toLocaleString()}</div>
+            </div>
+            <div className="border border-slate-800/60 bg-[#0a0d0a] px-2.5 py-2">
+              <div className="text-[8px] uppercase tracking-widest text-slate-600">Project</div>
+              <div className="mt-1 text-slate-200 break-all">{event.projectId}</div>
+            </div>
+            <div className="border border-slate-800/60 bg-[#0a0d0a] px-2.5 py-2">
+              <div className="text-[8px] uppercase tracking-widest text-slate-600">Request</div>
+              <div className="mt-1 text-slate-200">
+                <span className={cn("font-bold mr-2", event.method ? (METHOD_COLOR[event.method] ?? "text-slate-300") : "text-slate-300")}>
+                  {event.method ?? "LOG"}
+                </span>
+                <span className="break-all">{event.path ?? "Request observed"}</span>
+              </div>
+            </div>
+            <div className="border border-slate-800/60 bg-[#0a0d0a] px-2.5 py-2">
+              <div className="text-[8px] uppercase tracking-widest text-slate-600">Outcome</div>
+              <div className="mt-1 text-slate-200">
+                {event.status !== undefined ? (
+                  <span className={cn("font-bold mr-2", statusColor(event.status))}>{event.status}</span>
+                ) : null}
+                <span>{event.latency ?? "Latency not exposed"}</span>
+                {event.count > 1 ? <span className="text-slate-500"> · burst of {event.count}</span> : null}
+              </div>
+            </div>
+          </div>
+
+          <div className="border border-slate-800/60 bg-[#0a0d0a] px-3 py-2.5">
+            <div className="text-[8px] uppercase tracking-widest text-slate-600">Inferred Route</div>
+            {routeNodes.length > 0 ? (
+              <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px]">
+                {routeNodes.map((node, index) => (
+                  <div key={`${event.id}-${node.id}`} className="contents">
+                    {index > 0 && <span className="text-slate-700">→</span>}
+                    <button
+                      onClick={() => onSelectNode(node)}
+                      className="border border-slate-700/70 bg-[#09110b] px-2 py-1 text-slate-200 transition-colors hover:border-emerald-700/70 hover:text-emerald-300"
+                    >
+                      {node.label}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-2 text-[10px] text-slate-500">No route could be inferred for this log entry.</p>
+            )}
+            {focusNode && (
+              <p className="mt-2 text-[10px] text-slate-500">
+                Final observed workload: <span className="text-slate-300">{focusNode.label}</span>
+                {focusNode.sublabel ? <span className="text-slate-600"> · {focusNode.sublabel}</span> : null}
+              </p>
+            )}
+          </div>
+
+          <div className="border border-slate-800/60 bg-[#0a0d0a] px-3 py-2.5">
+            <div className="text-[8px] uppercase tracking-widest text-slate-600">Interpretation</div>
+            <p className="mt-2 text-[10px] text-slate-300">{liveEventStatusHint(event)}</p>
+            <div className="mt-2 text-[10px] text-slate-500">
+              Useful next checks: inspect the final node logs, compare the path against discovered routes, and verify whether auth or ingress policy matches the status you saw.
+            </div>
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  );
 }
 
 // ─── Layout calculation ───────────────────────────────────────────────────────
@@ -412,6 +622,39 @@ function calcPositions(
       pos[node.id] = {
         cx: COL_PADDING_X + colWidth * col + colWidth / 2,
         cy: ROW_PADDING_Y + startY + idx * (NODE_H + NODE_GAP) + NODE_H / 2,
+      };
+    });
+  }
+
+  return pos;
+}
+
+function calcFocusedPathPositions(
+  nodes: GraphNode[],
+  activeIds: Set<string>,
+  containerW: number,
+  containerH: number,
+): Record<string, { cx: number; cy: number }> {
+  const activeNodes = nodes.filter(node => activeIds.has(node.id));
+  if (activeNodes.length <= 1) return {};
+
+  const cols = [...new Set(activeNodes.map(node => node.col))].sort((a, b) => a - b);
+  const focusedGap = 44;
+  const totalW = cols.length * NODE_W + Math.max(0, cols.length - 1) * focusedGap;
+  const startX = containerW / 2 - totalW / 2 + NODE_W / 2;
+  const colIndex = new Map(cols.map((col, index) => [col, index]));
+  const pos: Record<string, { cx: number; cy: number }> = {};
+
+  for (const col of cols) {
+    const colNodes = activeNodes.filter(node => node.col === col);
+    const totalH = colNodes.length * NODE_H + (colNodes.length - 1) * NODE_GAP;
+    const startY = containerH / 2 - totalH / 2;
+    const index = colIndex.get(col) ?? 0;
+
+    colNodes.forEach((node, nodeIdx) => {
+      pos[node.id] = {
+        cx: startX + index * (NODE_W + focusedGap),
+        cy: ROW_PADDING_Y + startY + nodeIdx * (NODE_H + NODE_GAP) + NODE_H / 2,
       };
     });
   }
@@ -502,6 +745,13 @@ const METHOD_COLOR: Record<string, string> = {
   GET: "text-sky-400", POST: "text-emerald-400", PUT: "text-amber-400",
   PATCH: "text-orange-400", DELETE: "text-red-400",
 };
+
+const ENDPOINT_FILTERS: { id: EndpointFilter; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "compute", label: "Compute" },
+  { id: "k8s", label: "K8s" },
+  { id: "cloudrun", label: "CloudRun" },
+];
 
 // ─── Node type labels ─────────────────────────────────────────────────────────
 
@@ -681,14 +931,26 @@ function ResponseDetail({
   response,
   open,
   onToggleHeaders,
+  method,
+  url,
+  routeNodes,
+  onSelectNode,
 }: {
   response: ProxyResponse;
   open: boolean;
   onToggleHeaders: () => void;
+  method: string;
+  url: string;
+  routeNodes: GraphNode[];
+  onSelectNode: (node: GraphNode) => void;
 }) {
+  const [showContext, setShowContext] = useState(false);
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-col gap-1 border border-slate-800 p-2 bg-[#0d0d0d]">
+      <button
+        onClick={() => setShowContext(v => !v)}
+        className="flex flex-col gap-1 border border-slate-800 p-2 bg-[#0d0d0d] text-left transition-colors hover:border-emerald-900/60"
+      >
         <div className="flex justify-between">
           <span className="text-slate-500">Status</span>
           <span className={cn("font-bold", statusColor(response.status))}>
@@ -702,7 +964,59 @@ function ResponseDetail({
             response.timing < 1000 ? "text-amber-400" : "text-red-400"
           )}>{response.timing}ms</span>
         </div>
-      </div>
+        <div className="pt-1 text-[9px] text-slate-600">
+          {showContext ? "Hide route and response context" : "Click to inspect route and response context"}
+        </div>
+      </button>
+
+      {showContext && (
+        <div className="border border-slate-800/60 bg-[#0a0d0a] px-3 py-2.5 space-y-3">
+          <div>
+            <div className="text-[8px] uppercase tracking-widest text-slate-600">Request</div>
+            <div className="mt-1 text-[10px] text-slate-200 break-all">
+              <span className={cn("font-bold mr-2", METHOD_COLOR[method] ?? "text-slate-300")}>{method}</span>
+              <span>{url}</span>
+            </div>
+          </div>
+
+          <div>
+            <div className="text-[8px] uppercase tracking-widest text-slate-600">Inferred Route</div>
+            {routeNodes.length > 0 ? (
+              <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px]">
+                {routeNodes.map((node, index) => (
+                  <div key={`response-route-${node.id}`} className="contents">
+                    {index > 0 && <span className="text-slate-700">→</span>}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSelectNode(node);
+                      }}
+                      className="border border-slate-700/70 bg-[#09110b] px-2 py-1 text-slate-200 transition-colors hover:border-emerald-700/70 hover:text-emerald-300"
+                    >
+                      {node.label}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-2 text-[10px] text-slate-500">No route could be inferred for this response.</p>
+            )}
+          </div>
+
+          <div>
+            <div className="text-[8px] uppercase tracking-widest text-slate-600">Interpretation</div>
+            <p className="mt-2 text-[10px] text-slate-300">
+              {response.status
+                ? response.status >= 500
+                  ? "The request appears to have reached the final workload, but the workload or an upstream dependency failed while processing it."
+                  : response.status >= 400
+                    ? "The request reached the target service, but the service rejected it. This usually means auth, validation, or route policy stopped it."
+                    : "The request appears to have traversed the inferred path and completed successfully at the final workload."
+                : "The request did not produce a normal HTTP response. Check the route nodes and logs for transport or proxy failures."}
+            </p>
+          </div>
+        </div>
+      )}
 
       {response.error && (
         <div className="border border-red-900/50 bg-red-900/10 p-2 text-red-400 text-[10px]">
@@ -768,8 +1082,8 @@ function parseEnvoyLog(msg: string): { method: string; path: string; status: num
 
 // Parse nginx JSON access logs: {"time":...,"remote_addr":...,"method":...,"uri":...,"status":200,...}
 function parseNginxLog(msg: string): { method: string; path: string; status: number; latencyMs: number; remoteIp: string; userAgent: string } | null {
-  try {
-    const j = JSON.parse(msg);
+	try {
+		const j = JSON.parse(msg);
     if (!j.method && !j.uri) return null;
     return {
       method:    j.method ?? "",
@@ -777,9 +1091,37 @@ function parseNginxLog(msg: string): { method: string; path: string; status: num
       status:    Number(j.status ?? 0),
       latencyMs: j.request_time ? Math.round(Number(j.request_time) * 1000) : 0,
       remoteIp:  j.remote_addr ?? j.x_forwarded_for ?? "",
-      userAgent: j.user_agent ?? "",
-    };
+		userAgent: j.user_agent ?? "",
+	};
   } catch { return null; }
+}
+
+function parseStructuredRequestLog(msg: string): {
+  method: string;
+  path: string;
+  status: number;
+  latencyMs: number;
+  remoteIp: string;
+  userAgent: string;
+  headers?: Record<string, unknown>;
+  body?: string;
+} | null {
+  try {
+    const j = JSON.parse(msg);
+    if (j?.type !== "request" || !j.method || !j.path) return null;
+    return {
+      method: j.method,
+      path: j.path,
+      status: Number(j.status ?? 0),
+      latencyMs: Number(j.latencyMs ?? 0),
+      remoteIp: j.remoteIp ?? "",
+      userAgent: (j.headers?.["User-Agent"] as string) ?? (j.headers?.["user-agent"] as string) ?? "",
+      headers: j.headers ?? undefined,
+      body: typeof j.body === "string" ? j.body : undefined,
+    };
+  } catch {
+    return null;
+  }
 }
 
 type NodeDetailTab = "info" | "logs" | "routes";
@@ -787,12 +1129,288 @@ type NodeDetailTab = "info" | "logs" | "routes";
 interface DiscoveredRoute { method: string; path: string; description?: string; body?: Record<string, string> | null; }
 interface HttpRequestLog {
   method: string; url: string; status?: number;
-  latency: string; remoteIp: string; responseSize: string; userAgent: string;
+  latency: string;
+  requestSize?: string;
+  remoteIp: string;
+  serverIp?: string;
+  referer?: string;
+  responseSize: string;
+  userAgent: string;
+  protocol?: string;
 }
 interface LogEntry {
   timestamp: string; severity: string; message: string;
   pod?: string; container?: string; revision?: string; instanceId?: string;
   httpRequest?: HttpRequestLog;
+  payload?: unknown;
+}
+
+interface LogEntryDetails {
+  title: string;
+  timestamp: string;
+  method?: string;
+  path?: string;
+  status?: number;
+  latency?: string;
+  remoteIp?: string;
+  responseSize?: string;
+  requestSize?: string;
+  userAgent?: string;
+  serverIp?: string;
+  referer?: string;
+  protocol?: string;
+  source?: string;
+  severity?: string;
+  message?: string;
+  body?: string;
+  headers?: Record<string, unknown>;
+  payload?: unknown;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function findStructuredRequestPayload(payload: unknown): {
+  headers?: Record<string, unknown>;
+  body?: unknown;
+} {
+  const root = asRecord(payload);
+  if (!root) return {};
+
+  const directHeaders = asRecord(root.headers);
+  const directBody = root.body ?? root.payload ?? root.requestBody;
+  if (directHeaders || directBody !== undefined) {
+    return { headers: directHeaders ?? undefined, body: directBody };
+  }
+
+  const request = asRecord(root.request);
+  if (request) {
+    const requestHeaders = asRecord(request.headers);
+    const requestBody = request.body ?? request.payload;
+    if (requestHeaders || requestBody !== undefined) {
+      return { headers: requestHeaders ?? undefined, body: requestBody };
+    }
+  }
+
+  const httpRequest = asRecord(root.httpRequest);
+  if (httpRequest) {
+    const requestHeaders = asRecord(httpRequest.headers);
+    const requestBody = httpRequest.body;
+    if (requestHeaders || requestBody !== undefined) {
+      return { headers: requestHeaders ?? undefined, body: requestBody };
+    }
+  }
+
+  return {};
+}
+
+function getLogEntryDetails(entry: LogEntry): LogEntryDetails {
+  const ts = entry.timestamp ? new Date(entry.timestamp).toLocaleString() : "Unknown";
+  const structured = findStructuredRequestPayload(entry.payload);
+  const structuredBody = structured.body !== undefined
+    ? typeof structured.body === "string"
+      ? structured.body
+      : JSON.stringify(structured.body, null, 2)
+    : undefined;
+
+  if (entry.httpRequest) {
+    const hr = entry.httpRequest;
+    const path = (() => { try { return new URL(hr.url).pathname; } catch { return hr.url; } })();
+    return {
+      title: `${hr.method} ${path}`,
+      timestamp: ts,
+      method: hr.method,
+      path,
+      status: hr.status,
+      latency: hr.latency,
+      requestSize: hr.requestSize ? `${hr.requestSize}B` : undefined,
+      remoteIp: hr.remoteIp,
+      serverIp: hr.serverIp || undefined,
+      referer: hr.referer || undefined,
+      responseSize: hr.responseSize ? `${hr.responseSize}B` : undefined,
+      userAgent: hr.userAgent,
+      protocol: hr.protocol || undefined,
+      message: entry.message || undefined,
+      source: entry.revision || entry.pod || entry.instanceId || undefined,
+      headers: structured.headers,
+      body: structuredBody,
+      payload: entry.payload,
+    };
+  }
+
+  const parsed = parseReqLog(entry.message) ?? parseNginxLog(entry.message) ?? parseEnvoyLog(entry.message);
+  if (parsed) {
+    const source = entry.container || entry.pod || entry.instanceId || entry.revision || "";
+    const remoteIp = (parsed as any).ip ?? (parsed as any).remoteIp ?? "";
+    const body = (parsed as any).body ?? "";
+    const userAgent = (parsed as any).userAgent ?? "";
+    return {
+      title: `${parsed.method} ${parsed.path}`,
+      timestamp: ts,
+      method: parsed.method,
+      path: parsed.path,
+      status: parsed.status,
+      latency: `${parsed.latencyMs}ms`,
+      remoteIp: remoteIp || undefined,
+      userAgent: userAgent || undefined,
+      source: source || undefined,
+      body: body || structuredBody,
+      headers: structured.headers,
+      message: entry.message,
+      payload: entry.payload,
+    };
+  }
+
+  const structuredLog = parseStructuredRequestLog(entry.message);
+  if (structuredLog) {
+    const source = entry.container || entry.pod || entry.instanceId || entry.revision || "";
+    return {
+      title: `${structuredLog.method} ${structuredLog.path}`,
+      timestamp: ts,
+      method: structuredLog.method,
+      path: structuredLog.path,
+      status: structuredLog.status,
+      latency: `${structuredLog.latencyMs}ms`,
+      remoteIp: structuredLog.remoteIp || undefined,
+      userAgent: structuredLog.userAgent || undefined,
+      source: source || undefined,
+      body: structuredLog.body || structuredBody,
+      headers: structuredLog.headers ?? structured.headers,
+      message: entry.message,
+      payload: entry.payload,
+    };
+  }
+
+  return {
+    title: entry.severity || "Log entry",
+    timestamp: ts,
+    severity: entry.severity,
+    source: entry.revision || entry.pod || entry.instanceId || undefined,
+    message: entry.message,
+    body: structuredBody,
+    headers: structured.headers,
+    payload: entry.payload,
+  };
+}
+
+function LogEntryModal({
+  entry,
+  onClose,
+}: {
+  entry: LogEntry;
+  onClose: () => void;
+}) {
+  const details = getLogEntryDetails(entry);
+  if (typeof document === "undefined") return null;
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[220] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ opacity: 0, y: 10, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 10, scale: 0.98 }}
+        transition={{ duration: 0.14, ease: "easeOut" }}
+        className="flex w-[min(760px,100%)] max-h-[80vh] min-h-0 flex-col overflow-hidden rounded-lg border border-slate-700/70 bg-[#070b07]/96 shadow-2xl shadow-black/60"
+        style={{ fontFamily: "var(--font-mono, monospace)" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3 border-b border-slate-800/40 px-4 py-3">
+          <div>
+            <div className="text-[10px] uppercase tracking-widest text-slate-500">Log Entry</div>
+            <div className="mt-1 text-[11px] text-emerald-400 font-semibold break-all">{details.title}</div>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-sm border border-slate-800 px-2 py-1 text-[9px] text-slate-500 transition-colors hover:border-slate-600 hover:text-slate-300"
+          >
+            Close
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-auto px-4 py-3 space-y-3 text-[10px]">
+          <div className="grid grid-cols-2 gap-2">
+            <div className="border border-slate-800/60 bg-[#0a0d0a] px-2.5 py-2">
+              <div className="text-[8px] uppercase tracking-widest text-slate-600">Timestamp</div>
+              <div className="mt-1 text-slate-200">{details.timestamp}</div>
+            </div>
+            <div className="border border-slate-800/60 bg-[#0a0d0a] px-2.5 py-2">
+              <div className="text-[8px] uppercase tracking-widest text-slate-600">Source</div>
+              <div className="mt-1 text-slate-200 break-all">{details.source ?? "Unknown"}</div>
+            </div>
+            <div className="border border-slate-800/60 bg-[#0a0d0a] px-2.5 py-2">
+              <div className="text-[8px] uppercase tracking-widest text-slate-600">Request</div>
+              <div className="mt-1 text-slate-200 break-all">
+                {details.method ? <span className={cn("font-bold mr-2", METHOD_COLOR[details.method] ?? "text-slate-300")}>{details.method}</span> : null}
+                <span>{details.path ?? details.message ?? "Log entry"}</span>
+              </div>
+            </div>
+            <div className="border border-slate-800/60 bg-[#0a0d0a] px-2.5 py-2">
+              <div className="text-[8px] uppercase tracking-widest text-slate-600">Outcome</div>
+              <div className="mt-1 text-slate-200">
+                {details.status !== undefined ? <span className={cn("font-bold mr-2", statusColor(details.status))}>{details.status}</span> : null}
+                <span>{details.latency ?? details.severity ?? "No status/latency"}</span>
+              </div>
+            </div>
+          </div>
+
+          {details.headers && Object.keys(details.headers).length > 0 && (
+            <div className="border border-slate-800/60 bg-[#0a0d0a] px-3 py-2.5">
+              <div className="text-[8px] uppercase tracking-widest text-slate-600">Headers</div>
+              <pre className="mt-2 whitespace-pre-wrap break-all text-slate-300">
+                {JSON.stringify(details.headers, null, 2)}
+              </pre>
+            </div>
+          )}
+
+          {Boolean(details.payload) && (
+            <div className="border border-slate-800/60 bg-[#0a0d0a] px-3 py-2.5">
+              <div className="text-[8px] uppercase tracking-widest text-slate-600">Structured Payload</div>
+              <pre className="mt-2 whitespace-pre-wrap break-all text-slate-300">
+                {JSON.stringify(details.payload, null, 2)}
+              </pre>
+            </div>
+          )}
+
+          {(details.method || details.path || details.protocol || details.requestSize || details.remoteIp || details.serverIp || details.referer || details.responseSize || details.userAgent) && (
+            <div className="border border-slate-800/60 bg-[#0a0d0a] px-3 py-2.5">
+              <div className="text-[8px] uppercase tracking-widest text-slate-600">Request Details</div>
+              <div className="mt-2 space-y-1 text-slate-300">
+                {details.method ? <div><span className="text-slate-500">Method:</span> {details.method}</div> : null}
+                {details.path ? <div className="break-all"><span className="text-slate-500">Path:</span> {details.path}</div> : null}
+                {details.protocol ? <div><span className="text-slate-500">Protocol:</span> {details.protocol}</div> : null}
+                {details.requestSize ? <div><span className="text-slate-500">Request size:</span> {details.requestSize}</div> : null}
+                {details.responseSize ? <div><span className="text-slate-500">Response size:</span> {details.responseSize}</div> : null}
+                {details.remoteIp ? <div><span className="text-slate-500">Caller IP:</span> {details.remoteIp}</div> : null}
+                {details.serverIp ? <div><span className="text-slate-500">Server IP:</span> {details.serverIp}</div> : null}
+                {details.referer ? <div className="break-all"><span className="text-slate-500">Referer:</span> {details.referer}</div> : null}
+                {details.userAgent ? <div className="break-all"><span className="text-slate-500">User agent:</span> {details.userAgent}</div> : null}
+              </div>
+            </div>
+          )}
+
+          {details.body && (
+            <div className="border border-slate-800/60 bg-[#0a0d0a] px-3 py-2.5">
+              <div className="text-[8px] uppercase tracking-widest text-slate-600">Body</div>
+              <pre className="mt-2 whitespace-pre-wrap break-all text-slate-300">{details.body}</pre>
+            </div>
+          )}
+
+          {details.message && (
+            <div className="border border-slate-800/60 bg-[#0a0d0a] px-3 py-2.5">
+              <div className="text-[8px] uppercase tracking-widest text-slate-600">Raw Log</div>
+              <pre className="mt-2 whitespace-pre-wrap break-all text-slate-300">{details.message}</pre>
+            </div>
+          )}
+        </div>
+      </motion.div>
+    </div>,
+    document.body
+  );
 }
 
 function NodeDetail({
@@ -832,6 +1450,7 @@ function NodeDetail({
   const [logSearch, setLogSearch] = useState("");
   const [logStatusFilter, setLogStatusFilter] = useState<"all" | "2xx" | "3xx" | "4xx" | "5xx">("all");
   const [logsExpanded, setLogsExpanded] = useState(false);
+  const [selectedLogEntry, setSelectedLogEntry] = useState<LogEntry | null>(null);
   const [copyFlash, setCopyFlash] = useState(false);
   const [availableContainers, setAvailableContainers] = useState<string[]>([]);
   const [selectedContainer, setSelectedContainer] = useState<string>(
@@ -911,12 +1530,12 @@ function NodeDetail({
   // Filtered logs
   const filteredLogs = useMemo(() => {
     return logs.filter(l => {
-      const parsed = !l.httpRequest ? (parseReqLog(l.message) ?? parseNginxLog(l.message) ?? parseEnvoyLog(l.message)) : null;
+      const parsed = !l.httpRequest ? (parseReqLog(l.message) ?? parseStructuredRequestLog(l.message) ?? parseNginxLog(l.message) ?? parseEnvoyLog(l.message)) : null;
       const status = l.httpRequest?.status ?? parsed?.status;
       const searchable = l.httpRequest
         ? `${l.httpRequest.method} ${l.httpRequest.url} ${l.httpRequest.remoteIp} ${l.httpRequest.userAgent}`
         : parsed
-        ? `${parsed.method} ${parsed.path} ${(parsed as any).ip ?? (parsed as any).remoteIp ?? ""} ${(parsed as any).userAgent ?? ""} ${(parsed as any).body ?? ""}`
+        ? `${parsed.method} ${parsed.path} ${(parsed as any).ip ?? (parsed as any).remoteIp ?? ""} ${(parsed as any).userAgent ?? ""} ${(parsed as any).body ?? ""} ${JSON.stringify((parsed as any).headers ?? {})}`
         : l.message;
 
       if (logStatusFilter !== "all") {
@@ -958,11 +1577,23 @@ function NodeDetail({
     const handler = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (e.key === "c" && !e.ctrlKey && !e.metaKey) handleCopyLogs();
-      if (e.key === "Escape") setLogsExpanded(false);
+      if (e.key === "Escape") {
+        if (selectedLogEntry) {
+          e.preventDefault();
+          e.stopPropagation();
+          setSelectedLogEntry(null);
+          return;
+        }
+        if (logsExpanded) {
+          e.preventDefault();
+          e.stopPropagation();
+          setLogsExpanded(false);
+        }
+      }
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [tab, handleCopyLogs]);
+  }, [tab, handleCopyLogs, selectedLogEntry, logsExpanded]);
 
   // AI analysis state
   const [aiState, setAiState] = useState<{ loading: boolean; text: string | null; error: string | null }>({ loading: false, text: null, error: null });
@@ -1228,7 +1859,11 @@ function NodeDetail({
                 const path = (() => { try { return new URL(hr.url).pathname; } catch { return hr.url; } })();
                 const methodColor = METHOD_COLOR[hr.method] ?? "text-slate-400";
                 return (
-                  <div key={i} className="border-b border-slate-800/30 pb-1.5 last:border-0">
+                  <button
+                    key={i}
+                    onClick={() => setSelectedLogEntry(l)}
+                    className="w-full border-b border-slate-800/30 pb-1.5 last:border-0 text-left transition-colors hover:bg-white/[0.03]"
+                  >
                     <div className="flex items-center gap-1.5 mb-0.5">
                       <span className={cn("text-[8px] font-bold w-10 shrink-0", methodColor)}>{hr.method}</span>
                       <span className={cn("text-[8px] font-bold shrink-0", statusC)}>{hr.status ?? "?"}</span>
@@ -1243,12 +1878,12 @@ function NodeDetail({
                     {hr.userAgent && (
                       <p className="text-[8px] text-slate-700 truncate mt-0.5">{hr.userAgent}</p>
                     )}
-                  </div>
+                  </button>
                 );
               }
 
               // ── Try to parse structured text log ([req], nginx JSON, Envoy) ──
-              const parsed = parseReqLog(l.message) ?? parseNginxLog(l.message) ?? parseEnvoyLog(l.message);
+              const parsed = parseReqLog(l.message) ?? parseStructuredRequestLog(l.message) ?? parseNginxLog(l.message) ?? parseEnvoyLog(l.message);
               if (parsed) {
                 const statusC =
                   parsed.status < 300 ? "text-emerald-400" :
@@ -1259,7 +1894,11 @@ function NodeDetail({
                 const ip = (parsed as any).ip ?? (parsed as any).remoteIp ?? "";
                 const body = (parsed as any).body ?? "";
                 return (
-                  <div key={i} className="border-b border-slate-800/30 pb-1.5 last:border-0">
+                  <button
+                    key={i}
+                    onClick={() => setSelectedLogEntry(l)}
+                    className="w-full border-b border-slate-800/30 pb-1.5 last:border-0 text-left transition-colors hover:bg-white/[0.03]"
+                  >
                     <div className="flex items-center gap-1.5 mb-0.5">
                       <span className={cn("text-[8px] font-bold w-10 shrink-0", methodColor)}>{parsed.method}</span>
                       <span className={cn("text-[8px] font-bold shrink-0", statusC)}>{parsed.status}</span>
@@ -1274,14 +1913,18 @@ function NodeDetail({
                     {body && (
                       <p className="text-[8px] text-slate-700 font-mono truncate mt-0.5" title={body}>{body}</p>
                     )}
-                  </div>
+                  </button>
                 );
               }
 
               // ── Plain text / JSON log ──
               const source = l.revision || l.pod || l.instanceId || "";
               return (
-                <div key={i} className="border-b border-slate-800/40 pb-1.5 last:border-0">
+                <button
+                  key={i}
+                  onClick={() => setSelectedLogEntry(l)}
+                  className="w-full border-b border-slate-800/40 pb-1.5 last:border-0 text-left transition-colors hover:bg-white/[0.03]"
+                >
                   <div className="flex items-center gap-2 mb-0.5">
                     <span className={cn("text-[8px] font-bold shrink-0", severityColor)}>{l.severity}</span>
                     {source && <span className="text-[8px] text-slate-700 truncate">{source}</span>}
@@ -1290,7 +1933,7 @@ function NodeDetail({
                   {l.message && (
                     <p className="text-[10px] text-slate-400 font-mono break-all leading-relaxed">{l.message}</p>
                   )}
-                </div>
+                </button>
               );
             })}
 
@@ -1402,13 +2045,13 @@ function NodeDetail({
                     <div className="flex-1 overflow-y-auto px-4 py-2 flex flex-col gap-1.5 font-mono text-[10px]">
                       {filteredLogs.map((l, i) => {
                         const ts = l.timestamp ? new Date(l.timestamp).toLocaleTimeString() : "";
-                        const parsed = !l.httpRequest ? parseReqLog(l.message) : null;
+                        const parsed = !l.httpRequest ? (parseReqLog(l.message) ?? parseStructuredRequestLog(l.message)) : null;
                         const status = l.httpRequest?.status ?? parsed?.status;
                         const method = l.httpRequest?.method ?? parsed?.method ?? "";
                         const path = l.httpRequest
                           ? (() => { try { return new URL(l.httpRequest!.url).pathname; } catch { return l.httpRequest!.url; } })()
                           : parsed?.path ?? "";
-                        const ip = l.httpRequest?.remoteIp ?? parsed?.ip ?? "";
+                        const ip = l.httpRequest?.remoteIp ?? (parsed as any)?.ip ?? (parsed as any)?.remoteIp ?? "";
                         const latency = l.httpRequest?.latency ?? (parsed ? `${parsed.latencyMs}ms` : "");
                         const body = parsed?.body ?? "";
                         const pod = l.pod || l.instanceId || "";
@@ -1418,7 +2061,11 @@ function NodeDetail({
                           : status < 500 ? "text-amber-400" : "text-red-400";
                         const methodColor = METHOD_COLOR[method] ?? "text-slate-400";
                         if (method) return (
-                          <div key={i} className="flex items-baseline gap-2 border-b border-slate-800/30 pb-1 last:border-0">
+                          <button
+                            key={i}
+                            onClick={() => setSelectedLogEntry(l)}
+                            className="flex w-full items-baseline gap-2 border-b border-slate-800/30 pb-1 last:border-0 text-left transition-colors hover:bg-white/[0.03]"
+                          >
                             <span className="text-slate-700 shrink-0 w-16">{ts}</span>
                             <span className={cn("shrink-0 w-10 font-bold", methodColor)}>{method}</span>
                             <span className={cn("shrink-0 w-8 font-bold", statusC)}>{status ?? "?"}</span>
@@ -1426,19 +2073,32 @@ function NodeDetail({
                             <span className="text-slate-600 shrink-0">{ip}</span>
                             <span className="text-slate-700 shrink-0">{latency}</span>
                             {body && <span className="text-slate-700 truncate max-w-[200px]" title={body}>{body}</span>}
-                          </div>
+                          </button>
                         );
                         return (
-                          <div key={i} className="flex items-baseline gap-2 border-b border-slate-800/30 pb-1 last:border-0">
+                          <button
+                            key={i}
+                            onClick={() => setSelectedLogEntry(l)}
+                            className="flex w-full items-baseline gap-2 border-b border-slate-800/30 pb-1 last:border-0 text-left transition-colors hover:bg-white/[0.03]"
+                          >
                             <span className="text-slate-700 shrink-0 w-16">{ts}</span>
                             {pod && <span className="text-slate-700 shrink-0 truncate max-w-[120px]">{pod}</span>}
                             <span className="text-slate-400 flex-1 break-all">{l.message}</span>
-                          </div>
+                          </button>
                         );
                       })}
                     </div>
                   </motion.div>
                 </motion.div>
+              )}
+            </AnimatePresence>
+
+            <AnimatePresence>
+              {selectedLogEntry && (
+                <LogEntryModal
+                  entry={selectedLogEntry}
+                  onClose={() => setSelectedLogEntry(null)}
+                />
               )}
             </AnimatePresence>
           </>
@@ -1575,6 +2235,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const [url, setUrl] = useState("");
   const [bodyText, setBodyText] = useState('{\n  "key": "value"\n}');
   const [methodOpen, setMethodOpen] = useState(false);
+  const [endpointFilter, setEndpointFilter] = useState<EndpointFilter>("all");
 
   // Send state
   const [sending, setSending] = useState(false);
@@ -1606,6 +2267,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const liveTimestamps = useRef<number[]>([]);   // sliding window of request timestamps
   const [liveRps, setLiveRps] = useState<number | null>(null);
   const [liveEvents, setLiveEvents] = useState<LiveEvent[]>([]);
+  const [selectedLiveEvent, setSelectedLiveEvent] = useState<LiveEvent | null>(null);
 
   // Demo simulation
   const [demoRps, setDemoRps] = useState<number | null>(null);
@@ -1734,8 +2396,6 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   );
 
   const basePos = useMemo(() => calcPositions(nodes, containerSize.w, graphH), [nodes, containerSize.w, graphH]);
-  const pos = useMemo(() => ({ ...basePos, ...nodePositions }), [basePos, nodePositions]);
-  const lines = useMemo(() => buildSvgLines(edges, pos), [edges, pos]);
   const activePath = useMemo(() => {
     const base = inferActivePath(url, nodes, edges);
     // Include sidecar nodes whose parent GKE is in path
@@ -1744,6 +2404,14 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     });
     return base;
   }, [url, nodes, edges]);
+  const focusedPos = useMemo(
+    () => (url.trim() && activePath.size > 1
+      ? calcFocusedPathPositions(nodes, activePath, containerSize.w, graphH)
+      : {}),
+    [activePath, containerSize.w, graphH, nodes, url]
+  );
+  const pos = useMemo(() => ({ ...basePos, ...focusedPos, ...nodePositions }), [basePos, focusedPos, nodePositions]);
+  const lines = useMemo(() => buildSvgLines(edges, pos), [edges, pos]);
 
   const liveMonitorTarget = useMemo<LiveMonitorTarget | null>(() => {
     const buildGkeTarget = (pathNodeIds: Set<string>) => {
@@ -1811,6 +2479,48 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
     return null;
   }, [activePath, edges, nodeContainers, nodes]);
+
+  const responseRouteNodes = useMemo(() => {
+    const targetNode = activeTargetNodeFromPath(activePath, nodes);
+    if (!targetNode) return [] as GraphNode[];
+    return buildRouteToNode(targetNode.id, edges)
+      .map(routeId => nodes.find(node => node.id === routeId) ?? null)
+      .filter((node): node is GraphNode => !!node);
+  }, [activePath, edges, nodes]);
+
+  const openNodeDetail = useCallback((node: GraphNode) => {
+    setSelectedNode(node);
+    setShowResponse(false);
+  }, []);
+
+  const isEndpointSelected = useCallback((value: string) => {
+    if (!url.trim()) return false;
+    if (url === value || url.startsWith(value)) return true;
+    try {
+      const current = new URL(url);
+      const candidate = new URL(value);
+      return current.host === candidate.host;
+    } catch {
+      return false;
+    }
+  }, [url]);
+
+  const filteredK8sEntryPoints = useMemo(
+    () => entryPoints.filter(ep => ep.type !== "master-api" && ep.ip),
+    [entryPoints]
+  );
+  const filteredLoadBalancers = useMemo(
+    () => (snapshot?.loadBalancers ?? []).filter(lb => lb.ipAddress),
+    [snapshot]
+  );
+  const filteredCloudRunServices = useMemo(
+    () => (snapshot?.cloudRunServices ?? []).filter(service => service.url),
+    [snapshot]
+  );
+  const filteredVmTargets = useMemo(
+    () => (snapshot?.vms ?? []).filter(vm => !vm.name.startsWith("gke-") && vm.status === "RUNNING" && vm.externalIp),
+    [snapshot]
+  );
 
   const allLiveMonitorTargets = useMemo<LiveMonitorTarget[]>(() => {
     const targets: LiveMonitorTarget[] = [];
@@ -2149,7 +2859,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
         const allEntries = results.flatMap(result => result.entries);
         if (allEntries.length > 0) {
           const newEvents = results
-            .map(result => toLiveEvent(result.target, result.entries))
+            .map(result => toLiveEvent(result.target, result.entries, nodes))
             .filter((event): event is LiveEvent => !!event)
             .sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
           if (newEvents.length > 0) {
@@ -2207,7 +2917,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     const id = setInterval(poll, pollIntervalMs);
     poll(); // immediate first check
     return () => { clearInterval(id); };
-  }, [allLiveMonitorTargets, liveMode, liveMonitorTarget, liveScope, runBfsAnimation]);
+  }, [allLiveMonitorTargets, liveMode, liveMonitorTarget, liveScope, nodes, runBfsAnimation]);
 
   useEffect(() => {
     if (!demoMode || !liveMode || demoLiveTargets.length === 0) return;
@@ -2224,7 +2934,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
           ? shuffled.slice(0, targetCount)
           : [shuffled[0]];
         const ts = new Date().toISOString();
-        const events = targets.map(target => toDemoLiveEvent(target, ts, 1 + Math.floor(Math.random() * 6)));
+        const events = targets.map(target => toDemoLiveEvent(target, ts, 1 + Math.floor(Math.random() * 6), nodes));
 
         setLiveEvents(prev => {
           const merged = [...prev, ...events];
@@ -2251,7 +2961,19 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
     run();
     return () => { running = false; };
-  }, [demoLiveTargets, demoMode, liveMode, liveScope, runBfsAnimation]);
+  }, [demoLiveTargets, demoMode, liveMode, liveScope, nodes, runBfsAnimation]);
+
+  useEffect(() => {
+    if (!selectedLiveEvent) return;
+    const updated = liveEvents.find(event => event.id === selectedLiveEvent.id);
+    if (updated) {
+      setSelectedLiveEvent(updated);
+      return;
+    }
+    if (!liveEvents.some(event => event.id === selectedLiveEvent.id)) {
+      setSelectedLiveEvent(null);
+    }
+  }, [liveEvents, selectedLiveEvent]);
 
   // ── Send request ────────────────────────────────────────────────────────────
   const handleSend = useCallback(async () => {
@@ -2365,53 +3087,171 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
           {/* URL suggestions */}
           {(loadingEntryPoints || snapshot || entryPoints.length > 0) && (
             <div className="flex flex-col gap-1">
+              <div className="flex flex-wrap gap-1 px-1 pb-1">
+                {ENDPOINT_FILTERS.map(filter => (
+                  <button
+                    key={filter.id}
+                    onClick={() => setEndpointFilter(filter.id)}
+                    className={cn(
+                      "px-2 py-1 text-[9px] uppercase tracking-widest border transition-colors",
+                      endpointFilter === filter.id
+                        ? "border-emerald-800/80 bg-emerald-950/30 text-emerald-300"
+                        : "border-slate-800/70 bg-[#090909] text-slate-500 hover:text-slate-300 hover:border-slate-700"
+                    )}
+                  >
+                    {filter.label}
+                  </button>
+                ))}
+              </div>
+
               {loadingEntryPoints ? (
                 <div className="flex items-center gap-2 px-2 py-1.5 text-[10px] text-slate-600">
                   <Loader2 size={9} className="animate-spin shrink-0" />
                   <span>Scanning GKE entry points…</span>
                 </div>
-              ) : entryPoints.length > 0 && (
+              ) : (endpointFilter === "all" || endpointFilter === "k8s") && filteredK8sEntryPoints.length > 0 && (
                 <div className="text-[9px] uppercase tracking-widest text-slate-600 px-1">GKE Entry Points</div>
               )}
-              {!loadingEntryPoints && entryPoints.filter(ep => ep.type !== "master-api").map(ep => {
+              {!loadingEntryPoints && (endpointFilter === "all" || endpointFilter === "k8s") && filteredK8sEntryPoints.map(ep => {
                 const proto = "http";
                 const value = `${proto}://${ep.ip}`;
                 const svcLabel = ep.k8sService ? ` · ${ep.k8sService}` : "";
                 const label = `${ep.clusterName}${svcLabel}`;
                 const typeTag = ep.type === "master-api" ? "API" : ep.type === "ingress" ? "ING" : "LB";
+                const isSelected = isEndpointSelected(value);
                 return (
-                  <button key={`ep-${ep.clusterName}-${ep.ip}-${ep.type}`} onClick={() => setUrl(value)}
-                    className="text-left text-[10px] px-2 py-1 border border-slate-800/50 bg-[#0a0a0a] hover:border-emerald-800/60 truncate"
+                  <HoverTooltip
+                    key={`ep-${ep.clusterName}-${ep.ip}-${ep.type}`}
+                    content={
+                      <>
+                        <div className="text-emerald-400 font-bold uppercase tracking-widest text-[8px] mb-1">{label}</div>
+                        <div className="text-sky-300 font-mono">{value}</div>
+                        {ep.isPublic && <div className="text-amber-400 mt-1">Public endpoint</div>}
+                      </>
+                    }
                   >
-                    <span className="text-[8px] font-bold text-emerald-700 mr-1.5 border border-emerald-900 px-1 py-px">{typeTag}</span>
-                    <span className="text-slate-500 mr-1">{label}</span>
-                    <span className="text-sky-400">{value}</span>
-                    {ep.isPublic && <span className="ml-1 text-[8px] text-amber-600">PUB</span>}
-                  </button>
+                    <button onClick={() => setUrl(value)}
+                      className={cn(
+                        "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm",
+                        isSelected
+                          ? "bg-emerald-950/35 ring-1 ring-emerald-700/70 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.15)]"
+                          : "bg-[#0a0a0a]/60 hover:bg-[#0d120e]"
+                      )}
+                    >
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className={cn(
+                          "text-[8px] font-bold px-1 py-px rounded-sm",
+                          isSelected ? "text-emerald-300 bg-emerald-900/40" : "text-emerald-700 bg-emerald-950/30"
+                        )}>{typeTag}</span>
+                        <span className={cn("break-words", isSelected ? "text-slate-200" : "text-slate-400")}>{label}</span>
+                        {isSelected && <span className="text-[8px] text-emerald-300 uppercase tracking-widest">Selected</span>}
+                        {ep.isPublic && <span className="text-[8px] text-amber-500 uppercase tracking-widest">Public</span>}
+                      </div>
+                      <div className={cn("mt-0.5 font-mono whitespace-pre-wrap break-all", isSelected ? "text-emerald-300" : "text-sky-400")}>{value}</div>
+                    </button>
+                  </HoverTooltip>
                 );
               })}
               {snapshot && (
                 <>
-                  {((snapshot.loadBalancers ?? []).filter(lb => lb.ipAddress).length > 0 ||
-                    (snapshot.cloudRunServices ?? []).filter(s => s.url).length > 0) && (
-                    <div className="text-[9px] uppercase tracking-widest text-slate-600 px-1 pt-1">Other Targets</div>
+                  {(endpointFilter === "all" || endpointFilter === "compute") &&
+                    (filteredLoadBalancers.length > 0 || filteredVmTargets.length > 0) && (
+                      <div className="text-[9px] uppercase tracking-widest text-slate-600 px-1 pt-1">Compute Endpoints</div>
                   )}
-                  {(snapshot.loadBalancers ?? []).filter(lb => lb.ipAddress).map(lb => (
-                    <button key={`lb-${lb.ipAddress}`} onClick={() => setUrl(`http://${lb.ipAddress}`)}
-                      className="text-left text-[10px] px-2 py-1 border border-slate-800/50 bg-[#0a0a0a] hover:border-slate-700 truncate"
-                    >
-                      <span className="text-slate-500 mr-1">LB: {lb.name}</span>
-                      <span className="text-violet-400">{`http://${lb.ipAddress}`}</span>
-                    </button>
-                  ))}
-                  {(snapshot.cloudRunServices ?? []).filter(s => s.url).map(s => (
-                    <button key={`run-${s.url}`} onClick={() => setUrl(s.url!)}
-                      className="text-left text-[10px] px-2 py-1 border border-slate-800/50 bg-[#0a0a0a] hover:border-slate-700 truncate"
-                    >
-                      <span className="text-slate-500 mr-1">Run: {s.name}</span>
-                      <span className="text-emerald-400">{s.url}</span>
-                    </button>
-                  ))}
+                  {(endpointFilter === "all" || endpointFilter === "compute") && filteredLoadBalancers.map(lb => {
+                    const value = `http://${lb.ipAddress}`;
+                    const isSelected = isEndpointSelected(value);
+                    return (
+                      <HoverTooltip
+                        key={`lb-${lb.ipAddress}`}
+                        content={
+                          <>
+                            <div className="text-violet-300 font-bold uppercase tracking-widest text-[8px] mb-1">{lb.name}</div>
+                            <div className="text-sky-300 font-mono">{value}</div>
+                          </>
+                        }
+                      >
+                        <button onClick={() => setUrl(value)}
+                          className={cn(
+                            "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm",
+                            isSelected
+                              ? "bg-violet-950/30 ring-1 ring-violet-700/70 shadow-[inset_0_0_0_1px_rgba(139,92,246,0.15)]"
+                              : "bg-[#0a0a0a]/60 hover:bg-[#0d1013]"
+                          )}
+                        >
+                          <div className={cn("break-words", isSelected ? "text-slate-200" : "text-slate-400")}>
+                            {lb.name}
+                            {isSelected && <span className="ml-2 text-[8px] text-violet-300 uppercase tracking-widest">Selected</span>}
+                          </div>
+                          <div className={cn("mt-0.5 font-mono whitespace-pre-wrap break-all", isSelected ? "text-violet-300" : "text-violet-400")}>{value}</div>
+                        </button>
+                      </HoverTooltip>
+                    );
+                  })}
+                  {(endpointFilter === "all" || endpointFilter === "compute") && filteredVmTargets.map(vm => {
+                    const value = `http://${vm.externalIp}`;
+                    const isSelected = isEndpointSelected(value);
+                    return (
+                      <HoverTooltip
+                        key={`vm-${vm.name}-${vm.externalIp}`}
+                        content={
+                          <>
+                            <div className="text-cyan-300 font-bold uppercase tracking-widest text-[8px] mb-1">{vm.name}</div>
+                            <div className="text-sky-300 font-mono">{value}</div>
+                            <div className="text-slate-500 mt-1">{vm.zone.split("/").pop() ?? vm.zone}</div>
+                          </>
+                        }
+                      >
+                        <button onClick={() => setUrl(value)}
+                          className={cn(
+                            "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm",
+                            isSelected
+                              ? "bg-cyan-950/30 ring-1 ring-cyan-700/70 shadow-[inset_0_0_0_1px_rgba(34,211,238,0.12)]"
+                              : "bg-[#0a0a0a]/60 hover:bg-[#0c1113]"
+                          )}
+                        >
+                          <div className={cn("break-words", isSelected ? "text-slate-200" : "text-slate-400")}>
+                            {vm.name}
+                            {isSelected && <span className="ml-2 text-[8px] text-cyan-300 uppercase tracking-widest">Selected</span>}
+                          </div>
+                          <div className={cn("mt-0.5 font-mono whitespace-pre-wrap break-all", isSelected ? "text-cyan-300" : "text-cyan-400")}>{value}</div>
+                        </button>
+                      </HoverTooltip>
+                    );
+                  })}
+                  {(endpointFilter === "all" || endpointFilter === "cloudrun") && filteredCloudRunServices.length > 0 && (
+                    <div className="text-[9px] uppercase tracking-widest text-slate-600 px-1 pt-1">Cloud Run</div>
+                  )}
+                  {(endpointFilter === "all" || endpointFilter === "cloudrun") && filteredCloudRunServices.map(s => {
+                    const value = s.url!;
+                    const isSelected = isEndpointSelected(value);
+                    return (
+                      <HoverTooltip
+                        key={`run-${s.url}`}
+                        content={
+                          <>
+                            <div className="text-emerald-400 font-bold uppercase tracking-widest text-[8px] mb-1">{s.name}</div>
+                            <div className="text-sky-300 font-mono break-all">{s.url}</div>
+                          </>
+                        }
+                      >
+                        <button onClick={() => setUrl(value)}
+                          className={cn(
+                            "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm",
+                            isSelected
+                              ? "bg-emerald-950/35 ring-1 ring-emerald-700/70 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.15)]"
+                              : "bg-[#0a0a0a]/60 hover:bg-[#0c120d]"
+                          )}
+                        >
+                          <div className={cn("break-words", isSelected ? "text-slate-200" : "text-slate-400")}>
+                            {s.name}
+                            {isSelected && <span className="ml-2 text-[8px] text-emerald-300 uppercase tracking-widest">Selected</span>}
+                          </div>
+                          <div className={cn("mt-0.5 font-mono whitespace-pre-wrap break-all", isSelected ? "text-emerald-300" : "text-emerald-400")}>{s.url}</div>
+                        </button>
+                      </HoverTooltip>
+                    );
+                  })}
                 </>
               )}
             </div>
@@ -2858,11 +3698,21 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
               exit={{ opacity: 0, y: 8 }}
               className="shrink-0 flex items-center gap-4 px-4 py-2 border-t border-slate-800/50 text-[10px]"
             >
-              <span className={cn("font-bold", statusColor(response.status))}>
-                {response.status ? `${response.status} ${response.statusText}` : "ERROR"}
-              </span>
-              <span className="text-slate-500">{response.timing}ms</span>
-              {response.error && <span className="text-red-400 truncate">{response.error}</span>}
+              <HoverTooltip
+                content={`HTTP ${response.status ?? "ERROR"}${response.statusText ? ` ${response.statusText}` : ""}`}
+              >
+                <span className={cn("font-bold", statusColor(response.status))}>
+                  {response.status ? `${response.status} ${response.statusText}` : "ERROR"}
+                </span>
+              </HoverTooltip>
+              <HoverTooltip content={`Response time: ${response.timing}ms`}>
+                <span className="text-slate-500">{response.timing}ms</span>
+              </HoverTooltip>
+              {response.error && (
+                <HoverTooltip content={response.error}>
+                  <span className="text-red-400 truncate">{response.error}</span>
+                </HoverTooltip>
+              )}
             </motion.div>
           )}
         </AnimatePresence>
@@ -2899,9 +3749,21 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                   </button>
                 )}
                 {response?.status && (
-                  <span className={cn("text-xs font-bold font-mono", statusColor(response.status))}>
-                    {response.status}
-                  </span>
+                  <HoverTooltip
+                    align="right"
+                    content={
+                      <>
+                        <div className="text-emerald-400 font-bold uppercase tracking-widest text-[8px] mb-1">Response</div>
+                        <div>HTTP {response.status}{response.statusText ? ` ${response.statusText}` : ""}</div>
+                        <div className="text-slate-400 mt-1">{response.timing}ms</div>
+                        {response.error ? <div className="text-red-300 mt-1">{response.error}</div> : null}
+                      </>
+                    }
+                  >
+                    <span className={cn("text-xs font-bold font-mono", statusColor(response.status))}>
+                      {response.status}
+                    </span>
+                  </HoverTooltip>
                 )}
               </div>
             </div>
@@ -2934,8 +3796,15 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                       : "";
                     const countText = event.count > 1 ? ` (+${event.count - 1})` : "";
                     const pathText = event.path ?? "Request observed";
-                    return (
-                      <div key={event.id} className="w-full border-b border-slate-800/30 py-1 last:border-b-0">
+                  return (
+                      <button
+                        key={event.id}
+                        onClick={() => setSelectedLiveEvent(event)}
+                        className={cn(
+                          "w-full border-b border-slate-800/30 py-1 last:border-b-0 text-left transition-colors hover:bg-white/[0.03]",
+                          selectedLiveEvent?.id === event.id && "bg-emerald-950/20"
+                        )}
+                      >
                         <div className="whitespace-pre-wrap break-all text-slate-300">
                           <span className="text-slate-700">{ts}</span>{" "}
                           <span className="text-emerald-500">{event.label}</span>{" "}
@@ -2946,7 +3815,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                           {event.latency ? <> <span className="text-slate-600">{event.latency}</span></> : null}
                           {countText ? <> <span className="text-slate-500">{countText}</span></> : null}
                         </div>
-                      </div>
+                      </button>
                     );
                   })}
                 </div>
@@ -2983,7 +3852,14 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                       const countText = event.count > 1 ? ` (+${event.count - 1})` : "";
                       const pathText = event.path ?? "Request observed";
                       return (
-                        <div key={`console-${event.id}`} className="border-b border-slate-800/20 py-1.5 last:border-b-0">
+                        <button
+                          key={`console-${event.id}`}
+                          onClick={() => setSelectedLiveEvent(event)}
+                          className={cn(
+                            "w-full border-b border-slate-800/20 py-1.5 last:border-b-0 text-left transition-colors hover:bg-white/[0.03]",
+                            selectedLiveEvent?.id === event.id && "bg-emerald-950/20"
+                          )}
+                        >
                           <div className="whitespace-pre-wrap break-all text-slate-300">
                             <span className="text-slate-700">{ts}</span>{" "}
                             <span className="text-emerald-500">{event.label}</span>{" "}
@@ -2994,7 +3870,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                             {event.latency ? <> <span className="text-slate-600">{event.latency}</span></> : null}
                             {countText ? <> <span className="text-slate-500">{countText}</span></> : null}
                           </div>
-                        </div>
+                        </button>
                       );
                     })}
                   </div>
@@ -3015,7 +3891,17 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                 </div>
               )}
 
-              {response && <ResponseDetail response={response} open={responseOpen} onToggleHeaders={() => setResponseOpen(o => !o)} />}
+              {response && (
+                <ResponseDetail
+                  response={response}
+                  open={responseOpen}
+                  onToggleHeaders={() => setResponseOpen(o => !o)}
+                  method={method}
+                  url={url}
+                  routeNodes={responseRouteNodes}
+                  onSelectNode={openNodeDetail}
+                />
+              )}
             </div>
           </>
         ) : null}
@@ -3055,6 +3941,21 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
             nodeContainers={nodeContainers}
             gkeNodes={baseNodes.filter(n => n.type === "gke" && n.projectId)}
             onClose={() => setShowTrace(false)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {selectedLiveEvent && (
+          <LiveEventDetail
+            event={selectedLiveEvent}
+            nodes={nodes}
+            edges={edges}
+            onClose={() => setSelectedLiveEvent(null)}
+            onSelectNode={(node) => {
+              setSelectedLiveEvent(null);
+              openNodeDetail(node);
+            }}
           />
         )}
       </AnimatePresence>

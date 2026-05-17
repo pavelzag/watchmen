@@ -19,6 +19,8 @@ Options:
   --method METHOD         HTTP method, default: GET
   --repeat N              Requests per endpoint in each round, default: 1
   --header 'K: V'         Extra header, repeatable
+  --json-body JSON        Send this JSON body with each request
+  --no-trace-headers      Disable built-in Watchmen trace headers
   --path PATH             Append path to each Cloud Run base URL
   --rounds N              Override round count; uses first N intervals
 
@@ -27,6 +29,7 @@ Examples:
   scripts/poll-cloudrun-endpoints.sh --email you@example.com --path /healthz
   scripts/poll-cloudrun-endpoints.sh --email you@example.com --intervals 1,3,7,15
   scripts/poll-cloudrun-endpoints.sh --email you@example.com --fixed-interval 2 --duration 300 --repeat 3
+  scripts/poll-cloudrun-endpoints.sh --email you@example.com --method POST --path /items --json-body '{"name":"watchmen","value":"trace probe"}'
 EOF
 }
 
@@ -40,6 +43,8 @@ METHOD="GET"
 REPEAT="1"
 PATH_SUFFIX=""
 ROUNDS=""
+JSON_BODY=""
+INCLUDE_TRACE_HEADERS="true"
 HEADERS=()
 
 while [[ $# -gt 0 ]]; do
@@ -80,6 +85,14 @@ while [[ $# -gt 0 ]]; do
       HEADERS+=("${2:-}")
       shift 2
       ;;
+    --json-body)
+      JSON_BODY="${2:-}"
+      shift 2
+      ;;
+    --no-trace-headers)
+      INCLUDE_TRACE_HEADERS="false"
+      shift
+      ;;
     --path)
       PATH_SUFFIX="${2:-}"
       shift 2
@@ -112,6 +125,13 @@ if [[ -z "$DB_URL" ]]; then
     exit 1
   fi
   DB_URL="$(grep '^POSTGRES_URL=' .env.local | sed 's/^POSTGRES_URL=//')"
+fi
+
+# Accept quoted .env values like POSTGRES_URL="postgres://..."
+if [[ "${DB_URL:0:1}" == '"' && "${DB_URL: -1}" == '"' ]]; then
+  DB_URL="${DB_URL:1:${#DB_URL}-2}"
+elif [[ "${DB_URL:0:1}" == "'" && "${DB_URL: -1}" == "'" ]]; then
+  DB_URL="${DB_URL:1:${#DB_URL}-2}"
 fi
 
 if [[ -z "$DB_URL" ]]; then
@@ -210,15 +230,12 @@ CURL_ARGS=(
   --user-agent "watchmen-trace-poller/1.0"
 )
 
-if [[ ${#HEADERS[@]} -gt 0 ]]; then
-  for header in "${HEADERS[@]}"; do
-    CURL_ARGS+=(--header "$header")
-  done
-fi
-
 echo "Found ${#ENDPOINT_ROWS[@]} Cloud Run endpoint(s) for $EMAIL"
 echo "Intervals: ${INTERVALS[*]} seconds"
 echo "Requests per endpoint per round: $REPEAT"
+if [[ -n "$JSON_BODY" ]]; then
+  echo "JSON body: enabled"
+fi
 echo
 
 round=1
@@ -231,11 +248,17 @@ for interval in "${INTERVALS[@]}"; do
     target="${url%/}${PATH_SUFFIX}"
     req=1
     while [[ "$req" -le "$REPEAT" ]]; do
+      trace_id="watchmen-${round}-${req}-$(date +%s)-${RANDOM}"
       sep='?'
       if [[ "$target" == *\?* ]]; then
         sep='&'
       fi
-      request_url="${target}${sep}watchmen_trace_probe=$(date +%s)-${RANDOM}-${round}-${req}"
+      request_url="${target}${sep}watchmen_trace_probe=${trace_id}"
+      request_body="$JSON_BODY"
+
+      if [[ -z "$request_body" && ( "$METHOD" == "POST" || "$METHOD" == "PUT" || "$METHOD" == "PATCH" ) ]]; then
+        request_body="{\"name\":\"watchmen-trace-${round}-${req}\",\"value\":\"${trace_id}\",\"source\":\"watchmen-trace-poller\"}"
+      fi
 
       if [[ "$REPEAT" -gt 1 ]]; then
         printf '%s [%s/%s] #%s %s -> ' "$name" "$project_id" "$region" "$req" "$request_url"
@@ -243,7 +266,23 @@ for interval in "${INTERVALS[@]}"; do
         printf '%s [%s/%s] %s -> ' "$name" "$project_id" "$region" "$request_url"
       fi
 
-      if ! curl "${CURL_ARGS[@]}" "$request_url"; then
+      REQUEST_CURL_ARGS=("${CURL_ARGS[@]}")
+      if [[ "$INCLUDE_TRACE_HEADERS" == "true" ]]; then
+        REQUEST_CURL_ARGS+=(--header "X-Watchmen-Trace-Source: poll-cloudrun-endpoints")
+        REQUEST_CURL_ARGS+=(--header "X-Watchmen-Trace-Id: ${trace_id}")
+        REQUEST_CURL_ARGS+=(--header "X-Watchmen-Trace-Round: ${round}")
+      fi
+      if [[ ${#HEADERS[@]} -gt 0 ]]; then
+        for header in "${HEADERS[@]}"; do
+          REQUEST_CURL_ARGS+=(--header "$header")
+        done
+      fi
+      if [[ -n "$request_body" ]]; then
+        REQUEST_CURL_ARGS+=(--header "Content-Type: application/json")
+        REQUEST_CURL_ARGS+=(--data-raw "$request_body")
+      fi
+
+      if ! curl "${REQUEST_CURL_ARGS[@]}" "$request_url"; then
         echo "status=ERR"
       fi
       req=$((req + 1))

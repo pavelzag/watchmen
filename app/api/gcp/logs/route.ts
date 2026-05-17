@@ -134,9 +134,13 @@ export async function GET(req: NextRequest) {
         url:          hr.requestUrl ?? "",
         status:       hr.status ? Number(hr.status) : undefined,
         latency:      hr.latency ?? "",
+        requestSize:  hr.requestSize ?? "",
         remoteIp:     hr.remoteIp ?? "",
+        serverIp:     hr.serverIp ?? "",
+        referer:      hr.referer ?? "",
         responseSize: hr.responseSize ?? "",
         userAgent:    hr.userAgent ?? "",
+        protocol:     hr.protocol ?? "",
       } : undefined;
 
       // Text message from payload
@@ -150,6 +154,7 @@ export async function GET(req: NextRequest) {
         timestamp:   e.timestamp ?? "",
         severity:    e.severity ?? "DEFAULT",
         message,
+        payload:     e.jsonPayload ?? e.protoPayload ?? null,
         container:   (e.resource?.labels as any)?.container_name ?? "",
         pod:         (e.resource?.labels as any)?.pod_name ?? "",
         revision:    (e.resource?.labels as any)?.revision_name ?? "",
