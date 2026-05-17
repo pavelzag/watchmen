@@ -45,3 +45,4 @@ istio-*/
 # IDE / local tooling
 .vscode/
 .claude/
+.env*.local
