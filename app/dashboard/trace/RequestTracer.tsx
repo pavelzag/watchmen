@@ -369,6 +369,27 @@ function toLiveEvent(target: LiveMonitorTarget, entries: LogEntry[]): LiveEvent 
   };
 }
 
+function toDemoLiveEvent(target: LiveMonitorTarget, ts: string, count: number): LiveEvent {
+  const method = Math.random() < 0.8 ? "GET" : "POST";
+  const paths = ["/", "/healthz", "/index", "/api/trace", "/api/status"];
+  const path = paths[Math.floor(Math.random() * paths.length)];
+  const statuses = [200, 200, 200, 201, 202, 403, 404, 500];
+  const status = statuses[Math.floor(Math.random() * statuses.length)];
+  const latencyMs = 20 + Math.floor(Math.random() * 900);
+  return {
+    id: `${liveTargetKey(target)}:${ts}:${count}:demo`,
+    ts,
+    label: liveTargetLabel(target),
+    kind: target.kind,
+    projectId: target.projectId,
+    method,
+    path,
+    status,
+    latency: `${latencyMs}ms`,
+    count,
+  };
+}
+
 // ─── Layout calculation ───────────────────────────────────────────────────────
 
 function calcPositions(
@@ -1845,6 +1866,50 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     return targets;
   }, [edges, nodeContainers, nodes]);
 
+  const demoLiveTargets = useMemo<LiveMonitorTarget[]>(() => {
+    if (!demoMode) return [];
+    const targets: LiveMonitorTarget[] = [];
+    const seen = new Set<string>();
+    nodes.forEach(node => {
+      if (
+        (node.type === "cloudrun" && node.projectId && node.resourceName) ||
+        (node.type === "vm" && node.projectId && node.resourceName) ||
+        (node.type === "gke" && node.projectId)
+      ) {
+        const pathIds = buildPathForNode(node.id, edges);
+        const target =
+          node.type === "cloudrun"
+            ? {
+                kind: "cloudrun" as const,
+                projectId: node.projectId!,
+                service: node.resourceName!,
+                region: node.region,
+                pathIds,
+              }
+            : node.type === "vm"
+              ? {
+                  kind: "vm" as const,
+                  projectId: node.projectId!,
+                  instance: node.resourceName!,
+                  region: node.region,
+                  pathIds,
+                }
+              : {
+                  kind: "gke" as const,
+                  projectId: node.projectId!,
+                  container: "demo-app",
+                  pathIds,
+                };
+        const key = liveTargetKey(target);
+        if (!seen.has(key)) {
+          seen.add(key);
+          targets.push(target);
+        }
+      }
+    });
+    return targets;
+  }, [demoMode, edges, nodes]);
+
   const liveEventsOrdered = useMemo(
     () => [...liveEvents].sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime()),
     [liveEvents]
@@ -2144,6 +2209,50 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     return () => { clearInterval(id); };
   }, [allLiveMonitorTargets, liveMode, liveMonitorTarget, liveScope, runBfsAnimation]);
 
+  useEffect(() => {
+    if (!demoMode || !liveMode || demoLiveTargets.length === 0) return;
+
+    let running = true;
+    const run = async () => {
+      await sleep(600);
+      while (running) {
+        const targetCount = liveScope === "all"
+          ? Math.min(demoLiveTargets.length, 1 + Math.floor(Math.random() * Math.min(3, demoLiveTargets.length)))
+          : 1;
+        const shuffled = [...demoLiveTargets].sort(() => Math.random() - 0.5);
+        const targets = liveScope === "all"
+          ? shuffled.slice(0, targetCount)
+          : [shuffled[0]];
+        const ts = new Date().toISOString();
+        const events = targets.map(target => toDemoLiveEvent(target, ts, 1 + Math.floor(Math.random() * 6)));
+
+        setLiveEvents(prev => {
+          const merged = [...prev, ...events];
+          return merged.slice(-24);
+        });
+
+        const nowMs = Date.now();
+        events.forEach(() => liveTimestamps.current.push(nowMs));
+        liveTimestamps.current = liveTimestamps.current.filter(t => nowMs - t < 60_000);
+        const inWindow = liveTimestamps.current.filter(t => nowMs - t < 10_000).length;
+        setLiveRps(inWindow / 10);
+
+        if (liveAnimEnabledRef.current) {
+          for (let i = 0; i < targets.length; i++) {
+            if (!running) break;
+            if (i > 0) await sleep(180);
+            await runBfsAnimation(targets[i].pathIds, { colDelay: 140, resetAfterMs: 700 });
+          }
+        }
+
+        await sleep(1200 + Math.random() * 2200);
+      }
+    };
+
+    run();
+    return () => { running = false; };
+  }, [demoLiveTargets, demoMode, liveMode, liveScope, runBfsAnimation]);
+
   // ── Send request ────────────────────────────────────────────────────────────
   const handleSend = useCallback(async () => {
     if (sending || !url.trim()) return;
@@ -2367,7 +2476,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
           ))}
           <div className="flex items-center gap-0.5 px-2 border-l border-slate-800/30 shrink-0">
             {/* Live monitor toggle */}
-            {liveMonitorTarget && (
+            {(demoMode || liveMonitorTarget) && (
               <>
                 <button
                   onClick={() => {
@@ -2392,7 +2501,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                       </span>
                     )}
                   </button>
-                {allLiveMonitorTargets.length > 1 && (
+                {((demoMode ? demoLiveTargets.length : allLiveMonitorTargets.length) > 1) && (
                   <button
                     onClick={() => setLiveScope(scope => scope === "all" ? "active" : "all")}
                     title={liveScope === "all" ? "Watching all monitorable endpoints" : "Watch all monitorable endpoints"}
