@@ -18,6 +18,7 @@ Options:
   --timeout SECONDS       Per-request curl timeout, default: 10
   --method METHOD         HTTP method, default: GET
   --repeat N              Requests per endpoint in each round, default: 1
+  --parallel N            Max concurrent requests across all endpoints, default: 1
   --header 'K: V'         Extra header, repeatable
   --json-body JSON        Send this JSON body with each request
   --no-trace-headers      Disable built-in Watchmen trace headers
@@ -28,7 +29,7 @@ Examples:
   scripts/poll-cloudrun-endpoints.sh --email you@example.com
   scripts/poll-cloudrun-endpoints.sh --email you@example.com --path /healthz
   scripts/poll-cloudrun-endpoints.sh --email you@example.com --intervals 1,3,7,15
-  scripts/poll-cloudrun-endpoints.sh --email you@example.com --fixed-interval 2 --duration 300 --repeat 3
+  scripts/poll-cloudrun-endpoints.sh --email you@example.com --fixed-interval 2 --duration 300 --repeat 3 --parallel 8
   scripts/poll-cloudrun-endpoints.sh --email you@example.com --method POST --path /items --json-body '{"name":"watchmen","value":"trace probe"}'
 EOF
 }
@@ -41,6 +42,7 @@ DURATION=""
 TIMEOUT="10"
 METHOD="GET"
 REPEAT="1"
+PARALLEL="1"
 PATH_SUFFIX=""
 ROUNDS=""
 JSON_BODY=""
@@ -79,6 +81,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --repeat)
       REPEAT="${2:-}"
+      shift 2
+      ;;
+    --parallel)
+      PARALLEL="${2:-}"
       shift 2
       ;;
     --header)
@@ -145,6 +151,11 @@ fi
 
 if ! [[ "$REPEAT" =~ ^[0-9]+$ ]] || [[ "$REPEAT" -lt 1 ]]; then
   echo "--repeat must be a positive integer" >&2
+  exit 1
+fi
+
+if ! [[ "$PARALLEL" =~ ^[0-9]+$ ]] || [[ "$PARALLEL" -lt 1 ]]; then
+  echo "--parallel must be a positive integer" >&2
   exit 1
 fi
 
@@ -233,10 +244,63 @@ CURL_ARGS=(
 echo "Found ${#ENDPOINT_ROWS[@]} Cloud Run endpoint(s) for $EMAIL"
 echo "Intervals: ${INTERVALS[*]} seconds"
 echo "Requests per endpoint per round: $REPEAT"
+echo "Max concurrent requests: $PARALLEL"
 if [[ -n "$JSON_BODY" ]]; then
   echo "JSON body: enabled"
 fi
 echo
+
+run_request() {
+  local name="$1"
+  local project_id="$2"
+  local region="$3"
+  local req="$4"
+  local request_url="$5"
+  local request_body="$6"
+  local trace_id="$7"
+  local round="$8"
+
+  if [[ "$REPEAT" -gt 1 ]]; then
+    printf '%s [%s/%s] #%s %s -> ' "$name" "$project_id" "$region" "$req" "$request_url"
+  else
+    printf '%s [%s/%s] %s -> ' "$name" "$project_id" "$region" "$request_url"
+  fi
+
+  REQUEST_CURL_ARGS=("${CURL_ARGS[@]}")
+  if [[ "$INCLUDE_TRACE_HEADERS" == "true" ]]; then
+    REQUEST_CURL_ARGS+=(--header "X-Watchmen-Trace-Source: poll-cloudrun-endpoints")
+    REQUEST_CURL_ARGS+=(--header "X-Watchmen-Trace-Id: ${trace_id}")
+    REQUEST_CURL_ARGS+=(--header "X-Watchmen-Trace-Round: ${round}")
+  fi
+  if [[ ${#HEADERS[@]} -gt 0 ]]; then
+    for header in "${HEADERS[@]}"; do
+      REQUEST_CURL_ARGS+=(--header "$header")
+    done
+  fi
+  if [[ -n "$request_body" ]]; then
+    REQUEST_CURL_ARGS+=(--header "Content-Type: application/json")
+    REQUEST_CURL_ARGS+=(--data-raw "$request_body")
+  fi
+
+  if ! curl "${REQUEST_CURL_ARGS[@]}" "$request_url"; then
+    echo "status=ERR"
+  fi
+}
+
+throttle_parallel() {
+  if [[ "$PARALLEL" -le 1 ]]; then
+    return
+  fi
+
+  local running_jobs
+  while :; do
+    running_jobs="$(jobs -pr | wc -l | tr -d '[:space:]')"
+    if [[ "$running_jobs" -lt "$PARALLEL" ]]; then
+      break
+    fi
+    sleep 0.05
+  done
+}
 
 round=1
 for interval in "${INTERVALS[@]}"; do
@@ -260,34 +324,19 @@ for interval in "${INTERVALS[@]}"; do
         request_body="{\"name\":\"watchmen-trace-${round}-${req}\",\"value\":\"${trace_id}\",\"source\":\"watchmen-trace-poller\"}"
       fi
 
-      if [[ "$REPEAT" -gt 1 ]]; then
-        printf '%s [%s/%s] #%s %s -> ' "$name" "$project_id" "$region" "$req" "$request_url"
+      if [[ "$PARALLEL" -gt 1 ]]; then
+        throttle_parallel
+        run_request "$name" "$project_id" "$region" "$req" "$request_url" "$request_body" "$trace_id" "$round" &
       else
-        printf '%s [%s/%s] %s -> ' "$name" "$project_id" "$region" "$request_url"
-      fi
-
-      REQUEST_CURL_ARGS=("${CURL_ARGS[@]}")
-      if [[ "$INCLUDE_TRACE_HEADERS" == "true" ]]; then
-        REQUEST_CURL_ARGS+=(--header "X-Watchmen-Trace-Source: poll-cloudrun-endpoints")
-        REQUEST_CURL_ARGS+=(--header "X-Watchmen-Trace-Id: ${trace_id}")
-        REQUEST_CURL_ARGS+=(--header "X-Watchmen-Trace-Round: ${round}")
-      fi
-      if [[ ${#HEADERS[@]} -gt 0 ]]; then
-        for header in "${HEADERS[@]}"; do
-          REQUEST_CURL_ARGS+=(--header "$header")
-        done
-      fi
-      if [[ -n "$request_body" ]]; then
-        REQUEST_CURL_ARGS+=(--header "Content-Type: application/json")
-        REQUEST_CURL_ARGS+=(--data-raw "$request_body")
-      fi
-
-      if ! curl "${REQUEST_CURL_ARGS[@]}" "$request_url"; then
-        echo "status=ERR"
+        run_request "$name" "$project_id" "$region" "$req" "$request_url" "$request_body" "$trace_id" "$round"
       fi
       req=$((req + 1))
     done
   done
+
+  if [[ "$PARALLEL" -gt 1 ]]; then
+    wait
+  fi
 
   if [[ "$round" -lt "${#INTERVALS[@]}" ]]; then
     echo "Sleeping ${interval}s"

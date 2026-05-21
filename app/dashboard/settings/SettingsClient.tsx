@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Eye, EyeOff, Trash2, Check, Loader2, AlertCircle, CheckCircle2, Star, Plus, X, ShieldCheck, Bell, Send } from "lucide-react";
+import { ArrowLeft, Eye, EyeOff, Trash2, Check, Loader2, AlertCircle, CheckCircle2, Star, Plus, X, ShieldCheck, Bell, Send, Wifi, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AIProvider, AIKeyRecord } from "@/lib/ai/client";
 import {
@@ -18,6 +18,84 @@ interface CloudCredRecord {
   provider: string;
   createdAt: string;
   updatedAt: string;
+}
+
+type TraceSourceMode = "polling" | "streaming";
+type TraceSetupState = "not_configured" | "terraform_generated" | "resources_applied" | "receiving_events";
+type TunnelProvider = "cloudflared" | "ngrok";
+type TunnelState = "idle" | "starting" | "running" | "error";
+
+function getPublicHttpsPushEndpoint(origin: string): string {
+  try {
+    const url = new URL(origin);
+    if (url.protocol !== "https:") return "";
+    const host = url.hostname.toLowerCase();
+    if (host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "0.0.0.0") return "";
+    if (/^10\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host) || /^192\.168\./.test(host)) return "";
+    return `${url.origin}/api/ingest/gcp/pubsub`;
+  } catch {
+    return "";
+  }
+}
+
+function validateStreamingPushEndpoint(pushEndpoint: string): string | null {
+  const value = pushEndpoint.trim();
+  if (!value) return "Set a public HTTPS Watchmen URL for Pub/Sub push delivery.";
+
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return "Enter a valid absolute push endpoint URL.";
+  }
+
+  if (url.protocol !== "https:") return "Pub/Sub push delivery requires HTTPS.";
+
+  const host = url.hostname.toLowerCase();
+  if (host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "0.0.0.0") {
+    return "Pub/Sub cannot push to localhost. Use a deployed Watchmen URL.";
+  }
+  if (/^10\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host) || /^192\.168\./.test(host)) {
+    return "Pub/Sub cannot push to a private-network URL. Use a public Watchmen URL.";
+  }
+
+  return null;
+}
+
+interface GcpTraceSourceConfig {
+  cloud: "gcp";
+  mode: TraceSourceMode;
+  projectId: string;
+  region: string;
+  namePrefix: string;
+  pushEndpoint: string;
+  pushAudience: string;
+  setupState: TraceSetupState;
+  lastCheckedAt: string | null;
+  lastCheckMessage: string;
+}
+
+interface GeneratedFile {
+  name: string;
+  content: string;
+  language: string;
+}
+
+interface GcpTraceSourceBundle {
+  files: GeneratedFile[];
+  steps: string[];
+  notes: string[];
+}
+
+interface LocalTunnelStatus {
+  state: TunnelState;
+  provider: TunnelProvider | null;
+  publicUrl: string;
+  pushEndpoint: string;
+  port: number;
+  message: string;
+  availableProviders: TunnelProvider[];
+  logs: string[];
 }
 
 interface ProviderConfig {
@@ -108,6 +186,16 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
 
   const [githubToken, setGithubToken] = useState("");
   const [showGithubToken, setShowGithubToken] = useState(false);
+  const [gcpTraceSource, setGcpTraceSource] = useState<GcpTraceSourceConfig | null>(null);
+  const [gcpTraceBundle, setGcpTraceBundle] = useState<GcpTraceSourceBundle | null>(null);
+  const [gcpTraceSaving, setGcpTraceSaving] = useState(false);
+  const [gcpTraceChecking, setGcpTraceChecking] = useState(false);
+  const [gcpTraceLoading, setGcpTraceLoading] = useState(true);
+  const [gcpTraceError, setGcpTraceError] = useState<string | null>(null);
+  const [copiedFileName, setCopiedFileName] = useState<string | null>(null);
+  const [localTunnel, setLocalTunnel] = useState<LocalTunnelStatus | null>(null);
+  const [localTunnelLoading, setLocalTunnelLoading] = useState(false);
+  const [localTunnelAction, setLocalTunnelAction] = useState<"start" | "stop" | null>(null);
 
   // Browser-only AI keys
   const [browserKeys, setBrowserKeys] = useState<BrowserAIKeys>({});
@@ -155,12 +243,25 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
     if (isDemoUser) {
       setDemoCreds(getDemoCredentials());
       setCloudLoading(false);
+      setGcpTraceLoading(false);
     } else {
       fetch("/api/settings/credentials")
         .then((r) => r.json())
         .then((d) => setCloudCreds(d.credentials ?? []))
         .catch(() => { })
         .finally(() => setCloudLoading(false));
+
+      fetch("/api/settings/trace-source/gcp")
+        .then((r) => r.json())
+        .then((d) => setGcpTraceSource(d.config ?? null))
+        .catch(() => setGcpTraceError("Failed to load GCP trace source settings."))
+        .finally(() => setGcpTraceLoading(false));
+
+      fetch("/api/settings/trace-source/gcp/tunnel")
+        .then((r) => r.json())
+        .then((d) => setLocalTunnel(d.status ?? null))
+        .catch(() => {})
+        .finally(() => setLocalTunnelLoading(false));
     }
   }, [isDemoUser]);
 
@@ -251,6 +352,166 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
       { id: crypto.randomUUID(), timestamp: new Date().toISOString(), provider, message },
       ...prev.slice(0, 19),
     ]);
+  }
+
+  async function saveGcpTraceSource() {
+    if (!gcpTraceSource) return;
+    if (gcpTraceSource.mode === "streaming") {
+      const pushEndpointError = validateStreamingPushEndpoint(gcpTraceSource.pushEndpoint);
+      if (pushEndpointError) {
+        setGcpTraceError(pushEndpointError);
+        return;
+      }
+    }
+    setGcpTraceSaving(true);
+    setGcpTraceError(null);
+    try {
+      const res = await fetch("/api/settings/trace-source/gcp", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(gcpTraceSource),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setGcpTraceError(data.error ?? "Failed to save trace source settings.");
+        return;
+      }
+      setGcpTraceSource(data.config ?? gcpTraceSource);
+      setGcpTraceBundle(data.bundle ?? null);
+    } catch (e) {
+      setGcpTraceError(e instanceof Error ? e.message : "Failed to save trace source settings.");
+    } finally {
+      setGcpTraceSaving(false);
+    }
+  }
+
+  async function generateGcpTraceBundle() {
+    setGcpTraceError(null);
+    try {
+      const res = await fetch("/api/settings/trace-source/gcp/files");
+      const data = await res.json();
+      if (!res.ok) {
+        setGcpTraceError(data.error ?? "Failed to generate Terraform bundle.");
+        return;
+      }
+      setGcpTraceBundle(data.bundle ?? null);
+      setGcpTraceSource(data.config ?? gcpTraceSource);
+    } catch (e) {
+      setGcpTraceError(e instanceof Error ? e.message : "Failed to generate Terraform bundle.");
+    }
+  }
+
+  async function refreshLocalTunnelStatus() {
+    try {
+      const res = await fetch("/api/settings/trace-source/gcp/tunnel");
+      const data = await res.json();
+      if (res.ok) setLocalTunnel(data.status ?? null);
+    } catch {}
+  }
+
+  async function startLocalTunnel(provider?: TunnelProvider) {
+    setLocalTunnelAction("start");
+    setGcpTraceError(null);
+    try {
+      const res = await fetch("/api/settings/trace-source/gcp/tunnel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(provider ? { provider } : {}),
+      });
+      const data = await res.json();
+      setLocalTunnel(data.status ?? null);
+      if (!res.ok) {
+        setGcpTraceError(data.error ?? data.status?.message ?? "Failed to start local test tunnel.");
+      }
+    } catch (e) {
+      setGcpTraceError(e instanceof Error ? e.message : "Failed to start local test tunnel.");
+    } finally {
+      setLocalTunnelAction(null);
+    }
+  }
+
+  async function stopLocalTunnel() {
+    setLocalTunnelAction("stop");
+    setGcpTraceError(null);
+    try {
+      const res = await fetch("/api/settings/trace-source/gcp/tunnel", {
+        method: "DELETE",
+      });
+      const data = await res.json();
+      setLocalTunnel(data.status ?? null);
+      if (!res.ok) {
+        setGcpTraceError(data.error ?? "Failed to stop local test tunnel.");
+      }
+    } catch (e) {
+      setGcpTraceError(e instanceof Error ? e.message : "Failed to stop local test tunnel.");
+    } finally {
+      setLocalTunnelAction(null);
+    }
+  }
+
+  function useTunnelUrl() {
+    if (!localTunnel?.pushEndpoint) return;
+    setGcpTraceSource((current) => current ? {
+      ...current,
+      mode: "streaming",
+      pushEndpoint: localTunnel.pushEndpoint,
+      pushAudience: localTunnel.pushEndpoint,
+    } : current);
+  }
+
+  async function checkGcpTraceSetup() {
+    setGcpTraceChecking(true);
+    setGcpTraceError(null);
+    try {
+      const res = await fetch("/api/settings/trace-source/gcp/check", {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setGcpTraceError(data.error ?? "Failed to check GCP trace setup.");
+        return;
+      }
+      setGcpTraceSource(data.config ?? gcpTraceSource);
+    } catch (e) {
+      setGcpTraceError(e instanceof Error ? e.message : "Failed to check GCP trace setup.");
+    } finally {
+      setGcpTraceChecking(false);
+    }
+  }
+
+  async function copyGeneratedFile(file: GeneratedFile) {
+    try {
+      await navigator.clipboard.writeText(file.content);
+      setCopiedFileName(file.name);
+      setTimeout(() => setCopiedFileName((current) => current === file.name ? null : current), 2000);
+    } catch {
+      setGcpTraceError(`Failed to copy ${file.name}.`);
+    }
+  }
+
+  function downloadGeneratedFile(file: GeneratedFile) {
+    const blob = new Blob([file.content], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = file.name;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function traceSetupBadge(state: TraceSetupState) {
+    switch (state) {
+      case "receiving_events":
+        return { label: "Active", className: "text-emerald-400 border-emerald-500/25 bg-emerald-500/10" };
+      case "resources_applied":
+        return { label: "Resources Applied", className: "text-sky-400 border-sky-500/25 bg-sky-500/10" };
+      case "terraform_generated":
+        return { label: "Terraform Ready", className: "text-amber-400 border-amber-500/25 bg-amber-500/10" };
+      default:
+        return { label: "Not Configured", className: "text-slate-400 border-slate-600/30 bg-slate-700/30" };
+    }
   }
 
   async function saveKey(provider: AIProvider) {
@@ -1086,6 +1347,364 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
             })()}
 
           </div>
+        )}
+      </div>
+
+      <div className="space-y-4">
+        <div>
+          <h2 className="text-xs font-bold uppercase tracking-widest" style={{ color: "var(--border-dim)" }}>GCP Trace Source</h2>
+          <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
+            Choose whether Watchmen should read live trace activity from Cloud Logging polling or from a Pub/Sub streaming integration.
+          </p>
+        </div>
+
+        {isDemoUser ? (
+          <div className="border p-4 text-xs" style={{ borderColor: "var(--border-dim)", background: "rgba(15, 23, 42, 0.45)", color: "var(--text-muted)" }}>
+            GCP trace-source configuration is disabled in demo mode.
+          </div>
+        ) : gcpTraceLoading || !gcpTraceSource ? (
+          <div className="animate-pulse h-56" style={{ background: "var(--bg-card2)", border: "1px solid var(--border-dim)" }} />
+        ) : (
+          (() => {
+            const badge = traceSetupBadge(gcpTraceSource.setupState);
+            const hasGcpCredential = cloudCreds.some((c) => c.provider === "gcp");
+            return (
+              <div className="border p-5 space-y-5" style={{ background: "rgba(16, 185, 129, 0.04)", borderColor: "rgba(16, 185, 129, 0.16)" }}>
+                <div className="flex items-start justify-between gap-4 flex-wrap">
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-bold" style={{ color: "var(--text-strong)" }}>Trace Source: GCP</span>
+                      <span className={cn("px-2 py-0.5 border text-[10px] uppercase tracking-widest", badge.className)}>
+                        {badge.label}
+                      </span>
+                    </div>
+                    <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
+                      {gcpTraceSource.lastCheckMessage}
+                    </p>
+                    {!hasGcpCredential && (
+                      <p className="text-xs mt-2 text-amber-400">
+                        Add GCP credentials above before checking streaming setup.
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={checkGcpTraceSetup}
+                      disabled={gcpTraceChecking || !hasGcpCredential}
+                      className="terminal-btn text-xs px-3 py-1.5"
+                    >
+                      {gcpTraceChecking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Check setup"}
+                    </button>
+                    {gcpTraceSource.mode === "streaming" && (
+                      <button
+                        onClick={generateGcpTraceBundle}
+                        className="terminal-btn text-xs px-3 py-1.5"
+                      >
+                        Generate Terraform
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {([
+                    {
+                      mode: "polling" as const,
+                      title: "Cloud Logging Polling",
+                      description: "Simpler setup. Higher latency and more Cloud Logging read traffic.",
+                    },
+                    {
+                      mode: "streaming" as const,
+                      title: "Pub/Sub Streaming",
+                      description: "Lower latency. Requires Log Router, Pub/Sub, and Terraform apply steps.",
+                    },
+                  ]).map((option) => (
+                    <button
+                      key={option.mode}
+                      onClick={() => setGcpTraceSource((current) => current ? {
+                        ...current,
+                        mode: option.mode,
+                        pushEndpoint: option.mode === "streaming" && !current.pushEndpoint && typeof window !== "undefined"
+                          ? getPublicHttpsPushEndpoint(window.location.origin)
+                          : current.pushEndpoint,
+                        pushAudience: option.mode === "streaming" && !current.pushAudience && typeof window !== "undefined"
+                          ? getPublicHttpsPushEndpoint(window.location.origin)
+                          : current.pushAudience,
+                        setupState: option.mode === "polling"
+                          ? "receiving_events"
+                          : current.projectId.trim()
+                            ? "terraform_generated"
+                            : "not_configured",
+                      } : current)}
+                      className={cn(
+                        "text-left border p-4 transition-colors",
+                        gcpTraceSource.mode === option.mode ? "border-emerald-500/40 bg-emerald-500/10" : "border-slate-700/70 hover:border-slate-500"
+                      )}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-sm font-semibold" style={{ color: "var(--text-strong)" }}>{option.title}</span>
+                        <span className={cn("w-3 h-3 rounded-full border", gcpTraceSource.mode === option.mode ? "border-emerald-400 bg-emerald-400" : "border-slate-500")} />
+                      </div>
+                      <p className="text-xs mt-2" style={{ color: "var(--text-muted)" }}>{option.description}</p>
+                    </button>
+                  ))}
+                </div>
+
+                {gcpTraceSource.mode === "streaming" && (
+                  <div className="space-y-4 border p-4" style={{ borderColor: "var(--border-dim)", background: "rgba(2, 6, 23, 0.35)" }}>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>GCP Project ID</label>
+                        <input
+                          type="text"
+                          value={gcpTraceSource.projectId}
+                          onChange={(e) => setGcpTraceSource((current) => current ? { ...current, projectId: e.target.value } : current)}
+                          placeholder="watchmen-prod-project"
+                          className="w-full px-3 py-2 bg-transparent border text-xs outline-none font-mono"
+                          style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Region</label>
+                        <input
+                          type="text"
+                          value={gcpTraceSource.region}
+                          onChange={(e) => setGcpTraceSource((current) => current ? { ...current, region: e.target.value } : current)}
+                          placeholder="us-central1"
+                          className="w-full px-3 py-2 bg-transparent border text-xs outline-none font-mono"
+                          style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Resource Prefix</label>
+                        <input
+                          type="text"
+                          value={gcpTraceSource.namePrefix}
+                          onChange={(e) => setGcpTraceSource((current) => current ? { ...current, namePrefix: e.target.value } : current)}
+                          placeholder="watchmen-live-trace"
+                          className="w-full px-3 py-2 bg-transparent border text-xs outline-none font-mono"
+                          style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Push Endpoint</label>
+                        <input
+                          type="text"
+                          value={gcpTraceSource.pushEndpoint}
+                          onChange={(e) => setGcpTraceSource((current) => current ? { ...current, pushEndpoint: e.target.value } : current)}
+                          placeholder="https://watchmen.example.com/api/ingest/gcp/pubsub"
+                          className="w-full px-3 py-2 bg-transparent border text-xs outline-none font-mono"
+                          style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Push Audience (Optional)</label>
+                      <input
+                        type="text"
+                        value={gcpTraceSource.pushAudience}
+                        onChange={(e) => setGcpTraceSource((current) => current ? { ...current, pushAudience: e.target.value } : current)}
+                        placeholder="Optional OIDC audience for Pub/Sub push"
+                        className="w-full px-3 py-2 bg-transparent border text-xs outline-none font-mono"
+                        style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
+                      />
+                    </div>
+
+                    <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                      Pub/Sub push must target a public HTTPS Watchmen URL. Localhost and private-network addresses will not receive events from GCP.
+                    </p>
+                    {gcpTraceSource.pushEndpoint.trim() && validateStreamingPushEndpoint(gcpTraceSource.pushEndpoint) && (
+                      <p className="text-xs text-amber-400">
+                        {validateStreamingPushEndpoint(gcpTraceSource.pushEndpoint)}
+                      </p>
+                    )}
+
+                  </div>
+                )}
+
+                {gcpTraceSource.mode === "streaming" && (
+                  <div className="border p-4 space-y-4" style={{ borderColor: "var(--border-dim)", background: "rgba(8, 47, 73, 0.18)" }}>
+                    <div className="flex items-start justify-between gap-4 flex-wrap">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <Wifi className="w-4 h-4 text-sky-400" />
+                          <h3 className="text-xs font-bold uppercase tracking-widest" style={{ color: "var(--text-strong)" }}>Local Test Tunnel</h3>
+                        </div>
+                        <p className="text-xs mt-2" style={{ color: "var(--text-muted)" }}>
+                          Start a temporary public tunnel to your local Watchmen instance so GCP Pub/Sub can push into `/api/ingest/gcp/pubsub`.
+                        </p>
+                      </div>
+                      <button
+                        onClick={refreshLocalTunnelStatus}
+                        disabled={localTunnelLoading}
+                        className="terminal-btn text-xs px-3 py-1.5"
+                      >
+                        Refresh Tunnel
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-wrap text-xs">
+                      <span
+                        className={cn(
+                          "px-2 py-0.5 border uppercase tracking-widest",
+                          localTunnel?.state === "running"
+                            ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-400"
+                            : localTunnel?.state === "starting"
+                              ? "border-amber-500/25 bg-amber-500/10 text-amber-400"
+                              : localTunnel?.state === "error"
+                                ? "border-red-500/25 bg-red-500/10 text-red-400"
+                                : "border-slate-600/30 bg-slate-700/20 text-slate-400"
+                        )}
+                      >
+                        {localTunnel?.state ?? "idle"}
+                      </span>
+                      {localTunnel?.provider && (
+                        <span style={{ color: "var(--text-muted)" }}>
+                          Provider: <span className="font-mono" style={{ color: "var(--text-primary)" }}>{localTunnel.provider}</span>
+                        </span>
+                      )}
+                      {localTunnel?.publicUrl && (
+                        <span style={{ color: "var(--text-muted)" }}>
+                          URL: <span className="font-mono" style={{ color: "var(--text-primary)" }}>{localTunnel.publicUrl}</span>
+                        </span>
+                      )}
+                    </div>
+
+                    <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                      {localTunnel?.message ?? "Detecting tunnel tooling..."}
+                    </p>
+
+                    {localTunnel?.availableProviders?.length ? (
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          onClick={() => startLocalTunnel()}
+                          disabled={localTunnelAction !== null || localTunnel?.state === "starting" || localTunnel?.state === "running"}
+                          className="terminal-btn text-xs px-3 py-1.5"
+                        >
+                          {localTunnelAction === "start" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Start Test Tunnel"}
+                        </button>
+                        <button
+                          onClick={stopLocalTunnel}
+                          disabled={localTunnelAction !== null || localTunnel?.state !== "running"}
+                          className="terminal-btn text-xs px-3 py-1.5"
+                        >
+                          {localTunnelAction === "stop" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <><Square className="w-3.5 h-3.5" /> Stop Tunnel</>}
+                        </button>
+                        <button
+                          onClick={useTunnelUrl}
+                          disabled={!localTunnel?.pushEndpoint}
+                          className="terminal-btn text-xs px-3 py-1.5"
+                        >
+                          Use This URL
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-2 text-xs" style={{ color: "var(--text-muted)" }}>
+                        <p>No supported tunnel client is installed locally. Install one of these, then click `Refresh Tunnel`:</p>
+                        <p className="font-mono" style={{ color: "var(--text-primary)" }}>brew install cloudflared</p>
+                        <p className="font-mono" style={{ color: "var(--text-primary)" }}>brew install ngrok/ngrok/ngrok</p>
+                      </div>
+                    )}
+
+                    {localTunnel?.pushEndpoint && (
+                      <div className="space-y-2">
+                        <div className="border p-3 text-xs font-mono" style={{ borderColor: "var(--border-dim)", background: "#05070d", color: "var(--text-primary)" }}>
+                          {localTunnel.pushEndpoint}
+                        </div>
+                        <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                          `Use This URL` fills the Push Endpoint and Push Audience fields above. Click `Save Trace Source` after that.
+                        </p>
+                      </div>
+                    )}
+
+                    {localTunnel?.logs?.length ? (
+                      <details className="border p-3" style={{ borderColor: "var(--border-dim)", background: "rgba(2, 6, 23, 0.25)" }}>
+                        <summary className="cursor-pointer text-xs uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>
+                          Tunnel Logs
+                        </summary>
+                        <pre className="mt-3 overflow-auto text-[10px] leading-5 whitespace-pre-wrap font-mono" style={{ color: "var(--text-primary)", maxHeight: 180 }}>
+                          {localTunnel.logs.join("\n")}
+                        </pre>
+                      </details>
+                    ) : null}
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    onClick={saveGcpTraceSource}
+                    disabled={
+                      gcpTraceSaving
+                      || (gcpTraceSource.mode === "streaming" && (
+                        !gcpTraceSource.projectId.trim()
+                        || Boolean(validateStreamingPushEndpoint(gcpTraceSource.pushEndpoint))
+                      ))
+                    }
+                    className="terminal-btn text-xs px-3 py-1.5"
+                  >
+                    {gcpTraceSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Save Trace Source"}
+                  </button>
+                  <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+                    {gcpTraceSource.mode === "streaming"
+                      ? "Save first, then generate Terraform and apply it in your infra repo."
+                      : "Save to keep Cloud Logging polling as the active trace source."}
+                  </span>
+                </div>
+
+                {gcpTraceError && (
+                  <p className="text-xs font-mono text-red-400">{gcpTraceError}</p>
+                )}
+
+                {gcpTraceBundle && gcpTraceSource.mode === "streaming" && (
+                  <div className="space-y-4">
+                    <div className="border p-4 space-y-3" style={{ borderColor: "var(--border-dim)", background: "rgba(2, 6, 23, 0.3)" }}>
+                      <div>
+                        <h3 className="text-xs font-bold uppercase tracking-widest" style={{ color: "var(--border-dim)" }}>Apply Steps</h3>
+                        <div className="mt-2 space-y-1 text-xs" style={{ color: "var(--text-muted)" }}>
+                          {gcpTraceBundle.steps.map((step, index) => (
+                            <p key={index}>{index + 1}. {step}</p>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="space-y-1 text-xs" style={{ color: "var(--text-muted)" }}>
+                        {gcpTraceBundle.notes.map((note, index) => (
+                          <p key={index}>- {note}</p>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      {gcpTraceBundle.files.map((file) => (
+                        <div key={file.name} className="border p-4 space-y-3" style={{ borderColor: "var(--border-dim)", background: "rgba(2, 6, 23, 0.3)" }}>
+                          <div className="flex items-center justify-between gap-3 flex-wrap">
+                            <div>
+                              <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "var(--text-strong)" }}>{file.name}</p>
+                              <p className="text-[10px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>{file.language}</p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button onClick={() => copyGeneratedFile(file)} className="terminal-btn text-xs px-3 py-1.5">
+                                {copiedFileName === file.name ? "Copied" : "Copy"}
+                              </button>
+                              <button onClick={() => downloadGeneratedFile(file)} className="terminal-btn text-xs px-3 py-1.5">
+                                Download
+                              </button>
+                            </div>
+                          </div>
+                          <pre className="overflow-auto border p-3 text-[10px] leading-5 font-mono whitespace-pre-wrap" style={{ borderColor: "var(--border-dim)", color: "var(--text-primary)", background: "#05070d", maxHeight: 260 }}>
+                            {file.content}
+                          </pre>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()
         )}
       </div>
         </div>

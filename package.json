@@ -3,8 +3,8 @@
   "version": "0.4.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "dev:debug": "WATCHMEN_DEBUG=true NEXT_PUBLIC_WATCHMEN_DEBUG=true next dev",
+    "dev": "next dev -p 3019",
+    "dev:debug": "WATCHMEN_DEBUG=true NEXT_PUBLIC_WATCHMEN_DEBUG=true next dev -p 3019",
     "build": "next build",
     "start": "node .next/standalone/server.js",
     "lint": "next lint",

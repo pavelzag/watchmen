@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const body = (await req.json()) as { tasks?: AnyBackgroundTask[]; task?: AnyBackgroundTask };
+    const body = (await req.json().catch(() => ({}))) as { tasks?: AnyBackgroundTask[]; task?: AnyBackgroundTask };
     const tasks = Array.isArray(body.tasks)
       ? body.tasks
       : body.task

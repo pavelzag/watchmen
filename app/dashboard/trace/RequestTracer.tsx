@@ -11,6 +11,7 @@ import {
 import { cn } from "@/lib/utils";
 import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
 import type { GcpSnapshot, GkeEntryPoint } from "@/lib/gcp/types";
+import type { LiveTraceIngressEvent } from "@/lib/live-trace-bus";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -21,6 +22,14 @@ const COL_PADDING_X = 24;
 const ROW_PADDING_Y = 40;
 const ANIM_COL_DELAY = 320; // ms between columns
 const ANIM_PULSE_MS = 260;  // ms node stays "active" before "done"
+const LIVE_POLL_ACTIVE_MS = 1500;
+const LIVE_POLL_ALL_MS = 4000;
+const LIVE_ALL_BATCH_SIZE = 4;
+const LIVE_STREAM_PULSE_MS = 520;
+// Cloud Logging can lag well beyond a few seconds, so keep a wider freshness
+// window for "live" traffic while still aging events out of the UI separately.
+const LIVE_EVENT_FRESHNESS_MS = 120_000;
+const LIVE_EVENT_RETENTION_MS = 30_000;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -64,6 +73,11 @@ interface LiveEvent {
   count: number;
 }
 
+interface LivePulseBurst {
+  id: string;
+  pathIds: Set<string>;
+}
+
 interface GraphNode {
   id: string;
   type: NodeType;
@@ -99,6 +113,41 @@ interface ProxyResponse {
   body?: string;
   error?: string;
   headers?: Record<string, string>;
+}
+
+type TraceSourceMode = "polling" | "streaming";
+type TraceSetupState = "not_configured" | "terraform_generated" | "resources_applied" | "receiving_events";
+
+interface GcpTraceSourceConfigSummary {
+  mode: TraceSourceMode;
+  setupState: TraceSetupState;
+  lastCheckMessage: string;
+}
+
+function getProxyUrlValidationError(rawUrl: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return "Enter a valid absolute URL.";
+  }
+
+  if (parsed.protocol !== "https:") {
+    return "Only HTTPS URLs are allowed by the trace proxy.";
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  if (host === "169.254.169.254" || host === "metadata.google.internal" || host === "metadata.internal") {
+    return "Metadata endpoints are blocked by the trace proxy.";
+  }
+  if (host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "0.0.0.0") {
+    return "Localhost targets are blocked by the trace proxy.";
+  }
+  if (/^10\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host) || /^192\.168\./.test(host)) {
+    return "Private-network targets are blocked by the trace proxy.";
+  }
+
+  return null;
 }
 
 function HoverTooltip({
@@ -373,6 +422,45 @@ function liveTargetLabel(target: LiveMonitorTarget): string {
   return `VM · ${target.instance}`;
 }
 
+function resolveTargetFromIngressEvent(event: LiveTraceIngressEvent): {
+  kind: LiveMonitorTarget["kind"];
+  projectId: string;
+  region?: string;
+  service?: string;
+  instance?: string;
+  container?: string;
+} {
+  if (event.kind === "cloudrun") {
+    return {
+      kind: "cloudrun",
+      projectId: event.projectId,
+      region: event.region,
+      service: event.resourceName,
+    };
+  }
+  if (event.kind === "vm") {
+    return {
+      kind: "vm",
+      projectId: event.projectId,
+      region: event.region,
+      instance: event.resourceName,
+    };
+  }
+  return {
+    kind: "gke",
+    projectId: event.projectId,
+    region: event.region,
+    container: event.container ?? event.resourceName,
+  };
+}
+
+function liveTargetKeyFromIngressEvent(event: LiveTraceIngressEvent): string {
+  const target = resolveTargetFromIngressEvent(event);
+  if (target.kind === "cloudrun") return `cloudrun:${target.projectId}:${target.region ?? ""}:${target.service}`;
+  if (target.kind === "vm") return `vm:${target.projectId}:${target.region ?? ""}:${target.instance}`;
+  return `gke:${target.projectId}:${target.container}`;
+}
+
 function resolveLiveTargetNodeId(target: LiveMonitorTarget, nodes: GraphNode[]): string | undefined {
   if (target.kind === "gke") {
     return nodes.find(
@@ -389,6 +477,46 @@ function resolveLiveTargetNodeId(target: LiveMonitorTarget, nodes: GraphNode[]):
   return nodes.find(
     n => target.pathIds.has(n.id) && n.type === "vm" && n.projectId === target.projectId && n.resourceName === target.instance
   )?.id;
+}
+
+function resolveLiveEventNodeIdFromIngress(event: LiveTraceIngressEvent, nodes: GraphNode[]): string | undefined {
+  const target = resolveTargetFromIngressEvent(event);
+  if (target.kind === "cloudrun") {
+    return nodes.find(
+      n => n.type === "cloudrun" && n.projectId === target.projectId && n.resourceName === target.service
+    )?.id;
+  }
+  if (target.kind === "vm") {
+    return nodes.find(
+      n => n.type === "vm" && n.projectId === target.projectId && n.resourceName === target.instance
+    )?.id;
+  }
+  return nodes.find(
+    n => n.type === "sidecar" && n.projectId === target.projectId && n.container === target.container
+  )?.id ?? nodes.find(
+    n => n.type === "gke" && n.projectId === target.projectId
+  )?.id;
+}
+
+function toLiveEventFromIngress(event: LiveTraceIngressEvent, nodes: GraphNode[]): LiveEvent {
+  const target = resolveTargetFromIngressEvent(event);
+  return {
+    id: event.id,
+    ts: event.timestamp,
+    label: target.kind === "cloudrun"
+      ? `RUN · ${target.service}`
+      : target.kind === "vm"
+        ? `VM · ${target.instance}`
+        : `GKE · ${target.container}`,
+    kind: target.kind,
+    projectId: target.projectId,
+    focusNodeId: resolveLiveEventNodeIdFromIngress(event, nodes),
+    method: event.method,
+    path: event.path,
+    status: event.status,
+    latency: event.latency,
+    count: event.count,
+  };
 }
 
 function toLiveEvent(target: LiveMonitorTarget, entries: LogEntry[], nodes: GraphNode[]): LiveEvent | null {
@@ -441,6 +569,12 @@ function toDemoLiveEvent(target: LiveMonitorTarget, ts: string, count: number, n
     latency: `${latencyMs}ms`,
     count,
   };
+}
+
+function eventTimestampMs(ts: string | undefined): number {
+  if (!ts) return 0;
+  const ms = new Date(ts).getTime();
+  return Number.isFinite(ms) ? ms : 0;
 }
 
 function buildRouteToNode(nodeId: string, edges: GraphEdge[]): string[] {
@@ -2163,6 +2297,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const [loadingSnapshot, setLoadingSnapshot] = useState(true);
   const [entryPoints, setEntryPoints] = useState<GkeEntryPoint[]>([]);
   const [loadingEntryPoints, setLoadingEntryPoints] = useState(true);
+  const [traceSourceConfig, setTraceSourceConfig] = useState<GcpTraceSourceConfigSummary | null>(null);
 
   // Topology derived from snapshot + entry points — auto-updates when either changes
   const { nodes: baseNodes, edges: baseEdges } = useMemo(
@@ -2172,6 +2307,22 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
   // Containers discovered per GKE node (used to build sidecar nodes)
   const [nodeContainers, setNodeContainers] = useState<Record<string, string[]>>({});
+
+  useEffect(() => {
+    if (demoMode) return;
+    fetch("/api/settings/trace-source/gcp")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.config) {
+          setTraceSourceConfig({
+            mode: d.config.mode,
+            setupState: d.config.setupState,
+            lastCheckMessage: d.config.lastCheckMessage,
+          });
+        }
+      })
+      .catch(() => {});
+  }, [demoMode]);
 
   // Eagerly fetch container lists for all GKE nodes so sidecar nodes appear
   useEffect(() => {
@@ -2237,6 +2388,9 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const [methodOpen, setMethodOpen] = useState(false);
   const [endpointFilter, setEndpointFilter] = useState<EndpointFilter>("all");
 
+  const traceSourceLabel = traceSourceConfig?.mode === "streaming" ? "Pub/Sub Streaming" : "Cloud Logging Polling";
+  const showTraceSetupHint = traceSourceConfig?.mode === "streaming" && traceSourceConfig.setupState !== "receiving_events";
+
   // Send state
   const [sending, setSending] = useState(false);
   const [nodeStatus, setNodeStatus] = useState<Record<string, NodeStatus>>({});
@@ -2267,7 +2421,9 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const liveTimestamps = useRef<number[]>([]);   // sliding window of request timestamps
   const [liveRps, setLiveRps] = useState<number | null>(null);
   const [liveEvents, setLiveEvents] = useState<LiveEvent[]>([]);
+  const [livePulseBursts, setLivePulseBursts] = useState<LivePulseBurst[]>([]);
   const [selectedLiveEvent, setSelectedLiveEvent] = useState<LiveEvent | null>(null);
+  const livePulseTimeoutsRef = useRef<Map<string, number>>(new Map());
 
   // Demo simulation
   const [demoRps, setDemoRps] = useState<number | null>(null);
@@ -2298,9 +2454,17 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
   const [cursorInContainer, setCursorInContainer] = useState({ x: 0, y: 0 });
 
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    e.preventDefault();
-    setZoom(z => Math.min(3, Math.max(0.3, z - e.deltaY * 0.001)));
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      setZoom(z => Math.min(3, Math.max(0.3, z - event.deltaY * 0.001)));
+    };
+
+    container.addEventListener("wheel", handleWheel, { passive: false });
+    return () => container.removeEventListener("wheel", handleWheel);
   }, []);
 
   const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
@@ -2479,6 +2643,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
     return null;
   }, [activePath, edges, nodeContainers, nodes]);
+  const hasFocusedLiveTarget = Boolean(url.trim() && activePath.size > 1 && liveMonitorTarget);
 
   const responseRouteNodes = useMemo(() => {
     const targetNode = activeTargetNodeFromPath(activePath, nodes);
@@ -2684,6 +2849,70 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     }
   }, [edges]);
 
+  const emitLivePulseBurst = useCallback((pathIds: Set<string>) => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setLivePulseBursts(prev => [...prev, { id, pathIds: new Set(pathIds) }].slice(-24));
+    const timeoutId = window.setTimeout(() => {
+      livePulseTimeoutsRef.current.delete(id);
+      setLivePulseBursts(prev => prev.filter(burst => burst.id !== id));
+    }, LIVE_STREAM_PULSE_MS);
+    livePulseTimeoutsRef.current.set(id, timeoutId);
+  }, []);
+
+  useEffect(() => {
+    if (liveMode) return;
+    livePulseTimeoutsRef.current.forEach(timeoutId => window.clearTimeout(timeoutId));
+    livePulseTimeoutsRef.current.clear();
+    setLivePulseBursts([]);
+  }, [liveMode]);
+
+  useEffect(() => {
+    return () => {
+      livePulseTimeoutsRef.current.forEach(timeoutId => window.clearTimeout(timeoutId));
+      livePulseTimeoutsRef.current.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    const useStreamingLive = !demoMode && traceSourceConfig?.mode === "streaming";
+    if (!useStreamingLive || !liveMode) return;
+
+    const eventSource = new EventSource("/api/trace/live");
+    eventSource.addEventListener("trace", (rawEvent) => {
+      const parsed = JSON.parse((rawEvent as MessageEvent).data) as LiveTraceIngressEvent;
+
+      if (liveScope === "active" && hasFocusedLiveTarget && liveMonitorTarget) {
+        const activeKey = liveTargetKey(liveMonitorTarget);
+        if (liveTargetKeyFromIngressEvent(parsed) !== activeKey) {
+          return;
+        }
+      }
+
+      const uiEvent = toLiveEventFromIngress(parsed, nodes);
+      const nowMs = eventTimestampMs(uiEvent.ts) || Date.now();
+
+      setLiveEvents(prev => {
+        const retainedPrev = prev.filter(event => nowMs - eventTimestampMs(event.ts) < LIVE_EVENT_RETENTION_MS);
+        const merged = [...retainedPrev, uiEvent];
+        return merged.slice(-24);
+      });
+
+      liveTimestamps.current.push(nowMs);
+      liveTimestamps.current = liveTimestamps.current.filter(t => nowMs - t < 60_000);
+      const inWindow = liveTimestamps.current.filter(t => nowMs - t < 10_000).length;
+      setLiveRps(inWindow > 0 ? inWindow / 10 : null);
+
+      if (liveAnimEnabledRef.current && uiEvent.focusNodeId) {
+        const pathIds = buildPathForNode(uiEvent.focusNodeId, edges);
+        if (liveModeRef.current) emitLivePulseBurst(pathIds);
+      }
+    });
+
+    return () => {
+      eventSource.close();
+    };
+  }, [demoMode, edges, emitLivePulseBurst, hasFocusedLiveTarget, liveMode, liveMonitorTarget, liveScope, nodes, traceSourceConfig]);
+
   // ── Demo simulation: auto-animate traffic through topology ──────────────────
   useEffect(() => {
     if (!demoMode || nodes.length < 2 || loadingSnapshot) return;
@@ -2790,6 +3019,8 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
   // ── Live monitoring: poll Cloud Logging, fire pulse on new traffic ───────────
   useEffect(() => {
+    const useStreamingLive = !demoMode && traceSourceConfig?.mode === "streaming";
+    if (useStreamingLive) return;
     liveModeRef.current = liveMode;
     if (!liveMode) {
       liveLastTsByTarget.current = {};
@@ -2818,9 +3049,14 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     const poll = async () => {
       if (!liveModeRef.current || busy) return;
       if (Date.now() < liveCooldownUntilRef.current) return;
+      const pollNowMs = Date.now();
+      setLiveEvents(prev => prev.filter(event => pollNowMs - eventTimestampMs(event.ts) < LIVE_EVENT_RETENTION_MS));
+      liveTimestamps.current = liveTimestamps.current.filter(t => pollNowMs - t < 60_000);
+      const currentWindowCount = liveTimestamps.current.filter(t => pollNowMs - t < 10_000).length;
+      setLiveRps(currentWindowCount > 0 ? currentWindowCount / 10 : null);
       const targets = liveScope === "all"
         ? (() => {
-            const batchSize = 2;
+            const batchSize = LIVE_ALL_BATCH_SIZE;
             const start = livePollCursorRef.current % allTargets.length;
             const batch = Array.from({ length: Math.min(batchSize, allTargets.length) }, (_, i) => allTargets[(start + i) % allTargets.length]);
             livePollCursorRef.current = (start + batch.length) % allTargets.length;
@@ -2848,7 +3084,11 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
               const latest = entries.reduce((a, b) => a.timestamp > b.timestamp ? a : b);
               liveLastTsByTarget.current[key] = latest.timestamp;
             }
-            return { target, entries, rateLimited: false };
+            const freshEntries = entries.filter(entry => {
+              const tsMs = eventTimestampMs(entry.timestamp);
+              return tsMs > 0 && pollNowMs - tsMs <= LIVE_EVENT_FRESHNESS_MS;
+            });
+            return { target, entries: freshEntries, rateLimited: false };
           })
         );
 
@@ -2864,7 +3104,8 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
             .sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
           if (newEvents.length > 0) {
             setLiveEvents(prev => {
-              const merged = [...newEvents, ...prev];
+              const retainedPrev = prev.filter(event => pollNowMs - eventTimestampMs(event.ts) < LIVE_EVENT_RETENTION_MS);
+              const merged = [...newEvents, ...retainedPrev];
               const deduped: LiveEvent[] = [];
               const seen = new Set<string>();
               for (const event of merged) {
@@ -2879,10 +3120,9 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
           allEntries.forEach(e => {
             if (e.timestamp) liveTimestamps.current.push(new Date(e.timestamp).getTime());
           });
-          const maxTs = Math.max(...liveTimestamps.current);
-          liveTimestamps.current = liveTimestamps.current.filter(t => maxTs - t < 60_000);
-          const inWindow = liveTimestamps.current.filter(t => maxTs - t < 10_000).length;
-          setLiveRps(inWindow / 10);
+          liveTimestamps.current = liveTimestamps.current.filter(t => pollNowMs - t < 60_000);
+          const inWindow = liveTimestamps.current.filter(t => pollNowMs - t < 10_000).length;
+          setLiveRps(inWindow > 0 ? inWindow / 10 : null);
 
           if (liveAnimEnabledRef.current) {
             busy = true;
@@ -2890,21 +3130,21 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
             if (targets.length === 1) {
               const [{ target, entries }] = targetsWithHits;
               if (target) {
-                const pulses = Math.min(Math.max(1, Math.round(entries.length / 5)), 4);
+                const pulses = Math.min(Math.max(1, Math.ceil(entries.length / 2)), 8);
                 for (let p = 0; p < pulses; p++) {
                   if (!liveModeRef.current) break;
-                  if (p > 0) await sleep(350);
-                  await runBfsAnimation(target.pathIds, { colDelay: 160, resetAfterMs: 700 });
+                  if (p > 0) await sleep(180);
+                  await runBfsAnimation(target.pathIds, { colDelay: 110, resetAfterMs: 450 });
                 }
               }
             } else {
               const animatedTargets = targetsWithHits
                 .sort((a, b) => b.entries.length - a.entries.length)
-                .slice(0, 6);
+                .slice(0, 8);
               for (let i = 0; i < animatedTargets.length; i++) {
                 if (!liveModeRef.current) break;
-                if (i > 0) await sleep(220);
-                await runBfsAnimation(animatedTargets[i].target.pathIds, { colDelay: 140, resetAfterMs: 700 });
+                if (i > 0) await sleep(140);
+                await runBfsAnimation(animatedTargets[i].target.pathIds, { colDelay: 110, resetAfterMs: 420 });
               }
             }
             busy = false;
@@ -2913,11 +3153,11 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       } catch { /* ignore polling errors */ }
     };
 
-    const pollIntervalMs = liveScope === "all" ? 8000 : 3000;
+    const pollIntervalMs = liveScope === "all" ? LIVE_POLL_ALL_MS : LIVE_POLL_ACTIVE_MS;
     const id = setInterval(poll, pollIntervalMs);
     poll(); // immediate first check
     return () => { clearInterval(id); };
-  }, [allLiveMonitorTargets, liveMode, liveMonitorTarget, liveScope, nodes, runBfsAnimation]);
+  }, [allLiveMonitorTargets, demoMode, liveMode, liveMonitorTarget, liveScope, nodes, runBfsAnimation, traceSourceConfig]);
 
   useEffect(() => {
     if (!demoMode || !liveMode || demoLiveTargets.length === 0) return;
@@ -2977,7 +3217,18 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
   // ── Send request ────────────────────────────────────────────────────────────
   const handleSend = useCallback(async () => {
-    if (sending || !url.trim()) return;
+    const trimmedUrl = url.trim();
+    if (sending || !trimmedUrl) return;
+
+    const validationError = getProxyUrlValidationError(trimmedUrl);
+    if (validationError) {
+      setResponse({ ok: false, error: validationError, timing: 0 });
+      setRequestTime(new Date());
+      setShowTrace(false);
+      setNodeStatus({});
+      return;
+    }
+
     setSending(true);
     setResponse(null);
     setRequestTime(new Date());
@@ -2996,7 +3247,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     const httpPromise = fetch("/api/proxy", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: url.trim(), method, body: parsedBody }),
+      body: JSON.stringify({ url: trimmedUrl, method, body: parsedBody }),
     }).then(r => r.json() as Promise<ProxyResponse>);
 
     // BFS pulse through the active path (handles sidecar chains in correct order)
@@ -3325,7 +3576,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                     setLiveMode(next);
                     if (!next) setNodeStatus({});
                   }}
-                  title={liveMode ? "Stop live monitoring" : "Watch for incoming requests (polls Cloud Logging every 2s)"}
+                  title={liveMode ? "Stop live monitoring" : `Watch for incoming requests via ${traceSourceLabel}`}
                   className={cn(
                     "flex items-center gap-1 text-[8px] px-1.5 py-0.5 border transition-colors font-bold tracking-widest",
                     liveMode
@@ -3341,6 +3592,20 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                       </span>
                     )}
                   </button>
+                {showTraceSetupHint && (
+                  <div
+                    className={cn(
+                      "flex items-center gap-1 text-[8px] px-1.5 py-0.5 border tracking-widest",
+                      traceSourceConfig?.setupState === "terraform_generated"
+                        ? "border-amber-800 text-amber-400 bg-amber-950/20"
+                        : "border-sky-800 text-sky-400 bg-sky-950/30"
+                    )}
+                    title={traceSourceConfig?.lastCheckMessage}
+                  >
+                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-current" />
+                    SETUP
+                  </div>
+                )}
                 {((demoMode ? demoLiveTargets.length : allLiveMonitorTargets.length) > 1) && (
                   <button
                     onClick={() => setLiveScope(scope => scope === "all" ? "active" : "all")}
@@ -3410,7 +3675,6 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
           ref={containerRef}
           className="relative flex-1 overflow-hidden cursor-grab active:cursor-grabbing"
           style={{ height: graphH }}
-          onWheel={handleWheel}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
@@ -3445,10 +3709,17 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
               const toActive = activePath.has(line.toId);
               const isLit = nodeStatus[line.fromId] === "done" || nodeStatus[line.fromId] === "active";
               const isPath = fromActive && toActive;
+              const concurrentBursts = livePulseBursts.filter(
+                burst => burst.pathIds.has(line.fromId) && burst.pathIds.has(line.toId)
+              );
               // Show pulse when line is in the URL-matched path OR when both endpoints
               // are actively being animated (e.g. live mode with no URL typed)
               const bothAnimated = nodeStatus[line.fromId] !== undefined && nodeStatus[line.toId] !== undefined;
-              const lineVisible = !url.trim() || isPath || fromActive || toActive;
+              // Keep edge visibility consistent with node visibility.
+              // When a URL is focused, only show edges whose endpoints are both
+              // part of the inferred path; otherwise "internet" keeps every
+              // outbound edge faintly visible because it is always active.
+              const lineVisible = !url.trim() || isPath;
 
               return (
                 <g key={line.id} opacity={lineVisible ? 1 : 0}>
@@ -3491,6 +3762,32 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                       />
                     </>
                   )}
+                  {concurrentBursts.map((burst) => (
+                    <g key={burst.id}>
+                      <motion.path
+                        d={bezierPath(line)}
+                        fill="none"
+                        stroke="#00ff41"
+                        strokeWidth={6}
+                        strokeLinecap="round"
+                        opacity={0.25}
+                        filter="url(#pulse-glow)"
+                        initial={{ pathLength: 0 }}
+                        animate={{ pathLength: 1 }}
+                        transition={{ duration: 0.42, ease: "easeOut" }}
+                      />
+                      <motion.path
+                        d={bezierPath(line)}
+                        fill="none"
+                        stroke="#00ff41"
+                        strokeWidth={2}
+                        strokeLinecap="round"
+                        initial={{ pathLength: 0, opacity: 0.95 }}
+                        animate={{ pathLength: 1, opacity: 1 }}
+                        transition={{ duration: 0.38, ease: "easeOut" }}
+                      />
+                    </g>
+                  ))}
                 </g>
               );
             })}

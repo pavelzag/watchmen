@@ -111,7 +111,9 @@ export async function GET(req: NextRequest) {
       filters.push(`(severity="INFO" OR severity="DEFAULT" OR severity="NOTICE" OR severity="WARNING" OR severity="ERROR")`);
     }
 
-    if (after)  filters.push(`timestamp >= "${after}"`);
+    // Use a strict lower bound so the last-seen entry doesn't get replayed
+    // forever when the client advances its cursor to that exact timestamp.
+    if (after)  filters.push(`timestamp > "${after}"`);
     if (before) filters.push(`timestamp <= "${before}"`);
 
     const filterStr = filters.join("\n");

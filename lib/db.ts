@@ -132,3 +132,19 @@ export async function ensureBackgroundTasksTable(): Promise<void> {
       ON user_background_tasks (user_email, dismissed, updated_at DESC)
   `;
 }
+
+/**
+ * Ensures the trace source configuration table exists.
+ */
+export async function ensureTraceSourceConfigsTable(): Promise<void> {
+  await sql`
+    CREATE TABLE IF NOT EXISTS user_trace_source_configs (
+      user_email   TEXT NOT NULL,
+      cloud        TEXT NOT NULL,
+      config       JSONB NOT NULL,
+      updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (user_email, cloud)
+    )
+  `;
+}

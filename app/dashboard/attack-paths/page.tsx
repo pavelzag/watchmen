@@ -262,8 +262,24 @@ export default function AttackPathsPage() {
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const { tasks, startAttackPathAnalysis } = useTaskCenter();
 
+  async function hasAwsCredentialsConfigured() {
+    try {
+      const res = await fetch("/api/settings/credentials");
+      if (!res.ok) return false;
+      const data = await res.json();
+      return (data.credentials ?? []).some((credential: { provider?: string }) => credential.provider === "aws");
+    } catch {
+      return false;
+    }
+  }
+
   async function loadAwsPaths() {
     try {
+      const hasAwsCredentials = await hasAwsCredentialsConfigured();
+      if (!hasAwsCredentials) {
+        setAwsPaths([]);
+        return;
+      }
       const res = await fetch("/api/aws/snapshot");
       if (!res.ok) {
         if (res.status === 404) setAwsPaths([]);
