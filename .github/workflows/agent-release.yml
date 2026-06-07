@@ -74,6 +74,7 @@ jobs:
         working-directory: services/ebpf-agent
         run: |
           set -euo pipefail
+          go mod tidy
           go generate ./...
 
       - name: Build agent
