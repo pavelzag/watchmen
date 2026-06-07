@@ -57,7 +57,8 @@ jobs:
             make \
             pkg-config \
             libelf-dev \
-            zlib1g-dev
+            zlib1g-dev \
+            libbpf-dev
           # Build bpftool from source to avoid kernel-version mismatch with apt
           git clone --depth 1 --recursive --branch v7.7.0 https://github.com/libbpf/bpftool.git /tmp/bpftool
           make -C /tmp/bpftool/src -j$(nproc)
