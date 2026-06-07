@@ -1,0 +1,20 @@
+[Unit]
+Description=Watchmen eBPF Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/watchmen-ebpf-agent
+Restart=always
+RestartSec=5
+Environment=WATCHMEN_VERBOSE=1
+# Set this to your collector when ready:
+# Environment=WATCHMEN_ENDPOINT=https://watchmen.example.com/api/agent/events
+
+# Early test mode. Tighten this after deciding which probes the agent keeps.
+User=root
+
+[Install]
+WantedBy=multi-user.target
+

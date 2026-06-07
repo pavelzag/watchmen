@@ -24,7 +24,7 @@ declare global {
   var __watchmenLocalTunnelRuntime: LocalTunnelRuntime | undefined;
 }
 
-const DEFAULT_PORT = 3019;
+const DEFAULT_PORT = 3000;
 const MAX_LOG_LINES = 40;
 
 function createInitialStatus(): LocalTunnelStatus {

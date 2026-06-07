@@ -66,6 +66,7 @@ export interface GkeEntryPoint {
 }
 
 export interface VM {
+  id?: string;
   name: string;
   projectId: string;
   zone: string;
@@ -75,6 +76,7 @@ export interface VM {
   externalIp?: string | null;
   serviceAccount?: string | null;
   tags?: string[];
+  labels?: Record<string, string>;
   createdAt?: string;
 }
 

@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euxo pipefail
+
+export DEBIAN_FRONTEND=noninteractive
+
+apt-get update
+apt-get install -y \
+  ca-certificates \
+  clang \
+  git \
+  libbpf-dev \
+  llvm \
+  make \
+  pkg-config \
+  bpftool \
+  linux-tools-common \
+  linux-tools-generic \
+  linux-cloud-tools-generic
+
+if [ "${install_go_toolchain}" = "true" ]; then
+  apt-get install -y golang-go
+fi
+
+mkdir -p /opt/watchmen-agent
+cat >/opt/watchmen-agent/README.txt <<'EOF'
+This VM is prepared for Go/eBPF agent testing.
+
+Useful checks:
+  uname -a
+  bpftool feature probe kernel
+  bpftool prog list
+EOF
+
