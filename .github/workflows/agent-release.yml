@@ -52,11 +52,14 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y \
-            bpftool \
+            linux-tools-common \
+            linux-tools-$(uname -r) \
             clang \
             llvm \
             make \
             pkg-config
+          # bpftool from linux-tools lives under /usr/lib/linux-tools-*/
+          sudo ln -sf /usr/lib/linux-tools-*/bpftool /usr/local/bin/bpftool
 
       - name: Generate BTF header
         working-directory: services/ebpf-agent
