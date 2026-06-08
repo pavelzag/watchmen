@@ -144,21 +144,21 @@ int trace_http_sendmsg(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_enter_writev")
 int trace_http_writev(struct trace_event_raw_sys_enter *ctx)
 {
-	const struct iovec *iov = (const void *)ctx->args[1];
+	unsigned long iov_ptr = ctx->args[1];
 	int iovcnt = (int)ctx->args[2];
-	if (iovcnt <= 0) return 0;
+	if (iovcnt <= 0 || !iov_ptr) return 0;
 
-	__u64 iov_len;
-	bpf_probe_read_user(&iov_len, sizeof(iov_len), &iov[0].iov_len);
+	unsigned long iov_len;
+	bpf_probe_read_user(&iov_len, 8, (const void *)(iov_ptr + 8));
 	if (iov_len < 3 || iov_len > 65536) return 0;
 
 	int read_len = iov_len < DATA_LEN ? (int)iov_len : DATA_LEN;
-	const void *base;
-	bpf_probe_read_user(&base, sizeof(base), &iov[0].iov_base);
+	unsigned long base;
+	bpf_probe_read_user(&base, 8, (const void *)iov_ptr);
 	if (!base) return 0;
 
 	char data[DATA_LEN];
-	bpf_probe_read_user(data, read_len, base);
+	bpf_probe_read_user(data, read_len, (const void *)base);
 
 	if (!is_http_req(data, read_len) && !is_http_resp(data, read_len))
 		return 0;
