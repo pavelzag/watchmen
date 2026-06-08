@@ -62,7 +62,6 @@ static __always_inline int is_http_resp(const char *data, int len)
 SEC("tracepoint/syscalls/sys_enter_write")
 int trace_http_write(struct trace_event_raw_sys_enter *ctx)
 {
-	int fd = (int)ctx->args[0];
 	void *buf = (void *)ctx->args[1];
 	size_t count = (size_t)ctx->args[2];
 
@@ -93,7 +92,6 @@ int trace_http_write(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_enter_sendto")
 int trace_http_sendto(struct trace_event_raw_sys_enter *ctx)
 {
-	int fd = (int)ctx->args[0];
 	void *buf = (void *)ctx->args[1];
 	size_t count = (size_t)ctx->args[2];
 
