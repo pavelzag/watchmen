@@ -45,23 +45,84 @@ static __always_inline int is_http_resp(const char *data, int len)
 	return data[0] == 'H' && data[1] == 'T' && data[2] == 'T' && data[3] == 'P' && data[4] == '/';
 }
 
-SEC("raw_tracepoint/sys_enter")
-int trace_http_write(struct bpf_raw_tracepoint_args *ctx)
+static __always_inline int submit_http_event(const char *data, int len)
 {
-	char comm[TASK_COMM_LEN];
-	bpf_get_current_comm(&comm, sizeof(comm));
-	if (comm[0] != 'w') return 0;
+	if (!is_http_req(data, len) && !is_http_resp(data, len))
+		return 0;
 
-	struct event *event;
-	event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
+	struct event *event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
 	if (!event) return 0;
 
 	event->pid = bpf_get_current_pid_tgid() >> 32;
 	event->uid = bpf_get_current_uid_gid();
-	__builtin_memcpy(event->comm, comm, sizeof(event->comm));
-	event->type = 42;
+	bpf_get_current_comm(&event->comm, sizeof(event->comm));
+	event->type = is_http_req(data, len) ? EVENT_HTTP_REQ : EVENT_HTTP_RESP;
+	__builtin_memcpy(event->data, data, DATA_LEN);
 	bpf_ringbuf_submit(event, 0);
 	return 0;
+}
+
+SEC("raw_tracepoint/sys_enter")
+int trace_http_write(struct bpf_raw_tracepoint_args *ctx)
+{
+#if !defined(__TARGET_ARCH_x86)
+	return 0;
+#else
+	struct pt_regs *regs = (struct pt_regs *)ctx->args[0];
+	long id = (long)ctx->args[1];
+	char data[DATA_LEN];
+	int read_len = 0;
+
+	if (id == 1 || id == 44) {
+		const void *buf = (const void *)regs->si;
+		unsigned long count = regs->dx;
+		if (count < 3 || count > 65536 || !buf) return 0;
+		read_len = count < DATA_LEN ? (int)count : DATA_LEN;
+		bpf_probe_read_user(data, read_len, buf);
+		return submit_http_event(data, read_len);
+	}
+
+	if (id == 20) {
+		unsigned long iov_ptr = regs->si;
+		int iovcnt = (int)regs->dx;
+		if (!iov_ptr || iovcnt <= 0) return 0;
+
+		unsigned long iov_len;
+		bpf_probe_read_user(&iov_len, 8, (const void *)(iov_ptr + 8));
+		if (iov_len < 3 || iov_len > 65536) return 0;
+
+		unsigned long base;
+		bpf_probe_read_user(&base, 8, (const void *)iov_ptr);
+		if (!base) return 0;
+
+		read_len = iov_len < DATA_LEN ? (int)iov_len : DATA_LEN;
+		bpf_probe_read_user(data, read_len, (const void *)base);
+		return submit_http_event(data, read_len);
+	}
+
+	if (id == 46) {
+		unsigned long msg_ptr = regs->si;
+		if (!msg_ptr) return 0;
+
+		unsigned long iov_ptr;
+		bpf_probe_read_user(&iov_ptr, 8, (const void *)(msg_ptr + 16));
+		if (!iov_ptr) return 0;
+
+		unsigned long iov_len;
+		bpf_probe_read_user(&iov_len, 8, (const void *)(iov_ptr + 8));
+		if (iov_len < 3 || iov_len > 65536) return 0;
+
+		unsigned long base;
+		bpf_probe_read_user(&base, 8, (const void *)iov_ptr);
+		if (!base) return 0;
+
+		read_len = iov_len < DATA_LEN ? (int)iov_len : DATA_LEN;
+		bpf_probe_read_user(data, read_len, (const void *)base);
+		return submit_http_event(data, read_len);
+	}
+
+	return 0;
+#endif
 }
 
 SEC("tracepoint/syscalls/sys_enter_sendto")
