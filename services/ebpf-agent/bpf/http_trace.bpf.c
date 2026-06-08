@@ -144,8 +144,13 @@ int trace_http_sendmsg(struct trace_event_raw_sys_enter *ctx)
 SEC("kprobe/sys_writev")
 int kprobe_sys_writev(struct pt_regs *ctx)
 {
+#if defined(__TARGET_ARCH_x86)
+	unsigned long iov_ptr = ctx->si;
+	int iovcnt = (int)ctx->dx;
+#else
 	unsigned long iov_ptr = PT_REGS_PARM2(ctx);
 	int iovcnt = (int)PT_REGS_PARM3(ctx);
+#endif
 	if (iovcnt <= 0 || iovcnt > 16) return 0;
 	if (!iov_ptr) return 0;
 
