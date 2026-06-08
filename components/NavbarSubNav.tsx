@@ -12,6 +12,7 @@ const NAV_ITEMS = [
     { href: "/dashboard/attack-paths", label: "ATTACK PATHS" },
     { href: "/dashboard/iac-drift", label: "IAC DRIFT" },
     { href: "/dashboard/container-scan", label: "CONTAINERS" },
+    { href: "/dashboard/agent-events", label: "AGENTS" },
     { href: "/dashboard/history", label: "HISTORY" },
     { href: "/dashboard/compliance", label: "COMPLIANCE" },
     { href: "/dashboard/settings", label: "SETTINGS" },

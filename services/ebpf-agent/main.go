@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -22,29 +23,43 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 )
 
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall -Werror" execsnoop bpf/execsnoop.bpf.c -- -I./bpf
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall -Werror" http_trace bpf/http_trace.bpf.c -- -I./bpf
 
-const eventTypeExec = "process_exec"
+const (
+	eventTypeHTTPReq  = "http_request"
+	eventTypeHTTPResp = "http_response"
+	eventDataLen      = 256
+)
 
 var version = "dev"
 
 type bpfEvent struct {
-	PID      uint64
-	PPID     uint64
-	UID      uint32
-	Comm     [16]byte
-	Filename [256]byte
+	PID     uint64
+	UID     uint32
+	Type    uint32
+	SrcIP   uint32
+	DstIP   uint32
+	SrcPort uint16
+	DstPort uint16
+	Comm    [16]byte
+	Data    [eventDataLen]byte
 }
 
-type telemetryEvent struct {
-	Type      string    `json:"type"`
-	Timestamp time.Time `json:"timestamp"`
-	Hostname  string    `json:"hostname"`
-	PID       uint64    `json:"pid"`
-	PPID      uint64    `json:"ppid"`
-	UID       uint32    `json:"uid"`
-	Comm      string    `json:"comm"`
-	Filename  string    `json:"filename"`
+type httpEvent struct {
+	Type      string `json:"type"`
+	Timestamp string `json:"timestamp"`
+	Hostname  string `json:"hostname"`
+	PID       uint64 `json:"pid"`
+	UID       uint32 `json:"uid"`
+	Comm      string `json:"comm"`
+	SrcIP     string `json:"src_ip"`
+	DstIP     string `json:"dst_ip"`
+	SrcPort   uint16 `json:"src_port"`
+	DstPort   uint16 `json:"dst_port"`
+	Method    string `json:"method,omitempty"`
+	Path      string `json:"path,omitempty"`
+	Status    string `json:"status,omitempty"`
+	Data      string `json:"data"`
 }
 
 type sender struct {
@@ -77,17 +92,23 @@ func run(ctx context.Context, endpoint string, verbose bool) error {
 		return fmt.Errorf("remove memlock limit: %w", err)
 	}
 
-	var objs execsnoopObjects
-	if err := loadExecsnoopObjects(&objs, nil); err != nil {
+	var objs http_traceObjects
+	if err := loadHttp_traceObjects(&objs, nil); err != nil {
 		return fmt.Errorf("load eBPF objects: %w", err)
 	}
 	defer objs.Close()
 
-	tp, err := link.Tracepoint("syscalls", "sys_enter_execve", objs.HandleExec, nil)
+	kpSend, err := link.Kprobe("tcp_sendmsg", objs.TraceHttpSend, nil)
 	if err != nil {
-		return fmt.Errorf("attach sys_enter_execve tracepoint: %w", err)
+		return fmt.Errorf("attach tcp_sendmsg kprobe: %w", err)
 	}
-	defer tp.Close()
+	defer kpSend.Close()
+
+	kpRecv, err := link.Kprobe("tcp_recvmsg", objs.TraceHttpRecv, nil)
+	if err != nil {
+		return fmt.Errorf("attach tcp_recvmsg kprobe: %w", err)
+	}
+	defer kpRecv.Close()
 
 	reader, err := ringbuf.NewReader(objs.Events)
 	if err != nil {
@@ -112,7 +133,7 @@ func run(ctx context.Context, endpoint string, verbose bool) error {
 		agentSecret: getenv("WATCHMEN_AGENT_SECRET", ""),
 	}
 
-	log.Printf("watchmen eBPF agent started version=%s host=%s endpoint=%q", version, host, endpoint)
+	log.Printf("watchmen HTTP trace agent started version=%s host=%s endpoint=%q", version, host, endpoint)
 
 	for {
 		record, err := reader.Read()
@@ -137,29 +158,57 @@ func run(ctx context.Context, endpoint string, verbose bool) error {
 	}
 }
 
-func decodeEvent(raw []byte, hostname string) (telemetryEvent, error) {
+func ip4(addr uint32) string {
+	return net.IPv4(byte(addr), byte(addr>>8), byte(addr>>16), byte(addr>>24)).String()
+}
+
+func decodeEvent(raw []byte, hostname string) (httpEvent, error) {
 	var event bpfEvent
 	if len(raw) < int(unsafe.Sizeof(event)) {
-		return telemetryEvent{}, fmt.Errorf("sample too small: got %d bytes", len(raw))
+		return httpEvent{}, fmt.Errorf("sample too small: got %d bytes", len(raw))
 	}
 
 	if err := binary.Read(bytes.NewReader(raw), binary.LittleEndian, &event); err != nil {
-		return telemetryEvent{}, err
+		return httpEvent{}, err
 	}
 
-	return telemetryEvent{
-		Type:      eventTypeExec,
-		Timestamp: time.Now().UTC(),
+	eventType := eventTypeHTTPReq
+	if event.Type == 1 {
+		eventType = eventTypeHTTPResp
+	}
+
+	dataStr := strings.TrimSpace(cString(event.Data[:]))
+
+	h := httpEvent{
+		Type:      eventType,
+		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
 		Hostname:  hostname,
 		PID:       event.PID,
-		PPID:      event.PPID,
 		UID:       event.UID,
 		Comm:      cString(event.Comm[:]),
-		Filename:  cString(event.Filename[:]),
-	}, nil
+		SrcIP:     ip4(event.SrcIP),
+		DstIP:     ip4(event.DstIP),
+		SrcPort:   event.SrcPort,
+		DstPort:   event.DstPort,
+		Data:      dataStr,
+	}
+
+	// Parse HTTP request line
+	if event.Type == 0 {
+		if parts := strings.SplitN(dataStr, " ", 3); len(parts) >= 2 {
+			h.Method = parts[0]
+			h.Path = parts[1]
+		}
+	} else {
+		if parts := strings.SplitN(dataStr, " ", 3); len(parts) >= 2 {
+			h.Status = parts[1]
+		}
+	}
+
+	return h, nil
 }
 
-func (s sender) send(ctx context.Context, event telemetryEvent) error {
+func (s sender) send(ctx context.Context, event httpEvent) error {
 	payload, err := json.Marshal(event)
 	if err != nil {
 		return err
@@ -199,7 +248,7 @@ func cString(raw []byte) string {
 	if idx := bytes.IndexByte(raw, 0); idx >= 0 {
 		raw = raw[:idx]
 	}
-	return strings.TrimSpace(string(raw))
+	return string(raw)
 }
 
 func getenv(key, fallback string) string {

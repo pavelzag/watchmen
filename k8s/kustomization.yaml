@@ -4,6 +4,8 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - secret.yaml
+  - agent-secret.yaml
+  - agent-daemonset.yaml
   - deployment.yaml
   - service.yaml
   - ingress.yaml

@@ -8,7 +8,7 @@ export const RESOURCE_LINKS: Record<string, { path: string; label: string; Icon:
     eks_cluster: { path: "/dashboard/aws", label: "EKS Clusters", Icon: Server },
     service_account: { path: "/dashboard/service-accounts", label: "Service Accounts", Icon: KeySquare },
     vm: { path: "/dashboard/vms", label: "VMs", Icon: MonitorDot },
-    ec2_instance: { path: "/dashboard/vms", label: "EC2 Instances", Icon: MonitorDot },
+    ec2_instance: { path: "/dashboard/aws/ec2", label: "EC2 Instances", Icon: MonitorDot },
     cloud_run: { path: "/dashboard/cloud-run", label: "Cloud Run", Icon: Play },
     lambda_function: { path: "/dashboard/aws", label: "Lambda Functions", Icon: Play },
     cloud_sql: { path: "/dashboard/cloud-sql", label: "Cloud SQL", Icon: Database },
