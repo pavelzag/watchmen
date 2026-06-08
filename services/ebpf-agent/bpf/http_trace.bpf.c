@@ -146,33 +146,21 @@ int trace_http_writev(struct trace_event_raw_sys_enter *ctx)
 {
 	const struct iovec *iov = (const void *)ctx->args[1];
 	int iovcnt = (int)ctx->args[2];
-	if (iovcnt <= 0 || iovcnt > 16) return 0;
+	if (iovcnt <= 0) return 0;
+
+	__u64 iov_len;
+	bpf_probe_read_user(&iov_len, sizeof(iov_len), &iov[0].iov_len);
+	if (iov_len < 3 || iov_len > 65536) return 0;
+
+	int read_len = iov_len < DATA_LEN ? (int)iov_len : DATA_LEN;
+	const void *base;
+	bpf_probe_read_user(&base, sizeof(base), &iov[0].iov_base);
+	if (!base) return 0;
 
 	char data[DATA_LEN];
-	int total = 0;
+	bpf_probe_read_user(data, read_len, base);
 
-	#pragma unroll
-	for (int i = 0; i < 16; i++) {
-		if (i >= iovcnt || total >= DATA_LEN) break;
-
-		__u64 iov_len;
-		bpf_probe_read_user(&iov_len, sizeof(iov_len), &iov[i].iov_len);
-		if (iov_len == 0) continue;
-
-		const void *base;
-		bpf_probe_read_user(&base, sizeof(base), &iov[i].iov_base);
-		if (!base) continue;
-
-		int copy_len = DATA_LEN - total;
-		if (iov_len < copy_len) copy_len = (int)iov_len;
-		if (copy_len <= 0) continue;
-
-		bpf_probe_read_user(data + total, copy_len, base);
-		total += copy_len;
-	}
-
-	if (total < 3) return 0;
-	if (!is_http_req(data, total) && !is_http_resp(data, total))
+	if (!is_http_req(data, read_len) && !is_http_resp(data, read_len))
 		return 0;
 
 	struct event *event;
@@ -183,7 +171,7 @@ int trace_http_writev(struct trace_event_raw_sys_enter *ctx)
 	event->uid = bpf_get_current_uid_gid();
 	bpf_get_current_comm(&event->comm, sizeof(event->comm));
 
-	event->type = is_http_req(data, total) ? EVENT_HTTP_REQ : EVENT_HTTP_RESP;
+	event->type = is_http_req(data, read_len) ? EVENT_HTTP_REQ : EVENT_HTTP_RESP;
 	__builtin_memcpy(event->data, data, DATA_LEN);
 	bpf_ringbuf_submit(event, 0);
 	return 0;
