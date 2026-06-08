@@ -141,8 +141,8 @@ int trace_http_sendmsg(struct trace_event_raw_sys_enter *ctx)
 	return 0;
 }
 
-SEC("kprobe/sys_writev")
-int kprobe_sys_writev(struct pt_regs *ctx)
+SEC("tracepoint/syscalls/sys_enter_writev")
+int trace_http_writev(struct trace_event_raw_sys_enter *ctx)
 {
 	struct event *event;
 	event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
@@ -151,7 +151,7 @@ int kprobe_sys_writev(struct pt_regs *ctx)
 	event->pid = bpf_get_current_pid_tgid() >> 32;
 	event->uid = bpf_get_current_uid_gid();
 	bpf_get_current_comm(&event->comm, sizeof(event->comm));
-	event->type = 42;  // magic marker
+	event->type = 42;
 
 	bpf_ringbuf_submit(event, 0);
 	return 0;

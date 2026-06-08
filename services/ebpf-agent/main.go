@@ -107,11 +107,11 @@ func run(ctx context.Context, endpoint string, verbose bool) error {
 	}
 	defer tpSendmsg.Close()
 
-	kpWritev, err := link.Kprobe("__x64_sys_writev", objs.KprobeSysWritev, nil)
+	tpWritev, err := link.Tracepoint("syscalls", "sys_enter_writev", objs.TraceHttpWritev, nil)
 	if err != nil {
-		return fmt.Errorf("attach kprobe __x64_sys_writev: %w", err)
+		return fmt.Errorf("attach sys_enter_writev tracepoint: %w", err)
 	}
-	defer kpWritev.Close()
+	defer tpWritev.Close()
 
 	reader, err := ringbuf.NewReader(objs.Events)
 	if err != nil {
