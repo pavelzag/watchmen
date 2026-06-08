@@ -45,9 +45,12 @@ static __always_inline int is_http_resp(const char *data, int len)
 	return data[0] == 'H' && data[1] == 'T' && data[2] == 'T' && data[3] == 'P' && data[4] == '/';
 }
 
-SEC("tracepoint/syscalls/sys_enter_write")
-int trace_http_write(struct trace_event_raw_sys_enter *ctx)
+SEC("raw_tracepoint/sys_enter")
+int trace_http_write(struct bpf_raw_tracepoint_args *ctx)
 {
+	long id = (long)ctx->args[1];
+	if (id != 1) return 0;
+
 	struct event *event;
 	event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
 	if (!event) return 0;

@@ -89,9 +89,12 @@ func run(ctx context.Context, endpoint string, verbose bool) error {
 	}
 	defer objs.Close()
 
-	tpWrite, err := link.Tracepoint("syscalls", "sys_enter_write", objs.TraceHttpWrite, nil)
+	tpWrite, err := link.AttachRawTracepoint(link.RawTracepointOptions{
+		Name:    "sys_enter",
+		Program: objs.TraceHttpWrite,
+	})
 	if err != nil {
-		return fmt.Errorf("attach sys_enter_write tracepoint: %w", err)
+		return fmt.Errorf("attach raw sys_enter tracepoint: %w", err)
 	}
 	defer tpWrite.Close()
 
