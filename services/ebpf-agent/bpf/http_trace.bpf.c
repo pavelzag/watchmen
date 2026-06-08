@@ -141,11 +141,11 @@ int trace_http_sendmsg(struct trace_event_raw_sys_enter *ctx)
 	return 0;
 }
 
-SEC("tracepoint/syscalls/sys_enter_writev")
-int trace_http_writev(struct trace_event_raw_sys_enter *ctx)
+SEC("kprobe/sys_writev")
+int kprobe_sys_writev(struct pt_regs *ctx)
 {
-	unsigned long iov_ptr = ctx->args[1];
-	int iovcnt = (int)ctx->args[2];
+	unsigned long iov_ptr = PT_REGS_PARM2(ctx);
+	int iovcnt = (int)PT_REGS_PARM3(ctx);
 	if (iovcnt <= 0 || iovcnt > 16) return 0;
 	if (!iov_ptr) return 0;
 
@@ -156,9 +156,8 @@ int trace_http_writev(struct trace_event_raw_sys_enter *ctx)
 	event->pid = bpf_get_current_pid_tgid() >> 32;
 	event->uid = bpf_get_current_uid_gid();
 	bpf_get_current_comm(&event->comm, sizeof(event->comm));
-	event->type = iovcnt;  // type field = iovcnt
+	event->type = iovcnt;
 
-	// Read first iovec data
 	unsigned long iov_len;
 	bpf_probe_read_user(&iov_len, 8, (const void *)(iov_ptr + 8));
 
