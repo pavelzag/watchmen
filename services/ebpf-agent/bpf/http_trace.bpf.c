@@ -83,9 +83,7 @@ int trace_http_write(struct trace_event_raw_sys_enter *ctx)
 	bpf_get_current_comm(&event->comm, sizeof(event->comm));
 
 	event->type = is_http_req(data, read_len) ? EVENT_HTTP_REQ : EVENT_HTTP_RESP;
-	for (int i = 0; i < read_len; i++)
-		bpf_probe_read_kernel(&event->data[i], 1, &data[i]);
-
+	bpf_probe_read_kernel(event->data, DATA_LEN, data);
 	bpf_ringbuf_submit(event, 0);
 	return 0;
 }
@@ -114,8 +112,7 @@ int trace_http_sendto(struct trace_event_raw_sys_enter *ctx)
 	bpf_get_current_comm(&event->comm, sizeof(event->comm));
 
 	event->type = is_http_req(data, read_len) ? EVENT_HTTP_REQ : EVENT_HTTP_RESP;
-	for (int i = 0; i < read_len; i++)
-		event->data[i] = data[i];
+	bpf_probe_read_kernel(event->data, DATA_LEN, data);
 
 	bpf_ringbuf_submit(event, 0);
 	return 0;
@@ -148,8 +145,7 @@ int trace_http_sendmsg(struct trace_event_raw_sys_enter *ctx)
 	bpf_get_current_comm(&event->comm, sizeof(event->comm));
 
 	event->type = is_http_req(data, read_len) ? EVENT_HTTP_REQ : EVENT_HTTP_RESP;
-	for (int i = 0; i < read_len; i++)
-		event->data[i] = data[i];
+	bpf_probe_read_kernel(event->data, DATA_LEN, data);
 
 	bpf_ringbuf_submit(event, 0);
 	return 0;
