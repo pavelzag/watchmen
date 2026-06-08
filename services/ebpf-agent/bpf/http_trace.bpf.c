@@ -72,10 +72,12 @@ int trace_http_write(struct bpf_raw_tracepoint_args *ctx)
 	long id = (long)ctx->args[1];
 	char data[DATA_LEN];
 	int read_len = 0;
+	unsigned long arg1 = BPF_CORE_READ(regs, si);
+	unsigned long arg2 = BPF_CORE_READ(regs, dx);
 
 	if (id == 1 || id == 44) {
-		const void *buf = (const void *)regs->si;
-		unsigned long count = regs->dx;
+		const void *buf = (const void *)arg1;
+		unsigned long count = arg2;
 		if (count < 3 || count > 65536 || !buf) return 0;
 		read_len = count < DATA_LEN ? (int)count : DATA_LEN;
 		bpf_probe_read_user(data, read_len, buf);
@@ -83,8 +85,8 @@ int trace_http_write(struct bpf_raw_tracepoint_args *ctx)
 	}
 
 	if (id == 20) {
-		unsigned long iov_ptr = regs->si;
-		int iovcnt = (int)regs->dx;
+		unsigned long iov_ptr = arg1;
+		int iovcnt = (int)arg2;
 		if (!iov_ptr || iovcnt <= 0) return 0;
 
 		unsigned long iov_len;
@@ -101,7 +103,7 @@ int trace_http_write(struct bpf_raw_tracepoint_args *ctx)
 	}
 
 	if (id == 46) {
-		unsigned long msg_ptr = regs->si;
+		unsigned long msg_ptr = arg1;
 		if (!msg_ptr) return 0;
 
 		unsigned long iov_ptr;
