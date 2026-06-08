@@ -9,7 +9,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -23,7 +22,7 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 )
 
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall -Werror -D__TARGET_ARCH_x86" http_trace bpf/http_trace.bpf.c -- -I./bpf
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall -Werror" http_trace bpf/http_trace.bpf.c -- -I./bpf
 
 const (
 	eventTypeHTTPReq  = "http_request"
@@ -34,15 +33,11 @@ const (
 var version = "dev"
 
 type bpfEvent struct {
-	PID     uint64
-	UID     uint32
-	Type    uint32
-	SrcIP   uint32
-	DstIP   uint32
-	SrcPort uint16
-	DstPort uint16
-	Comm    [16]byte
-	Data    [eventDataLen]byte
+	PID  uint64
+	UID  uint32
+	Type uint32
+	Comm [16]byte
+	Data [eventDataLen]byte
 }
 
 type httpEvent struct {
@@ -52,10 +47,6 @@ type httpEvent struct {
 	PID       uint64 `json:"pid"`
 	UID       uint32 `json:"uid"`
 	Comm      string `json:"comm"`
-	SrcIP     string `json:"src_ip"`
-	DstIP     string `json:"dst_ip"`
-	SrcPort   uint16 `json:"src_port"`
-	DstPort   uint16 `json:"dst_port"`
 	Method    string `json:"method,omitempty"`
 	Path      string `json:"path,omitempty"`
 	Status    string `json:"status,omitempty"`
@@ -98,17 +89,23 @@ func run(ctx context.Context, endpoint string, verbose bool) error {
 	}
 	defer objs.Close()
 
-	kpSend, err := link.Kprobe("tcp_sendmsg", objs.TraceHttpSend, nil)
+	tpWrite, err := link.Tracepoint("syscalls", "sys_enter_write", objs.TraceHttpWrite, nil)
 	if err != nil {
-		return fmt.Errorf("attach tcp_sendmsg kprobe: %w", err)
+		return fmt.Errorf("attach sys_enter_write tracepoint: %w", err)
 	}
-	defer kpSend.Close()
+	defer tpWrite.Close()
 
-	kpRecv, err := link.Kprobe("tcp_recvmsg", objs.TraceHttpRecv, nil)
+	tpSendto, err := link.Tracepoint("syscalls", "sys_enter_sendto", objs.TraceHttpSendto, nil)
 	if err != nil {
-		return fmt.Errorf("attach tcp_recvmsg kprobe: %w", err)
+		return fmt.Errorf("attach sys_enter_sendto tracepoint: %w", err)
 	}
-	defer kpRecv.Close()
+	defer tpSendto.Close()
+
+	tpSendmsg, err := link.Tracepoint("syscalls", "sys_enter_sendmsg", objs.TraceHttpSendmsg, nil)
+	if err != nil {
+		return fmt.Errorf("attach sys_enter_sendmsg tracepoint: %w", err)
+	}
+	defer tpSendmsg.Close()
 
 	reader, err := ringbuf.NewReader(objs.Events)
 	if err != nil {
@@ -158,10 +155,6 @@ func run(ctx context.Context, endpoint string, verbose bool) error {
 	}
 }
 
-func ip4(addr uint32) string {
-	return net.IPv4(byte(addr), byte(addr>>8), byte(addr>>16), byte(addr>>24)).String()
-}
-
 func decodeEvent(raw []byte, hostname string) (httpEvent, error) {
 	var event bpfEvent
 	if len(raw) < int(unsafe.Sizeof(event)) {
@@ -186,14 +179,9 @@ func decodeEvent(raw []byte, hostname string) (httpEvent, error) {
 		PID:       event.PID,
 		UID:       event.UID,
 		Comm:      cString(event.Comm[:]),
-		SrcIP:     ip4(event.SrcIP),
-		DstIP:     ip4(event.DstIP),
-		SrcPort:   event.SrcPort,
-		DstPort:   event.DstPort,
 		Data:      dataStr,
 	}
 
-	// Parse HTTP request line
 	if event.Type == 0 {
 		if parts := strings.SplitN(dataStr, " ", 3); len(parts) >= 2 {
 			h.Method = parts[0]

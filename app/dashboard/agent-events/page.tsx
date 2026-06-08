@@ -15,10 +15,6 @@ type HttpEvent = {
     pid: number;
     uid: number;
     comm: string;
-    src_ip: string;
-    dst_ip: string;
-    src_port: number;
-    dst_port: number;
     method?: string;
     path?: string;
     status?: string;
@@ -99,8 +95,6 @@ export default function AgentEventsPage() {
       ev?.method?.toLowerCase().includes(q) ||
       ev?.path?.toLowerCase().includes(q) ||
       ev?.status?.includes(q) ||
-      ev?.src_ip?.includes(q) ||
-      ev?.dst_ip?.includes(q) ||
       ev?.hostname?.toLowerCase().includes(q) ||
       String(ev?.pid).includes(q)
     );
@@ -164,7 +158,6 @@ export default function AgentEventsPage() {
                   <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-slate-400 w-16">PID</th>
                   <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-slate-400 w-20">Method</th>
                   <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-slate-400">Path / Status</th>
-                  <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-slate-400 w-44">Connection</th>
                   <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-slate-400 w-44">Node</th>
                 </tr>
               </thead>
@@ -202,11 +195,8 @@ export default function AgentEventsPage() {
                           : <span className="text-slate-600 text-xs">—</span>
                         }
                       </td>
-                      <td className="px-4 py-2 font-mono text-xs text-slate-400 truncate max-w-[250px]">
+                      <td className="px-4 py-2 font-mono text-xs text-slate-400 truncate max-w-[300px]">
                         {isReq ? (ev.path ?? ev.data) : ev.status ? `HTTP ${ev.status}` : ev.data}
-                      </td>
-                      <td className="px-4 py-2 font-mono text-xs text-slate-500 truncate max-w-[200px]">
-                        {ev.src_ip}:{ev.src_port} → {ev.dst_ip}:{ev.dst_port}
                       </td>
                       <td className="px-4 py-2 font-mono text-xs text-slate-500 truncate max-w-[180px]">
                         {ev.hostname}

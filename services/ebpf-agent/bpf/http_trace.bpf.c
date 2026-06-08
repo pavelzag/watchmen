@@ -5,7 +5,6 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 
-#define AF_INET 2
 #define TASK_COMM_LEN 16
 #define DATA_LEN 256
 
@@ -16,10 +15,6 @@ struct event {
 	__u64 pid;
 	__u32 uid;
 	__u32 type;
-	__u32 src_ip;
-	__u32 dst_ip;
-	__u16 src_port;
-	__u16 dst_port;
 	char comm[TASK_COMM_LEN];
 	char data[DATA_LEN];
 };
@@ -64,46 +59,20 @@ static __always_inline int is_http_resp(const char *data, int len)
 	return (c0 == 'H' && c1 == 'T' && c2 == 'T' && c3 == 'P' && c4 == '/');
 }
 
-static __always_inline int read_http_data(struct msghdr *msg, char *buf, int buf_len)
+SEC("tracepoint/syscalls/sys_enter_write")
+int trace_http_write(struct trace_event_raw_sys_enter *ctx)
 {
-	struct iov_iter iter;
-	if (bpf_probe_read_kernel(&iter, sizeof(iter), &msg->msg_iter))
-		return 0;
+	int fd = (int)ctx->args[0];
+	void *buf = (void *)ctx->args[1];
+	size_t count = (size_t)ctx->args[2];
 
-	// Check iter_type (IT_IOVEC == 1 for iovec-based)
-	u8 type = 0;
-	bpf_probe_read_kernel(&type, sizeof(type), &iter.iter_type);
-	if (type != 1) return 0;
+	if (count < 3 || count > 65536) return 0;
 
-	// Read the iovec pointer (field name 'iov' in anonymous union inside iov_iter)
-	const struct iovec *iov_ptr;
-	bpf_probe_read_kernel(&iov_ptr, sizeof(iov_ptr), &iter.iov);
+	char data[DATA_LEN];
+	int read_len = count < DATA_LEN ? count : DATA_LEN;
+	bpf_probe_read_user(data, read_len, buf);
 
-	struct iovec iov;
-	if (bpf_probe_read_kernel(&iov, sizeof(iov), iov_ptr))
-		return 0;
-
-	int read_len = iov.iov_len < buf_len ? iov.iov_len : buf_len;
-	if (read_len <= 0) return 0;
-
-	bpf_probe_read_user(buf, read_len, iov.iov_base);
-	return read_len;
-}
-
-SEC("kprobe/tcp_sendmsg")
-int trace_http_send(struct pt_regs *ctx)
-{
-	struct sock *sk = (struct sock *)PT_REGS_PARM1(ctx);
-	struct msghdr *msg = (struct msghdr *)PT_REGS_PARM2(ctx);
-
-	u16 family;
-	bpf_probe_read_kernel(&family, sizeof(family), &sk->__sk_common.skc_family);
-	if (family != AF_INET) return 0;
-
-	char sample[32];
-	int n = read_http_data(msg, sample, sizeof(sample));
-	if (n < 3) return 0;
-	if (!is_http_req(sample, n) && !is_http_resp(sample, n))
+	if (!is_http_req(data, read_len) && !is_http_resp(data, read_len))
 		return 0;
 
 	struct event *event;
@@ -114,43 +83,27 @@ int trace_http_send(struct pt_regs *ctx)
 	event->uid = bpf_get_current_uid_gid();
 	bpf_get_current_comm(&event->comm, sizeof(event->comm));
 
-	event->type = is_http_req(sample, n) ? EVENT_HTTP_REQ : EVENT_HTTP_RESP;
-
-	bpf_probe_read_kernel(&event->src_ip, sizeof(event->src_ip), &sk->__sk_common.skc_rcv_saddr);
-	bpf_probe_read_kernel(&event->dst_ip, sizeof(event->dst_ip), &sk->__sk_common.skc_daddr);
-	bpf_probe_read_kernel(&event->src_port, sizeof(event->src_port), &sk->__sk_common.skc_num);
-	bpf_probe_read_kernel(&event->dst_port, sizeof(event->dst_port), &sk->__sk_common.skc_dport);
-
-	// Read full data
-	struct iov_iter iter;
-	bpf_probe_read_kernel(&iter, sizeof(iter), &msg->msg_iter);
-	const struct iovec *iov_ptr;
-	bpf_probe_read_kernel(&iov_ptr, sizeof(iov_ptr), &iter.iov);
-	struct iovec iov;
-	if (!bpf_probe_read_kernel(&iov, sizeof(iov), iov_ptr)) {
-		int data_len = iov.iov_len < DATA_LEN ? iov.iov_len : DATA_LEN;
-		if (data_len > 0)
-			bpf_probe_read_user(&event->data, data_len, iov.iov_base);
-	}
+	event->type = is_http_req(data, read_len) ? EVENT_HTTP_REQ : EVENT_HTTP_RESP;
+	__builtin_memcpy(event->data, data, read_len);
 
 	bpf_ringbuf_submit(event, 0);
 	return 0;
 }
 
-SEC("kprobe/tcp_recvmsg")
-int trace_http_recv(struct pt_regs *ctx)
+SEC("tracepoint/syscalls/sys_enter_sendto")
+int trace_http_sendto(struct trace_event_raw_sys_enter *ctx)
 {
-	struct sock *sk = (struct sock *)PT_REGS_PARM1(ctx);
-	struct msghdr *msg = (struct msghdr *)PT_REGS_PARM2(ctx);
+	int fd = (int)ctx->args[0];
+	void *buf = (void *)ctx->args[1];
+	size_t count = (size_t)ctx->args[2];
 
-	u16 family;
-	bpf_probe_read_kernel(&family, sizeof(family), &sk->__sk_common.skc_family);
-	if (family != AF_INET) return 0;
+	if (count < 3 || count > 65536) return 0;
 
-	char sample[32];
-	int n = read_http_data(msg, sample, sizeof(sample));
-	if (n < 5) return 0;
-	if (!is_http_resp(sample, n) && !is_http_req(sample, n))
+	char data[DATA_LEN];
+	int read_len = count < DATA_LEN ? count : DATA_LEN;
+	bpf_probe_read_user(data, read_len, buf);
+
+	if (!is_http_req(data, read_len) && !is_http_resp(data, read_len))
 		return 0;
 
 	struct event *event;
@@ -161,23 +114,41 @@ int trace_http_recv(struct pt_regs *ctx)
 	event->uid = bpf_get_current_uid_gid();
 	bpf_get_current_comm(&event->comm, sizeof(event->comm));
 
-	event->type = is_http_resp(sample, n) ? EVENT_HTTP_RESP : EVENT_HTTP_REQ;
+	event->type = is_http_req(data, read_len) ? EVENT_HTTP_REQ : EVENT_HTTP_RESP;
+	__builtin_memcpy(event->data, data, read_len);
 
-	bpf_probe_read_kernel(&event->src_ip, sizeof(event->src_ip), &sk->__sk_common.skc_rcv_saddr);
-	bpf_probe_read_kernel(&event->dst_ip, sizeof(event->dst_ip), &sk->__sk_common.skc_daddr);
-	bpf_probe_read_kernel(&event->src_port, sizeof(event->src_port), &sk->__sk_common.skc_num);
-	bpf_probe_read_kernel(&event->dst_port, sizeof(event->dst_port), &sk->__sk_common.skc_dport);
+	bpf_ringbuf_submit(event, 0);
+	return 0;
+}
 
-	struct iov_iter iter;
-	bpf_probe_read_kernel(&iter, sizeof(iter), &msg->msg_iter);
-	const struct iovec *iov_ptr;
-	bpf_probe_read_kernel(&iov_ptr, sizeof(iov_ptr), &iter.iov);
+SEC("tracepoint/syscalls/sys_enter_sendmsg")
+int trace_http_sendmsg(struct trace_event_raw_sys_enter *ctx)
+{
+	struct user_msghdr *msg = (struct user_msghdr *)ctx->args[1];
+	if (!msg) return 0;
+
 	struct iovec iov;
-	if (!bpf_probe_read_kernel(&iov, sizeof(iov), iov_ptr)) {
-		int data_len = iov.iov_len < DATA_LEN ? iov.iov_len : DATA_LEN;
-		if (data_len > 0)
-			bpf_probe_read_user(&event->data, data_len, iov.iov_base);
-	}
+	if (bpf_probe_read_user(&iov, sizeof(iov), msg->msg_iov))
+		return 0;
+	if (iov.iov_len < 3 || iov.iov_len > 65536) return 0;
+
+	char data[DATA_LEN];
+	int read_len = iov.iov_len < DATA_LEN ? iov.iov_len : DATA_LEN;
+	bpf_probe_read_user(data, read_len, iov.iov_base);
+
+	if (!is_http_req(data, read_len) && !is_http_resp(data, read_len))
+		return 0;
+
+	struct event *event;
+	event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
+	if (!event) return 0;
+
+	event->pid = bpf_get_current_pid_tgid() >> 32;
+	event->uid = bpf_get_current_uid_gid();
+	bpf_get_current_comm(&event->comm, sizeof(event->comm));
+
+	event->type = is_http_req(data, read_len) ? EVENT_HTTP_REQ : EVENT_HTTP_RESP;
+	__builtin_memcpy(event->data, data, read_len);
 
 	bpf_ringbuf_submit(event, 0);
 	return 0;
