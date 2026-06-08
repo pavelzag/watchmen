@@ -146,22 +146,8 @@ int trace_http_writev(struct trace_event_raw_sys_enter *ctx)
 {
 	unsigned long iov_ptr = ctx->args[1];
 	int iovcnt = (int)ctx->args[2];
-	if (iovcnt <= 0 || !iov_ptr) return 0;
-
-	unsigned long iov_len;
-	bpf_probe_read_user(&iov_len, 8, (const void *)(iov_ptr + 8));
-	if (iov_len < 3 || iov_len > 65536) return 0;
-
-	int read_len = iov_len < DATA_LEN ? (int)iov_len : DATA_LEN;
-	unsigned long base;
-	bpf_probe_read_user(&base, 8, (const void *)iov_ptr);
-	if (!base) return 0;
-
-	char data[DATA_LEN];
-	bpf_probe_read_user(data, read_len, (const void *)base);
-
-	if (!is_http_req(data, read_len) && !is_http_resp(data, read_len))
-		return 0;
+	if (iovcnt <= 0 || iovcnt > 16) return 0;
+	if (!iov_ptr) return 0;
 
 	struct event *event;
 	event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
@@ -170,9 +156,20 @@ int trace_http_writev(struct trace_event_raw_sys_enter *ctx)
 	event->pid = bpf_get_current_pid_tgid() >> 32;
 	event->uid = bpf_get_current_uid_gid();
 	bpf_get_current_comm(&event->comm, sizeof(event->comm));
+	event->type = iovcnt;  // type field = iovcnt
 
-	event->type = is_http_req(data, read_len) ? EVENT_HTTP_REQ : EVENT_HTTP_RESP;
-	__builtin_memcpy(event->data, data, DATA_LEN);
+	// Read first iovec data
+	unsigned long iov_len;
+	bpf_probe_read_user(&iov_len, 8, (const void *)(iov_ptr + 8));
+
+	unsigned long base;
+	bpf_probe_read_user(&base, 8, (const void *)iov_ptr);
+
+	int data_len = iov_len < DATA_LEN ? (int)iov_len : DATA_LEN;
+	if (data_len > 0 && base) {
+		bpf_probe_read_user(event->data, data_len, (const void *)base);
+	}
+
 	bpf_ringbuf_submit(event, 0);
 	return 0;
 }
