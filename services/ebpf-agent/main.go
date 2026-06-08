@@ -124,7 +124,7 @@ func run(ctx context.Context, endpoint string, verbose bool) error {
 	}
 
 	out := sender{
-		client:      &http.Client{Timeout: 5 * time.Second},
+		client:      &http.Client{Timeout: 15 * time.Second},
 		url:         endpoint,
 		agentID:     getenv("WATCHMEN_AGENT_ID", ""),
 		agentSecret: getenv("WATCHMEN_AGENT_SECRET", ""),
