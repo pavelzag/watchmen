@@ -110,5 +110,6 @@ jobs:
           else
             gh release create "$TAG" dist/watchmen-ebpf-agent-linux-amd64 dist/watchmen-ebpf-agent-linux-amd64.sha256 \
               --title "Watchmen Agent ${VERSION}" \
-              --notes "Linux amd64 Watchmen eBPF agent release ${VERSION}."
+              --notes "Linux amd64 Watchmen eBPF agent release ${VERSION}." \
+              --draft=false
           fi

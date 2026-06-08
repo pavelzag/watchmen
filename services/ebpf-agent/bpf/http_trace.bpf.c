@@ -121,18 +121,21 @@ int trace_http_sendto(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_enter_sendmsg")
 int trace_http_sendmsg(struct trace_event_raw_sys_enter *ctx)
 {
-	struct user_msghdr msg;
-	if (bpf_probe_read_user(&msg, sizeof(msg), (const void *)ctx->args[1]))
-		return 0;
+	unsigned long msg_ptr = ctx->args[1];
+	if (!msg_ptr) return 0;
 
-	struct iovec iov;
-	if (bpf_probe_read_user(&iov, sizeof(iov), msg.msg_iov))
-		return 0;
-	if (iov.iov_len < 3 || iov.iov_len > 65536) return 0;
+	unsigned long iov_ptr;
+	bpf_probe_read_user(&iov_ptr, 8, (const void *)(msg_ptr + 16));
 
 	char data[DATA_LEN];
-	int read_len = iov.iov_len < DATA_LEN ? iov.iov_len : DATA_LEN;
-	bpf_probe_read_user(data, read_len, iov.iov_base);
+	unsigned long iov_len;
+	bpf_probe_read_user(&iov_len, 8, (const void *)(iov_ptr + 8));
+	if (iov_len < 3 || iov_len > 65536) return 0;
+
+	int read_len = iov_len < DATA_LEN ? (int)iov_len : DATA_LEN;
+	unsigned long base;
+	bpf_probe_read_user(&base, 8, (const void *)iov_ptr);
+	bpf_probe_read_user(data, read_len, (const void *)base);
 
 	if (!is_http_req(data, read_len) && !is_http_resp(data, read_len))
 		return 0;
