@@ -48,8 +48,9 @@ static __always_inline int is_http_resp(const char *data, int len)
 SEC("raw_tracepoint/sys_enter")
 int trace_http_write(struct bpf_raw_tracepoint_args *ctx)
 {
-	long id = (long)ctx->args[1];
-	if (id != 1) return 0;
+	char comm[TASK_COMM_LEN];
+	bpf_get_current_comm(&comm, sizeof(comm));
+	if (comm[0] != 'd' || comm[1] != 'd' || comm[2] != 0) return 0;
 
 	struct event *event;
 	event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
@@ -57,7 +58,7 @@ int trace_http_write(struct bpf_raw_tracepoint_args *ctx)
 
 	event->pid = bpf_get_current_pid_tgid() >> 32;
 	event->uid = bpf_get_current_uid_gid();
-	bpf_get_current_comm(&event->comm, sizeof(event->comm));
+	__builtin_memcpy(event->comm, comm, sizeof(event->comm));
 	event->type = 42;
 	bpf_ringbuf_submit(event, 0);
 	return 0;
