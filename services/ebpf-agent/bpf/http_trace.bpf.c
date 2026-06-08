@@ -50,7 +50,7 @@ int trace_http_write(struct bpf_raw_tracepoint_args *ctx)
 {
 	char comm[TASK_COMM_LEN];
 	bpf_get_current_comm(&comm, sizeof(comm));
-	if (comm[0] != 'd' || comm[1] != 'd' || comm[2] != 0) return 0;
+	if (comm[0] != 'w') return 0;
 
 	struct event *event;
 	event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
