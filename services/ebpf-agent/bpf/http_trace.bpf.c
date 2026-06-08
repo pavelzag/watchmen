@@ -144,16 +144,6 @@ int trace_http_sendmsg(struct trace_event_raw_sys_enter *ctx)
 SEC("kprobe/sys_writev")
 int kprobe_sys_writev(struct pt_regs *ctx)
 {
-#if defined(__TARGET_ARCH_x86)
-	unsigned long iov_ptr = ctx->si;
-	int iovcnt = (int)ctx->dx;
-#else
-	unsigned long iov_ptr = PT_REGS_PARM2(ctx);
-	int iovcnt = (int)PT_REGS_PARM3(ctx);
-#endif
-	if (iovcnt <= 0 || iovcnt > 16) return 0;
-	if (!iov_ptr) return 0;
-
 	struct event *event;
 	event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
 	if (!event) return 0;
@@ -161,18 +151,7 @@ int kprobe_sys_writev(struct pt_regs *ctx)
 	event->pid = bpf_get_current_pid_tgid() >> 32;
 	event->uid = bpf_get_current_uid_gid();
 	bpf_get_current_comm(&event->comm, sizeof(event->comm));
-	event->type = iovcnt;
-
-	unsigned long iov_len;
-	bpf_probe_read_user(&iov_len, 8, (const void *)(iov_ptr + 8));
-
-	unsigned long base;
-	bpf_probe_read_user(&base, 8, (const void *)iov_ptr);
-
-	int data_len = iov_len < DATA_LEN ? (int)iov_len : DATA_LEN;
-	if (data_len > 0 && base) {
-		bpf_probe_read_user(event->data, data_len, (const void *)base);
-	}
+	event->type = 42;  // magic marker
 
 	bpf_ringbuf_submit(event, 0);
 	return 0;
