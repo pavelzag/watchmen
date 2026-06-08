@@ -5,7 +5,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { ensureAgentInstallTables, sql } from "@/lib/db";
 
-const BINARY_URL = process.env.WATCHMEN_AGENT_BINARY_URL ?? "https://github.com/pavelzag/watchmen/releases/download/agent-v0.1.0/watchmen-ebpf-agent-linux-amd64";
+const BINARY_URL = process.env.WATCHMEN_AGENT_BINARY_URL ?? "https://github.com/pavelzag/watchmen/releases/download/agent-v0.2.0/watchmen-ebpf-agent-linux-amd64";
 const AGENT_VERSION = process.env.WATCHMEN_AGENT_VERSION ?? "dev";
 
 function generateManifest(clusterName: string, projectId: string, location: string, origin: string) {

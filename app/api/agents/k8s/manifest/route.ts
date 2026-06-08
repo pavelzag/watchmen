@@ -7,7 +7,7 @@ export async function GET(req: NextRequest) {
   const agentVersion = process.env.WATCHMEN_AGENT_VERSION ?? "dev";
   const origin = process.env.WATCHMEN_BASE_URL ?? req.nextUrl.origin;
   const registerUrl = `${origin}/api/agents/k8s/register`;
-  const binaryUrl = process.env.WATCHMEN_AGENT_BINARY_URL ?? "https://github.com/pavelzag/watchmen/releases/download/agent-v0.1.0/watchmen-ebpf-agent-linux-amd64";
+  const binaryUrl = process.env.WATCHMEN_AGENT_BINARY_URL ?? "https://github.com/pavelzag/watchmen/releases/download/agent-v0.2.0/watchmen-ebpf-agent-linux-amd64";
 
   const yaml = `# Watchmen eBPF Agent — generated for cluster "${clusterName}" (${projectId})
 # Apply with: kubectl apply -f -

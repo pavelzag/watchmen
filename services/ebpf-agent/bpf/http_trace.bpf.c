@@ -121,11 +121,12 @@ int trace_http_sendto(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_enter_sendmsg")
 int trace_http_sendmsg(struct trace_event_raw_sys_enter *ctx)
 {
-	struct user_msghdr *msg = (struct user_msghdr *)ctx->args[1];
-	if (!msg) return 0;
+	struct user_msghdr msg;
+	if (bpf_probe_read_user(&msg, sizeof(msg), (const void *)ctx->args[1]))
+		return 0;
 
 	struct iovec iov;
-	if (bpf_probe_read_user(&iov, sizeof(iov), msg->msg_iov))
+	if (bpf_probe_read_user(&iov, sizeof(iov), msg.msg_iov))
 		return 0;
 	if (iov.iov_len < 3 || iov.iov_len > 65536) return 0;
 

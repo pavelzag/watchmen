@@ -57,17 +57,17 @@ spec:
                 "$REGISTER_URL" 2>/dev/null || echo "registration skipped (server unreachable)"
           env:
             - name: WATCHMEN_AGENT_BINARY_URL
-              value: "https://github.com/pavelzag/watchmen/releases/download/agent-v0.1.0/watchmen-ebpf-agent-linux-amd64"
+              value: "https://github.com/pavelzag/watchmen/releases/download/agent-v0.2.0/watchmen-ebpf-agent-linux-amd64"
             - name: CLUSTER_NAME
-              value: "REPLACE_ME"
+              value: "watchmen-test"
             - name: PROJECT_ID
-              value: "REPLACE_ME"
+              value: "watchmen-test-488807"
             - name: LOCATION
-              value: "REPLACE_ME"
+              value: "us-central1"
             - name: AGENT_VERSION
-              value: "0.1.0"
+              value: "0.2.0"
             - name: REGISTER_URL
-              value: "https://REPLACE_ME/api/agents/k8s/register"
+              value: "https://0be0-45-80-184-54.ngrok-free.app/api/agents/k8s/register"
             - name: AGENT_SECRET
               valueFrom:
                 secretKeyRef:
