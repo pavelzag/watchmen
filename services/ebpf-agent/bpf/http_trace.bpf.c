@@ -29,31 +29,31 @@ struct {
 	__uint(max_entries, 1 << 24);
 } events SEC(".maps");
 
-struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
-	__uint(max_entries, 65536);
-	__type(key, __u64);        // tid
-	__type(value, __u32[4]);   // dst_ip, dst_port, src_ip, src_port
-} conn_map SEC(".maps");
-
-static __always_inline int is_http_request(const char *data, int len) {
-	if (len < 4) return 0;
-	char c0, c1, c2, c3;
+static __always_inline int is_http_req(const char *data, int len)
+{
+	if (len < 3) return 0;
+	char c0, c1, c2;
 	bpf_probe_read_kernel(&c0, 1, &data[0]);
 	bpf_probe_read_kernel(&c1, 1, &data[1]);
 	bpf_probe_read_kernel(&c2, 1, &data[2]);
-	bpf_probe_read_kernel(&c3, 1, &data[3]);
 	if (c0 == 'G' && c1 == 'E' && c2 == 'T') return 1;
-	if (c0 == 'P' && c1 == 'O' && c2 == 'S' && c3 == 'T') return 1;
 	if (c0 == 'P' && c1 == 'U' && c2 == 'T') return 1;
+	if (len < 4) return 0;
+	char c3;
+	bpf_probe_read_kernel(&c3, 1, &data[3]);
+	if (c0 == 'P' && c1 == 'O' && c2 == 'S' && c3 == 'T') return 1;
 	if (c0 == 'D' && c1 == 'E' && c2 == 'L') return 1;
-	if (c0 == 'P' && c1 == 'A' && c2 == 'T' && c3 == 'C') return 1;
 	if (c0 == 'H' && c1 == 'E' && c2 == 'A' && c3 == 'D') return 1;
+	if (len < 5) return 0;
+	char c4;
+	bpf_probe_read_kernel(&c4, 1, &data[4]);
+	if (c0 == 'P' && c1 == 'A' && c2 == 'T' && c3 == 'C' && c4 == 'H') return 1;
 	if (c0 == 'O' && c1 == 'P' && c2 == 'T' && c3 == 'I') return 1;
 	return 0;
 }
 
-static __always_inline int is_http_response(const char *data, int len) {
+static __always_inline int is_http_resp(const char *data, int len)
+{
 	if (len < 5) return 0;
 	char c0, c1, c2, c3, c4;
 	bpf_probe_read_kernel(&c0, 1, &data[0]);
@@ -64,41 +64,46 @@ static __always_inline int is_http_response(const char *data, int len) {
 	return (c0 == 'H' && c1 == 'T' && c2 == 'T' && c3 == 'P' && c4 == '/');
 }
 
+static __always_inline int read_http_data(struct msghdr *msg, char *buf, int buf_len)
+{
+	struct iov_iter iter;
+	if (bpf_probe_read_kernel(&iter, sizeof(iter), &msg->msg_iter))
+		return 0;
+
+	// Check iter_type (IT_IOVEC == 1 for iovec-based)
+	u8 type = 0;
+	bpf_probe_read_kernel(&type, sizeof(type), &iter.iter_type);
+	if (type != 1) return 0;
+
+	// Read the iovec pointer (field name 'iov' in anonymous union inside iov_iter)
+	const struct iovec *iov_ptr;
+	bpf_probe_read_kernel(&iov_ptr, sizeof(iov_ptr), &iter.iov);
+
+	struct iovec iov;
+	if (bpf_probe_read_kernel(&iov, sizeof(iov), iov_ptr))
+		return 0;
+
+	int read_len = iov.iov_len < buf_len ? iov.iov_len : buf_len;
+	if (read_len <= 0) return 0;
+
+	bpf_probe_read_user(buf, read_len, iov.iov_base);
+	return read_len;
+}
+
 SEC("kprobe/tcp_sendmsg")
 int trace_http_send(struct pt_regs *ctx)
 {
 	struct sock *sk = (struct sock *)PT_REGS_PARM1(ctx);
 	struct msghdr *msg = (struct msghdr *)PT_REGS_PARM2(ctx);
 
-	// Only IPv4
 	u16 family;
 	bpf_probe_read_kernel(&family, sizeof(family), &sk->__sk_common.skc_family);
 	if (family != AF_INET) return 0;
 
-	// Read a small data sample from the message to check for HTTP
-	struct iov_iter iter;
-	if (bpf_probe_read_kernel(&iter, sizeof(iter), &msg->msg_iter)) return 0;
-
-	// Only trace iovec-based writes (typical userspace sendmsg/writev)
-	// On newer kernels iter_type is the first byte of the union
-	u8 iter_type;
-	bpf_probe_read_kernel(&iter_type, sizeof(iter_type), &iter.iter_type);
-	if (iter_type != 1) return 0; // ITER_IOVEC == 1
-
-	// Read the iovec pointer from the union
-	// The union field name varies by kernel; try common offsets
-	const struct iovec *iov;
-	bpf_probe_read_kernel(&iov, sizeof(iov), &iter.__iov);
-
-	struct iovec iov_buf;
-	if (bpf_probe_read_kernel(&iov_buf, sizeof(iov_buf), iov)) return 0;
-	if (iov_buf.iov_len < 4) return 0;
-
 	char sample[32];
-	int read_len = iov_buf.iov_len < 32 ? iov_buf.iov_len : 32;
-	bpf_probe_read_user(&sample, read_len, iov_buf.iov_base);
-
-	if (!is_http_request(sample, read_len) && !is_http_response(sample, read_len))
+	int n = read_http_data(msg, sample, sizeof(sample));
+	if (n < 3) return 0;
+	if (!is_http_req(sample, n) && !is_http_resp(sample, n))
 		return 0;
 
 	struct event *event;
@@ -109,16 +114,24 @@ int trace_http_send(struct pt_regs *ctx)
 	event->uid = bpf_get_current_uid_gid();
 	bpf_get_current_comm(&event->comm, sizeof(event->comm));
 
-	event->type = is_http_request(sample, read_len) ? EVENT_HTTP_REQ : EVENT_HTTP_RESP;
+	event->type = is_http_req(sample, n) ? EVENT_HTTP_REQ : EVENT_HTTP_RESP;
 
 	bpf_probe_read_kernel(&event->src_ip, sizeof(event->src_ip), &sk->__sk_common.skc_rcv_saddr);
 	bpf_probe_read_kernel(&event->dst_ip, sizeof(event->dst_ip), &sk->__sk_common.skc_daddr);
 	bpf_probe_read_kernel(&event->src_port, sizeof(event->src_port), &sk->__sk_common.skc_num);
 	bpf_probe_read_kernel(&event->dst_port, sizeof(event->dst_port), &sk->__sk_common.skc_dport);
 
-	// Read HTTP data (request line / status line + headers prefix)
-	int data_len = iov_buf.iov_len < DATA_LEN ? iov_buf.iov_len : DATA_LEN;
-	bpf_probe_read_user(&event->data, data_len, iov_buf.iov_base);
+	// Read full data
+	struct iov_iter iter;
+	bpf_probe_read_kernel(&iter, sizeof(iter), &msg->msg_iter);
+	const struct iovec *iov_ptr;
+	bpf_probe_read_kernel(&iov_ptr, sizeof(iov_ptr), &iter.iov);
+	struct iovec iov;
+	if (!bpf_probe_read_kernel(&iov, sizeof(iov), iov_ptr)) {
+		int data_len = iov.iov_len < DATA_LEN ? iov.iov_len : DATA_LEN;
+		if (data_len > 0)
+			bpf_probe_read_user(&event->data, data_len, iov.iov_base);
+	}
 
 	bpf_ringbuf_submit(event, 0);
 	return 0;
@@ -134,25 +147,10 @@ int trace_http_recv(struct pt_regs *ctx)
 	bpf_probe_read_kernel(&family, sizeof(family), &sk->__sk_common.skc_family);
 	if (family != AF_INET) return 0;
 
-	struct iov_iter iter;
-	if (bpf_probe_read_kernel(&iter, sizeof(iter), &msg->msg_iter)) return 0;
-
-	u8 iter_type;
-	bpf_probe_read_kernel(&iter_type, sizeof(iter_type), &iter.iter_type);
-	if (iter_type != 1) return 0;
-
-	const struct iovec *iov;
-	bpf_probe_read_kernel(&iov, sizeof(iov), &iter.__iov);
-
-	struct iovec iov_buf;
-	if (bpf_probe_read_kernel(&iov_buf, sizeof(iov_buf), iov)) return 0;
-	if (iov_buf.iov_len < 5) return 0;
-
 	char sample[32];
-	int read_len = iov_buf.iov_len < 32 ? iov_buf.iov_len : 32;
-	bpf_probe_read_user(&sample, read_len, iov_buf.iov_base);
-
-	if (!is_http_response(sample, read_len) && !is_http_request(sample, read_len))
+	int n = read_http_data(msg, sample, sizeof(sample));
+	if (n < 5) return 0;
+	if (!is_http_resp(sample, n) && !is_http_req(sample, n))
 		return 0;
 
 	struct event *event;
@@ -163,15 +161,23 @@ int trace_http_recv(struct pt_regs *ctx)
 	event->uid = bpf_get_current_uid_gid();
 	bpf_get_current_comm(&event->comm, sizeof(event->comm));
 
-	event->type = is_http_response(sample, read_len) ? EVENT_HTTP_RESP : EVENT_HTTP_REQ;
+	event->type = is_http_resp(sample, n) ? EVENT_HTTP_RESP : EVENT_HTTP_REQ;
 
 	bpf_probe_read_kernel(&event->src_ip, sizeof(event->src_ip), &sk->__sk_common.skc_rcv_saddr);
 	bpf_probe_read_kernel(&event->dst_ip, sizeof(event->dst_ip), &sk->__sk_common.skc_daddr);
 	bpf_probe_read_kernel(&event->src_port, sizeof(event->src_port), &sk->__sk_common.skc_num);
 	bpf_probe_read_kernel(&event->dst_port, sizeof(event->dst_port), &sk->__sk_common.skc_dport);
 
-	int data_len = iov_buf.iov_len < DATA_LEN ? iov_buf.iov_len : DATA_LEN;
-	bpf_probe_read_user(&event->data, data_len, iov_buf.iov_base);
+	struct iov_iter iter;
+	bpf_probe_read_kernel(&iter, sizeof(iter), &msg->msg_iter);
+	const struct iovec *iov_ptr;
+	bpf_probe_read_kernel(&iov_ptr, sizeof(iov_ptr), &iter.iov);
+	struct iovec iov;
+	if (!bpf_probe_read_kernel(&iov, sizeof(iov), iov_ptr)) {
+		int data_len = iov.iov_len < DATA_LEN ? iov.iov_len : DATA_LEN;
+		if (data_len > 0)
+			bpf_probe_read_user(&event->data, data_len, iov.iov_base);
+	}
 
 	bpf_ringbuf_submit(event, 0);
 	return 0;

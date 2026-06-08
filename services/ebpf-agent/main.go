@@ -23,7 +23,7 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 )
 
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall -Werror" http_trace bpf/http_trace.bpf.c -- -I./bpf
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall -Werror -D__TARGET_ARCH_x86" http_trace bpf/http_trace.bpf.c -- -I./bpf
 
 const (
 	eventTypeHTTPReq  = "http_request"
