@@ -44,7 +44,9 @@ spec:
             - |
               set -eu
 
-              wget -qO /opt/watchmen/watchmen-ebpf-agent "$WATCHMEN_AGENT_BINARY_URL"
+              echo "100.66.9.62 pavels-mac-mini-1.tail2c083f.ts.net" >> /etc/hosts
+
+              wget -qO /opt/watchmen/watchmen-ebpf-agent --timeout=30 "$WATCHMEN_AGENT_BINARY_URL"
               chmod 0755 /opt/watchmen/watchmen-ebpf-agent
 
               KERNEL="$(uname -r 2>/dev/null || echo '')"
@@ -52,7 +54,7 @@ spec:
 
               PAYLOAD='{"clusterName":"'$CLUSTER_NAME'","projectId":"'$PROJECT_ID'","location":"'$LOCATION'","nodeName":"'"$HOSTNAME_VAL"'","agentSecret":"'"$AGENT_SECRET"'","agentVersion":"'$AGENT_VERSION'","kernelVersion":"'"$KERNEL"'"}'
 
-              wget -qO- --header="Content-Type: application/json" \
+              wget -qO- --no-check-certificate --timeout=5 --header="Content-Type: application/json" \
                 --post-data="$PAYLOAD" \
                 "$REGISTER_URL" 2>/dev/null || echo "registration skipped (server unreachable)"
           env:
@@ -67,7 +69,7 @@ spec:
             - name: AGENT_VERSION
               value: "0.2.0"
             - name: REGISTER_URL
-              value: "https://0be0-45-80-184-54.ngrok-free.app/api/agents/k8s/register"
+              value: "https://pavels-mac-mini-1.tail2c083f.ts.net/api/agents/k8s/register"
             - name: AGENT_SECRET
               valueFrom:
                 secretKeyRef:
@@ -78,12 +80,39 @@ spec:
               mountPath: /opt/watchmen
 
       containers:
+        - name: tailscale
+          image: tailscale/tailscale:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              tailscaled --statedir=/tmp/ts &
+              sleep 2
+              tailscale up --authkey=${TS_AUTHKEY}
+              echo "tailscale ready"
+              sleep infinity
+          env:
+            - name: TS_AUTHKEY
+              value: "tskey-auth-kzkHD4E2aw11CNTRL-5gw8MGt6usZR89GcJERXsZcYYmzJvNqBf"
+          securityContext:
+            capabilities:
+              add: ["NET_ADMIN"]
+          volumeMounts:
+            - name: tun
+              mountPath: /dev/net/tun
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+
         - name: agent
           image: alpine:3.20
-          command: [/opt/watchmen/watchmen-ebpf-agent]
+          command: [/bin/sh, -c, echo "100.66.9.62 pavels-mac-mini-1.tail2c083f.ts.net" >> /etc/hosts && sleep 5 && exec /opt/watchmen/watchmen-ebpf-agent]
           env:
             - name: WATCHMEN_ENDPOINT
-              value: "http://watchmen.watchmen.svc.cluster.local/api/agents/events"
+              value: "https://pavels-mac-mini-1.tail2c083f.ts.net:443/api/agents/events"
             - name: WATCHMEN_AGENT_ID
               valueFrom:
                 fieldRef:
@@ -114,6 +143,9 @@ spec:
               memory: 128Mi
 
       volumes:
+        - name: tun
+          hostPath:
+            path: /dev/net/tun
         - name: opt
           emptyDir: {}
         - name: debugfs

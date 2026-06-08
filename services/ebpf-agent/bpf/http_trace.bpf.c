@@ -27,36 +27,22 @@ struct {
 static __always_inline int is_http_req(const char *data, int len)
 {
 	if (len < 3) return 0;
-	char c0, c1, c2;
-	bpf_probe_read_kernel(&c0, 1, &data[0]);
-	bpf_probe_read_kernel(&c1, 1, &data[1]);
-	bpf_probe_read_kernel(&c2, 1, &data[2]);
-	if (c0 == 'G' && c1 == 'E' && c2 == 'T') return 1;
-	if (c0 == 'P' && c1 == 'U' && c2 == 'T') return 1;
+	if (data[0] == 'G' && data[1] == 'E' && data[2] == 'T') return 1;
+	if (data[0] == 'P' && data[1] == 'U' && data[2] == 'T') return 1;
 	if (len < 4) return 0;
-	char c3;
-	bpf_probe_read_kernel(&c3, 1, &data[3]);
-	if (c0 == 'P' && c1 == 'O' && c2 == 'S' && c3 == 'T') return 1;
-	if (c0 == 'D' && c1 == 'E' && c2 == 'L') return 1;
-	if (c0 == 'H' && c1 == 'E' && c2 == 'A' && c3 == 'D') return 1;
+	if (data[0] == 'P' && data[1] == 'O' && data[2] == 'S' && data[3] == 'T') return 1;
+	if (data[0] == 'D' && data[1] == 'E' && data[2] == 'L') return 1;
+	if (data[0] == 'H' && data[1] == 'E' && data[2] == 'A' && data[3] == 'D') return 1;
 	if (len < 5) return 0;
-	char c4;
-	bpf_probe_read_kernel(&c4, 1, &data[4]);
-	if (c0 == 'P' && c1 == 'A' && c2 == 'T' && c3 == 'C' && c4 == 'H') return 1;
-	if (c0 == 'O' && c1 == 'P' && c2 == 'T' && c3 == 'I') return 1;
+	if (data[0] == 'P' && data[1] == 'A' && data[2] == 'C' && data[3] == 'H' && data[4] == 'H') return 1;
+	if (data[0] == 'O' && data[1] == 'P' && data[2] == 'T' && data[3] == 'I') return 1;
 	return 0;
 }
 
 static __always_inline int is_http_resp(const char *data, int len)
 {
 	if (len < 5) return 0;
-	char c0, c1, c2, c3, c4;
-	bpf_probe_read_kernel(&c0, 1, &data[0]);
-	bpf_probe_read_kernel(&c1, 1, &data[1]);
-	bpf_probe_read_kernel(&c2, 1, &data[2]);
-	bpf_probe_read_kernel(&c3, 1, &data[3]);
-	bpf_probe_read_kernel(&c4, 1, &data[4]);
-	return (c0 == 'H' && c1 == 'T' && c2 == 'T' && c3 == 'P' && c4 == '/');
+	return data[0] == 'H' && data[1] == 'T' && data[2] == 'T' && data[3] == 'P' && data[4] == '/';
 }
 
 SEC("tracepoint/syscalls/sys_enter_write")
@@ -83,7 +69,7 @@ int trace_http_write(struct trace_event_raw_sys_enter *ctx)
 	bpf_get_current_comm(&event->comm, sizeof(event->comm));
 
 	event->type = is_http_req(data, read_len) ? EVENT_HTTP_REQ : EVENT_HTTP_RESP;
-	bpf_probe_read_kernel(event->data, DATA_LEN, data);
+	__builtin_memcpy(event->data, data, DATA_LEN);
 	bpf_ringbuf_submit(event, 0);
 	return 0;
 }
@@ -112,7 +98,7 @@ int trace_http_sendto(struct trace_event_raw_sys_enter *ctx)
 	bpf_get_current_comm(&event->comm, sizeof(event->comm));
 
 	event->type = is_http_req(data, read_len) ? EVENT_HTTP_REQ : EVENT_HTTP_RESP;
-	bpf_probe_read_kernel(event->data, DATA_LEN, data);
+	__builtin_memcpy(event->data, data, DATA_LEN);
 
 	bpf_ringbuf_submit(event, 0);
 	return 0;
@@ -121,21 +107,21 @@ int trace_http_sendto(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_enter_sendmsg")
 int trace_http_sendmsg(struct trace_event_raw_sys_enter *ctx)
 {
-	unsigned long msg_ptr = ctx->args[1];
-	if (!msg_ptr) return 0;
+	const struct user_msghdr *msg = (const void *)ctx->args[1];
+	if (!msg) return 0;
 
-	unsigned long iov_ptr;
-	bpf_probe_read_user(&iov_ptr, 8, (const void *)(msg_ptr + 16));
+	const struct iovec *iov;
+	bpf_probe_read_user(&iov, sizeof(iov), &msg->msg_iov);
 
 	char data[DATA_LEN];
-	unsigned long iov_len;
-	bpf_probe_read_user(&iov_len, 8, (const void *)(iov_ptr + 8));
+	__u64 iov_len;
+	bpf_probe_read_user(&iov_len, sizeof(iov_len), &iov->iov_len);
 	if (iov_len < 3 || iov_len > 65536) return 0;
 
 	int read_len = iov_len < DATA_LEN ? (int)iov_len : DATA_LEN;
-	unsigned long base;
-	bpf_probe_read_user(&base, 8, (const void *)iov_ptr);
-	bpf_probe_read_user(data, read_len, (const void *)base);
+	const void *base;
+	bpf_probe_read_user(&base, sizeof(base), &iov->iov_base);
+	bpf_probe_read_user(data, read_len, base);
 
 	if (!is_http_req(data, read_len) && !is_http_resp(data, read_len))
 		return 0;
@@ -149,7 +135,7 @@ int trace_http_sendmsg(struct trace_event_raw_sys_enter *ctx)
 	bpf_get_current_comm(&event->comm, sizeof(event->comm));
 
 	event->type = is_http_req(data, read_len) ? EVENT_HTTP_REQ : EVENT_HTTP_RESP;
-	bpf_probe_read_kernel(event->data, DATA_LEN, data);
+	__builtin_memcpy(event->data, data, DATA_LEN);
 
 	bpf_ringbuf_submit(event, 0);
 	return 0;
