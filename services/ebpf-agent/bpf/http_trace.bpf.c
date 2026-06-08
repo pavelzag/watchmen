@@ -48,18 +48,6 @@ static __always_inline int is_http_resp(const char *data, int len)
 SEC("tracepoint/syscalls/sys_enter_write")
 int trace_http_write(struct trace_event_raw_sys_enter *ctx)
 {
-	void *buf = (void *)ctx->args[1];
-	size_t count = (size_t)ctx->args[2];
-
-	if (count < 3 || count > 65536) return 0;
-
-	char data[DATA_LEN];
-	int read_len = count < DATA_LEN ? count : DATA_LEN;
-	bpf_probe_read_user(data, read_len, buf);
-
-	if (!is_http_req(data, read_len) && !is_http_resp(data, read_len))
-		return 0;
-
 	struct event *event;
 	event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
 	if (!event) return 0;
@@ -67,9 +55,7 @@ int trace_http_write(struct trace_event_raw_sys_enter *ctx)
 	event->pid = bpf_get_current_pid_tgid() >> 32;
 	event->uid = bpf_get_current_uid_gid();
 	bpf_get_current_comm(&event->comm, sizeof(event->comm));
-
-	event->type = is_http_req(data, read_len) ? EVENT_HTTP_REQ : EVENT_HTTP_RESP;
-	__builtin_memcpy(event->data, data, DATA_LEN);
+	event->type = 42;
 	bpf_ringbuf_submit(event, 0);
 	return 0;
 }
