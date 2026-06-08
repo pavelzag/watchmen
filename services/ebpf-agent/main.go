@@ -107,9 +107,9 @@ func run(ctx context.Context, endpoint string, verbose bool) error {
 	}
 	defer tpSendmsg.Close()
 
-	kpWritev, err := link.Kprobe("sys_writev", objs.KprobeSysWritev, nil)
+	kpWritev, err := link.Kprobe("__x64_sys_writev", objs.KprobeSysWritev, nil)
 	if err != nil {
-		return fmt.Errorf("attach kprobe sys_writev: %w", err)
+		return fmt.Errorf("attach kprobe __x64_sys_writev: %w", err)
 	}
 	defer kpWritev.Close()
 
