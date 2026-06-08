@@ -141,4 +141,52 @@ int trace_http_sendmsg(struct trace_event_raw_sys_enter *ctx)
 	return 0;
 }
 
+SEC("tracepoint/syscalls/sys_enter_writev")
+int trace_http_writev(struct trace_event_raw_sys_enter *ctx)
+{
+	const struct iovec *iov = (const void *)ctx->args[1];
+	int iovcnt = (int)ctx->args[2];
+	if (iovcnt <= 0 || iovcnt > 16) return 0;
+
+	char data[DATA_LEN];
+	int total = 0;
+
+	#pragma unroll
+	for (int i = 0; i < 16; i++) {
+		if (i >= iovcnt || total >= DATA_LEN) break;
+
+		__u64 iov_len;
+		bpf_probe_read_user(&iov_len, sizeof(iov_len), &iov[i].iov_len);
+		if (iov_len == 0) continue;
+
+		const void *base;
+		bpf_probe_read_user(&base, sizeof(base), &iov[i].iov_base);
+		if (!base) continue;
+
+		int copy_len = DATA_LEN - total;
+		if (iov_len < copy_len) copy_len = (int)iov_len;
+		if (copy_len <= 0) continue;
+
+		bpf_probe_read_user(data + total, copy_len, base);
+		total += copy_len;
+	}
+
+	if (total < 3) return 0;
+	if (!is_http_req(data, total) && !is_http_resp(data, total))
+		return 0;
+
+	struct event *event;
+	event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
+	if (!event) return 0;
+
+	event->pid = bpf_get_current_pid_tgid() >> 32;
+	event->uid = bpf_get_current_uid_gid();
+	bpf_get_current_comm(&event->comm, sizeof(event->comm));
+
+	event->type = is_http_req(data, total) ? EVENT_HTTP_REQ : EVENT_HTTP_RESP;
+	__builtin_memcpy(event->data, data, DATA_LEN);
+	bpf_ringbuf_submit(event, 0);
+	return 0;
+}
+
 char LICENSE[] SEC("license") = "Dual MIT/GPL";
