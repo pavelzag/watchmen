@@ -84,6 +84,33 @@ const DEFAULT_NODES: InfrastructureNode[] = [
     { id: "response", label: "Final Response", icon: CheckCircle2, description: "Success 200 OK" },
 ];
 
+function getGkeAgentScenario(clusterName: string) {
+    return {
+        id: `gke-agent-${clusterName}`,
+        label: `GKE Agent: ${clusterName}`,
+        description: `Live HTTP activity observed from the Watchmen eBPF agent in cluster ${clusterName}.`,
+        nodes: [
+            { id: "gateway", label: "Cluster Edge", icon: ShieldCheck, description: "Traffic entering or leaving cluster workloads" },
+            { id: "gke-pods", label: "GKE Pod", icon: Layers, description: "Observed pod or node process HTTP activity" },
+            { id: "response", label: "Observed Event", icon: CheckCircle2, description: "Request or response captured by the agent" },
+        ],
+        nodeDetails: {
+            "gke-pods": {
+                title: `GKE Pod Activity: ${clusterName}`,
+                description: "Live HTTP requests and responses captured from Kubernetes pods and node-local processes.",
+            },
+            gateway: {
+                title: `Cluster Edge: ${clusterName}`,
+                description: "Represents ingress/egress path around the observed Kubernetes workload traffic.",
+            },
+            response: {
+                title: `Observed HTTP Event: ${clusterName}`,
+                description: "Represents the HTTP request/response that the Watchmen agent captured.",
+            },
+        },
+    };
+}
+
 
 export default function TraceClient() {
     const [inputJson, setInputJson] = useState(JSON.stringify(DEFAULT_JSON, null, 2));
@@ -149,6 +176,10 @@ export default function TraceClient() {
 
             // Assign dynamic scenarios to discovered endpoints from the API
             const discoveryEndpoints = rawEndpoints.map((ep: any) => {
+                if (ep.type === "GKE" && !ep.scenario) {
+                    const clusterName = ep.id.replace("gke-cluster-", "");
+                    return { ...ep, scenario: getGkeAgentScenario(clusterName) };
+                }
                 if (ep.type === "Load Balancer" && !ep.scenario) {
                     return { ...ep, scenario: getGcpLbScenario(ep.id.replace("gcp-lb-", ""), ep.url.replace("http://", "")) };
                 } else if (ep.type === "Cloud Run" && !ep.scenario) {
@@ -417,11 +448,21 @@ export default function TraceClient() {
 
         const pollHistory = async () => {
             try {
-                const res = await fetch("/api/trace/history");
+                const res = await fetch(`/api/trace/history?t=${Date.now()}`, {
+                    cache: "no-store",
+                });
                 if (res.ok) {
                     const history = await res.json();
                     if (history && history.length > 0) {
-                        const latest = history[0];
+                        const selectedCluster = targetEndpoint?.type === "GKE"
+                            ? targetEndpoint?.id?.replace("gke-cluster-", "")
+                            : null;
+                        const relevantHistory = selectedCluster
+                            ? history.filter((item: any) => item.cluster_name === selectedCluster)
+                            : history;
+                        if (relevantHistory.length === 0) return;
+
+                        const latest = relevantHistory[0];
 
                         // Check if this is a new request we haven't seen yet
                         if (latest.request_id !== lastRequestRef.current) {
@@ -459,9 +500,15 @@ export default function TraceClient() {
             }
         };
 
+        pollHistory();
         const interval = setInterval(pollHistory, 3000);
         return () => clearInterval(interval);
-    }, [isLiveMode, currentNodes.length]);
+    }, [isLiveMode, currentNodes.length, targetEndpoint?.id, targetEndpoint?.type]);
+
+    useEffect(() => {
+        lastRequestRef.current = null;
+        setActiveNodeIndex(-1);
+    }, [isLiveMode, targetEndpoint?.id]);
 
     const selectedNodeDetail = currentNodeDetails[selectedNodeId || ""] || null;
 

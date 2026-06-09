@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { sql, ensureGcpSnapshotTable, ensureAwsSnapshotTable } from "@/lib/db";
+import { sql, ensureAgentInstallTables, ensureGcpSnapshotTable, ensureAwsSnapshotTable } from "@/lib/db";
 import type { GcpSnapshot } from "@/lib/gcp/types";
 import type { AwsSnapshot } from "@/lib/aws/types";
 
@@ -51,6 +51,27 @@ export async function GET(req: NextRequest) {
             });
         }
         // 1. Fetch GCP Endpoints
+        await ensureAgentInstallTables();
+        const gkeClusters = await sql`
+            SELECT DISTINCT metadata->>'clusterName' AS cluster_name
+            FROM agent_hosts
+            WHERE provider = 'k8s'
+              AND (user_email = ${email} OR user_email = 'system')
+              AND metadata->>'clusterName' IS NOT NULL
+            ORDER BY metadata->>'clusterName'
+        `;
+
+        gkeClusters.rows.forEach((row: any) => {
+            endpoints.push({
+                id: `gke-cluster-${row.cluster_name}`,
+                label: `[Observed] GKE: ${row.cluster_name}`,
+                url: "",
+                provider: "gcp",
+                type: "GKE",
+                description: `HTTP trace events observed from GKE cluster ${row.cluster_name}`,
+            });
+        });
+
         await ensureGcpSnapshotTable();
         const gcpResult = await sql`
             SELECT snapshot FROM user_snapshots WHERE user_email = ${email}

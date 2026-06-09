@@ -276,7 +276,7 @@ watchmen/
 ├── services/
 │   ├── request-processor/ Go service — traces in-cluster HTTP requests
 │   └── test-echo/         Lightweight echo app for topology demos
-├── k8s/                  Kubernetes manifests
+├── ../watchmen-infra/k8s/ Kubernetes manifests
 │   └── istio/            Optional Istio mTLS and access-log telemetry
 ├── scripts/
 │   ├── migrate.sql       Database schema

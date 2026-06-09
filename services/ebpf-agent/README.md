@@ -10,7 +10,7 @@ The first collector attaches to `syscalls:sys_enter_execve` and emits process ex
 
 ## Build on the GCP VM
 
-SSH to the VM created by `stacks/gcp-ebpf-vm`, then copy this directory or clone the repo.
+SSH to the VM created by `../watchmen-infra/stacks/gcp-ebpf-vm`, then copy this directory or clone the repo.
 
 ```sh
 cd services/ebpf-agent
@@ -65,7 +65,7 @@ For a private repository, use a release host that the VM installer can access wi
 
 ```sh
 sudo install -m 0755 watchmen-ebpf-agent /usr/local/bin/watchmen-ebpf-agent
-sudo install -m 0644 ../../deploy/systemd/watchmen-ebpf-agent.service /etc/systemd/system/watchmen-ebpf-agent.service
+sudo install -m 0644 ../../../watchmen-infra/deploy/systemd/watchmen-ebpf-agent.service /etc/systemd/system/watchmen-ebpf-agent.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now watchmen-ebpf-agent
 sudo journalctl -u watchmen-ebpf-agent -f

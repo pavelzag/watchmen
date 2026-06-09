@@ -1,4 +1,4 @@
-import { sql } from "@/lib/db";
+import { retryOnce, sql } from "@/lib/db";
 import { decrypt } from "@/lib/encryption";
 
 export type AIProvider = "openai" | "anthropic" | "google";
@@ -11,29 +11,40 @@ export interface AIKeyRecord {
 }
 
 /** Ensures the user_api_keys table exists. Safe to call on every request. */
+let apiKeysTableReady: Promise<void> | null = null;
+
 export async function ensureApiKeysTable() {
-  await sql`
-    CREATE TABLE IF NOT EXISTS user_api_keys (
-      user_email    TEXT NOT NULL,
-      provider      TEXT NOT NULL,
-      encrypted_key TEXT NOT NULL,
-      key_hint      TEXT NOT NULL,
-      is_active     BOOLEAN NOT NULL DEFAULT FALSE,
-      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      PRIMARY KEY (user_email, provider)
-    )
-  `;
+  if (!apiKeysTableReady) {
+    apiKeysTableReady = retryOnce(async () => {
+      await sql`
+        CREATE TABLE IF NOT EXISTS user_api_keys (
+          user_email    TEXT NOT NULL,
+          provider      TEXT NOT NULL,
+          encrypted_key TEXT NOT NULL,
+          key_hint      TEXT NOT NULL,
+          is_active     BOOLEAN NOT NULL DEFAULT FALSE,
+          created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (user_email, provider)
+        )
+      `;
+    }).catch((error) => {
+      apiKeysTableReady = null;
+      throw error;
+    });
+  }
+
+  await apiKeysTableReady;
 }
 
 /** Returns all key records for a user (no plaintext keys). */
 export async function listUserKeys(userEmail: string): Promise<AIKeyRecord[]> {
   await ensureApiKeysTable();
-  const result = await sql`
+  const result = await retryOnce(() => sql`
     SELECT provider, key_hint, is_active, created_at
     FROM user_api_keys
     WHERE user_email = ${userEmail}
     ORDER BY created_at ASC
-  `;
+  `);
   return result.rows.map((r) => ({
     provider: r.provider as AIProvider,
     keyHint: r.key_hint,
@@ -45,12 +56,12 @@ export async function listUserKeys(userEmail: string): Promise<AIKeyRecord[]> {
 /** Retrieves and decrypts the active API key for a user. Returns null if none configured. */
 export async function getActiveKey(userEmail: string): Promise<{ provider: AIProvider; key: string } | null> {
   await ensureApiKeysTable();
-  const result = await sql`
+  const result = await retryOnce(() => sql`
     SELECT provider, encrypted_key
     FROM user_api_keys
     WHERE user_email = ${userEmail} AND is_active = TRUE
     LIMIT 1
-  `;
+  `);
   if (result.rows.length === 0) return null;
   const row = result.rows[0];
   return { provider: row.provider as AIProvider, key: decrypt(row.encrypted_key) };

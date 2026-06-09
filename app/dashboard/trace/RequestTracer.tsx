@@ -26,6 +26,7 @@ const LIVE_POLL_ACTIVE_MS = 1500;
 const LIVE_POLL_ALL_MS = 4000;
 const LIVE_ALL_BATCH_SIZE = 4;
 const LIVE_STREAM_PULSE_MS = 520;
+const LIVE_STREAMING_POLL_FALLBACK_MS = 15_000;
 // Cloud Logging can lag well beyond a few seconds, so keep a wider freshness
 // window for "live" traffic while still aging events out of the UI separately.
 const LIVE_EVENT_FRESHNESS_MS = 120_000;
@@ -71,6 +72,23 @@ interface LiveEvent {
   status?: number;
   latency?: string;
   count: number;
+}
+
+interface AgentEventRow {
+  id: number | string;
+  agent_id: string;
+  provider?: string;
+  project_id?: string;
+  cluster_name?: string;
+  received_at: string;
+  event: {
+    type?: string;
+    method?: string;
+    path?: string;
+    status?: number;
+    hostname?: string;
+    comm?: string;
+  };
 }
 
 interface LivePulseBurst {
@@ -122,6 +140,15 @@ interface GcpTraceSourceConfigSummary {
   mode: TraceSourceMode;
   setupState: TraceSetupState;
   lastCheckMessage: string;
+}
+
+function shouldUseStreamingLive(
+  demoMode: boolean,
+  traceSourceConfig: GcpTraceSourceConfigSummary | null,
+): boolean {
+  return !demoMode
+    && traceSourceConfig?.mode === "streaming"
+    && traceSourceConfig.setupState === "receiving_events";
 }
 
 function getProxyUrlValidationError(rawUrl: string): string | null {
@@ -461,6 +488,12 @@ function liveTargetKeyFromIngressEvent(event: LiveTraceIngressEvent): string {
   return `gke:${target.projectId}:${target.container}`;
 }
 
+function ingressEventMatchesLiveTarget(event: LiveTraceIngressEvent, target: LiveMonitorTarget): boolean {
+  if (event.kind !== target.kind || event.projectId !== target.projectId) return false;
+  if (target.kind === "gke") return true;
+  return liveTargetKeyFromIngressEvent(event) === liveTargetKey(target);
+}
+
 function resolveLiveTargetNodeId(target: LiveMonitorTarget, nodes: GraphNode[]): string | undefined {
   if (target.kind === "gke") {
     return nodes.find(
@@ -498,6 +531,26 @@ function resolveLiveEventNodeIdFromIngress(event: LiveTraceIngressEvent, nodes: 
   )?.id;
 }
 
+function buildPathForIngressEvent(
+  event: LiveTraceIngressEvent,
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+  activeTarget: LiveMonitorTarget | null,
+): Set<string> | null {
+  const focusNodeId = resolveLiveEventNodeIdFromIngress(event, nodes);
+  if (focusNodeId) return buildPathForNode(focusNodeId, edges);
+  if (activeTarget && ingressEventMatchesLiveTarget(event, activeTarget)) {
+    return new Set(activeTarget.pathIds);
+  }
+  const fallbackNode = nodes.find(node => {
+    if (node.projectId !== event.projectId) return false;
+    if (event.kind === "gke") return node.type === "gke";
+    if (event.kind === "cloudrun") return node.type === "cloudrun" && node.resourceName === event.resourceName;
+    return node.type === "vm" && node.resourceName === event.resourceName;
+  });
+  return fallbackNode ? buildPathForNode(fallbackNode.id, edges) : null;
+}
+
 function toLiveEventFromIngress(event: LiveTraceIngressEvent, nodes: GraphNode[]): LiveEvent {
   const target = resolveTargetFromIngressEvent(event);
   return {
@@ -516,6 +569,47 @@ function toLiveEventFromIngress(event: LiveTraceIngressEvent, nodes: GraphNode[]
     status: event.status,
     latency: event.latency,
     count: event.count,
+  };
+}
+
+function resolveAgentEventNodeId(event: AgentEventRow, nodes: GraphNode[]): string | undefined {
+  return nodes.find(
+    n => n.type === "gke" && (!event.project_id || n.projectId === event.project_id)
+  )?.id ?? nodes.find(n => n.type === "gke")?.id;
+}
+
+function buildPathForAgentEvent(
+  event: AgentEventRow,
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+  activeTarget: LiveMonitorTarget | null,
+): Set<string> | null {
+  if (
+    activeTarget?.kind === "gke"
+    && (!event.project_id || activeTarget.projectId === event.project_id)
+  ) {
+    return new Set(activeTarget.pathIds);
+  }
+  const focusNodeId = resolveAgentEventNodeId(event, nodes);
+  return focusNodeId ? buildPathForNode(focusNodeId, edges) : null;
+}
+
+function toLiveEventFromAgentEvent(event: AgentEventRow, nodes: GraphNode[]): LiveEvent {
+  const focusNodeId = resolveAgentEventNodeId(event, nodes);
+  const ev = event.event ?? {};
+  return {
+    id: `agent:${event.id}`,
+    ts: event.received_at,
+    label: event.cluster_name
+      ? `GKE · ${event.cluster_name}`
+      : `GKE · ${ev.hostname ?? event.agent_id}`,
+    kind: "gke",
+    projectId: event.project_id ?? "",
+    focusNodeId,
+    method: ev.method,
+    path: ev.path,
+    status: ev.status,
+    count: 1,
   };
 }
 
@@ -2416,6 +2510,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const liveAnimEnabledRef = useRef(true);
   const liveModeRef = useRef(false);
   const liveLastTsByTarget = useRef<Record<string, string>>({});
+  const liveLastAgentEventAtRef = useRef("");
   const livePollCursorRef = useRef(0);
   const liveCooldownUntilRef = useRef(0);
   const liveTimestamps = useRef<number[]>([]);   // sliding window of request timestamps
@@ -2424,6 +2519,15 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const [livePulseBursts, setLivePulseBursts] = useState<LivePulseBurst[]>([]);
   const [selectedLiveEvent, setSelectedLiveEvent] = useState<LiveEvent | null>(null);
   const livePulseTimeoutsRef = useRef<Map<string, number>>(new Map());
+  const liveStreamingLastEventAtRef = useRef(0);
+
+  useEffect(() => {
+    liveModeRef.current = liveMode;
+  }, [liveMode]);
+
+  useEffect(() => {
+    liveAnimEnabledRef.current = liveAnimEnabled;
+  }, [liveAnimEnabled]);
 
   // Demo simulation
   const [demoRps, setDemoRps] = useState<number | null>(null);
@@ -2874,16 +2978,16 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   }, []);
 
   useEffect(() => {
-    const useStreamingLive = !demoMode && traceSourceConfig?.mode === "streaming";
+    const useStreamingLive = shouldUseStreamingLive(demoMode, traceSourceConfig);
     if (!useStreamingLive || !liveMode) return;
 
     const eventSource = new EventSource("/api/trace/live");
     eventSource.addEventListener("trace", (rawEvent) => {
       const parsed = JSON.parse((rawEvent as MessageEvent).data) as LiveTraceIngressEvent;
+      liveStreamingLastEventAtRef.current = Date.now();
 
       if (liveScope === "active" && hasFocusedLiveTarget && liveMonitorTarget) {
-        const activeKey = liveTargetKey(liveMonitorTarget);
-        if (liveTargetKeyFromIngressEvent(parsed) !== activeKey) {
+        if (!ingressEventMatchesLiveTarget(parsed, liveMonitorTarget)) {
           return;
         }
       }
@@ -2902,9 +3006,10 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       const inWindow = liveTimestamps.current.filter(t => nowMs - t < 10_000).length;
       setLiveRps(inWindow > 0 ? inWindow / 10 : null);
 
-      if (liveAnimEnabledRef.current && uiEvent.focusNodeId) {
-        const pathIds = buildPathForNode(uiEvent.focusNodeId, edges);
-        if (liveModeRef.current) emitLivePulseBurst(pathIds);
+      if (liveAnimEnabledRef.current) {
+        const pathIds = buildPathForIngressEvent(parsed, nodes, edges, liveMonitorTarget);
+        if (!pathIds) return;
+        emitLivePulseBurst(pathIds);
       }
     });
 
@@ -3019,11 +3124,11 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
   // ── Live monitoring: poll Cloud Logging, fire pulse on new traffic ───────────
   useEffect(() => {
-    const useStreamingLive = !demoMode && traceSourceConfig?.mode === "streaming";
-    if (useStreamingLive) return;
+    const useStreamingLive = shouldUseStreamingLive(demoMode, traceSourceConfig);
     liveModeRef.current = liveMode;
     if (!liveMode) {
       liveLastTsByTarget.current = {};
+      liveLastAgentEventAtRef.current = "";
       livePollCursorRef.current = 0;
       liveCooldownUntilRef.current = 0;
       liveTimestamps.current = [];
@@ -3035,7 +3140,8 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     const allTargets = liveScope === "all"
       ? allLiveMonitorTargets
       : (liveMonitorTarget ? [liveMonitorTarget] : []);
-    if (allTargets.length === 0) return;
+    const hasGkeNodes = nodes.some(node => node.type === "gke");
+    if (allTargets.length === 0 && !hasGkeNodes) return;
 
     const startTs = new Date().toISOString();
     allTargets.forEach(target => {
@@ -3044,16 +3150,37 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
         liveLastTsByTarget.current[key] = startTs;
       }
     });
+    if (!liveLastAgentEventAtRef.current) {
+      liveLastAgentEventAtRef.current = startTs;
+    }
     let busy = false;
 
     const poll = async () => {
       if (!liveModeRef.current || busy) return;
+      if (
+        useStreamingLive
+        && Date.now() - liveStreamingLastEventAtRef.current < LIVE_STREAMING_POLL_FALLBACK_MS
+      ) {
+        return;
+      }
       if (Date.now() < liveCooldownUntilRef.current) return;
       const pollNowMs = Date.now();
       setLiveEvents(prev => prev.filter(event => pollNowMs - eventTimestampMs(event.ts) < LIVE_EVENT_RETENTION_MS));
       liveTimestamps.current = liveTimestamps.current.filter(t => pollNowMs - t < 60_000);
       const currentWindowCount = liveTimestamps.current.filter(t => pollNowMs - t < 10_000).length;
       setLiveRps(currentWindowCount > 0 ? currentWindowCount / 10 : null);
+      const agentEventsPromise = fetch(
+        `/api/agents/events/query?${new URLSearchParams({
+          after: liveLastAgentEventAtRef.current,
+          limit: "20",
+        })}`
+      )
+        .then(async (res) => {
+          if (!res.ok) return [] as AgentEventRow[];
+          const data = await res.json().catch(() => ({}));
+          return (data.events ?? []) as AgentEventRow[];
+        })
+        .catch(() => [] as AgentEventRow[]);
       const targets = liveScope === "all"
         ? (() => {
             const batchSize = LIVE_ALL_BATCH_SIZE;
@@ -3064,48 +3191,66 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
           })()
         : allTargets;
       try {
-        const results = await Promise.all(
-          targets.map(async (target) => {
-            const key = liveTargetKey(target);
-            const after = liveLastTsByTarget.current[key] ?? startTs;
-            const params = buildLiveLogParams(target, after);
-            const res = await fetch(`/api/gcp/logs?${params}`);
-            const data = await res.json().catch(() => ({}));
-            if (res.status === 429 || data?.code === "rate_limited") {
-              const retryAfterSec = Number(data?.retryAfterSec ?? 30);
-              liveCooldownUntilRef.current = Date.now() + retryAfterSec * 1000;
-              return { target, entries: [] as LogEntry[], rateLimited: true };
-            }
-            if (!res.ok) {
-              return { target, entries: [] as LogEntry[], rateLimited: false };
-            }
-            const entries: LogEntry[] = data.entries ?? [];
-            if (entries.length > 0) {
-              const latest = entries.reduce((a, b) => a.timestamp > b.timestamp ? a : b);
-              liveLastTsByTarget.current[key] = latest.timestamp;
-            }
-            const freshEntries = entries.filter(entry => {
-              const tsMs = eventTimestampMs(entry.timestamp);
-              return tsMs > 0 && pollNowMs - tsMs <= LIVE_EVENT_FRESHNESS_MS;
-            });
-            return { target, entries: freshEntries, rateLimited: false };
-          })
-        );
+        const [agentEvents, results] = await Promise.all([
+          agentEventsPromise,
+          Promise.all(
+            targets.map(async (target) => {
+              const key = liveTargetKey(target);
+              const after = liveLastTsByTarget.current[key] ?? startTs;
+              const params = buildLiveLogParams(target, after);
+              const res = await fetch(`/api/gcp/logs?${params}`);
+              const data = await res.json().catch(() => ({}));
+              if (res.status === 429 || data?.code === "rate_limited") {
+                const retryAfterSec = Number(data?.retryAfterSec ?? 30);
+                liveCooldownUntilRef.current = Date.now() + retryAfterSec * 1000;
+                return { target, entries: [] as LogEntry[], rateLimited: true };
+              }
+              if (!res.ok) {
+                return { target, entries: [] as LogEntry[], rateLimited: false };
+              }
+              const entries: LogEntry[] = data.entries ?? [];
+              if (entries.length > 0) {
+                const latest = entries.reduce((a, b) => a.timestamp > b.timestamp ? a : b);
+                liveLastTsByTarget.current[key] = latest.timestamp;
+              }
+              const freshEntries = entries.filter(entry => {
+                const tsMs = eventTimestampMs(entry.timestamp);
+                return tsMs > 0 && pollNowMs - tsMs <= LIVE_EVENT_FRESHNESS_MS;
+              });
+              return { target, entries: freshEntries, rateLimited: false };
+            })
+          ),
+        ]);
 
         if (results.some(result => result.rateLimited)) {
           return;
         }
 
         const allEntries = results.flatMap(result => result.entries);
-        if (allEntries.length > 0) {
+        const freshAgentEvents = agentEvents.filter(event => {
+          const tsMs = eventTimestampMs(event.received_at);
+          return tsMs > 0 && pollNowMs - tsMs <= LIVE_EVENT_FRESHNESS_MS;
+        });
+        if (agentEvents.length > 0) {
+          const latestAgentEvent = agentEvents.reduce((a, b) =>
+            eventTimestampMs(a.received_at) > eventTimestampMs(b.received_at) ? a : b
+          );
+          liveLastAgentEventAtRef.current = latestAgentEvent.received_at;
+        }
+
+        if (allEntries.length > 0 || freshAgentEvents.length > 0) {
           const newEvents = results
             .map(result => toLiveEvent(result.target, result.entries, nodes))
-            .filter((event): event is LiveEvent => !!event)
+            .filter((event): event is LiveEvent => !!event);
+          const agentLiveEvents = freshAgentEvents
+            .map(event => toLiveEventFromAgentEvent(event, nodes))
+            .filter(event => event.focusNodeId);
+          const mergedNewEvents = [...newEvents, ...agentLiveEvents]
             .sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
-          if (newEvents.length > 0) {
+          if (mergedNewEvents.length > 0) {
             setLiveEvents(prev => {
               const retainedPrev = prev.filter(event => pollNowMs - eventTimestampMs(event.ts) < LIVE_EVENT_RETENTION_MS);
-              const merged = [...newEvents, ...retainedPrev];
+              const merged = [...mergedNewEvents, ...retainedPrev];
               const deduped: LiveEvent[] = [];
               const seen = new Set<string>();
               for (const event of merged) {
@@ -3119,6 +3264,9 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
           }
           allEntries.forEach(e => {
             if (e.timestamp) liveTimestamps.current.push(new Date(e.timestamp).getTime());
+          });
+          freshAgentEvents.forEach(e => {
+            if (e.received_at) liveTimestamps.current.push(new Date(e.received_at).getTime());
           });
           liveTimestamps.current = liveTimestamps.current.filter(t => pollNowMs - t < 60_000);
           const inWindow = liveTimestamps.current.filter(t => pollNowMs - t < 10_000).length;
@@ -3146,6 +3294,14 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                 if (i > 0) await sleep(140);
                 await runBfsAnimation(animatedTargets[i].target.pathIds, { colDelay: 110, resetAfterMs: 420 });
               }
+            }
+            const animatedAgentEvents = freshAgentEvents.slice(0, 8);
+            for (let i = 0; i < animatedAgentEvents.length; i++) {
+              if (!liveModeRef.current) break;
+              const pathIds = buildPathForAgentEvent(animatedAgentEvents[i], nodes, edges, liveMonitorTarget);
+              if (!pathIds) continue;
+              if (i > 0) await sleep(140);
+              await runBfsAnimation(pathIds, { colDelay: 110, resetAfterMs: 420 });
             }
             busy = false;
           }
@@ -3719,7 +3875,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
               // When a URL is focused, only show edges whose endpoints are both
               // part of the inferred path; otherwise "internet" keeps every
               // outbound edge faintly visible because it is always active.
-              const lineVisible = !url.trim() || isPath;
+              const lineVisible = !url.trim() || isPath || concurrentBursts.length > 0;
 
               return (
                 <g key={line.id} opacity={lineVisible ? 1 : 0}>
