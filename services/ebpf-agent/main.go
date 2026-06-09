@@ -98,18 +98,6 @@ func run(ctx context.Context, endpoint string, verbose bool) error {
 	}
 	defer tpWrite.Close()
 
-	tpSendto, err := link.Tracepoint("syscalls", "sys_enter_sendto", objs.TraceHttpSendto, nil)
-	if err != nil {
-		return fmt.Errorf("attach sys_enter_sendto tracepoint: %w", err)
-	}
-	defer tpSendto.Close()
-
-	tpSendmsg, err := link.Tracepoint("syscalls", "sys_enter_sendmsg", objs.TraceHttpSendmsg, nil)
-	if err != nil {
-		return fmt.Errorf("attach sys_enter_sendmsg tracepoint: %w", err)
-	}
-	defer tpSendmsg.Close()
-
 	reader, err := ringbuf.NewReader(objs.Events)
 	if err != nil {
 		return fmt.Errorf("open ring buffer: %w", err)

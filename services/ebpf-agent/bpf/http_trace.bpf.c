@@ -50,12 +50,20 @@ static __always_inline int submit_http_event(const char *data, int len)
 	if (!is_http_req(data, len) && !is_http_resp(data, len))
 		return 0;
 
+	char comm[TASK_COMM_LEN];
+	bpf_get_current_comm(&comm, sizeof(comm));
+	if (comm[0] == 'w' && comm[1] == 'a' && comm[2] == 't' && comm[3] == 'c' &&
+	    comm[4] == 'h' && comm[5] == 'm' && comm[6] == 'e' && comm[7] == 'n' &&
+	    comm[8] == '-' && comm[9] == 'e' && comm[10] == 'b' && comm[11] == 'p' &&
+	    comm[12] == 'f' && comm[13] == '-')
+		return 0;
+
 	struct event *event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
 	if (!event) return 0;
 
 	event->pid = bpf_get_current_pid_tgid() >> 32;
 	event->uid = bpf_get_current_uid_gid();
-	bpf_get_current_comm(&event->comm, sizeof(event->comm));
+	__builtin_memcpy(event->comm, comm, sizeof(event->comm));
 	event->type = is_http_req(data, len) ? EVENT_HTTP_REQ : EVENT_HTTP_RESP;
 	__builtin_memcpy(event->data, data, DATA_LEN);
 	bpf_ringbuf_submit(event, 0);
@@ -125,73 +133,6 @@ int trace_http_write(struct bpf_raw_tracepoint_args *ctx)
 
 	return 0;
 #endif
-}
-
-SEC("tracepoint/syscalls/sys_enter_sendto")
-int trace_http_sendto(struct trace_event_raw_sys_enter *ctx)
-{
-	void *buf = (void *)ctx->args[1];
-	size_t count = (size_t)ctx->args[2];
-
-	if (count < 3 || count > 65536) return 0;
-
-	char data[DATA_LEN];
-	int read_len = count < DATA_LEN ? count : DATA_LEN;
-	bpf_probe_read_user(data, read_len, buf);
-
-	if (!is_http_req(data, read_len) && !is_http_resp(data, read_len))
-		return 0;
-
-	struct event *event;
-	event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
-	if (!event) return 0;
-
-	event->pid = bpf_get_current_pid_tgid() >> 32;
-	event->uid = bpf_get_current_uid_gid();
-	bpf_get_current_comm(&event->comm, sizeof(event->comm));
-
-	event->type = is_http_req(data, read_len) ? EVENT_HTTP_REQ : EVENT_HTTP_RESP;
-	__builtin_memcpy(event->data, data, DATA_LEN);
-
-	bpf_ringbuf_submit(event, 0);
-	return 0;
-}
-
-SEC("tracepoint/syscalls/sys_enter_sendmsg")
-int trace_http_sendmsg(struct trace_event_raw_sys_enter *ctx)
-{
-	const struct user_msghdr *msg = (const void *)ctx->args[1];
-	if (!msg) return 0;
-
-	const struct iovec *iov;
-	bpf_probe_read_user(&iov, sizeof(iov), &msg->msg_iov);
-
-	char data[DATA_LEN];
-	__u64 iov_len;
-	bpf_probe_read_user(&iov_len, sizeof(iov_len), &iov->iov_len);
-	if (iov_len < 3 || iov_len > 65536) return 0;
-
-	int read_len = iov_len < DATA_LEN ? (int)iov_len : DATA_LEN;
-	const void *base;
-	bpf_probe_read_user(&base, sizeof(base), &iov->iov_base);
-	bpf_probe_read_user(data, read_len, base);
-
-	if (!is_http_req(data, read_len) && !is_http_resp(data, read_len))
-		return 0;
-
-	struct event *event;
-	event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
-	if (!event) return 0;
-
-	event->pid = bpf_get_current_pid_tgid() >> 32;
-	event->uid = bpf_get_current_uid_gid();
-	bpf_get_current_comm(&event->comm, sizeof(event->comm));
-
-	event->type = is_http_req(data, read_len) ? EVENT_HTTP_REQ : EVENT_HTTP_RESP;
-	__builtin_memcpy(event->data, data, DATA_LEN);
-
-	bpf_ringbuf_submit(event, 0);
-	return 0;
 }
 
 char LICENSE[] SEC("license") = "Dual MIT/GPL";
