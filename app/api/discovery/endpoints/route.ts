@@ -4,6 +4,8 @@ import { sql, ensureAgentInstallTables, ensureGcpSnapshotTable, ensureAwsSnapsho
 import type { GcpSnapshot } from "@/lib/gcp/types";
 import type { AwsSnapshot } from "@/lib/aws/types";
 
+const AGENT_HEALTH_WINDOW = "5 minutes";
+
 export interface DiscoveredEndpoint {
     id: string;
     label: string;
@@ -58,6 +60,8 @@ export async function GET(req: NextRequest) {
             WHERE provider = 'k8s'
               AND (user_email = ${email} OR user_email = 'system')
               AND metadata->>'clusterName' IS NOT NULL
+              AND status = 'healthy'
+              AND last_seen_at > NOW() - ${AGENT_HEALTH_WINDOW}::interval
             ORDER BY metadata->>'clusterName'
         `;
 

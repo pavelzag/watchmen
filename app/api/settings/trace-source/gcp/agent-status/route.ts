@@ -3,6 +3,8 @@ import { auth } from "@/lib/auth";
 import { ensureAgentInstallTables, ensureGcpSnapshotTable, sql } from "@/lib/db";
 import type { GkeCluster, GcpSnapshot } from "@/lib/gcp/types";
 
+const AGENT_HEALTH_WINDOW = "5 minutes";
+
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
@@ -50,7 +52,7 @@ export async function GET(req: Request) {
       project_id,
       zone AS location,
       COUNT(DISTINCT instance_name) AS node_count,
-      COUNT(DISTINCT CASE WHEN status = 'healthy' THEN instance_name END) AS healthy_count,
+      COUNT(DISTINCT CASE WHEN status = 'healthy' AND last_seen_at > NOW() - ${AGENT_HEALTH_WINDOW}::interval THEN instance_name END) AS healthy_count,
       MAX(last_seen_at) AS last_seen_at
     FROM agent_hosts
     WHERE provider = 'k8s'
