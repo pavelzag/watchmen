@@ -613,33 +613,106 @@ function toLiveEventFromAgentEvent(event: AgentEventRow, nodes: GraphNode[]): Li
   };
 }
 
-function toLiveEvent(target: LiveMonitorTarget, entries: LogEntry[], nodes: GraphNode[]): LiveEvent | null {
-  if (entries.length === 0) return null;
-  const latest = entries.reduce((a, b) => a.timestamp > b.timestamp ? a : b);
-  const parsed = !latest.httpRequest
-    ? (parseReqLog(latest.message) ?? parseNginxLog(latest.message) ?? parseEnvoyLog(latest.message))
-    : null;
-  const method = latest.httpRequest?.method ?? parsed?.method ?? undefined;
-  const path = latest.httpRequest
-    ? (() => {
-        try { return new URL(latest.httpRequest!.url).pathname; }
-        catch { return latest.httpRequest!.url; }
-      })()
-    : ("path" in (parsed ?? {}) ? parsed?.path : undefined);
-  const status = latest.httpRequest?.status ?? ("status" in (parsed ?? {}) ? parsed?.status : undefined);
-  const latency = latest.httpRequest?.latency ?? ("latencyMs" in (parsed ?? {}) && parsed ? `${parsed.latencyMs}ms` : undefined);
+interface ParsedLiveRequestLog {
+  entry: LogEntry;
+  method?: string;
+  path?: string;
+  status?: number;
+  latency?: string;
+  userAgent?: string;
+}
+
+const EXPECTED_REQUEST_PATHS = new Set([
+  "/health",
+  "/api/health",
+  "/healthz",
+  "/ready",
+  "/readyz",
+  "/live",
+  "/livez",
+  "/startup",
+  "/startupz",
+  "/ping",
+  "/metrics",
+]);
+
+const EXPECTED_REQUEST_USER_AGENT_RE = /\b(GoogleHC|kube-probe|ELB-HealthChecker|HealthChecker|watchmen-trace-poller)\b/i;
+
+function isExpectedLiveRequest({
+  path,
+  userAgent,
+}: {
+  path?: string;
+  userAgent?: string;
+}): boolean {
+  const cleanPath = (path ?? "").split("?")[0].replace(/\/+$/, "") || "/";
+  if (EXPECTED_REQUEST_PATHS.has(cleanPath.toLowerCase())) return true;
+  if (EXPECTED_REQUEST_USER_AGENT_RE.test(userAgent ?? "")) return true;
+  if ((path ?? "").includes("watchmen_trace_probe=")) return true;
+  return false;
+}
+
+function parseLiveRequestLog(entry: LogEntry): ParsedLiveRequestLog | null {
+  if (entry.httpRequest) {
+    const hr = entry.httpRequest;
+    const method = hr.method || undefined;
+    const path = hr.url
+      ? (() => {
+          try { return new URL(hr.url).pathname; }
+          catch { return hr.url; }
+        })()
+      : undefined;
+    if (!method && !path && hr.status === undefined) return null;
+    return {
+      entry,
+      method,
+      path,
+      status: hr.status,
+      latency: hr.latency || undefined,
+      userAgent: hr.userAgent || undefined,
+    };
+  }
+
+  const parsed =
+    parseReqLog(entry.message) ??
+    parseNginxLog(entry.message) ??
+    parseEnvoyLog(entry.message) ??
+    parseStructuredRequestLog(entry.message);
+
+  if (!parsed?.method && !parsed?.path) return null;
+
   return {
-    id: `${liveTargetKey(target)}:${latest.timestamp}:${entries.length}`,
-    ts: latest.timestamp,
+    entry,
+    method: parsed.method || undefined,
+    path: parsed.path || undefined,
+    status: parsed.status || undefined,
+    latency: `${parsed.latencyMs}ms`,
+    userAgent: ("userAgent" in parsed ? parsed.userAgent : undefined) || undefined,
+  };
+}
+
+function getUnexpectedLiveRequestLogs(entries: LogEntry[]): ParsedLiveRequestLog[] {
+  return entries
+    .map(parseLiveRequestLog)
+    .filter((entry): entry is ParsedLiveRequestLog => !!entry && !isExpectedLiveRequest(entry));
+}
+
+function toLiveEvent(target: LiveMonitorTarget, entries: LogEntry[], nodes: GraphNode[]): LiveEvent | null {
+  const requestLogs = getUnexpectedLiveRequestLogs(entries);
+  if (requestLogs.length === 0) return null;
+  const latest = requestLogs.reduce((a, b) => a.entry.timestamp > b.entry.timestamp ? a : b);
+  return {
+    id: `${liveTargetKey(target)}:${latest.entry.timestamp}:${requestLogs.length}`,
+    ts: latest.entry.timestamp,
     label: liveTargetLabel(target),
     kind: target.kind,
     projectId: target.projectId,
     focusNodeId: resolveLiveTargetNodeId(target, nodes),
-    method,
-    path,
-    status,
-    latency,
-    count: entries.length,
+    method: latest.method,
+    path: latest.path,
+    status: latest.status,
+    latency: latest.latency,
+    count: requestLogs.length,
   };
 }
 
@@ -2985,6 +3058,9 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     eventSource.addEventListener("trace", (rawEvent) => {
       const parsed = JSON.parse((rawEvent as MessageEvent).data) as LiveTraceIngressEvent;
       liveStreamingLastEventAtRef.current = Date.now();
+      if (isExpectedLiveRequest({ path: parsed.path, userAgent: parsed.userAgent })) {
+        return;
+      }
 
       if (liveScope === "active" && hasFocusedLiveTarget && liveMonitorTarget) {
         if (!ingressEventMatchesLiveTarget(parsed, liveMonitorTarget)) {
@@ -3226,10 +3302,19 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
           return;
         }
 
-        const allEntries = results.flatMap(result => result.entries);
+        const filteredResults = results.map(result => ({
+          ...result,
+          entries: result.entries.filter(entry => {
+            const parsed = parseLiveRequestLog(entry);
+            return parsed && !isExpectedLiveRequest(parsed);
+          }),
+        }));
+        const allEntries = filteredResults.flatMap(result => result.entries);
         const freshAgentEvents = agentEvents.filter(event => {
           const tsMs = eventTimestampMs(event.received_at);
-          return tsMs > 0 && pollNowMs - tsMs <= LIVE_EVENT_FRESHNESS_MS;
+          return tsMs > 0
+            && pollNowMs - tsMs <= LIVE_EVENT_FRESHNESS_MS
+            && !isExpectedLiveRequest({ path: event.event?.path });
         });
         if (agentEvents.length > 0) {
           const latestAgentEvent = agentEvents.reduce((a, b) =>
@@ -3239,7 +3324,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
         }
 
         if (allEntries.length > 0 || freshAgentEvents.length > 0) {
-          const newEvents = results
+          const newEvents = filteredResults
             .map(result => toLiveEvent(result.target, result.entries, nodes))
             .filter((event): event is LiveEvent => !!event);
           const agentLiveEvents = freshAgentEvents
@@ -3274,7 +3359,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
           if (liveAnimEnabledRef.current) {
             busy = true;
-            const targetsWithHits = results.filter(result => result.entries.length > 0);
+            const targetsWithHits = filteredResults.filter(result => result.entries.length > 0);
             if (targets.length === 1) {
               const [{ target, entries }] = targetsWithHits;
               if (target) {
