@@ -1,8 +1,42 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { fetchGcpSnapshot, extractUsers, extractServiceAccountEmails } from "@/lib/gcp";
-import { useMockData } from "@/lib/gcp/client";
+import { initGoogleAuthFromKey, initUserAuth, useMockData } from "@/lib/gcp/client";
+import { getGkeClusters } from "@/lib/gcp/gke";
 import { sql, ensureGcpSnapshotTable } from "@/lib/db";
+import { getUserCloudCredentials } from "@/lib/credentials";
+import type { GcpSnapshot } from "@/lib/gcp/types";
+
+async function refreshLiveGkeClusters(
+  email: string,
+  accessToken: unknown,
+  snapshot: GcpSnapshot,
+): Promise<GcpSnapshot> {
+  const projectIds = [
+    ...new Set([
+      ...(snapshot.projects ?? []).map((project) => project.projectId),
+      ...(snapshot.gkeClusters ?? []).map((cluster) => cluster.projectId),
+    ].filter(Boolean)),
+  ];
+  if (projectIds.length === 0) return snapshot;
+
+  const gcpCreds = await getUserCloudCredentials(email, "gcp");
+  if (gcpCreds?.serviceAccountKey) {
+    initGoogleAuthFromKey(gcpCreds.serviceAccountKey as string);
+  } else if (typeof accessToken === "string" && accessToken) {
+    initUserAuth(accessToken);
+  } else {
+    return snapshot;
+  }
+
+  try {
+    const gkeClusters = await getGkeClusters(projectIds, false);
+    return { ...snapshot, gkeClusters };
+  } catch (err) {
+    console.warn("[api/gcp/snapshot] live GKE refresh failed; using stored snapshot", err);
+    return snapshot;
+  }
+}
 
 export async function GET() {
   const session = await auth();
@@ -44,7 +78,7 @@ export async function GET() {
     }
 
     const row = result.rows[0];
-    const snapshot = row.snapshot;
+    const snapshot = await refreshLiveGkeClusters(email, session.accessToken, row.snapshot as GcpSnapshot);
 
     return NextResponse.json({
       ...snapshot,

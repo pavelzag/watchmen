@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { ensureAgentInstallTables, ensureGcpSnapshotTable, sql } from "@/lib/db";
+import { getUserCloudCredentials } from "@/lib/credentials";
+import { initGoogleAuthFromKey, initUserAuth } from "@/lib/gcp/client";
+import { getGkeClusters } from "@/lib/gcp/gke";
 import type { GkeCluster, GcpSnapshot } from "@/lib/gcp/types";
 
 const AGENT_HEALTH_WINDOW = "5 minutes";
@@ -28,6 +31,32 @@ function deployCommand(origin: string, cluster: GkeCluster): string {
   ].join("\n");
 }
 
+async function getLiveClusters(email: string, accessToken: unknown, snapshotClusters: GkeCluster[], snapshot: GcpSnapshot | undefined): Promise<GkeCluster[]> {
+  const projectIds = [
+    ...new Set([
+      ...(snapshot?.projects ?? []).map((project) => project.projectId),
+      ...snapshotClusters.map((cluster) => cluster.projectId),
+    ].filter(Boolean)),
+  ];
+  if (projectIds.length === 0) return snapshotClusters;
+
+  const gcpCreds = await getUserCloudCredentials(email, "gcp");
+  if (gcpCreds?.serviceAccountKey) {
+    initGoogleAuthFromKey(gcpCreds.serviceAccountKey as string);
+  } else if (typeof accessToken === "string" && accessToken) {
+    initUserAuth(accessToken);
+  } else {
+    return snapshotClusters;
+  }
+
+  try {
+    return await getGkeClusters(projectIds, false);
+  } catch (err) {
+    console.warn("[api/settings/trace-source/gcp/agent-status] live GKE refresh failed; using stored snapshot", err);
+    return snapshotClusters;
+  }
+}
+
 export async function GET(req: Request) {
   const session = await auth();
   const email = session?.user?.email;
@@ -43,7 +72,8 @@ export async function GET(req: Request) {
   `;
 
   const snapshot = snapshotResult.rows[0]?.snapshot as GcpSnapshot | undefined;
-  const clusters = snapshot?.gkeClusters ?? [];
+  const snapshotClusters = snapshot?.gkeClusters ?? [];
+  const clusters = await getLiveClusters(email, session.accessToken, snapshotClusters, snapshot);
 
   await ensureAgentInstallTables();
   const hostResult = await sql`
