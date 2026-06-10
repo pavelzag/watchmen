@@ -4,7 +4,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Poll all Cloud Run URLs from a user's latest GCP snapshot using widening intervals.
+Poll Cloud Run URLs, GCP load balancers, and the GKE test app using widening intervals.
 
 Usage:
   scripts/poll-cloudrun-endpoints.sh --email you@example.com [options]
@@ -23,6 +23,10 @@ Options:
   --json-body JSON        Send this JSON body with each request
   --no-trace-headers      Disable built-in Watchmen trace headers
   --path PATH             Append path to each Cloud Run base URL
+  --no-load-balancers     Do not include GCP load balancer IPs from the snapshot
+  --no-gke-test-app       Do not include the wm-echo GKE test app LoadBalancer from kubectl
+  --gke-namespace NAME    Kubernetes namespace for the GKE test app, default: watchmen
+  --gke-test-service NAME Kubernetes Service name for the GKE test app, default: wm-echo
   --rounds N              Override round count; uses first N intervals
 
 Examples:
@@ -47,6 +51,10 @@ PATH_SUFFIX=""
 ROUNDS=""
 JSON_BODY=""
 INCLUDE_TRACE_HEADERS="true"
+INCLUDE_LOAD_BALANCERS="true"
+INCLUDE_GKE_TEST_APP="true"
+GKE_NAMESPACE="watchmen"
+GKE_TEST_SERVICE="wm-echo"
 HEADERS=()
 
 while [[ $# -gt 0 ]]; do
@@ -101,6 +109,22 @@ while [[ $# -gt 0 ]]; do
       ;;
     --path)
       PATH_SUFFIX="${2:-}"
+      shift 2
+      ;;
+    --no-load-balancers)
+      INCLUDE_LOAD_BALANCERS="false"
+      shift
+      ;;
+    --no-gke-test-app)
+      INCLUDE_GKE_TEST_APP="false"
+      shift
+      ;;
+    --gke-namespace)
+      GKE_NAMESPACE="${2:-}"
+      shift 2
+      ;;
+    --gke-test-service)
+      GKE_TEST_SERVICE="${2:-}"
       shift 2
       ;;
     --rounds)
@@ -213,22 +237,81 @@ done < <(
   psql "$DB_URL" -X -A -F $'\t' -v ON_ERROR_STOP=1 --set=email="$EMAIL" <<'EOF'
 \pset tuples_only on
 SELECT
-  elem->>'name' AS name,
+  'cloud-run:' || (elem->>'name') AS name,
   elem->>'projectId' AS project_id,
   elem->>'region' AS region,
   elem->>'url' AS url
 FROM user_snapshots s
-CROSS JOIN LATERAL jsonb_array_elements(s.snapshot->'cloudRunServices') elem
+CROSS JOIN LATERAL jsonb_array_elements(COALESCE(s.snapshot->'cloudRunServices', '[]'::jsonb)) elem
 WHERE s.user_email = :'email'
   AND COALESCE(elem->>'url', '') <> ''
+UNION ALL
+SELECT
+  'load-balancer:' || (elem->>'name') AS name,
+  elem->>'projectId' AS project_id,
+  COALESCE(NULLIF(elem->>'region', ''), 'global') AS region,
+  'http://' || (elem->>'ipAddress') AS url
+FROM user_snapshots s
+CROSS JOIN LATERAL jsonb_array_elements(COALESCE(s.snapshot->'loadBalancers', '[]'::jsonb)) elem
+WHERE s.user_email = :'email'
+  AND COALESCE(elem->>'ipAddress', '') <> ''
 ORDER BY 1, 2, 3;
 EOF
 )
 
+if [[ "$INCLUDE_LOAD_BALANCERS" != "true" ]]; then
+  FILTERED_ENDPOINT_ROWS=()
+  for row in "${ENDPOINT_ROWS[@]}"; do
+    IFS=$'\t' read -r name _project_id _region _url <<< "$row"
+    if [[ "$name" != load-balancer:* ]]; then
+      FILTERED_ENDPOINT_ROWS+=("$row")
+    fi
+  done
+  ENDPOINT_ROWS=("${FILTERED_ENDPOINT_ROWS[@]}")
+fi
+
+if [[ "$INCLUDE_GKE_TEST_APP" == "true" ]] && command -v kubectl >/dev/null 2>&1; then
+  test_app_ip="$(
+    kubectl get svc "$GKE_TEST_SERVICE" -n "$GKE_NAMESPACE" \
+      -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true
+  )"
+  if [[ -z "$test_app_ip" ]]; then
+    test_app_ip="$(
+      kubectl get svc "$GKE_TEST_SERVICE" -n "$GKE_NAMESPACE" \
+        -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true
+    )"
+  fi
+  if [[ -n "$test_app_ip" ]]; then
+    test_app_project="$(
+      psql "$DB_URL" -X -A -t -v ON_ERROR_STOP=1 --set=email="$EMAIL" <<'EOF' 2>/dev/null || true
+SELECT COALESCE((snapshot->'gkeClusters'->0->>'projectId'), '')
+FROM user_snapshots
+WHERE user_email = :'email'
+LIMIT 1;
+EOF
+    )"
+    ENDPOINT_ROWS+=("gke-test-app:${GKE_NAMESPACE}/${GKE_TEST_SERVICE}"$'\t'"${test_app_project:-k8s}"$'\t'"k8s"$'\t'"http://${test_app_ip}")
+  fi
+fi
+
 if [[ ${#ENDPOINT_ROWS[@]} -eq 0 ]]; then
-  echo "No Cloud Run URLs found for $EMAIL" >&2
+  echo "No Cloud Run, load balancer, or GKE test app endpoints found for $EMAIL" >&2
   exit 1
 fi
+
+DEDUPED_ENDPOINT_ROWS=()
+SEEN_URLS=$'\n'
+for row in "${ENDPOINT_ROWS[@]}"; do
+  IFS=$'\t' read -r _name _project_id _region url <<< "$row"
+  case "$SEEN_URLS" in
+    *$'\n'"$url"$'\n'*) ;;
+    *)
+      SEEN_URLS+="$url"$'\n'
+      DEDUPED_ENDPOINT_ROWS+=("$row")
+      ;;
+  esac
+done
+ENDPOINT_ROWS=("${DEDUPED_ENDPOINT_ROWS[@]}")
 
 CURL_ARGS=(
   --silent
@@ -241,7 +324,7 @@ CURL_ARGS=(
   --user-agent "watchmen-trace-poller/1.0"
 )
 
-echo "Found ${#ENDPOINT_ROWS[@]} Cloud Run endpoint(s) for $EMAIL"
+echo "Found ${#ENDPOINT_ROWS[@]} endpoint(s) for $EMAIL"
 echo "Intervals: ${INTERVALS[*]} seconds"
 echo "Requests per endpoint per round: $REPEAT"
 echo "Max concurrent requests: $PARALLEL"
