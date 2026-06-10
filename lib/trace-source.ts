@@ -1,6 +1,8 @@
 import { sql, ensureTraceSourceConfigsTable } from "@/lib/db";
 
 export type TraceSourceMode = "polling" | "streaming";
+export type GcpComputeTraceSource = "cloud_logging" | "pubsub";
+export type GcpGkeTraceSource = GcpComputeTraceSource | "ebpf_agent";
 export type TraceSetupState =
   | "not_configured"
   | "terraform_generated"
@@ -10,6 +12,8 @@ export type TraceSetupState =
 export interface GcpTraceSourceConfig {
   cloud: "gcp";
   mode: TraceSourceMode;
+  computeSource: GcpComputeTraceSource;
+  gkeSource: GcpGkeTraceSource;
   projectId: string;
   region: string;
   namePrefix: string;
@@ -35,6 +39,8 @@ export interface GcpTraceSourceBundle {
 export const DEFAULT_GCP_TRACE_SOURCE_CONFIG: GcpTraceSourceConfig = {
   cloud: "gcp",
   mode: "polling",
+  computeSource: "cloud_logging",
+  gkeSource: "cloud_logging",
   projectId: "",
   region: "us-central1",
   namePrefix: "watchmen-live-trace",

@@ -7,12 +7,23 @@ import {
   getUserGcpTraceSourceConfig,
   saveUserGcpTraceSourceConfig,
   validateGcpStreamingPushEndpoint,
+  type GcpComputeTraceSource,
+  type GcpGkeTraceSource,
   type GcpTraceSourceConfig,
   type TraceSourceMode,
 } from "@/lib/trace-source";
 
 function normalizeMode(value: unknown): TraceSourceMode {
   return value === "streaming" ? "streaming" : "polling";
+}
+
+function normalizeComputeSource(value: unknown): GcpComputeTraceSource {
+  return value === "pubsub" ? "pubsub" : "cloud_logging";
+}
+
+function normalizeGkeSource(value: unknown): GcpGkeTraceSource {
+  if (value === "pubsub" || value === "ebpf_agent") return value;
+  return "cloud_logging";
 }
 
 export async function GET() {
@@ -43,6 +54,8 @@ export async function PUT(req: NextRequest) {
     ...DEFAULT_GCP_TRACE_SOURCE_CONFIG,
     ...current,
     mode: normalizeMode(body.mode),
+    computeSource: normalizeComputeSource(body.computeSource ?? current.computeSource),
+    gkeSource: normalizeGkeSource(body.gkeSource ?? current.gkeSource),
     cloud: "gcp",
     projectId: String(body.projectId ?? current.projectId ?? "").trim(),
     region: String(body.region ?? current.region ?? DEFAULT_GCP_TRACE_SOURCE_CONFIG.region).trim() || DEFAULT_GCP_TRACE_SOURCE_CONFIG.region,
@@ -53,6 +66,10 @@ export async function PUT(req: NextRequest) {
     lastCheckMessage: current.lastCheckMessage,
     setupState: current.setupState,
   };
+
+  if (next.computeSource === "pubsub" || next.gkeSource === "pubsub") {
+    next.mode = "streaming";
+  }
 
   if (next.mode === "streaming" && !next.projectId) {
     return NextResponse.json({ error: "projectId is required for streaming mode." }, { status: 400 });
@@ -66,7 +83,7 @@ export async function PUT(req: NextRequest) {
 
   next.setupState = getDerivedGcpSetupState(next);
   next.lastCheckMessage = next.mode === "polling"
-    ? "Using Cloud Logging polling."
+    ? "Using Cloud Logging polling. Workload source preferences saved."
     : next.setupState === "terraform_generated"
       ? "Terraform bundle is ready to apply."
       : current.lastCheckMessage;

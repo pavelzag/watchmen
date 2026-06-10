@@ -26,7 +26,6 @@ const LIVE_POLL_ACTIVE_MS = 1500;
 const LIVE_POLL_ALL_MS = 4000;
 const LIVE_ALL_BATCH_SIZE = 4;
 const LIVE_STREAM_PULSE_MS = 520;
-const LIVE_STREAMING_POLL_FALLBACK_MS = 15_000;
 // Cloud Logging can lag well beyond a few seconds, so keep a wider freshness
 // window for "live" traffic while still aging events out of the UI separately.
 const LIVE_EVENT_FRESHNESS_MS = 120_000;
@@ -134,21 +133,52 @@ interface ProxyResponse {
 }
 
 type TraceSourceMode = "polling" | "streaming";
+type GcpComputeTraceSource = "cloud_logging" | "pubsub";
+type GcpGkeTraceSource = GcpComputeTraceSource | "ebpf_agent";
 type TraceSetupState = "not_configured" | "terraform_generated" | "resources_applied" | "receiving_events";
 
 interface GcpTraceSourceConfigSummary {
   mode: TraceSourceMode;
+  computeSource: GcpComputeTraceSource;
+  gkeSource: GcpGkeTraceSource;
   setupState: TraceSetupState;
   lastCheckMessage: string;
 }
 
-function shouldUseStreamingLive(
+function isPubSubReady(
   demoMode: boolean,
   traceSourceConfig: GcpTraceSourceConfigSummary | null,
 ): boolean {
   return !demoMode
     && traceSourceConfig?.mode === "streaming"
     && traceSourceConfig.setupState === "receiving_events";
+}
+
+function sourceForKind(
+  kind: LiveMonitorTarget["kind"],
+  traceSourceConfig: GcpTraceSourceConfigSummary | null,
+): GcpComputeTraceSource | GcpGkeTraceSource {
+  if (kind === "gke") return traceSourceConfig?.gkeSource ?? "cloud_logging";
+  return traceSourceConfig?.computeSource ?? "cloud_logging";
+}
+
+function shouldUseStreamingLive(
+  demoMode: boolean,
+  traceSourceConfig: GcpTraceSourceConfigSummary | null,
+): boolean {
+  return isPubSubReady(demoMode, traceSourceConfig)
+    && (traceSourceConfig?.computeSource === "pubsub" || traceSourceConfig?.gkeSource === "pubsub");
+}
+
+function shouldPollLiveTarget(
+  target: LiveMonitorTarget,
+  traceSourceConfig: GcpTraceSourceConfigSummary | null,
+): boolean {
+  return sourceForKind(target.kind, traceSourceConfig) === "cloud_logging";
+}
+
+function shouldUseAgentEvents(traceSourceConfig: GcpTraceSourceConfigSummary | null): boolean {
+  return traceSourceConfig?.gkeSource === "ebpf_agent";
 }
 
 function getProxyUrlValidationError(rawUrl: string): string | null {
@@ -444,7 +474,7 @@ function buildLiveLogParams(target: LiveMonitorTarget, after: string): URLSearch
 }
 
 function liveTargetLabel(target: LiveMonitorTarget): string {
-  if (target.kind === "gke") return `GKE · ${target.container}`;
+  if (target.kind === "gke") return target.container === "ebpf-agent" ? "GKE · eBPF agent" : `GKE · ${target.container}`;
   if (target.kind === "cloudrun") return `RUN · ${target.service}`;
   return `VM · ${target.instance}`;
 }
@@ -2483,6 +2513,8 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
         if (d.config) {
           setTraceSourceConfig({
             mode: d.config.mode,
+            computeSource: d.config.computeSource ?? "cloud_logging",
+            gkeSource: d.config.gkeSource ?? "cloud_logging",
             setupState: d.config.setupState,
             lastCheckMessage: d.config.lastCheckMessage,
           });
@@ -2555,8 +2587,14 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const [methodOpen, setMethodOpen] = useState(false);
   const [endpointFilter, setEndpointFilter] = useState<EndpointFilter>("all");
 
-  const traceSourceLabel = traceSourceConfig?.mode === "streaming" ? "Pub/Sub Streaming" : "Cloud Logging Polling";
-  const showTraceSetupHint = traceSourceConfig?.mode === "streaming" && traceSourceConfig.setupState !== "receiving_events";
+  const usesPubSubSource = traceSourceConfig?.computeSource === "pubsub" || traceSourceConfig?.gkeSource === "pubsub";
+  const usesAgentSource = traceSourceConfig?.gkeSource === "ebpf_agent";
+  const traceSourceLabel = [
+    usesPubSubSource ? "Pub/Sub" : null,
+    usesAgentSource ? "eBPF" : null,
+    (!usesPubSubSource || traceSourceConfig?.computeSource === "cloud_logging" || traceSourceConfig?.gkeSource === "cloud_logging") ? "Cloud Logging" : null,
+  ].filter(Boolean).join(" + ") || "Cloud Logging";
+  const showTraceSetupHint = usesPubSubSource && traceSourceConfig?.setupState !== "receiving_events";
 
   // Send state
   const [sending, setSending] = useState(false);
@@ -2758,6 +2796,14 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     const buildGkeTarget = (pathNodeIds: Set<string>) => {
       const gkeNode = nodes.find(n => pathNodeIds.has(n.id) && n.type === "gke" && n.projectId);
       if (!gkeNode) return null;
+      if (traceSourceConfig?.gkeSource === "ebpf_agent") {
+        return {
+          kind: "gke" as const,
+          projectId: gkeNode.projectId!,
+          container: "ebpf-agent",
+          pathIds: pathNodeIds,
+        };
+      }
       const containers = nodeContainers[gkeNode.id] ?? [];
       const container = SIDECAR_ORDER.find(c => containers.includes(c)) ?? containers[0];
       if (!container) return null;
@@ -2819,7 +2865,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     }
 
     return null;
-  }, [activePath, edges, nodeContainers, nodes]);
+  }, [activePath, edges, nodeContainers, nodes, traceSourceConfig?.gkeSource]);
   const hasFocusedLiveTarget = Boolean(url.trim() && activePath.size > 1 && liveMonitorTarget);
 
   const responseRouteNodes = useMemo(() => {
@@ -2886,6 +2932,14 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
         const target =
           node.type === "gke"
             ? (() => {
+                if (traceSourceConfig?.gkeSource === "ebpf_agent") {
+                  return {
+                    kind: "gke" as const,
+                    projectId: node.projectId!,
+                    container: "ebpf-agent",
+                    pathIds: pathNodeIds,
+                  };
+                }
                 const containers = nodeContainers[node.id] ?? [];
                 const container = SIDECAR_ORDER.find(c => containers.includes(c)) ?? containers[0];
                 if (!container) return null;
@@ -2916,7 +2970,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     });
 
     return targets;
-  }, [edges, nodeContainers, nodes]);
+  }, [edges, nodeContainers, nodes, traceSourceConfig?.gkeSource]);
 
   const demoLiveTargets = useMemo<LiveMonitorTarget[]>(() => {
     if (!demoMode) return [];
@@ -3061,6 +3115,9 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       if (isExpectedLiveRequest({ path: parsed.path, userAgent: parsed.userAgent })) {
         return;
       }
+      if (sourceForKind(parsed.kind, traceSourceConfig) !== "pubsub") {
+        return;
+      }
 
       if (liveScope === "active" && hasFocusedLiveTarget && liveMonitorTarget) {
         if (!ingressEventMatchesLiveTarget(parsed, liveMonitorTarget)) {
@@ -3200,7 +3257,6 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
   // ── Live monitoring: poll Cloud Logging, fire pulse on new traffic ───────────
   useEffect(() => {
-    const useStreamingLive = shouldUseStreamingLive(demoMode, traceSourceConfig);
     liveModeRef.current = liveMode;
     if (!liveMode) {
       liveLastTsByTarget.current = {};
@@ -3233,31 +3289,27 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
     const poll = async () => {
       if (!liveModeRef.current || busy) return;
-      if (
-        useStreamingLive
-        && Date.now() - liveStreamingLastEventAtRef.current < LIVE_STREAMING_POLL_FALLBACK_MS
-      ) {
-        return;
-      }
       if (Date.now() < liveCooldownUntilRef.current) return;
       const pollNowMs = Date.now();
       setLiveEvents(prev => prev.filter(event => pollNowMs - eventTimestampMs(event.ts) < LIVE_EVENT_RETENTION_MS));
       liveTimestamps.current = liveTimestamps.current.filter(t => pollNowMs - t < 60_000);
       const currentWindowCount = liveTimestamps.current.filter(t => pollNowMs - t < 10_000).length;
       setLiveRps(currentWindowCount > 0 ? currentWindowCount / 10 : null);
-      const agentEventsPromise = fetch(
-        `/api/agents/events/query?${new URLSearchParams({
-          after: liveLastAgentEventAtRef.current,
-          limit: "20",
-        })}`
-      )
-        .then(async (res) => {
-          if (!res.ok) return [] as AgentEventRow[];
-          const data = await res.json().catch(() => ({}));
-          return (data.events ?? []) as AgentEventRow[];
-        })
-        .catch(() => [] as AgentEventRow[]);
-      const targets = liveScope === "all"
+      const agentEventsPromise = shouldUseAgentEvents(traceSourceConfig)
+        ? fetch(
+            `/api/agents/events/query?${new URLSearchParams({
+              after: liveLastAgentEventAtRef.current,
+              limit: "20",
+            })}`
+          )
+            .then(async (res) => {
+              if (!res.ok) return [] as AgentEventRow[];
+              const data = await res.json().catch(() => ({}));
+              return (data.events ?? []) as AgentEventRow[];
+            })
+            .catch(() => [] as AgentEventRow[])
+        : Promise.resolve([] as AgentEventRow[]);
+      const targets = (liveScope === "all"
         ? (() => {
             const batchSize = LIVE_ALL_BATCH_SIZE;
             const start = livePollCursorRef.current % allTargets.length;
@@ -3265,7 +3317,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
             livePollCursorRef.current = (start + batch.length) % allTargets.length;
             return batch;
           })()
-        : allTargets;
+        : allTargets).filter(target => shouldPollLiveTarget(target, traceSourceConfig));
       try {
         const [agentEvents, results] = await Promise.all([
           agentEventsPromise,

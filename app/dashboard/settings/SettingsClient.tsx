@@ -21,6 +21,8 @@ interface CloudCredRecord {
 }
 
 type TraceSourceMode = "polling" | "streaming";
+type GcpComputeTraceSource = "cloud_logging" | "pubsub";
+type GcpGkeTraceSource = GcpComputeTraceSource | "ebpf_agent";
 type TraceSetupState = "not_configured" | "terraform_generated" | "resources_applied" | "receiving_events";
 type TunnelProvider = "cloudflared" | "ngrok";
 type TunnelState = "idle" | "starting" | "running" | "error";
@@ -65,6 +67,8 @@ function validateStreamingPushEndpoint(pushEndpoint: string): string | null {
 interface GcpTraceSourceConfig {
   cloud: "gcp";
   mode: TraceSourceMode;
+  computeSource: GcpComputeTraceSource;
+  gkeSource: GcpGkeTraceSource;
   projectId: string;
   region: string;
   namePrefix: string;
@@ -73,6 +77,21 @@ interface GcpTraceSourceConfig {
   setupState: TraceSetupState;
   lastCheckedAt: string | null;
   lastCheckMessage: string;
+}
+
+interface GcpAgentClusterStatus {
+  clusterName: string;
+  projectId: string;
+  location: string;
+  locationType: "regional" | "zonal";
+  snapshotNodeCount: number;
+  nodeCount: number;
+  healthyCount: number;
+  installed: boolean;
+  healthy: boolean;
+  lastSeenAt: string | null;
+  manifestUrl: string;
+  deployCommand: string;
 }
 
 interface GeneratedFile {
@@ -192,6 +211,9 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
   const [gcpTraceChecking, setGcpTraceChecking] = useState(false);
   const [gcpTraceLoading, setGcpTraceLoading] = useState(true);
   const [gcpTraceError, setGcpTraceError] = useState<string | null>(null);
+  const [gcpAgentClusters, setGcpAgentClusters] = useState<GcpAgentClusterStatus[]>([]);
+  const [gcpAgentLoading, setGcpAgentLoading] = useState(false);
+  const [copiedAgentCommand, setCopiedAgentCommand] = useState<string | null>(null);
   const [copiedFileName, setCopiedFileName] = useState<string | null>(null);
   const [localTunnel, setLocalTunnel] = useState<LocalTunnelStatus | null>(null);
   const [localTunnelLoading, setLocalTunnelLoading] = useState(false);
@@ -253,9 +275,15 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
 
       fetch("/api/settings/trace-source/gcp")
         .then((r) => r.json())
-        .then((d) => setGcpTraceSource(d.config ?? null))
+        .then((d) => setGcpTraceSource(d.config ? {
+          ...d.config,
+          computeSource: d.config.computeSource ?? "cloud_logging",
+          gkeSource: d.config.gkeSource ?? "cloud_logging",
+        } : null))
         .catch(() => setGcpTraceError("Failed to load GCP trace source settings."))
         .finally(() => setGcpTraceLoading(false));
+
+      refreshGcpAgentStatus();
 
       fetch("/api/settings/trace-source/gcp/tunnel")
         .then((r) => r.json())
@@ -378,10 +406,30 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
       }
       setGcpTraceSource(data.config ?? gcpTraceSource);
       setGcpTraceBundle(data.bundle ?? null);
+      if ((data.config ?? gcpTraceSource)?.gkeSource === "ebpf_agent") {
+        refreshGcpAgentStatus();
+      }
     } catch (e) {
       setGcpTraceError(e instanceof Error ? e.message : "Failed to save trace source settings.");
     } finally {
       setGcpTraceSaving(false);
+    }
+  }
+
+  async function refreshGcpAgentStatus() {
+    setGcpAgentLoading(true);
+    try {
+      const res = await fetch("/api/settings/trace-source/gcp/agent-status");
+      const data = await res.json();
+      if (!res.ok) {
+        setGcpTraceError(data.error ?? "Failed to load GKE agent status.");
+        return;
+      }
+      setGcpAgentClusters(data.clusters ?? []);
+    } catch (e) {
+      setGcpTraceError(e instanceof Error ? e.message : "Failed to load GKE agent status.");
+    } finally {
+      setGcpAgentLoading(false);
     }
   }
 
@@ -486,6 +534,16 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
       setTimeout(() => setCopiedFileName((current) => current === file.name ? null : current), 2000);
     } catch {
       setGcpTraceError(`Failed to copy ${file.name}.`);
+    }
+  }
+
+  async function copyAgentDeployCommand(cluster: GcpAgentClusterStatus) {
+    try {
+      await navigator.clipboard.writeText(cluster.deployCommand);
+      setCopiedAgentCommand(cluster.clusterName);
+      setTimeout(() => setCopiedAgentCommand((current) => current === cluster.clusterName ? null : current), 2000);
+    } catch {
+      setGcpTraceError(`Failed to copy deploy command for ${cluster.clusterName}.`);
     }
   }
 
@@ -1449,6 +1507,145 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
                     </button>
                   ))}
                 </div>
+
+                <div className="grid gap-3 lg:grid-cols-2">
+                  <div className="border p-4 space-y-3" style={{ borderColor: "var(--border-dim)", background: "rgba(2, 6, 23, 0.25)" }}>
+                    <div>
+                      <h3 className="text-xs font-bold uppercase tracking-widest" style={{ color: "var(--text-strong)" }}>Cloud Run / VM Source</h3>
+                      <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>Choose the live request source for Cloud Run services and Compute Engine VMs.</p>
+                    </div>
+                    {([
+                      { id: "cloud_logging" as const, title: "Cloud Logging", description: "Poll request logs directly from GCP." },
+                      { id: "pubsub" as const, title: "Pub/Sub", description: "Use the streaming Log Router sink when configured." },
+                    ]).map((option) => (
+                      <button
+                        key={option.id}
+                        onClick={() => setGcpTraceSource((current) => current ? {
+                          ...current,
+                          computeSource: option.id,
+                          mode: option.id === "pubsub" ? "streaming" : current.mode,
+                          pushEndpoint: option.id === "pubsub" && !current.pushEndpoint && typeof window !== "undefined"
+                            ? getPublicHttpsPushEndpoint(window.location.origin)
+                            : current.pushEndpoint,
+                          pushAudience: option.id === "pubsub" && !current.pushAudience && typeof window !== "undefined"
+                            ? getPublicHttpsPushEndpoint(window.location.origin)
+                            : current.pushAudience,
+                        } : current)}
+                        className={cn(
+                          "w-full text-left border p-3 transition-colors",
+                          gcpTraceSource.computeSource === option.id ? "border-emerald-500/40 bg-emerald-500/10" : "border-slate-700/70 hover:border-slate-500"
+                        )}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-sm font-semibold" style={{ color: "var(--text-strong)" }}>{option.title}</span>
+                          <span className={cn("w-3 h-3 rounded-full border", gcpTraceSource.computeSource === option.id ? "border-emerald-400 bg-emerald-400" : "border-slate-500")} />
+                        </div>
+                        <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{option.description}</p>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="border p-4 space-y-3" style={{ borderColor: "var(--border-dim)", background: "rgba(2, 6, 23, 0.25)" }}>
+                    <div>
+                      <h3 className="text-xs font-bold uppercase tracking-widest" style={{ color: "var(--text-strong)" }}>GKE Source</h3>
+                      <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>Choose whether Kubernetes traffic comes from logs, Pub/Sub, or the Watchmen eBPF agent.</p>
+                    </div>
+                    {([
+                      { id: "cloud_logging" as const, title: "Cloud Logging", description: "Poll k8s_container request logs." },
+                      { id: "pubsub" as const, title: "Pub/Sub", description: "Use streaming request logs from the Log Router sink." },
+                      { id: "ebpf_agent" as const, title: "eBPF Agent", description: "Use Watchmen's node DaemonSet HTTP capture." },
+                    ]).map((option) => (
+                      <button
+                        key={option.id}
+                        onClick={() => setGcpTraceSource((current) => current ? {
+                          ...current,
+                          gkeSource: option.id,
+                          mode: option.id === "pubsub" ? "streaming" : current.mode,
+                          pushEndpoint: option.id === "pubsub" && !current.pushEndpoint && typeof window !== "undefined"
+                            ? getPublicHttpsPushEndpoint(window.location.origin)
+                            : current.pushEndpoint,
+                          pushAudience: option.id === "pubsub" && !current.pushAudience && typeof window !== "undefined"
+                            ? getPublicHttpsPushEndpoint(window.location.origin)
+                            : current.pushAudience,
+                        } : current)}
+                        className={cn(
+                          "w-full text-left border p-3 transition-colors",
+                          gcpTraceSource.gkeSource === option.id ? "border-emerald-500/40 bg-emerald-500/10" : "border-slate-700/70 hover:border-slate-500"
+                        )}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-sm font-semibold" style={{ color: "var(--text-strong)" }}>{option.title}</span>
+                          <span className={cn("w-3 h-3 rounded-full border", gcpTraceSource.gkeSource === option.id ? "border-emerald-400 bg-emerald-400" : "border-slate-500")} />
+                        </div>
+                        <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{option.description}</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {gcpTraceSource.gkeSource === "ebpf_agent" && (
+                  <div className="border p-4 space-y-3" style={{ borderColor: "rgba(16, 185, 129, 0.18)", background: "rgba(6, 78, 59, 0.16)" }}>
+                    <div className="flex items-start justify-between gap-3 flex-wrap">
+                      <div>
+                        <h3 className="text-xs font-bold uppercase tracking-widest" style={{ color: "var(--text-strong)" }}>GKE eBPF Agent Coverage</h3>
+                        <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>Clusters from the latest GCP snapshot must have at least one healthy Watchmen agent node to emit eBPF trace events.</p>
+                      </div>
+                      <button
+                        onClick={refreshGcpAgentStatus}
+                        disabled={gcpAgentLoading}
+                        className="terminal-btn text-xs px-3 py-1.5"
+                      >
+                        {gcpAgentLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Refresh Agents"}
+                      </button>
+                    </div>
+
+                    {gcpAgentLoading && gcpAgentClusters.length === 0 ? (
+                      <div className="text-xs" style={{ color: "var(--text-muted)" }}>Checking agent registrations…</div>
+                    ) : gcpAgentClusters.length === 0 ? (
+                      <div className="text-xs text-amber-400">No GKE clusters found in the latest snapshot. Run a GCP scan first.</div>
+                    ) : (
+                      <div className="space-y-3">
+                        {gcpAgentClusters.map((cluster) => (
+                          <div key={`${cluster.projectId}/${cluster.location}/${cluster.clusterName}`} className="border p-3 space-y-2" style={{ borderColor: "var(--border-dim)", background: "rgba(2, 6, 23, 0.35)" }}>
+                            <div className="flex items-start justify-between gap-3 flex-wrap">
+                              <div>
+                                <div className="text-xs font-semibold" style={{ color: "var(--text-strong)" }}>{cluster.clusterName}</div>
+                                <div className="text-[10px] font-mono mt-0.5" style={{ color: "var(--text-muted)" }}>{cluster.projectId} / {cluster.location}</div>
+                              </div>
+                              <span className={cn(
+                                "px-2 py-0.5 border text-[10px] uppercase tracking-widest",
+                                cluster.healthy
+                                  ? "text-emerald-400 border-emerald-500/25 bg-emerald-500/10"
+                                  : cluster.installed
+                                    ? "text-amber-400 border-amber-500/25 bg-amber-500/10"
+                                    : "text-red-400 border-red-500/25 bg-red-500/10"
+                              )}>
+                                {cluster.healthy ? "Healthy" : cluster.installed ? "Registered" : "Missing"}
+                              </span>
+                            </div>
+                            <div className="text-xs" style={{ color: "var(--text-muted)" }}>
+                              Healthy nodes: <span className="font-mono" style={{ color: "var(--text-primary)" }}>{cluster.healthyCount}/{cluster.nodeCount || cluster.snapshotNodeCount || 0}</span>
+                              {cluster.lastSeenAt ? <span> · Last seen: <span className="font-mono" style={{ color: "var(--text-primary)" }}>{new Date(cluster.lastSeenAt).toLocaleString()}</span></span> : null}
+                            </div>
+                            {!cluster.healthy && (
+                              <div className="space-y-2">
+                                <pre className="overflow-auto p-3 text-[10px] leading-5 font-mono whitespace-pre-wrap" style={{ background: "#05070d", border: "1px solid var(--border-dim)", color: "var(--text-primary)", maxHeight: 160 }}>
+                                  {cluster.deployCommand}
+                                </pre>
+                                <button
+                                  onClick={() => copyAgentDeployCommand(cluster)}
+                                  className="terminal-btn text-xs px-3 py-1.5"
+                                >
+                                  {copiedAgentCommand === cluster.clusterName ? <Check className="w-3.5 h-3.5" /> : "Copy Deploy Command"}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {gcpTraceSource.mode === "streaming" && (
                   <div className="space-y-4 border p-4" style={{ borderColor: "var(--border-dim)", background: "rgba(2, 6, 23, 0.35)" }}>
