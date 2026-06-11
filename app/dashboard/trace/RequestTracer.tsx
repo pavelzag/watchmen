@@ -87,6 +87,7 @@ interface AgentEventRow {
     status?: number;
     hostname?: string;
     comm?: string;
+    data?: string;
   };
 }
 
@@ -680,6 +681,21 @@ function isExpectedLiveRequest({
   if (EXPECTED_REQUEST_USER_AGENT_RE.test(userAgent ?? "")) return true;
   if ((path ?? "").includes("watchmen_trace_probe=")) return true;
   return false;
+}
+
+function extractHeaderValue(raw: unknown, headerName: string): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const headerRe = new RegExp(`^${headerName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:\\s*(.+)$`, "im");
+  return raw.match(headerRe)?.[1]?.trim();
+}
+
+function isExpectedAgentLiveEvent(event: AgentEventRow): boolean {
+  const ev = event.event ?? {};
+  if (ev.type !== "http_request") return true;
+  return isExpectedLiveRequest({
+    path: ev.path,
+    userAgent: extractHeaderValue(ev.data, "User-Agent"),
+  });
 }
 
 function parseLiveRequestLog(entry: LogEntry): ParsedLiveRequestLog | null {
@@ -3366,7 +3382,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
           const tsMs = eventTimestampMs(event.received_at);
           return tsMs > 0
             && pollNowMs - tsMs <= LIVE_EVENT_FRESHNESS_MS
-            && !isExpectedLiveRequest({ path: event.event?.path });
+            && !isExpectedAgentLiveEvent(event);
         });
         if (agentEvents.length > 0) {
           const latestAgentEvent = agentEvents.reduce((a, b) =>
