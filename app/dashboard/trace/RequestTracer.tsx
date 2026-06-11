@@ -3018,7 +3018,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const [liveMode, setLiveMode] = useState(false);
   const [liveScope, setLiveScope] = useState<LiveScope>("active");
   const [liveAnimEnabled, setLiveAnimEnabled] = useState(true);
-  const [liveIntensityEnabled, setLiveIntensityEnabled] = useState(true);
+  const [liveIntensityEnabled, setLiveIntensityEnabled] = useState(false);
   const liveAnimEnabledRef = useRef(true);
   const liveIntensityEnabledRef = useRef(true);
   const liveModeRef = useRef(false);
@@ -4392,25 +4392,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                     ANIM
                   </button>
                 )}
-                {liveMode && (
-                  <button
-                    onClick={() => {
-                      const next = !liveIntensityEnabled;
-                      liveIntensityEnabledRef.current = next;
-                      setLiveIntensityEnabled(next);
-                    }}
-                    title={liveIntensityEnabled ? "Disable intensity-based line styling" : "Enable intensity-based line styling"}
-                    className={cn(
-                      "flex items-center gap-1 text-[8px] px-1.5 py-0.5 border transition-colors tracking-widest",
-                      liveIntensityEnabled
-                        ? "border-emerald-800 text-emerald-400 hover:border-emerald-700"
-                        : "border-slate-700 text-slate-600 hover:border-slate-500 hover:text-slate-400"
-                    )}
-                  >
-                    <Sparkles size={8} />
-                    INTENS
-                  </button>
-                )}
+                {/* Adaptive intensity styling is currently hidden from the UI. */}
                 <div className="w-px h-3 bg-slate-800 mx-0.5" />
               </>
             )}
