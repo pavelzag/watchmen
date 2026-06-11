@@ -31,7 +31,7 @@ const LIVE_STREAM_PULSE_MS = 520;
 const LIVE_EVENT_FRESHNESS_MS = 120_000;
 const LIVE_EVENT_RETENTION_MS = 120_000;
 const LIVE_EVENT_LIMIT = 100;
-const LOG_AUTO_REFRESH_MS = 10_000;
+const LOG_AUTO_REFRESH_MS = 5_000;
 const LOG_DRAWER_LIMIT = 200;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -1106,6 +1106,8 @@ function statusColor(code: number | undefined) {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
+const LOG_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE"] as const;
+type LogMethodFilter = "all" | typeof LOG_METHODS[number];
 const METHOD_COLOR: Record<string, string> = {
   GET: "text-sky-400", POST: "text-emerald-400", PUT: "text-amber-400",
   PATCH: "text-orange-400", DELETE: "text-red-400",
@@ -1986,6 +1988,7 @@ function NodeDetail({
   const [logsError, setLogsError] = useState<string | null>(null);
   const [logSearch, setLogSearch] = useState("");
   const [logStatusFilter, setLogStatusFilter] = useState<"all" | "2xx" | "3xx" | "4xx" | "5xx">("all");
+  const [logMethodFilter, setLogMethodFilter] = useState<LogMethodFilter>("all");
   const [hideGkeHealthLogs, setHideGkeHealthLogs] = useState(true);
   const [logsExpanded, setLogsExpanded] = useState(false);
   const [selectedLogEntry, setSelectedLogEntry] = useState<LogEntry | null>(null);
@@ -2086,6 +2089,7 @@ function NodeDetail({
       if (canHideGkeHealthLogs && hideGkeHealthLogs && isDefaultHiddenGkeHealthLog(l)) return false;
       const parsed = !l.httpRequest ? (parseReqLog(l.message) ?? parseStructuredRequestLog(l.message) ?? parseNginxLog(l.message) ?? parseEnvoyLog(l.message) ?? parseTraceAppLog(l.message)) : null;
       const status = l.httpRequest?.status ?? parsed?.status;
+      const method = (l.httpRequest?.method ?? parsed?.method ?? "").toUpperCase();
       const searchable = l.httpRequest
         ? `${l.httpRequest.method} ${l.httpRequest.url} ${l.httpRequest.remoteIp} ${l.httpRequest.userAgent}`
         : parsed
@@ -2098,6 +2102,7 @@ function NodeDetail({
         const r = ranges[logStatusFilter];
         if (r && (status < r[0] || status > r[1])) return false;
       }
+      if (logMethodFilter !== "all" && method !== logMethodFilter) return false;
       if (logSearch.trim()) {
         if (!searchable.toLowerCase().includes(logSearch.toLowerCase())) return false;
       }
@@ -2117,7 +2122,7 @@ function NodeDetail({
       if (prio !== 0) return prio;
       return (b.timestamp ?? "").localeCompare(a.timestamp ?? "");
     });
-  }, [canHideGkeHealthLogs, hideGkeHealthLogs, logs, logSearch, logStatusFilter]);
+  }, [canHideGkeHealthLogs, hideGkeHealthLogs, logs, logMethodFilter, logSearch, logStatusFilter]);
 
   // Copy logs to clipboard
   const handleCopyLogs = useCallback(() => {
@@ -2404,13 +2409,32 @@ function NodeDetail({
                       ? "border-slate-500 text-slate-300 bg-slate-800"
                       : "border-slate-800 text-slate-600 hover:text-slate-400 hover:border-slate-700"
                   )}
-                >
-                  {hideGkeHealthLogs ? "HEALTH HIDDEN" : "HEALTH SHOWN"}
-                </button>
+              >
+                {hideGkeHealthLogs ? "HEALTH HIDDEN" : "HEALTH SHOWN"}
+              </button>
               )}
-              {(logSearch || logStatusFilter !== "all" || (canHideGkeHealthLogs && hideGkeHealthLogs && hiddenGkeHealthLogCount > 0)) && (
+              {(logSearch || logStatusFilter !== "all" || logMethodFilter !== "all" || (canHideGkeHealthLogs && hideGkeHealthLogs && hiddenGkeHealthLogCount > 0)) && (
                 <span className="text-[8px] text-slate-600 self-center ml-1">{filteredLogs.length}/{logs.length}</span>
               )}
+            </div>
+
+            <div className="flex gap-1 flex-wrap">
+              {(["all", ...LOG_METHODS] as const).map(m => (
+                <button
+                  key={m}
+                  onClick={() => setLogMethodFilter(m)}
+                  className={cn(
+                    "text-[8px] px-1.5 py-0.5 border transition-colors font-mono",
+                    logMethodFilter === m
+                      ? m === "all"
+                        ? "border-slate-500 text-slate-300 bg-slate-800"
+                        : `border-current bg-current/10 ${METHOD_COLOR[m]}`
+                      : "border-slate-800 text-slate-600 hover:text-slate-400 hover:border-slate-700"
+                  )}
+                >
+                  {m}
+                </button>
+              ))}
             </div>
 
             {loadingLogs && (
@@ -2622,6 +2646,24 @@ function NodeDetail({
                             )}>{f.toUpperCase()}</button>
                         ))}
                       </div>
+                    </div>
+                    <div className="flex flex-wrap gap-1 px-4 pb-2">
+                      {(["all", ...LOG_METHODS] as const).map(m => (
+                        <button
+                          key={m}
+                          onClick={() => setLogMethodFilter(m)}
+                          className={cn(
+                            "text-[8px] px-1.5 py-0.5 border transition-colors font-mono",
+                            logMethodFilter === m
+                              ? m === "all"
+                                ? "border-slate-500 text-slate-300 bg-slate-800"
+                                : `border-current bg-current/10 ${METHOD_COLOR[m]}`
+                              : "border-slate-800 text-slate-600 hover:text-slate-400 hover:border-slate-700"
+                          )}
+                        >
+                          {m}
+                        </button>
+                      ))}
                     </div>
                     {/* Modal log list */}
                     <div className="flex-1 overflow-y-auto px-4 py-2 flex flex-col gap-1.5 font-mono text-[10px]">
