@@ -24,12 +24,12 @@ const ANIM_COL_DELAY = 320; // ms between columns
 const ANIM_PULSE_MS = 260;  // ms node stays "active" before "done"
 const LIVE_POLL_ACTIVE_MS = 1500;
 const LIVE_POLL_ALL_MS = 4000;
-const LIVE_ALL_BATCH_SIZE = 4;
 const LIVE_STREAM_PULSE_MS = 520;
 // Cloud Logging can lag well beyond a few seconds, so keep a wider freshness
 // window for "live" traffic while still aging events out of the UI separately.
 const LIVE_EVENT_FRESHNESS_MS = 120_000;
-const LIVE_EVENT_RETENTION_MS = 30_000;
+const LIVE_EVENT_RETENTION_MS = 120_000;
+const LIVE_EVENT_LIMIT = 100;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -2667,7 +2667,6 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const liveModeRef = useRef(false);
   const liveLastTsByTarget = useRef<Record<string, string>>({});
   const liveLastAgentEventAtRef = useRef("");
-  const livePollCursorRef = useRef(0);
   const liveCooldownUntilRef = useRef(0);
   const liveTimestamps = useRef<number[]>([]);   // sliding window of request timestamps
   const [liveRps, setLiveRps] = useState<number | null>(null);
@@ -2937,6 +2936,20 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       return false;
     }
   }, [url]);
+
+  const toggleEndpointSelection = useCallback((value: string) => {
+    setUrl(current => {
+      if (!current.trim()) return value;
+      if (current === value || current.startsWith(value)) return "";
+      try {
+        const selected = new URL(current);
+        const candidate = new URL(value);
+        return selected.host === candidate.host ? "" : value;
+      } catch {
+        return value;
+      }
+    });
+  }, []);
 
   const filteredK8sEntryPoints = useMemo(
     () => entryPoints.filter(ep => ep.type !== "master-api" && ep.ip),
@@ -3306,7 +3319,6 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     if (!liveMode) {
       liveLastTsByTarget.current = {};
       liveLastAgentEventAtRef.current = "";
-      livePollCursorRef.current = 0;
       liveCooldownUntilRef.current = 0;
       liveTimestamps.current = [];
       setLiveRps(null);
@@ -3354,15 +3366,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
             })
             .catch(() => [] as AgentEventRow[])
         : Promise.resolve([] as AgentEventRow[]);
-      const targets = (liveScope === "all"
-        ? (() => {
-            const batchSize = LIVE_ALL_BATCH_SIZE;
-            const start = livePollCursorRef.current % allTargets.length;
-            const batch = Array.from({ length: Math.min(batchSize, allTargets.length) }, (_, i) => allTargets[(start + i) % allTargets.length]);
-            livePollCursorRef.current = (start + batch.length) % allTargets.length;
-            return batch;
-          })()
-        : allTargets).filter(target => shouldPollLiveTarget(target, traceSourceConfig));
+      const targets = allTargets.filter(target => shouldPollLiveTarget(target, traceSourceConfig));
       try {
         const [agentEvents, results] = await Promise.all([
           agentEventsPromise,
@@ -3439,7 +3443,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                 if (seen.has(event.id)) continue;
                 seen.add(event.id);
                 deduped.push(event);
-                if (deduped.length >= 24) break;
+                if (deduped.length >= LIVE_EVENT_LIMIT) break;
               }
               return deduped;
             });
@@ -3719,7 +3723,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                       </>
                     }
                   >
-                    <button onClick={() => setUrl(value)}
+                    <button onClick={() => toggleEndpointSelection(value)}
                       className={cn(
                         "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm",
                         isSelected
@@ -3760,7 +3764,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                           </>
                         }
                       >
-                        <button onClick={() => setUrl(value)}
+                        <button onClick={() => toggleEndpointSelection(value)}
                           className={cn(
                             "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm",
                             isSelected
@@ -3791,7 +3795,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                           </>
                         }
                       >
-                        <button onClick={() => setUrl(value)}
+                        <button onClick={() => toggleEndpointSelection(value)}
                           className={cn(
                             "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm",
                             isSelected
@@ -3824,7 +3828,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                           </>
                         }
                       >
-                        <button onClick={() => setUrl(value)}
+                        <button onClick={() => toggleEndpointSelection(value)}
                           className={cn(
                             "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm",
                             isSelected
