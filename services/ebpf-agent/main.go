@@ -27,7 +27,7 @@ import (
 const (
 	eventTypeHTTPReq  = "http_request"
 	eventTypeHTTPResp = "http_response"
-	eventDataLen      = 256
+	eventDataLen      = 1024
 )
 
 var version = "dev"

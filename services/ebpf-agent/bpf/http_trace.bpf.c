@@ -6,7 +6,7 @@
 #include <bpf/bpf_tracing.h>
 
 #define TASK_COMM_LEN 16
-#define DATA_LEN 256
+#define DATA_LEN 1024
 
 #define EVENT_HTTP_REQ  0
 #define EVENT_HTTP_RESP 1
@@ -34,8 +34,12 @@ static __always_inline int is_http_req(const char *data, int len)
 	if (data[0] == 'D' && data[1] == 'E' && data[2] == 'L') return 1;
 	if (data[0] == 'H' && data[1] == 'E' && data[2] == 'A' && data[3] == 'D') return 1;
 	if (len < 5) return 0;
-	if (data[0] == 'P' && data[1] == 'A' && data[2] == 'C' && data[3] == 'H' && data[4] == 'H') return 1;
 	if (data[0] == 'O' && data[1] == 'P' && data[2] == 'T' && data[3] == 'I') return 1;
+	if (data[0] == 'T' && data[1] == 'R' && data[2] == 'A' && data[3] == 'C' && data[4] == 'E') return 1;
+	if (data[0] == 'P' && data[1] == 'A' && data[2] == 'T' && data[3] == 'C' && data[4] == 'H') return 1;
+	if (len < 7) return 0;
+	if (data[0] == 'C' && data[1] == 'O' && data[2] == 'N' && data[3] == 'N' &&
+	    data[4] == 'E' && data[5] == 'C' && data[6] == 'T') return 1;
 	return 0;
 }
 
