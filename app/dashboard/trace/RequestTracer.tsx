@@ -4210,9 +4210,9 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                   >
                     <button onClick={() => toggleEndpointSelection(value)}
                       className={cn(
-                        "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm",
+                        "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm relative overflow-hidden",
                         isSelected
-                          ? "bg-emerald-950/35 ring-1 ring-emerald-700/70 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.15)]"
+                          ? "bg-emerald-950/60 ring-2 ring-emerald-500/80 border border-emerald-500/35 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.22)]"
                           : "bg-[#0a0a0a]/60 hover:bg-[#0d120e]"
                       )}
                     >
@@ -4251,9 +4251,9 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                       >
                         <button onClick={() => toggleEndpointSelection(value)}
                           className={cn(
-                            "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm",
+                            "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm relative overflow-hidden",
                             isSelected
-                              ? "bg-violet-950/30 ring-1 ring-violet-700/70 shadow-[inset_0_0_0_1px_rgba(139,92,246,0.15)]"
+                              ? "bg-violet-950/55 ring-2 ring-violet-500/80 border border-violet-500/35 shadow-[inset_0_0_0_1px_rgba(139,92,246,0.22)]"
                               : "bg-[#0a0a0a]/60 hover:bg-[#0d1013]"
                           )}
                         >
@@ -4282,9 +4282,9 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                       >
                         <button onClick={() => toggleEndpointSelection(value)}
                           className={cn(
-                            "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm",
+                            "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm relative overflow-hidden",
                             isSelected
-                              ? "bg-cyan-950/30 ring-1 ring-cyan-700/70 shadow-[inset_0_0_0_1px_rgba(34,211,238,0.12)]"
+                              ? "bg-cyan-950/55 ring-2 ring-cyan-500/80 border border-cyan-500/35 shadow-[inset_0_0_0_1px_rgba(34,211,238,0.2)]"
                               : "bg-[#0a0a0a]/60 hover:bg-[#0c1113]"
                           )}
                         >
@@ -4315,9 +4315,9 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                       >
                         <button onClick={() => toggleEndpointSelection(value)}
                           className={cn(
-                            "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm",
+                            "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm relative overflow-hidden",
                             isSelected
-                              ? "bg-emerald-950/35 ring-1 ring-emerald-700/70 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.15)]"
+                              ? "bg-emerald-950/60 ring-2 ring-emerald-500/80 border border-emerald-500/35 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.22)]"
                               : "bg-[#0a0a0a]/60 hover:bg-[#0c120d]"
                           )}
                         >
@@ -4446,26 +4446,6 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                     >
                     <Globe size={8} />
                     ALL
-                  </button>
-                )}
-                {graphFullscreen && allVisibleEndpointUrls.length > 0 && (
-                  <button
-                    onClick={selectAllEndpoints}
-                    title="Select all visible request endpoints"
-                    className={cn(
-                      "flex items-center gap-1 text-[8px] px-1.5 py-0.5 border transition-colors tracking-widest",
-                      allEndpointsSelected
-                        ? "border-emerald-800 text-emerald-500 bg-emerald-950/30"
-                        : "border-slate-700 text-slate-600 hover:border-slate-500 hover:text-slate-400"
-                    )}
-                  >
-                    <Globe size={8} />
-                    ALL
-                    {allEndpointsSelected && (
-                      <span className="font-mono text-emerald-300">
-                        {allVisibleEndpointUrls.length}
-                      </span>
-                    )}
                   </button>
                 )}
                 {liveMode && (
