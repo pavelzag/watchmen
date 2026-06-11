@@ -4224,14 +4224,14 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                   Clear
                 </button>
               </div>
-              <div className="flex flex-wrap gap-1 max-h-16 overflow-auto no-scrollbar">
+              <div className="flex flex-col gap-1">
                 {selectedEndpointSummaries.map(item => (
                   <button
                     key={item.value}
                     onClick={() => toggleEndpointSelection(item.value)}
                     title={item.value}
                     className={cn(
-                      "flex items-center gap-1 px-2 py-1 text-[8px] uppercase tracking-widest border transition-colors max-w-full",
+                      "flex items-center justify-between gap-2 px-2 py-1 text-[8px] uppercase tracking-widest border transition-colors w-full text-left",
                       item.tone === "violet"
                         ? "border-violet-500/60 bg-violet-950/40 text-violet-200"
                         : item.tone === "cyan"
@@ -4239,8 +4239,8 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                         : "border-emerald-500/60 bg-emerald-950/40 text-emerald-200"
                     )}
                   >
-                    <span className="font-bold">{item.kind || "ENDPOINT"}</span>
-                    <span className="truncate max-w-[12rem] normal-case tracking-normal">
+                    <span className="font-bold shrink-0">{item.kind || "ENDPOINT"}</span>
+                    <span className="truncate min-w-0 normal-case tracking-normal text-right">
                       {item.label}
                     </span>
                   </button>
