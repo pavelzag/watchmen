@@ -31,6 +31,7 @@ const LIVE_STREAM_PULSE_MS = 520;
 const LIVE_EVENT_FRESHNESS_MS = 120_000;
 const LIVE_EVENT_RETENTION_MS = 120_000;
 const LIVE_EVENT_LIMIT = 100;
+const LOG_AUTO_REFRESH_MS = 10_000;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1881,12 +1882,10 @@ function NodeDetail({
       .catch(() => {});
   }, [tab, node.id, node.projectId, node.type, onIstioDetected]);
 
-  // Fetch logs when tab or container selection changes
-  useEffect(() => {
-    if (tab !== "logs" || !node.projectId) return;
-    setLoadingLogs(true);
+  const refreshLogs = useCallback(async ({ showLoading = false }: { showLoading?: boolean } = {}) => {
+    if (!node.projectId) return;
+    if (showLoading) setLoadingLogs(true);
     setLogsError(null);
-
     const params = new URLSearchParams({ projectId: node.projectId, limit: "80" });
     if (node.type === "cloudrun") {
       params.set("resourceType", "cloud_run_revision");
@@ -1909,15 +1908,27 @@ function NodeDetail({
       }
     }
 
-    fetch(`/api/gcp/logs?${params}`)
-      .then(r => r.json())
-      .then(d => {
-        if (d.error) { setLogsError(d.error); return; }
-        setLogs(d.entries ?? []);
-      })
-      .catch(e => setLogsError(e.message))
-      .finally(() => setLoadingLogs(false));
-  }, [tab, node.id, node.projectId, node.type, node.label, node.region, selectedContainer]);
+    try {
+      const res = await fetch(`/api/gcp/logs?${params}`);
+      const d = await res.json();
+      if (d.error) { setLogsError(d.error); return; }
+      setLogs(d.entries ?? []);
+    } catch (e) {
+      setLogsError(e instanceof Error ? e.message : "Failed to fetch logs.");
+    } finally {
+      if (showLoading) setLoadingLogs(false);
+    }
+  }, [node.projectId, node.type, node.resourceName, node.label, node.region, node.container, selectedContainer]);
+
+  // Fetch logs when tab or container selection changes, then keep them fresh while visible.
+  useEffect(() => {
+    if (tab !== "logs" || !node.projectId) return;
+    refreshLogs({ showLoading: true });
+    const intervalId = window.setInterval(() => {
+      refreshLogs();
+    }, LOG_AUTO_REFRESH_MS);
+    return () => window.clearInterval(intervalId);
+  }, [tab, node.projectId, refreshLogs]);
 
   // Fetch routes when tab becomes active
   useEffect(() => {
@@ -2175,10 +2186,10 @@ function NodeDetail({
                 className="text-slate-600 hover:text-slate-300 transition-colors"
               ><Maximize2 size={9} /></button>
               <button
-                onClick={() => { setLogs([]); setTab("info"); setTimeout(() => setTab("logs"), 0); }}
+                onClick={() => refreshLogs({ showLoading: true })}
                 title="Refresh"
                 className="text-slate-600 hover:text-slate-300 transition-colors"
-              ><RefreshCw size={9} /></button>
+              ><RefreshCw size={9} className={loadingLogs ? "animate-spin" : ""} /></button>
             </div>
 
             {/* Container selector (GKE + sidecar nodes) */}
