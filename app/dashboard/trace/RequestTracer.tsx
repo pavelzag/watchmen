@@ -24,6 +24,7 @@ const ANIM_COL_DELAY = 320; // ms between columns
 const ANIM_PULSE_MS = 260;  // ms node stays "active" before "done"
 const LIVE_POLL_ACTIVE_MS = 1500;
 const LIVE_POLL_ALL_MS = 4000;
+const LIVE_ALL_CLOUD_LOGGING_BATCH_SIZE = 3;
 const LIVE_STREAM_PULSE_MS = 520;
 // Cloud Logging can lag well beyond a few seconds, so keep a wider freshness
 // window for "live" traffic while still aging events out of the UI separately.
@@ -2667,6 +2668,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const liveModeRef = useRef(false);
   const liveLastTsByTarget = useRef<Record<string, string>>({});
   const liveLastAgentEventAtRef = useRef("");
+  const livePollCursorRef = useRef(0);
   const liveCooldownUntilRef = useRef(0);
   const liveTimestamps = useRef<number[]>([]);   // sliding window of request timestamps
   const [liveRps, setLiveRps] = useState<number | null>(null);
@@ -3170,7 +3172,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     eventSource.addEventListener("trace", (rawEvent) => {
       const parsed = JSON.parse((rawEvent as MessageEvent).data) as LiveTraceIngressEvent;
       liveStreamingLastEventAtRef.current = Date.now();
-      if (isExpectedLiveRequest({ path: parsed.path, userAgent: parsed.userAgent })) {
+      if (liveScope !== "all" && isExpectedLiveRequest({ path: parsed.path, userAgent: parsed.userAgent })) {
         return;
       }
       if (sourceForKind(parsed.kind, traceSourceConfig) !== "pubsub") {
@@ -3319,6 +3321,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     if (!liveMode) {
       liveLastTsByTarget.current = {};
       liveLastAgentEventAtRef.current = "";
+      livePollCursorRef.current = 0;
       liveCooldownUntilRef.current = 0;
       liveTimestamps.current = [];
       setLiveRps(null);
@@ -3352,6 +3355,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       liveTimestamps.current = liveTimestamps.current.filter(t => pollNowMs - t < 60_000);
       const currentWindowCount = liveTimestamps.current.filter(t => pollNowMs - t < 10_000).length;
       setLiveRps(currentWindowCount > 0 ? currentWindowCount / 10 : null);
+      const includeExpectedRequests = liveScope === "all";
       const agentEventsPromise = shouldUseAgentEvents(traceSourceConfig)
         ? fetch(
             `/api/agents/events/query?${new URLSearchParams({
@@ -3366,7 +3370,18 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
             })
             .catch(() => [] as AgentEventRow[])
         : Promise.resolve([] as AgentEventRow[]);
-      const targets = allTargets.filter(target => shouldPollLiveTarget(target, traceSourceConfig));
+      const cloudLoggingTargets = allTargets.filter(target => shouldPollLiveTarget(target, traceSourceConfig));
+      const targets = liveScope === "all" && cloudLoggingTargets.length > LIVE_ALL_CLOUD_LOGGING_BATCH_SIZE
+        ? (() => {
+            const start = livePollCursorRef.current % cloudLoggingTargets.length;
+            const batch = Array.from(
+              { length: LIVE_ALL_CLOUD_LOGGING_BATCH_SIZE },
+              (_, i) => cloudLoggingTargets[(start + i) % cloudLoggingTargets.length],
+            );
+            livePollCursorRef.current = (start + batch.length) % cloudLoggingTargets.length;
+            return batch;
+          })()
+        : cloudLoggingTargets;
       try {
         const [agentEvents, results] = await Promise.all([
           agentEventsPromise,
@@ -3407,7 +3422,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
           ...result,
           entries: result.entries.filter(entry => {
             const parsed = parseLiveRequestLog(entry);
-            return parsed && !isExpectedLiveRequest(parsed);
+            return parsed && (includeExpectedRequests || !isExpectedLiveRequest(parsed));
           }),
         }));
         const allEntries = filteredResults.flatMap(result => result.entries);
@@ -3415,7 +3430,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
           const tsMs = eventTimestampMs(event.received_at);
           return tsMs > 0
             && pollNowMs - tsMs <= LIVE_EVENT_FRESHNESS_MS
-            && !isExpectedAgentLiveEvent(event);
+            && (includeExpectedRequests || !isExpectedAgentLiveEvent(event));
         });
         if (agentEvents.length > 0) {
           const latestAgentEvent = agentEvents.reduce((a, b) =>
