@@ -1548,7 +1548,22 @@ interface LogEntryDetails {
   message?: string;
   body?: string;
   headers?: Record<string, unknown>;
+  queryParams?: Record<string, string>;
+  traceId?: string;
+  traceSource?: string;
+  traceMethod?: string;
+  contentType?: string;
+  payloadBytes?: string;
   payload?: unknown;
+}
+
+interface CapturedHttpDetails {
+  method?: string;
+  path?: string;
+  protocol?: string;
+  status?: number;
+  headers?: Record<string, string>;
+  body?: string;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -1591,6 +1606,84 @@ function findStructuredRequestPayload(payload: unknown): {
   return {};
 }
 
+function headerValue(headers: Record<string, unknown> | undefined, name: string): string | undefined {
+  if (!headers) return undefined;
+  const foundKey = Object.keys(headers).find(key => key.toLowerCase() === name.toLowerCase());
+  const value = foundKey ? headers[foundKey] : undefined;
+  return typeof value === "string" ? value : value === undefined ? undefined : String(value);
+}
+
+function parseQueryParams(pathOrUrl: string | undefined): Record<string, string> | undefined {
+  if (!pathOrUrl) return undefined;
+  try {
+    const url = new URL(pathOrUrl, "http://watchmen.local");
+    const entries = [...url.searchParams.entries()];
+    if (entries.length === 0) return undefined;
+    return Object.fromEntries(entries);
+  } catch {
+    return undefined;
+  }
+}
+
+function parseCapturedHttpDetails(raw: string | undefined): CapturedHttpDetails | null {
+  if (!raw) return null;
+  const normalized = raw.replace(/\r\n/g, "\n");
+  const [head, ...bodyParts] = normalized.split(/\n\n/);
+  const lines = head.split("\n").filter(Boolean);
+  const firstLine = lines[0] ?? "";
+  const headers: Record<string, string> = {};
+
+  lines.slice(1).forEach(line => {
+    const idx = line.indexOf(":");
+    if (idx <= 0) return;
+    headers[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+  });
+
+  const request = firstLine.match(/^([A-Z]+)\s+(\S+)\s+(HTTP\/\d(?:\.\d)?)$/);
+  const response = firstLine.match(/^HTTP\/\d(?:\.\d)?\s+(\d{3})\b/);
+  if (!request && !response && Object.keys(headers).length === 0) return null;
+
+  return {
+    method: request?.[1],
+    path: request?.[2],
+    protocol: request?.[3],
+    status: response ? Number(response[1]) : undefined,
+    headers: Object.keys(headers).length > 0 ? headers : undefined,
+    body: bodyParts.join("\n\n") || undefined,
+  };
+}
+
+function withCapturedHttpDetails(details: LogEntryDetails, raw: string | undefined): LogEntryDetails {
+  const captured = parseCapturedHttpDetails(raw);
+  const headers = {
+    ...(captured?.headers ?? {}),
+    ...(details.headers ?? {}),
+  };
+  const mergedHeaders = Object.keys(headers).length > 0 ? headers : undefined;
+  const queryParams = details.queryParams ?? parseQueryParams(details.path) ?? parseQueryParams(captured?.path);
+  const traceId =
+    details.traceId ??
+    headerValue(mergedHeaders, "X-Watchmen-Trace-Id") ??
+    queryParams?.watchmen_trace_probe;
+
+  return {
+    ...details,
+    method: details.method ?? captured?.method,
+    path: details.path ?? captured?.path,
+    protocol: details.protocol ?? captured?.protocol,
+    status: details.status ?? captured?.status,
+    userAgent: details.userAgent ?? headerValue(mergedHeaders, "User-Agent"),
+    body: details.body ?? captured?.body,
+    headers: mergedHeaders,
+    queryParams,
+    traceId,
+    traceSource: details.traceSource ?? headerValue(mergedHeaders, "X-Watchmen-Trace-Source"),
+    traceMethod: details.traceMethod ?? headerValue(mergedHeaders, "X-Watchmen-Trace-Method"),
+    contentType: details.contentType ?? headerValue(mergedHeaders, "Content-Type"),
+    payloadBytes: details.payloadBytes ?? headerValue(mergedHeaders, "X-Watchmen-Payload-Bytes"),
+  };
+}
+
 function getLogEntryDetails(entry: LogEntry): LogEntryDetails {
   const ts = entry.timestamp ? new Date(entry.timestamp).toLocaleString() : "Unknown";
   const structured = findStructuredRequestPayload(entry.payload);
@@ -1603,7 +1696,7 @@ function getLogEntryDetails(entry: LogEntry): LogEntryDetails {
   if (entry.httpRequest) {
     const hr = entry.httpRequest;
     const path = (() => { try { return new URL(hr.url).pathname; } catch { return hr.url; } })();
-    return {
+    return withCapturedHttpDetails({
       title: `${hr.method} ${path}`,
       timestamp: ts,
       method: hr.method,
@@ -1620,9 +1713,10 @@ function getLogEntryDetails(entry: LogEntry): LogEntryDetails {
       message: entry.message || undefined,
       source: entry.revision || entry.pod || entry.instanceId || undefined,
       headers: structured.headers,
+      queryParams: parseQueryParams(hr.url),
       body: structuredBody,
       payload: entry.payload,
-    };
+    }, entry.message);
   }
 
   const parsed = parseReqLog(entry.message) ?? parseNginxLog(entry.message) ?? parseEnvoyLog(entry.message) ?? parseTraceAppLog(entry.message);
@@ -1631,7 +1725,7 @@ function getLogEntryDetails(entry: LogEntry): LogEntryDetails {
     const remoteIp = (parsed as any).ip ?? (parsed as any).remoteIp ?? "";
     const body = (parsed as any).body ?? "";
     const userAgent = (parsed as any).userAgent ?? "";
-    return {
+    return withCapturedHttpDetails({
       title: `${parsed.method} ${parsed.path}`,
       timestamp: ts,
       method: parsed.method,
@@ -1645,13 +1739,13 @@ function getLogEntryDetails(entry: LogEntry): LogEntryDetails {
       headers: structured.headers,
       message: entry.message,
       payload: entry.payload,
-    };
+    }, entry.message);
   }
 
   const structuredLog = parseStructuredRequestLog(entry.message);
   if (structuredLog) {
     const source = entry.container || entry.pod || entry.instanceId || entry.revision || "";
-    return {
+    return withCapturedHttpDetails({
       title: `${structuredLog.method} ${structuredLog.path}`,
       timestamp: ts,
       method: structuredLog.method,
@@ -1665,10 +1759,10 @@ function getLogEntryDetails(entry: LogEntry): LogEntryDetails {
       headers: structuredLog.headers ?? structured.headers,
       message: entry.message,
       payload: entry.payload,
-    };
+    }, entry.message);
   }
 
-  return {
+  return withCapturedHttpDetails({
     title: entry.severity || "Log entry",
     timestamp: ts,
     severity: entry.severity,
@@ -1677,7 +1771,7 @@ function getLogEntryDetails(entry: LogEntry): LogEntryDetails {
     body: structuredBody,
     headers: structured.headers,
     payload: entry.payload,
-  };
+  }, entry.message);
 }
 
 function getLogEntryRequestPath(entry: LogEntry): string | undefined {
@@ -1767,6 +1861,28 @@ function LogEntryModal({
               <div className="text-[8px] uppercase tracking-widest text-slate-600">Headers</div>
               <pre className="mt-2 whitespace-pre-wrap break-all text-slate-300">
                 {JSON.stringify(details.headers, null, 2)}
+              </pre>
+            </div>
+          )}
+
+          {(details.traceId || details.traceSource || details.traceMethod || details.contentType || details.payloadBytes) && (
+            <div className="border border-slate-800/60 bg-[#0a0d0a] px-3 py-2.5">
+              <div className="text-[8px] uppercase tracking-widest text-slate-600">Trace Probe</div>
+              <div className="mt-2 grid gap-1 text-slate-300 sm:grid-cols-2">
+                {details.traceId ? <div className="break-all"><span className="text-slate-500">Trace ID:</span> {details.traceId}</div> : null}
+                {details.traceSource ? <div className="break-all"><span className="text-slate-500">Source:</span> {details.traceSource}</div> : null}
+                {details.traceMethod ? <div><span className="text-slate-500">Declared method:</span> {details.traceMethod}</div> : null}
+                {details.contentType ? <div className="break-all"><span className="text-slate-500">Content type:</span> {details.contentType}</div> : null}
+                {details.payloadBytes ? <div><span className="text-slate-500">Payload bytes:</span> {details.payloadBytes}</div> : null}
+              </div>
+            </div>
+          )}
+
+          {details.queryParams && Object.keys(details.queryParams).length > 0 && (
+            <div className="border border-slate-800/60 bg-[#0a0d0a] px-3 py-2.5">
+              <div className="text-[8px] uppercase tracking-widest text-slate-600">Query Parameters</div>
+              <pre className="mt-2 whitespace-pre-wrap break-all text-slate-300">
+                {JSON.stringify(details.queryParams, null, 2)}
               </pre>
             </div>
           )}
