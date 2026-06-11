@@ -2987,6 +2987,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const [methodOpen, setMethodOpen] = useState(false);
   const [endpointFilter, setEndpointFilter] = useState<EndpointFilter>("all");
   const [selectedEndpointUrls, setSelectedEndpointUrls] = useState<string[]>([]);
+  const [allEndpointsSelected, setAllEndpointsSelected] = useState(false);
 
   const usesPubSubSource = traceSourceConfig?.computeSource === "pubsub" || traceSourceConfig?.gkeSource === "pubsub";
   const usesAgentSource = traceSourceConfig?.gkeSource === "ebpf_agent";
@@ -3324,6 +3325,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   }, [selectedEndpointUrls, url]);
 
   const toggleEndpointSelection = useCallback((value: string) => {
+    setAllEndpointsSelected(false);
     setSelectedEndpointUrls(current => {
       if (current.includes(value)) {
         const next = current.filter(item => item !== value);
@@ -3342,6 +3344,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   }, []);
 
   const clearEndpointSelection = useCallback(() => {
+    setAllEndpointsSelected(false);
     setSelectedEndpointUrls([]);
   }, []);
 
@@ -3373,9 +3376,19 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   }, [filteredCloudRunServices, filteredK8sEntryPoints, filteredLoadBalancers, filteredVmTargets]);
 
   const selectAllEndpoints = useCallback(() => {
+    setAllEndpointsSelected(true);
     setSelectedEndpointUrls(allVisibleEndpointUrls);
     setUrl(allVisibleEndpointUrls[0] ?? "");
   }, [allVisibleEndpointUrls]);
+
+  useEffect(() => {
+    if (!allEndpointsSelected) return;
+    setSelectedEndpointUrls(allVisibleEndpointUrls);
+    setUrl(current => {
+      if (current && allVisibleEndpointUrls.includes(current)) return current;
+      return allVisibleEndpointUrls[0] ?? "";
+    });
+  }, [allEndpointsSelected, allVisibleEndpointUrls]);
 
   const allLiveMonitorTargets = useMemo<LiveMonitorTarget[]>(() => {
     const targets: LiveMonitorTarget[] = [];
@@ -4152,12 +4165,19 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                     }}
                     className={cn(
                       "px-2 py-1 text-[9px] uppercase tracking-widest border transition-colors",
-                      endpointFilter === filter.id
+                      filter.id === "all" && allEndpointsSelected
+                        ? "border-emerald-800/80 bg-emerald-950/30 text-emerald-300"
+                        : endpointFilter === filter.id
                         ? "border-emerald-800/80 bg-emerald-950/30 text-emerald-300"
                         : "border-slate-800/70 bg-[#090909] text-slate-500 hover:text-slate-300 hover:border-slate-700"
                     )}
                   >
                     {filter.label}
+                    {filter.id === "all" && allEndpointsSelected && allVisibleEndpointUrls.length > 0 && (
+                      <span className="ml-1 font-mono text-[8px] text-emerald-200">
+                        {allVisibleEndpointUrls.length}
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>
