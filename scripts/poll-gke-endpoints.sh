@@ -228,6 +228,8 @@ poll_url() {
     curl_args+=(--data-binary "$rendered_payload")
   fi
 
+  printf '  curl: %s\n' "$(format_curl_command "$method" "$request_url" "$payload" "$content_type" "$trace_id")"
+
   code="$(
     curl "${curl_args[@]}" "$request_url" 2>/tmp/watchmen-poll-error.$$ || printf '000 0'
   )"
@@ -238,7 +240,7 @@ poll_url() {
 
   printf '%s %-10s %-28s %-7s http=%s time=%ss %s\n' "$started" "$label" "$name" "$method" "$code" "$timing" "$request_url"
 
-  if [[ "$name" == gke-trace-* || "$label" != "ok" ]]; then
+  if [[ "$label" != "ok" ]]; then
     printf '  repro: %s\n' "$(format_curl_command "$method" "$request_url" "$payload" "$content_type" "$trace_id")"
   fi
 
