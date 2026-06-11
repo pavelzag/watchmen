@@ -2986,6 +2986,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const [bodyText, setBodyText] = useState('{\n  "key": "value"\n}');
   const [methodOpen, setMethodOpen] = useState(false);
   const [endpointFilter, setEndpointFilter] = useState<EndpointFilter>("all");
+  const [selectedEndpointUrls, setSelectedEndpointUrls] = useState<string[]>([]);
 
   const usesPubSubSource = traceSourceConfig?.computeSource === "pubsub" || traceSourceConfig?.gkeSource === "pubsub";
   const usesAgentSource = traceSourceConfig?.gkeSource === "ebpf_agent";
@@ -3310,6 +3311,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   }, []);
 
   const isEndpointSelected = useCallback((value: string) => {
+    if (selectedEndpointUrls.includes(value)) return true;
     if (!url.trim()) return false;
     if (url === value || url.startsWith(value)) return true;
     try {
@@ -3319,20 +3321,28 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     } catch {
       return false;
     }
-  }, [url]);
+  }, [selectedEndpointUrls, url]);
 
   const toggleEndpointSelection = useCallback((value: string) => {
-    setUrl(current => {
-      if (!current.trim()) return value;
-      if (current === value || current.startsWith(value)) return "";
-      try {
-        const selected = new URL(current);
-        const candidate = new URL(value);
-        return selected.host === candidate.host ? "" : value;
-      } catch {
-        return value;
+    setSelectedEndpointUrls(current => {
+      if (current.includes(value)) {
+        const next = current.filter(item => item !== value);
+        if (next.length === 0) {
+          setUrl("");
+        } else {
+          setUrl(next[0]);
+        }
+        return next;
       }
+
+      const next = [...current, value];
+      setUrl(next[0]);
+      return next;
     });
+  }, []);
+
+  const clearEndpointSelection = useCallback(() => {
+    setSelectedEndpointUrls([]);
   }, []);
 
   const filteredK8sEntryPoints = useMemo(
@@ -3351,6 +3361,21 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     () => (snapshot?.vms ?? []).filter(vm => !vm.name.startsWith("gke-") && vm.status === "RUNNING" && vm.externalIp),
     [snapshot]
   );
+
+  const allVisibleEndpointUrls = useMemo(() => {
+    const urls = [
+      ...filteredK8sEntryPoints.map(ep => `http://${ep.ip}`),
+      ...filteredLoadBalancers.map(lb => `http://${lb.ipAddress}`),
+      ...filteredVmTargets.map(vm => `http://${vm.externalIp}`),
+      ...filteredCloudRunServices.map(service => service.url!),
+    ];
+    return [...new Set(urls)];
+  }, [filteredCloudRunServices, filteredK8sEntryPoints, filteredLoadBalancers, filteredVmTargets]);
+
+  const selectAllEndpoints = useCallback(() => {
+    setSelectedEndpointUrls(allVisibleEndpointUrls);
+    setUrl(allVisibleEndpointUrls[0] ?? "");
+  }, [allVisibleEndpointUrls]);
 
   const allLiveMonitorTargets = useMemo<LiveMonitorTarget[]>(() => {
     const targets: LiveMonitorTarget[] = [];
@@ -3968,10 +3993,11 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
   // ── Send request ────────────────────────────────────────────────────────────
   const handleSend = useCallback(async () => {
-    const trimmedUrl = url.trim();
-    if (sending || !trimmedUrl) return;
+    const targetUrls = selectedEndpointUrls.length > 0 ? selectedEndpointUrls : [url.trim()].filter(Boolean);
+    if (sending || targetUrls.length === 0) return;
 
-    const validationError = getProxyUrlValidationError(trimmedUrl);
+    const invalidUrl = targetUrls.find(targetUrl => getProxyUrlValidationError(targetUrl));
+    const validationError = invalidUrl ? getProxyUrlValidationError(invalidUrl) : null;
     if (validationError) {
       setResponse({ ok: false, error: validationError, timing: 0 });
       setRequestTime(new Date());
@@ -3995,11 +4021,33 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       parsedBody = p.ok ? p.val : bodyText;
     }
 
-    const httpPromise = fetch("/api/proxy", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: trimmedUrl, method, body: parsedBody }),
-    }).then(r => r.json() as Promise<ProxyResponse>);
+    const httpPromise = targetUrls.length === 1
+      ? fetch("/api/proxy", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: targetUrls[0], method, body: parsedBody }),
+        }).then(r => r.json() as Promise<ProxyResponse>)
+      : Promise.all(
+          targetUrls.map(async targetUrl => {
+            const res = await fetch("/api/proxy", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ url: targetUrl, method, body: parsedBody }),
+            });
+            return res.json() as Promise<ProxyResponse>;
+          })
+        ).then(results => {
+          const failed = results.find(result => !result.ok);
+          if (failed) return failed;
+          return {
+            ok: true,
+            status: 200,
+            statusText: "OK",
+            timing: Math.max(...results.map(result => result.timing)),
+            body: JSON.stringify({ broadcast: results.length, results }, null, 2),
+            headers: {},
+          } as ProxyResponse;
+        });
 
     // BFS pulse through the active path (handles sidecar chains in correct order)
     await runBfsAnimation(activePath);
@@ -4023,7 +4071,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     }
 
     setSending(false);
-  }, [sending, url, method, bodyText, nodes, activePath, runBfsAnimation]);
+  }, [sending, url, method, bodyText, nodes, activePath, runBfsAnimation, selectedEndpointUrls]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
@@ -4076,7 +4124,10 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
             <input
               type="text"
               value={url}
-              onChange={e => setUrl(e.target.value)}
+              onChange={e => {
+                clearEndpointSelection();
+                setUrl(e.target.value);
+              }}
               placeholder="https://..."
               className="flex-1 min-w-0 px-2 py-2 bg-[#0d0d0d] border border-slate-800 text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-emerald-800"
             />
@@ -4093,7 +4144,12 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                 {ENDPOINT_FILTERS.map(filter => (
                   <button
                     key={filter.id}
-                    onClick={() => setEndpointFilter(filter.id)}
+                    onClick={() => {
+                      setEndpointFilter(filter.id);
+                      if (filter.id === "all") {
+                        selectAllEndpoints();
+                      }
+                    }}
                     className={cn(
                       "px-2 py-1 text-[9px] uppercase tracking-widest border transition-colors",
                       endpointFilter === filter.id
