@@ -16,6 +16,7 @@ Options:
   --path PATH             Trace path to hit. Default: /work
   --bursts N              Number of request bursts to send. Default: 6.
   --requests N            Requests per burst. Default: 20.
+  --concurrency N         Max in-flight requests per burst. Default: 10.
   --pause SECONDS         Pause between bursts. Default: 1.5.
   --timeout SECONDS       Per-request curl timeout. Default: 10.
   -h, --help              Show this help.
@@ -31,6 +32,7 @@ method="POST"
 path="/work"
 bursts="6"
 requests="20"
+concurrency="10"
 pause="1.5"
 timeout="10"
 tf_dir="${GKE_TF_DIR:-/Users/pavel/Projects/watchmen-infra/stacks/gcp-gke-cluster}"
@@ -61,6 +63,10 @@ while [[ $# -gt 0 ]]; do
       requests="${2:-}"
       shift 2
       ;;
+    --concurrency)
+      concurrency="${2:-}"
+      shift 2
+      ;;
     --pause)
       pause="${2:-}"
       shift 2
@@ -83,6 +89,11 @@ done
 
 if [[ -z "$email" ]]; then
   usage >&2
+  exit 2
+fi
+
+if ! [[ "$concurrency" =~ ^[0-9]+$ ]] || [[ "$concurrency" -lt 1 ]]; then
+  echo "Invalid concurrency: $concurrency" >&2
   exit 2
 fi
 
@@ -277,6 +288,7 @@ echo "  path:       $path"
 echo "  method:     $method"
 echo "  bursts:     $bursts"
 echo "  requests:   $requests"
+echo "  concurrency:$concurrency"
 echo "  pause:      $pause"
 echo
 
@@ -284,6 +296,7 @@ body_template='{"traceId":"__TRACE_ID__","email":"__EMAIL__","burst":"__BURST__"
 
 for burst in $(seq 1 "$bursts"); do
   echo "Burst $burst/$bursts"
+  request_pids=()
   for request in $(seq 1 "$requests"); do
     trace_id="watchmen-gke-volume-${burst}-${request}-$(date +%s)-${RANDOM}"
     request_url="$(append_query "${trace_url}${path}" "poll_email=$encoded_email&source=gke-volume&burst=$burst&request=$request&watchmen_trace_probe=$trace_id")"
@@ -292,7 +305,17 @@ for burst in $(seq 1 "$bursts"); do
     payload="${payload//__BURST__/$burst}"
     payload="${payload//__REQUEST__/$request}"
     payload="${payload//__PATH__/$path}"
-    send_request "$burst" "$request" "$method" "$request_url" "$payload" "application/json" "$trace_id"
+    send_request "$burst" "$request" "$method" "$request_url" "$payload" "application/json" "$trace_id" &
+    request_pids+=("$!")
+
+    if [[ "${#request_pids[@]}" -ge "$concurrency" ]]; then
+      wait "${request_pids[0]}"
+      request_pids=("${request_pids[@]:1}")
+    fi
+  done
+
+  for pid in "${request_pids[@]}"; do
+    wait "$pid"
   done
   echo
   if [[ "$burst" -lt "$bursts" ]]; then
