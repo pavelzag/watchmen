@@ -4955,9 +4955,9 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
         </AnimatePresence>
       </div>
 
-      {/* ── Fullscreen NodeDetail slide-in panel ──────────────────────── */}
+      {/* ── NodeDetail slide-in panel ───────────────────────────────── */}
       <AnimatePresence>
-        {graphFullscreen && selectedNode && (
+        {selectedNode && (
           <motion.div
             key={selectedNode.id}
             initial={{ x: 300, opacity: 0 }}
