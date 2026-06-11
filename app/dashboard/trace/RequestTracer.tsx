@@ -3004,7 +3004,9 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const [liveMode, setLiveMode] = useState(false);
   const [liveScope, setLiveScope] = useState<LiveScope>("active");
   const [liveAnimEnabled, setLiveAnimEnabled] = useState(true);
+  const [liveIntensityEnabled, setLiveIntensityEnabled] = useState(true);
   const liveAnimEnabledRef = useRef(true);
+  const liveIntensityEnabledRef = useRef(true);
   const liveModeRef = useRef(false);
   const liveLastTsByTarget = useRef<Record<string, string>>({});
   const liveLastAgentEventAtRef = useRef("");
@@ -3025,6 +3027,10 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   useEffect(() => {
     liveAnimEnabledRef.current = liveAnimEnabled;
   }, [liveAnimEnabled]);
+
+  useEffect(() => {
+    liveIntensityEnabledRef.current = liveIntensityEnabled;
+  }, [liveIntensityEnabled]);
 
   // Demo simulation
   const [demoRps, setDemoRps] = useState<number | null>(null);
@@ -4360,9 +4366,28 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                         ? "border-emerald-800 text-emerald-600 hover:border-emerald-700"
                         : "border-slate-700 text-slate-600 hover:border-slate-500 hover:text-slate-400"
                     )}
-                  >
+                    >
                     <Zap size={8} />
                     ANIM
+                  </button>
+                )}
+                {liveMode && (
+                  <button
+                    onClick={() => {
+                      const next = !liveIntensityEnabled;
+                      liveIntensityEnabledRef.current = next;
+                      setLiveIntensityEnabled(next);
+                    }}
+                    title={liveIntensityEnabled ? "Disable intensity-based line styling" : "Enable intensity-based line styling"}
+                    className={cn(
+                      "flex items-center gap-1 text-[8px] px-1.5 py-0.5 border transition-colors tracking-widest",
+                      liveIntensityEnabled
+                        ? "border-emerald-800 text-emerald-400 hover:border-emerald-700"
+                        : "border-slate-700 text-slate-600 hover:border-slate-500 hover:text-slate-400"
+                    )}
+                  >
+                    <Sparkles size={8} />
+                    INTENS
                   </button>
                 )}
                 <div className="w-px h-3 bg-slate-800 mx-0.5" />
@@ -4458,11 +4483,15 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
               // part of the inferred path; otherwise "internet" keeps every
               // outbound edge faintly visible because it is always active.
               const lineVisible = !url.trim() || isPath || concurrentBursts.length > 0;
-              const pulseGlowOpacity = 0.18 + requestActivityIntensity * 0.28;
-              const pulseCoreOpacity = 0.88 + requestActivityIntensity * 0.08;
-              const pulseGlowWidth = 5 + requestActivityIntensity * 2.5;
-              const pulseCoreWidth = 1.8 + requestActivityIntensity * 0.85;
-              const pulseDuration = Math.max(0.22, 0.38 - requestActivityIntensity * 0.12);
+              const useIntensityStyling = liveIntensityEnabled;
+              const lineActivity = useIntensityStyling
+                ? requestActivityIntensity * (isPath || concurrentBursts.length > 0 ? 1 : 0.55)
+                : 0;
+              const pulseGlowOpacity = useIntensityStyling ? 0.18 + lineActivity * 0.28 : 0.25;
+              const pulseCoreOpacity = useIntensityStyling ? 0.88 + lineActivity * 0.08 : 0.95;
+              const pulseGlowWidth = useIntensityStyling ? 5 + lineActivity * 2.5 : 6;
+              const pulseCoreWidth = useIntensityStyling ? 1.8 + lineActivity * 0.85 : 2;
+              const pulseDuration = useIntensityStyling ? Math.max(0.22, 0.38 - lineActivity * 0.12) : 0.38;
 
               return (
                 <g key={line.id} opacity={lineVisible ? 1 : 0}>
