@@ -4748,7 +4748,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                   status === "active" && "shadow-lg shadow-emerald-500/20",
                   status === "done" && meta.border,
                   status === "error" && "border-red-700",
-                  isSelected && "ring-1 ring-white/20",
+                  isSelected && "ring-2 ring-emerald-400/80 border-emerald-400/60 bg-emerald-950/20 shadow-[0_0_0_1px_rgba(16,185,129,0.18)]",
                 )}
               >
                 {/* Icon */}
@@ -4783,6 +4783,11 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                   </div>
                   <div className="flex items-center gap-1 mt-0.5">
                     <span className="text-[9px] text-slate-600 truncate">{node.sublabel}</span>
+                    {isSelected && (
+                      <span className="shrink-0 text-[7px] uppercase tracking-widest text-emerald-300 border border-emerald-700/70 px-0.5 rounded">
+                        Selected
+                      </span>
+                    )}
                     {istioNodes.has(node.id) && (
                       <span className="shrink-0 flex items-center gap-0.5 text-[7px] text-violet-400 border border-violet-800/60 px-0.5 rounded" title="Istio service mesh · mTLS enabled">
                         <Shield size={6} />mTLS
