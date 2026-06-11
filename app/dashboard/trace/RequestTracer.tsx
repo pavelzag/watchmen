@@ -4654,7 +4654,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                   status === "active" && "shadow-lg shadow-emerald-500/20",
                   status === "done" && meta.border,
                   status === "error" && "border-red-700",
-                  isSelected && "border-emerald-300/65 bg-emerald-950/30 shadow-[0_0_34px_rgba(16,185,129,0.26),0_0_82px_rgba(16,185,129,0.14)]",
+                  isSelected && "border-emerald-300/70 bg-emerald-950/32 shadow-[0_0_42px_rgba(16,185,129,0.30),0_0_100px_rgba(16,185,129,0.18)]",
                 )}
               >
                 {/* Icon */}
