@@ -746,29 +746,37 @@ function parseLiveRequestLog(entry: LogEntry): ParsedLiveRequestLog | null {
   };
 }
 
-function getUnexpectedLiveRequestLogs(entries: LogEntry[]): ParsedLiveRequestLog[] {
+function getLiveRequestLogs(entries: LogEntry[], includeExpectedRequests: boolean): ParsedLiveRequestLog[] {
   return entries
     .map(parseLiveRequestLog)
-    .filter((entry): entry is ParsedLiveRequestLog => !!entry && !isExpectedLiveRequest(entry));
+    .filter((entry): entry is ParsedLiveRequestLog => !!entry && (includeExpectedRequests || !isExpectedLiveRequest(entry)));
 }
 
-function toLiveEvent(target: LiveMonitorTarget, entries: LogEntry[], nodes: GraphNode[]): LiveEvent | null {
-  const requestLogs = getUnexpectedLiveRequestLogs(entries);
-  if (requestLogs.length === 0) return null;
-  const latest = requestLogs.reduce((a, b) => a.entry.timestamp > b.entry.timestamp ? a : b);
-  return {
-    id: `${liveTargetKey(target)}:${latest.entry.timestamp}:${requestLogs.length}`,
-    ts: latest.entry.timestamp,
-    label: liveTargetLabel(target),
+function toLiveEvents(
+  target: LiveMonitorTarget,
+  entries: LogEntry[],
+  nodes: GraphNode[],
+  includeExpectedRequests: boolean,
+): LiveEvent[] {
+  const requestLogs = getLiveRequestLogs(entries, includeExpectedRequests)
+    .sort((a, b) => eventTimestampMs(b.entry.timestamp) - eventTimestampMs(a.entry.timestamp));
+  const label = liveTargetLabel(target);
+  const focusNodeId = resolveLiveTargetNodeId(target, nodes);
+  const targetKey = liveTargetKey(target);
+
+  return requestLogs.slice(0, 20).map((request, index) => ({
+    id: `${targetKey}:${request.entry.timestamp}:${request.method ?? "HTTP"}:${request.path ?? "request"}:${index}`,
+    ts: request.entry.timestamp,
+    label,
     kind: target.kind,
     projectId: target.projectId,
-    focusNodeId: resolveLiveTargetNodeId(target, nodes),
-    method: latest.method,
-    path: latest.path,
-    status: latest.status,
-    latency: latest.latency,
-    count: requestLogs.length,
-  };
+    focusNodeId,
+    method: request.method,
+    path: request.path,
+    status: request.status,
+    latency: request.latency,
+    count: 1,
+  }));
 }
 
 function toDemoLiveEvent(target: LiveMonitorTarget, ts: string, count: number, nodes: GraphNode[]): LiveEvent {
@@ -3614,8 +3622,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
         if (allEntries.length > 0 || freshAgentEvents.length > 0) {
           const newEvents = filteredResults
-            .map(result => toLiveEvent(result.target, result.entries, nodes))
-            .filter((event): event is LiveEvent => !!event);
+            .flatMap(result => toLiveEvents(result.target, result.entries, nodes, includeExpectedRequests));
           const agentLiveEvents = freshAgentEvents
             .map(event => toLiveEventFromAgentEvent(event, nodes))
             .filter(event => event.focusNodeId);
