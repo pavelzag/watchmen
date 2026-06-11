@@ -723,6 +723,7 @@ function parseLiveRequestLog(entry: LogEntry): ParsedLiveRequestLog | null {
     parseReqLog(entry.message) ??
     parseNginxLog(entry.message) ??
     parseEnvoyLog(entry.message) ??
+    parseTraceAppLog(entry.message) ??
     parseStructuredRequestLog(entry.message);
 
   if (!parsed?.method && !parsed?.path) return null;
@@ -1238,7 +1239,7 @@ function TraceModal({
                 ? new Date(e.timestamp).toLocaleTimeString([], { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })
                 : "";
               const parsed = !e.httpRequest
-                ? (parseReqLog(e.message) ?? parseNginxLog(e.message) ?? parseEnvoyLog(e.message))
+                ? (parseReqLog(e.message) ?? parseNginxLog(e.message) ?? parseEnvoyLog(e.message) ?? parseTraceAppLog(e.message))
                 : null;
               const method = e.httpRequest?.method ?? parsed?.method ?? "";
               const path = e.httpRequest
@@ -1427,6 +1428,34 @@ function parseEnvoyLog(msg: string): { method: string; path: string; status: num
   return { method: m[2], path: m[3], status: Number(m[4]), latencyMs: Number(m[5]), remoteIp: m[6], userAgent: m[7] };
 }
 
+const TRACE_APP_LOG_RE = /\bservice=(\S+)\s+method=(\S+)\s+path=(\S+)\s+remote=(\S+)\s+duration=(\S+)/;
+function durationToMs(value: string): number {
+  const m = value.match(/^([\d.]+)(ns|µs|us|ms|s)$/);
+  if (!m) return 0;
+  const amount = Number(m[1]);
+  if (!Number.isFinite(amount)) return 0;
+  switch (m[2]) {
+    case "ns": return amount / 1_000_000;
+    case "µs":
+    case "us": return amount / 1_000;
+    case "s": return amount * 1_000;
+    default: return amount;
+  }
+}
+function parseTraceAppLog(msg: string): { method: string; path: string; status: number; latencyMs: number; remoteIp: string; userAgent: string; service: string } | null {
+  const m = msg.match(TRACE_APP_LOG_RE);
+  if (!m) return null;
+  return {
+    service: m[1],
+    method: m[2],
+    path: m[3],
+    remoteIp: m[4],
+    latencyMs: durationToMs(m[5]),
+    status: 200,
+    userAgent: "",
+  };
+}
+
 // Parse nginx JSON access logs: {"time":...,"remote_addr":...,"method":...,"uri":...,"status":200,...}
 function parseNginxLog(msg: string): { method: string; path: string; status: number; latencyMs: number; remoteIp: string; userAgent: string } | null {
 	try {
@@ -1588,7 +1617,7 @@ function getLogEntryDetails(entry: LogEntry): LogEntryDetails {
     };
   }
 
-  const parsed = parseReqLog(entry.message) ?? parseNginxLog(entry.message) ?? parseEnvoyLog(entry.message);
+  const parsed = parseReqLog(entry.message) ?? parseNginxLog(entry.message) ?? parseEnvoyLog(entry.message) ?? parseTraceAppLog(entry.message);
   if (parsed) {
     const source = entry.container || entry.pod || entry.instanceId || entry.revision || "";
     const remoteIp = (parsed as any).ip ?? (parsed as any).remoteIp ?? "";
@@ -1877,7 +1906,7 @@ function NodeDetail({
   // Filtered logs
   const filteredLogs = useMemo(() => {
     return logs.filter(l => {
-      const parsed = !l.httpRequest ? (parseReqLog(l.message) ?? parseStructuredRequestLog(l.message) ?? parseNginxLog(l.message) ?? parseEnvoyLog(l.message)) : null;
+      const parsed = !l.httpRequest ? (parseReqLog(l.message) ?? parseStructuredRequestLog(l.message) ?? parseNginxLog(l.message) ?? parseEnvoyLog(l.message) ?? parseTraceAppLog(l.message)) : null;
       const status = l.httpRequest?.status ?? parsed?.status;
       const searchable = l.httpRequest
         ? `${l.httpRequest.method} ${l.httpRequest.url} ${l.httpRequest.remoteIp} ${l.httpRequest.userAgent}`
@@ -1906,7 +1935,7 @@ function NodeDetail({
         const hr = l.httpRequest;
         return `${ts}  ${hr.method}  ${hr.status ?? "?"}  ${hr.url}  ${hr.remoteIp}  ${hr.latency}`;
       }
-      const parsed = parseReqLog(l.message);
+      const parsed = parseReqLog(l.message) ?? parseTraceAppLog(l.message);
       if (parsed) {
         return `${ts}  ${parsed.method}  ${parsed.status}  ${parsed.path}  ${(parsed as any).ip ?? (parsed as any).remoteIp ?? ""}  ${parsed.latencyMs}ms${(parsed as any).body ? `  body=${(parsed as any).body}` : ""}`;
       }
@@ -2230,7 +2259,7 @@ function NodeDetail({
               }
 
               // ── Try to parse structured text log ([req], nginx JSON, Envoy) ──
-              const parsed = parseReqLog(l.message) ?? parseStructuredRequestLog(l.message) ?? parseNginxLog(l.message) ?? parseEnvoyLog(l.message);
+              const parsed = parseReqLog(l.message) ?? parseStructuredRequestLog(l.message) ?? parseNginxLog(l.message) ?? parseEnvoyLog(l.message) ?? parseTraceAppLog(l.message);
               if (parsed) {
                 const statusC =
                   parsed.status < 300 ? "text-emerald-400" :
@@ -2392,7 +2421,7 @@ function NodeDetail({
                     <div className="flex-1 overflow-y-auto px-4 py-2 flex flex-col gap-1.5 font-mono text-[10px]">
                       {filteredLogs.map((l, i) => {
                         const ts = l.timestamp ? new Date(l.timestamp).toLocaleTimeString() : "";
-                        const parsed = !l.httpRequest ? (parseReqLog(l.message) ?? parseStructuredRequestLog(l.message)) : null;
+                        const parsed = !l.httpRequest ? (parseReqLog(l.message) ?? parseStructuredRequestLog(l.message) ?? parseTraceAppLog(l.message)) : null;
                         const status = l.httpRequest?.status ?? parsed?.status;
                         const method = l.httpRequest?.method ?? parsed?.method ?? "";
                         const path = l.httpRequest
@@ -2400,7 +2429,7 @@ function NodeDetail({
                           : parsed?.path ?? "";
                         const ip = l.httpRequest?.remoteIp ?? (parsed as any)?.ip ?? (parsed as any)?.remoteIp ?? "";
                         const latency = l.httpRequest?.latency ?? (parsed ? `${parsed.latencyMs}ms` : "");
-                        const body = parsed?.body ?? "";
+                        const body = parsed && "body" in parsed ? parsed.body ?? "" : "";
                         const pod = l.pod || l.instanceId || "";
                         const statusC = !status ? "text-slate-400"
                           : status < 300 ? "text-emerald-400"
