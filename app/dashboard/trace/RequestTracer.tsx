@@ -4084,7 +4084,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
         </div>
 
         {/* Scrollable middle: targets + body */}
-        <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-2">
+        <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar flex flex-col gap-2">
 
           {/* URL suggestions */}
           {(loadingEntryPoints || snapshot || entryPoints.length > 0) && (
@@ -4267,7 +4267,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                 value={bodyText}
                 onChange={e => setBodyText(e.target.value)}
                 rows={6}
-                className="w-full px-2 py-2 bg-[#0d0d0d] border border-slate-800 text-xs text-slate-300 font-mono focus:outline-none focus:border-emerald-800 resize-y"
+                className="w-full px-2 py-2 bg-[#0d0d0d] border border-slate-800 text-xs text-slate-300 font-mono focus:outline-none focus:border-emerald-800 resize-y no-scrollbar"
                 spellCheck={false}
               />
             </div>
