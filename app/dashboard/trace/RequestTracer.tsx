@@ -668,6 +668,12 @@ const EXPECTED_REQUEST_PATHS = new Set([
   "/metrics",
 ]);
 
+const DEFAULT_HIDDEN_GKE_HEALTH_PATHS = new Set([
+  "/health",
+  "/api/health",
+  "/healthz",
+]);
+
 const EXPECTED_REQUEST_USER_AGENT_RE = /\b(GoogleHC|kube-probe|ELB-HealthChecker|HealthChecker|watchmen-trace-poller)\b/i;
 
 function isExpectedLiveRequest({
@@ -1673,6 +1679,26 @@ function getLogEntryDetails(entry: LogEntry): LogEntryDetails {
   };
 }
 
+function getLogEntryRequestPath(entry: LogEntry): string | undefined {
+  if (entry.httpRequest?.url) {
+    try { return new URL(entry.httpRequest.url).pathname; }
+    catch { return entry.httpRequest.url; }
+  }
+
+  const parsed =
+    parseReqLog(entry.message) ??
+    parseStructuredRequestLog(entry.message) ??
+    parseNginxLog(entry.message) ??
+    parseEnvoyLog(entry.message) ??
+    parseTraceAppLog(entry.message);
+  return parsed?.path;
+}
+
+function isDefaultHiddenGkeHealthLog(entry: LogEntry): boolean {
+  const cleanPath = (getLogEntryRequestPath(entry) ?? "").split("?")[0].replace(/\/+$/, "") || "/";
+  return DEFAULT_HIDDEN_GKE_HEALTH_PATHS.has(cleanPath.toLowerCase());
+}
+
 function LogEntryModal({
   entry,
   onClose,
@@ -1826,6 +1852,7 @@ function NodeDetail({
   const [logsError, setLogsError] = useState<string | null>(null);
   const [logSearch, setLogSearch] = useState("");
   const [logStatusFilter, setLogStatusFilter] = useState<"all" | "2xx" | "3xx" | "4xx" | "5xx">("all");
+  const [hideGkeHealthLogs, setHideGkeHealthLogs] = useState(true);
   const [logsExpanded, setLogsExpanded] = useState(false);
   const [selectedLogEntry, setSelectedLogEntry] = useState<LogEntry | null>(null);
   const [copyFlash, setCopyFlash] = useState(false);
@@ -1905,8 +1932,14 @@ function NodeDetail({
   }, [tab, node.matchUrl]);
 
   // Filtered logs
+  const canHideGkeHealthLogs = node.type === "gke" || node.type === "sidecar";
+  const hiddenGkeHealthLogCount = useMemo(
+    () => canHideGkeHealthLogs ? logs.filter(isDefaultHiddenGkeHealthLog).length : 0,
+    [canHideGkeHealthLogs, logs]
+  );
   const filteredLogs = useMemo(() => {
     return logs.filter(l => {
+      if (canHideGkeHealthLogs && hideGkeHealthLogs && isDefaultHiddenGkeHealthLog(l)) return false;
       const parsed = !l.httpRequest ? (parseReqLog(l.message) ?? parseStructuredRequestLog(l.message) ?? parseNginxLog(l.message) ?? parseEnvoyLog(l.message) ?? parseTraceAppLog(l.message)) : null;
       const status = l.httpRequest?.status ?? parsed?.status;
       const searchable = l.httpRequest
@@ -1926,7 +1959,7 @@ function NodeDetail({
       }
       return true;
     });
-  }, [logs, logSearch, logStatusFilter]);
+  }, [canHideGkeHealthLogs, hideGkeHealthLogs, logs, logSearch, logStatusFilter]);
 
   // Copy logs to clipboard
   const handleCopyLogs = useCallback(() => {
@@ -2203,7 +2236,20 @@ function NodeDetail({
                   )}
                 >{f.toUpperCase()}</button>
               ))}
-              {(logSearch || logStatusFilter !== "all") && (
+              {canHideGkeHealthLogs && hiddenGkeHealthLogCount > 0 && (
+                <button
+                  onClick={() => setHideGkeHealthLogs(v => !v)}
+                  className={cn(
+                    "text-[8px] px-1.5 py-0.5 border transition-colors",
+                    hideGkeHealthLogs
+                      ? "border-slate-500 text-slate-300 bg-slate-800"
+                      : "border-slate-800 text-slate-600 hover:text-slate-400 hover:border-slate-700"
+                  )}
+                >
+                  {hideGkeHealthLogs ? "HEALTH HIDDEN" : "HEALTH SHOWN"}
+                </button>
+              )}
+              {(logSearch || logStatusFilter !== "all" || (canHideGkeHealthLogs && hideGkeHealthLogs && hiddenGkeHealthLogCount > 0)) && (
                 <span className="text-[8px] text-slate-600 self-center ml-1">{filteredLogs.length}/{logs.length}</span>
               )}
             </div>
