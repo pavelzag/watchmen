@@ -2986,8 +2986,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const [bodyText, setBodyText] = useState('{\n  "key": "value"\n}');
   const [methodOpen, setMethodOpen] = useState(false);
   const [endpointFilter, setEndpointFilter] = useState<EndpointFilter>("all");
-  const [selectedEndpointUrls, setSelectedEndpointUrls] = useState<string[]>([]);
-  const [allEndpointsSelected, setAllEndpointsSelected] = useState(false);
+  const [selectedEndpointUrl, setSelectedEndpointUrl] = useState<string | null>(null);
 
   const usesPubSubSource = traceSourceConfig?.computeSource === "pubsub" || traceSourceConfig?.gkeSource === "pubsub";
   const usesAgentSource = traceSourceConfig?.gkeSource === "ebpf_agent";
@@ -3312,7 +3311,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   }, []);
 
   const isEndpointSelected = useCallback((value: string) => {
-    if (selectedEndpointUrls.includes(value)) return true;
+    if (selectedEndpointUrl) return selectedEndpointUrl === value;
     if (!url.trim()) return false;
     if (url === value || url.startsWith(value)) return true;
     try {
@@ -3322,30 +3321,19 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     } catch {
       return false;
     }
-  }, [selectedEndpointUrls, url]);
+  }, [selectedEndpointUrl, url]);
 
   const toggleEndpointSelection = useCallback((value: string) => {
-    setAllEndpointsSelected(false);
-    setSelectedEndpointUrls(current => {
-      if (current.includes(value)) {
-        const next = current.filter(item => item !== value);
-        if (next.length === 0) {
-          setUrl("");
-        } else {
-          setUrl(next[0]);
-        }
-        return next;
-      }
-
-      const next = [...current, value];
-      setUrl(next[0]);
+    setSelectedEndpointUrl(current => {
+      const next = current === value ? null : value;
+      setUrl(next ?? "");
       return next;
     });
   }, []);
 
   const clearEndpointSelection = useCallback(() => {
-    setAllEndpointsSelected(false);
-    setSelectedEndpointUrls([]);
+    setSelectedEndpointUrl(null);
+    setUrl("");
   }, []);
 
   const filteredK8sEntryPoints = useMemo(
@@ -3365,95 +3353,68 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     [snapshot]
   );
 
-  const allVisibleEndpointUrls = useMemo(() => {
-    const urls = [
-      ...filteredK8sEntryPoints.map(ep => `http://${ep.ip}`),
-      ...filteredLoadBalancers.map(lb => `http://${lb.ipAddress}`),
-      ...filteredVmTargets.map(vm => `http://${vm.externalIp}`),
-      ...filteredCloudRunServices.map(service => service.url!),
-    ];
-    return [...new Set(urls)];
-  }, [filteredCloudRunServices, filteredK8sEntryPoints, filteredLoadBalancers, filteredVmTargets]);
+  const selectedEndpointSummary = useMemo(() => {
+    const urlValue = selectedEndpointUrl;
+    if (!urlValue) return null;
 
-  const selectedEndpointSummaries = useMemo(() => {
-    const entries = selectedEndpointUrls
-      .map(urlValue => {
-        const k8s = filteredK8sEntryPoints.find(ep => `http://${ep.ip}` === urlValue);
-        if (k8s) {
-          const label = `${k8s.clusterName}${k8s.k8sService ? ` · ${k8s.k8sService}` : ""}`;
-          return {
-            value: urlValue,
-            label,
-            kind: k8s.type === "master-api" ? "API" : k8s.type === "ingress" ? "ING" : "LB",
-            tone: "emerald" as const,
-          };
-        }
+    const k8s = filteredK8sEntryPoints.find(ep => `http://${ep.ip}` === urlValue);
+    if (k8s) {
+      const label = `${k8s.clusterName}${k8s.k8sService ? ` · ${k8s.k8sService}` : ""}`;
+      return {
+        value: urlValue,
+        label,
+        kind: k8s.type === "master-api" ? "API" : k8s.type === "ingress" ? "ING" : "LB",
+        tone: "emerald" as const,
+      };
+    }
 
-        const lb = filteredLoadBalancers.find(item => `http://${item.ipAddress}` === urlValue);
-        if (lb) {
-          return {
-            value: urlValue,
-            label: lb.name,
-            kind: "LB",
-            tone: "violet" as const,
-          };
-        }
+    const lb = filteredLoadBalancers.find(item => `http://${item.ipAddress}` === urlValue);
+    if (lb) {
+      return {
+        value: urlValue,
+        label: lb.name,
+        kind: "LB",
+        tone: "violet" as const,
+      };
+    }
 
-        const vm = filteredVmTargets.find(item => `http://${item.externalIp}` === urlValue);
-        if (vm) {
-          return {
-            value: urlValue,
-            label: vm.name,
-            kind: "VM",
-            tone: "cyan" as const,
-          };
-        }
+    const vm = filteredVmTargets.find(item => `http://${item.externalIp}` === urlValue);
+    if (vm) {
+      return {
+        value: urlValue,
+        label: vm.name,
+        kind: "VM",
+        tone: "cyan" as const,
+      };
+    }
 
-        const cloudRun = filteredCloudRunServices.find(item => item.url === urlValue);
-        if (cloudRun) {
-          return {
-            value: urlValue,
-            label: cloudRun.name,
-            kind: "RUN",
-            tone: "emerald" as const,
-          };
-        }
+    const cloudRun = filteredCloudRunServices.find(item => item.url === urlValue);
+    if (cloudRun) {
+      return {
+        value: urlValue,
+        label: cloudRun.name,
+        kind: "RUN",
+        tone: "emerald" as const,
+      };
+    }
 
-        try {
-          const parsed = new URL(urlValue);
-          return {
-            value: urlValue,
-            label: parsed.hostname,
-            kind: parsed.pathname && parsed.pathname !== "/" ? parsed.pathname : "",
-            tone: "emerald" as const,
-          };
-        } catch {
-          return {
-            value: urlValue,
-            label: urlValue,
-            kind: "",
-            tone: "emerald" as const,
-          };
-        }
-      });
-
-    return entries;
-  }, [filteredCloudRunServices, filteredK8sEntryPoints, filteredLoadBalancers, filteredVmTargets, selectedEndpointUrls]);
-
-  const selectAllEndpoints = useCallback(() => {
-    setAllEndpointsSelected(true);
-    setSelectedEndpointUrls(allVisibleEndpointUrls);
-    setUrl(allVisibleEndpointUrls[0] ?? "");
-  }, [allVisibleEndpointUrls]);
-
-  useEffect(() => {
-    if (!allEndpointsSelected) return;
-    setSelectedEndpointUrls(allVisibleEndpointUrls);
-    setUrl(current => {
-      if (current && allVisibleEndpointUrls.includes(current)) return current;
-      return allVisibleEndpointUrls[0] ?? "";
-    });
-  }, [allEndpointsSelected, allVisibleEndpointUrls]);
+    try {
+      const parsed = new URL(urlValue);
+      return {
+        value: urlValue,
+        label: parsed.hostname,
+        kind: parsed.pathname && parsed.pathname !== "/" ? parsed.pathname : "",
+        tone: "emerald" as const,
+      };
+    } catch {
+      return {
+        value: urlValue,
+        label: urlValue,
+        kind: "",
+        tone: "emerald" as const,
+      };
+    }
+  }, [filteredCloudRunServices, filteredK8sEntryPoints, filteredLoadBalancers, filteredVmTargets, selectedEndpointUrl]);
 
   const allLiveMonitorTargets = useMemo<LiveMonitorTarget[]>(() => {
     const targets: LiveMonitorTarget[] = [];
@@ -4071,7 +4032,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
   // ── Send request ────────────────────────────────────────────────────────────
   const handleSend = useCallback(async () => {
-    const targetUrls = selectedEndpointUrls.length > 0 ? selectedEndpointUrls : [url.trim()].filter(Boolean);
+    const targetUrls = [selectedEndpointUrl ?? url.trim()].filter(Boolean);
     if (sending || targetUrls.length === 0) return;
 
     const invalidUrl = targetUrls.find(targetUrl => getProxyUrlValidationError(targetUrl));
@@ -4149,7 +4110,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     }
 
     setSending(false);
-  }, [sending, url, method, bodyText, nodes, activePath, runBfsAnimation, selectedEndpointUrls]);
+  }, [sending, url, method, bodyText, nodes, activePath, runBfsAnimation, selectedEndpointUrl]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
@@ -4211,11 +4172,11 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
             />
           </div>
 
-          {selectedEndpointSummaries.length > 0 && (
+          {selectedEndpointSummary && (
             <div className="border border-slate-800/70 bg-[#090d0a] px-2 py-1.5">
               <div className="flex items-center justify-between gap-2 mb-1">
                 <div className="text-[9px] uppercase tracking-widest text-emerald-400">
-                  Selected · {selectedEndpointSummaries.length}
+                  Selected
                 </div>
                 <button
                   onClick={clearEndpointSelection}
@@ -4224,28 +4185,23 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                   Clear
                 </button>
               </div>
-              <div className="flex flex-col gap-1">
-                {selectedEndpointSummaries.map(item => (
-                  <button
-                    key={item.value}
-                    onClick={() => toggleEndpointSelection(item.value)}
-                    title={item.value}
-                    className={cn(
-                      "flex items-center justify-between gap-2 px-2 py-1 text-[8px] uppercase tracking-widest border transition-colors w-full text-left",
-                      item.tone === "violet"
-                        ? "border-violet-500/60 bg-violet-950/40 text-violet-200"
-                        : item.tone === "cyan"
-                        ? "border-cyan-500/60 bg-cyan-950/35 text-cyan-200"
-                        : "border-emerald-500/60 bg-emerald-950/40 text-emerald-200"
-                    )}
-                  >
-                    <span className="font-bold shrink-0">{item.kind || "ENDPOINT"}</span>
-                    <span className="truncate min-w-0 normal-case tracking-normal text-right">
-                      {item.label}
-                    </span>
-                  </button>
-                ))}
-              </div>
+              <button
+                onClick={() => toggleEndpointSelection(selectedEndpointSummary.value)}
+                title={selectedEndpointSummary.value}
+                className={cn(
+                  "flex items-center justify-between gap-2 px-2 py-1 text-[8px] uppercase tracking-widest border transition-colors w-full text-left",
+                  selectedEndpointSummary.tone === "violet"
+                    ? "border-violet-500/60 bg-violet-950/40 text-violet-200"
+                    : selectedEndpointSummary.tone === "cyan"
+                    ? "border-cyan-500/60 bg-cyan-950/35 text-cyan-200"
+                    : "border-emerald-500/60 bg-emerald-950/40 text-emerald-200"
+                )}
+              >
+                <span className="font-bold shrink-0">{selectedEndpointSummary.kind || "ENDPOINT"}</span>
+                <span className="truncate min-w-0 normal-case tracking-normal text-right">
+                  {selectedEndpointSummary.label}
+                </span>
+              </button>
             </div>
           )}
         </div>
@@ -4262,25 +4218,15 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                     key={filter.id}
                     onClick={() => {
                       setEndpointFilter(filter.id);
-                      if (filter.id === "all") {
-                        selectAllEndpoints();
-                      }
                     }}
                     className={cn(
                       "px-2 py-1 text-[9px] uppercase tracking-widest border transition-colors",
-                      filter.id === "all" && allEndpointsSelected
-                        ? "border-emerald-800/80 bg-emerald-950/30 text-emerald-300"
-                        : endpointFilter === filter.id
+                      endpointFilter === filter.id
                         ? "border-emerald-800/80 bg-emerald-950/30 text-emerald-300"
                         : "border-slate-800/70 bg-[#090909] text-slate-500 hover:text-slate-300 hover:border-slate-700"
                     )}
                   >
                     {filter.label}
-                    {filter.id === "all" && allEndpointsSelected && allVisibleEndpointUrls.length > 0 && (
-                      <span className="ml-1 font-mono text-[8px] text-emerald-200">
-                        {allVisibleEndpointUrls.length}
-                      </span>
-                    )}
                   </button>
                 ))}
               </div>
