@@ -24,6 +24,13 @@ struct {
 	__uint(max_entries, 1 << 24);
 } events SEC(".maps");
 
+struct {
+	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+	__uint(max_entries, 1);
+	__type(key, __u32);
+	__type(value, char[DATA_LEN]);
+} scratch SEC(".maps");
+
 static __always_inline int is_http_req(const char *data, int len)
 {
 	if (len < 3) return 0;
@@ -82,10 +89,13 @@ int trace_http_write(struct bpf_raw_tracepoint_args *ctx)
 #else
 	struct pt_regs *regs = (struct pt_regs *)ctx->args[0];
 	long id = (long)ctx->args[1];
-	char data[DATA_LEN];
+	__u32 key = 0;
+	char *data = bpf_map_lookup_elem(&scratch, &key);
 	int read_len = 0;
 	unsigned long arg1 = BPF_CORE_READ(regs, si);
 	unsigned long arg2 = BPF_CORE_READ(regs, dx);
+
+	if (!data) return 0;
 
 	if (id == 1 || id == 44) {
 		const void *buf = (const void *)arg1;
