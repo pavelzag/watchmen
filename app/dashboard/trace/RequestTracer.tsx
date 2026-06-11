@@ -4501,7 +4501,6 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
               // When a URL is focused, only show edges whose endpoints are both
               // part of the inferred path; otherwise "internet" keeps every
               // outbound edge faintly visible because it is always active.
-              const lineVisible = !url.trim() || isPath || concurrentBursts.length > 0;
               const useIntensityStyling = liveIntensityEnabled;
               const lineActivity = useIntensityStyling
                 ? requestActivityIntensity * (isPath || concurrentBursts.length > 0 ? 1 : 0.55)
@@ -4511,6 +4510,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
               const pulseGlowWidth = useIntensityStyling ? 5 + lineActivity * 2.5 : 6;
               const pulseCoreWidth = useIntensityStyling ? 1.8 + lineActivity * 0.85 : 2;
               const pulseDuration = useIntensityStyling ? Math.max(0.22, 0.38 - lineActivity * 0.12) : 0.38;
+              const lineVisible = !selectedNode && (!url.trim() || isPath || concurrentBursts.length > 0);
 
               return (
                 <g key={line.id} opacity={lineVisible ? 1 : 0}>
@@ -4592,8 +4592,9 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
               ? { ...NODE_META.sidecar, ...getContainerMeta(node.container) }
               : NODE_META[node.type];
             const status = nodeStatus[node.id] ?? "idle";
-            const inPath = activePath.has(node.id);
             const isSelected = selectedNode?.id === node.id;
+            const inPath = activePath.has(node.id);
+            const graphFocusActive = Boolean(selectedNode);
 
             const isBeingDragged = draggingNodeId === node.id;
 
@@ -4642,8 +4643,8 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                   height: NODE_H,
                 }}
                 animate={{
-                  opacity: isSelected ? 1 : (inPath ? 1 : (url.trim() ? 0 : 0.3)),
-                  scale: status === "active" ? 1.04 : isBeingDragged ? 1.06 : 1,
+                  opacity: graphFocusActive ? (isSelected ? 1 : 0) : (inPath ? 1 : (url.trim() ? 0 : 0.3)),
+                  scale: status === "active" ? 1.04 : isBeingDragged ? 1.06 : isSelected ? 1.02 : 1,
                 }}
                 transition={{ duration: isSelected ? 0.08 : 0.15 }}
                 className={cn(
@@ -4653,7 +4654,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                   status === "active" && "shadow-lg shadow-emerald-500/20",
                   status === "done" && meta.border,
                   status === "error" && "border-red-700",
-                  isSelected && "ring-2 ring-emerald-400/80 border-emerald-400/60 bg-emerald-950/20 shadow-[0_0_0_1px_rgba(16,185,129,0.18)]",
+                  isSelected && "ring-2 ring-emerald-300/90 border-emerald-300/70 bg-emerald-950/35 shadow-[0_0_24px_rgba(16,185,129,0.42),0_0_0_1px_rgba(16,185,129,0.22)]",
                 )}
               >
                 {/* Icon */}
@@ -4688,11 +4689,6 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                   </div>
                   <div className="flex items-center gap-1 mt-0.5">
                     <span className="text-[9px] text-slate-600 truncate">{node.sublabel}</span>
-                    {isSelected && (
-                      <span className="shrink-0 text-[7px] uppercase tracking-widest text-emerald-300 border border-emerald-700/70 px-0.5 rounded">
-                        Selected
-                      </span>
-                    )}
                     {istioNodes.has(node.id) && (
                       <span className="shrink-0 flex items-center gap-0.5 text-[7px] text-violet-400 border border-violet-800/60 px-0.5 rounded" title="Istio service mesh · mTLS enabled">
                         <Shield size={6} />mTLS
