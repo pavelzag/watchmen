@@ -4422,20 +4422,6 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
           </div>
         </div>
 
-        {(liveMode || demoMode) && (
-          <TraceActivityRail
-            intensity={requestActivityIntensity}
-            label={liveMode ? "LIVE TRAFFIC" : "SIM TRAFFIC"}
-            rateLabel={
-              requestActivityRate === null
-                ? "0.0/s"
-                : requestActivityRate >= 10
-                  ? `${requestActivityRate.toFixed(0)}/s`
-                  : `${requestActivityRate.toFixed(1)}/s`
-            }
-          />
-        )}
-
         {/* Graph canvas */}
         <div
           ref={containerRef}
