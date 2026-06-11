@@ -91,7 +91,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -n "$method_filter" ]]; then
-  method_filter="${method_filter^^}"
+  method_filter="$(printf '%s' "$method_filter" | tr '[:lower:]' '[:upper:]')"
   case "$method_filter" in
     GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|TRACE) ;;
     *)
@@ -146,6 +146,14 @@ append_query() {
   else
     printf '%s?%s' "$url" "$query"
   fi
+}
+
+should_poll_method() {
+  local method="$1"
+  if [[ -z "$method_filter" ]]; then
+    return 0
+  fi
+  [[ "$method" == "$method_filter" ]]
 }
 
 format_curl_command() {
@@ -394,14 +402,6 @@ echo "  trace_url:    ${trace_url:-<not found>}"
 echo "  intervals:    $intervals"
 echo "  method:       ${method_filter:-<all>}"
 echo
-
-should_poll_method() {
-  local method="$1"
-  if [[ -z "$method_filter" ]]; then
-    return 0
-  fi
-  [[ "$method" == "$method_filter" ]]
-}
 
 if [[ -n "$method_filter" ]]; then
   matches=0
