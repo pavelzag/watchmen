@@ -122,17 +122,24 @@ resolve_live_trace_url() {
   local candidate="${1:-}"
   local resolved=""
 
-  if [[ -n "$candidate" ]]; then
-    if curl -sS --max-time 3 --connect-timeout 2 -o /dev/null "$candidate" >/dev/null 2>&1; then
-      printf '%s' "$candidate"
-      return 0
-    fi
+  local live_trace_ip=""
+  live_trace_ip="$(kubectl -n "${NAMESPACE:-watchmen}" get svc watchmen-trace-main -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)"
+  if [[ -n "$live_trace_ip" ]]; then
+    printf 'http://%s/' "$live_trace_ip"
+    return 0
   fi
 
   if [[ -d "$tf_dir" ]]; then
     resolved="$(terraform -chdir="$tf_dir" output -raw trace_test_url 2>/dev/null || true)"
     if [[ -n "$resolved" ]]; then
       printf '%s' "$resolved"
+      return 0
+    fi
+  fi
+
+  if [[ -n "$candidate" ]]; then
+    if curl -sS --max-time 3 --connect-timeout 2 -o /dev/null "$candidate" >/dev/null 2>&1; then
+      printf '%s' "$candidate"
       return 0
     fi
   fi
