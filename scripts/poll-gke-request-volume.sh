@@ -10,7 +10,7 @@ Send repeated request bursts against the public GKE trace endpoint so the
 trace UI can be exercised with different request volumes.
 
 Options:
-  --trace-url URL         Public GKE trace-test LoadBalancer URL. Required unless TRACE_TEST_URL is set.
+  --trace-url URL         Public GKE trace-test LoadBalancer URL. Optional; falls back to Terraform if stale or omitted.
   --email EMAIL           Email label included in each request query string.
   --method VERB           HTTP method to send. Default: POST.
   --path PATH             Trace path to hit. Default: /work
@@ -33,6 +33,7 @@ bursts="6"
 requests="20"
 pause="1.5"
 timeout="10"
+tf_dir="${GKE_TF_DIR:-/Users/pavel/Projects/watchmen-infra/stacks/gcp-gke-cluster}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -80,7 +81,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$trace_url" || -z "$email" ]]; then
+if [[ -z "$email" ]]; then
   usage >&2
   exit 2
 fi
@@ -115,6 +116,28 @@ append_query() {
   else
     printf '%s?%s' "$url" "$query"
   fi
+}
+
+resolve_live_trace_url() {
+  local candidate="${1:-}"
+  local resolved=""
+
+  if [[ -n "$candidate" ]]; then
+    if curl -sS --max-time 3 --connect-timeout 2 -o /dev/null "$candidate" >/dev/null 2>&1; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  fi
+
+  if [[ -d "$tf_dir" ]]; then
+    resolved="$(terraform -chdir="$tf_dir" output -raw trace_test_url 2>/dev/null || true)"
+    if [[ -n "$resolved" ]]; then
+      printf '%s' "$resolved"
+      return 0
+    fi
+  fi
+
+  printf '%s' "${candidate:-}"
 }
 
 format_curl_command() {
@@ -232,6 +255,12 @@ send_request() {
 }
 
 trace_url="${trace_url%/}"
+trace_url="$(resolve_live_trace_url "$trace_url")"
+trace_url="${trace_url%/}"
+if [[ -z "$trace_url" ]]; then
+  echo "Unable to resolve a live GKE trace URL." >&2
+  exit 2
+fi
 encoded_email="$(urlencode "$email")"
 
 echo "Polling GKE trace request volume"
