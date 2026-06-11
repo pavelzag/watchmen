@@ -25,6 +25,7 @@ const ANIM_PULSE_MS = 260;  // ms node stays "active" before "done"
 const LIVE_POLL_ACTIVE_MS = 1500;
 const LIVE_POLL_ALL_MS = 4000;
 const LIVE_ALL_CLOUD_LOGGING_BATCH_SIZE = 3;
+const LIVE_LOG_FETCH_LIMIT = 100;
 const LIVE_STREAM_PULSE_MS = 520;
 // Cloud Logging can lag well beyond a few seconds, so keep a wider freshness
 // window for "live" traffic while still aging events out of the UI separately.
@@ -554,7 +555,7 @@ function buildLiveLogParams(target: LiveMonitorTarget, after: string): URLSearch
   const params = new URLSearchParams({
     projectId: target.projectId,
     after,
-    limit: "20",
+    limit: String(LIVE_LOG_FETCH_LIMIT),
   });
   if (target.kind === "gke") {
     params.set("container", target.container);
