@@ -35,7 +35,7 @@ watchmen_url="${WATCHMEN_URL:-https://watchmen-kappa.vercel.app}"
 trace_url="${TRACE_TEST_URL:-}"
 cluster="${GKE_CLUSTER_NAME:-}"
 project="${GCP_PROJECT_ID:-}"
-agent_binary_url="${WATCHMEN_AGENT_BINARY_URL:-https://github.com/pavelzag/watchmen/releases/download/agent-v0.3.18/watchmen-ebpf-agent-linux-amd64}"
+agent_binary_url="${WATCHMEN_AGENT_BINARY_URL:-https://github.com/pavelzag/watchmen/releases/download/agent-v0.3.19/watchmen-ebpf-agent-linux-amd64}"
 timeout="${CURL_TIMEOUT:-10}"
 
 while [[ $# -gt 0 ]]; do
