@@ -3546,10 +3546,18 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     eventSource.addEventListener("trace", (rawEvent) => {
       const parsed = JSON.parse((rawEvent as MessageEvent).data) as LiveTraceIngressEvent;
       liveStreamingLastEventAtRef.current = Date.now();
-      if (liveScope !== "all" && isExpectedLiveRequest({ path: parsed.path, userAgent: parsed.userAgent })) {
+      if (sourceForKind(parsed.kind, traceSourceConfig) !== "pubsub") {
         return;
       }
-      if (sourceForKind(parsed.kind, traceSourceConfig) !== "pubsub") {
+
+      const uiEvent = toLiveEventFromIngress(parsed, nodes);
+      const nowMs = eventTimestampMs(uiEvent.ts) || Date.now();
+      liveTimestamps.current.push(nowMs);
+      liveTimestamps.current = liveTimestamps.current.filter(t => nowMs - t < 60_000);
+      const inWindow = liveTimestamps.current.filter(t => nowMs - t < 10_000).length;
+      setLiveRps(inWindow > 0 ? inWindow / 10 : null);
+
+      if (liveScope !== "all" && isExpectedLiveRequest({ path: parsed.path, userAgent: parsed.userAgent })) {
         return;
       }
 
@@ -3559,19 +3567,11 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
         }
       }
 
-      const uiEvent = toLiveEventFromIngress(parsed, nodes);
-      const nowMs = eventTimestampMs(uiEvent.ts) || Date.now();
-
       setLiveEvents(prev => {
         const retainedPrev = prev.filter(event => nowMs - eventTimestampMs(event.ts) < LIVE_EVENT_RETENTION_MS);
         const merged = [...retainedPrev, uiEvent];
         return merged.slice(-24);
       });
-
-      liveTimestamps.current.push(nowMs);
-      liveTimestamps.current = liveTimestamps.current.filter(t => nowMs - t < 60_000);
-      const inWindow = liveTimestamps.current.filter(t => nowMs - t < 10_000).length;
-      setLiveRps(inWindow > 0 ? inWindow / 10 : null);
 
       if (liveAnimEnabledRef.current) {
         const pathIds = buildPathForIngressEvent(parsed, nodes, edges, liveMonitorTarget);
@@ -3792,6 +3792,12 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
           return;
         }
 
+        const rawEntries = results.flatMap(result => result.entries);
+        const rawAgentEvents = agentEvents.filter(event => {
+          const tsMs = eventTimestampMs(event.received_at);
+          return tsMs > 0 && pollNowMs - tsMs <= LIVE_EVENT_FRESHNESS_MS;
+        });
+
         const filteredResults = results.map(result => ({
           ...result,
           entries: result.entries.filter(entry => {
@@ -3811,6 +3817,21 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
             eventTimestampMs(a.received_at) > eventTimestampMs(b.received_at) ? a : b
           );
           liveLastAgentEventAtRef.current = latestAgentEvent.received_at;
+        }
+
+        const rawTrafficTimestamps = [
+          ...rawEntries
+            .map(entry => eventTimestampMs(entry.timestamp))
+            .filter(ts => ts > 0),
+          ...rawAgentEvents
+            .map(event => eventTimestampMs(event.received_at))
+            .filter(ts => ts > 0),
+        ];
+        if (rawTrafficTimestamps.length > 0) {
+          liveTimestamps.current.push(...rawTrafficTimestamps);
+          liveTimestamps.current = liveTimestamps.current.filter(t => pollNowMs - t < 60_000);
+          const inWindow = liveTimestamps.current.filter(t => pollNowMs - t < 10_000).length;
+          setLiveRps(inWindow > 0 ? inWindow / 10 : null);
         }
 
         if (allEntries.length > 0 || freshAgentEvents.length > 0) {
@@ -3836,16 +3857,6 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
               return deduped;
             });
           }
-          allEntries.forEach(e => {
-            if (e.timestamp) liveTimestamps.current.push(new Date(e.timestamp).getTime());
-          });
-          freshAgentEvents.forEach(e => {
-            if (e.received_at) liveTimestamps.current.push(new Date(e.received_at).getTime());
-          });
-          liveTimestamps.current = liveTimestamps.current.filter(t => pollNowMs - t < 60_000);
-          const inWindow = liveTimestamps.current.filter(t => pollNowMs - t < 10_000).length;
-          setLiveRps(inWindow > 0 ? inWindow / 10 : null);
-
           if (liveAnimEnabledRef.current) {
             busy = true;
             const targetsWithHits = filteredResults.filter(result => result.entries.length > 0);
