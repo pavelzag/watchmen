@@ -3375,6 +3375,71 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     return [...new Set(urls)];
   }, [filteredCloudRunServices, filteredK8sEntryPoints, filteredLoadBalancers, filteredVmTargets]);
 
+  const selectedEndpointSummaries = useMemo(() => {
+    const entries = selectedEndpointUrls
+      .map(urlValue => {
+        const k8s = filteredK8sEntryPoints.find(ep => `http://${ep.ip}` === urlValue);
+        if (k8s) {
+          const label = `${k8s.clusterName}${k8s.k8sService ? ` · ${k8s.k8sService}` : ""}`;
+          return {
+            value: urlValue,
+            label,
+            kind: k8s.type === "master-api" ? "API" : k8s.type === "ingress" ? "ING" : "LB",
+            tone: "emerald" as const,
+          };
+        }
+
+        const lb = filteredLoadBalancers.find(item => `http://${item.ipAddress}` === urlValue);
+        if (lb) {
+          return {
+            value: urlValue,
+            label: lb.name,
+            kind: "LB",
+            tone: "violet" as const,
+          };
+        }
+
+        const vm = filteredVmTargets.find(item => `http://${item.externalIp}` === urlValue);
+        if (vm) {
+          return {
+            value: urlValue,
+            label: vm.name,
+            kind: "VM",
+            tone: "cyan" as const,
+          };
+        }
+
+        const cloudRun = filteredCloudRunServices.find(item => item.url === urlValue);
+        if (cloudRun) {
+          return {
+            value: urlValue,
+            label: cloudRun.name,
+            kind: "RUN",
+            tone: "emerald" as const,
+          };
+        }
+
+        try {
+          const parsed = new URL(urlValue);
+          return {
+            value: urlValue,
+            label: parsed.hostname,
+            kind: parsed.pathname && parsed.pathname !== "/" ? parsed.pathname : "",
+            tone: "emerald" as const,
+          };
+        } catch {
+          return {
+            value: urlValue,
+            label: urlValue,
+            kind: "",
+            tone: "emerald" as const,
+          };
+        }
+      });
+
+    return entries;
+  }, [filteredCloudRunServices, filteredK8sEntryPoints, filteredLoadBalancers, filteredVmTargets, selectedEndpointUrls]);
+
   const selectAllEndpoints = useCallback(() => {
     setAllEndpointsSelected(true);
     setSelectedEndpointUrls(allVisibleEndpointUrls);
@@ -4153,6 +4218,44 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
           {/* URL suggestions */}
           {(loadingEntryPoints || snapshot || entryPoints.length > 0) && (
             <div className="flex flex-col gap-1">
+              {selectedEndpointSummaries.length > 0 && (
+                <div className="px-1 pb-1">
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <div className="text-[9px] uppercase tracking-widest text-emerald-400">
+                      Selected · {selectedEndpointSummaries.length}
+                    </div>
+                    <button
+                      onClick={clearEndpointSelection}
+                      className="text-[8px] uppercase tracking-widest text-slate-600 hover:text-slate-300 transition-colors"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {selectedEndpointSummaries.map(item => (
+                      <button
+                        key={item.value}
+                        onClick={() => toggleEndpointSelection(item.value)}
+                        title={item.value}
+                        className={cn(
+                          "flex items-center gap-1 px-2 py-1 text-[8px] uppercase tracking-widest border transition-colors max-w-full",
+                          item.tone === "violet"
+                            ? "border-violet-500/60 bg-violet-950/40 text-violet-200"
+                            : item.tone === "cyan"
+                            ? "border-cyan-500/60 bg-cyan-950/35 text-cyan-200"
+                            : "border-emerald-500/60 bg-emerald-950/40 text-emerald-200"
+                        )}
+                      >
+                        <span className="font-bold">{item.kind || "ENDPOINT"}</span>
+                        <span className="truncate max-w-[14rem] normal-case tracking-normal">
+                          {item.label}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className="flex flex-wrap gap-1 px-1 pb-1">
                 {ENDPOINT_FILTERS.map(filter => (
                   <button
