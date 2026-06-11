@@ -3353,69 +3353,6 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     [snapshot]
   );
 
-  const selectedEndpointSummary = useMemo(() => {
-    const urlValue = selectedEndpointUrl;
-    if (!urlValue) return null;
-
-    const k8s = filteredK8sEntryPoints.find(ep => `http://${ep.ip}` === urlValue);
-    if (k8s) {
-      const label = `${k8s.clusterName}${k8s.k8sService ? ` · ${k8s.k8sService}` : ""}`;
-      return {
-        value: urlValue,
-        label,
-        kind: k8s.type === "master-api" ? "API" : k8s.type === "ingress" ? "ING" : "LB",
-        tone: "emerald" as const,
-      };
-    }
-
-    const lb = filteredLoadBalancers.find(item => `http://${item.ipAddress}` === urlValue);
-    if (lb) {
-      return {
-        value: urlValue,
-        label: lb.name,
-        kind: "LB",
-        tone: "violet" as const,
-      };
-    }
-
-    const vm = filteredVmTargets.find(item => `http://${item.externalIp}` === urlValue);
-    if (vm) {
-      return {
-        value: urlValue,
-        label: vm.name,
-        kind: "VM",
-        tone: "cyan" as const,
-      };
-    }
-
-    const cloudRun = filteredCloudRunServices.find(item => item.url === urlValue);
-    if (cloudRun) {
-      return {
-        value: urlValue,
-        label: cloudRun.name,
-        kind: "RUN",
-        tone: "emerald" as const,
-      };
-    }
-
-    try {
-      const parsed = new URL(urlValue);
-      return {
-        value: urlValue,
-        label: parsed.hostname,
-        kind: parsed.pathname && parsed.pathname !== "/" ? parsed.pathname : "",
-        tone: "emerald" as const,
-      };
-    } catch {
-      return {
-        value: urlValue,
-        label: urlValue,
-        kind: "",
-        tone: "emerald" as const,
-      };
-    }
-  }, [filteredCloudRunServices, filteredK8sEntryPoints, filteredLoadBalancers, filteredVmTargets, selectedEndpointUrl]);
-
   const allLiveMonitorTargets = useMemo<LiveMonitorTarget[]>(() => {
     const targets: LiveMonitorTarget[] = [];
     const seen = new Set<string>();
@@ -4172,38 +4109,6 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
             />
           </div>
 
-          {selectedEndpointSummary && (
-            <div className="border border-slate-800/70 bg-[#090d0a] px-2 py-1.5">
-              <div className="flex items-center justify-between gap-2 mb-1">
-                <div className="text-[9px] uppercase tracking-widest text-emerald-400">
-                  Selected
-                </div>
-                <button
-                  onClick={clearEndpointSelection}
-                  className="text-[8px] uppercase tracking-widest text-slate-600 hover:text-slate-300 transition-colors"
-                >
-                  Clear
-                </button>
-              </div>
-              <button
-                onClick={() => toggleEndpointSelection(selectedEndpointSummary.value)}
-                title={selectedEndpointSummary.value}
-                className={cn(
-                  "flex items-center justify-between gap-2 px-2 py-1 text-[8px] uppercase tracking-widest border transition-colors w-full text-left",
-                  selectedEndpointSummary.tone === "violet"
-                    ? "border-violet-500/60 bg-violet-950/40 text-violet-200"
-                    : selectedEndpointSummary.tone === "cyan"
-                    ? "border-cyan-500/60 bg-cyan-950/35 text-cyan-200"
-                    : "border-emerald-500/60 bg-emerald-950/40 text-emerald-200"
-                )}
-              >
-                <span className="font-bold shrink-0">{selectedEndpointSummary.kind || "ENDPOINT"}</span>
-                <span className="truncate min-w-0 normal-case tracking-normal text-right">
-                  {selectedEndpointSummary.label}
-                </span>
-              </button>
-            </div>
-          )}
         </div>
 
         {/* Scrollable middle: targets + body */}
@@ -4737,10 +4642,10 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                   height: NODE_H,
                 }}
                 animate={{
-                  opacity: inPath ? 1 : (url.trim() ? 0 : 0.3),
+                  opacity: isSelected ? 1 : (inPath ? 1 : (url.trim() ? 0 : 0.3)),
                   scale: status === "active" ? 1.04 : isBeingDragged ? 1.06 : 1,
                 }}
-                transition={{ duration: 0.15 }}
+                transition={{ duration: isSelected ? 0.08 : 0.15 }}
                 className={cn(
                   "border flex items-center gap-2.5 px-3 select-none transition-colors duration-200",
                   isBeingDragged ? "cursor-grabbing shadow-xl shadow-black/40" : "cursor-grab",
