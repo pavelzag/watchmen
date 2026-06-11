@@ -26,7 +26,7 @@ const LIVE_POLL_ACTIVE_MS = 1500;
 const LIVE_POLL_ALL_MS = 4000;
 const LIVE_ALL_CLOUD_LOGGING_BATCH_SIZE = 3;
 const LIVE_LOG_FETCH_LIMIT = 100;
-const LIVE_RPS_WINDOW_MS = 3000;
+const LIVE_RPS_WINDOW_MS = 10_000;
 const LIVE_STREAM_PULSE_MS = 520;
 // Cloud Logging can lag well beyond a few seconds, so keep a wider freshness
 // window for "live" traffic while still aging events out of the UI separately.
@@ -200,9 +200,16 @@ function requestIntensityFromRate(rate: number | null): number {
   return clamp01(normalized);
 }
 
-function rateFromWindowCount(count: number, windowMs: number): number | null {
-  if (count <= 0) return null;
-  return count * (1000 / windowMs);
+function estimateRateFromTimestamps(timestamps: number[], nowMs: number, windowMs: number): number | null {
+  const recent = timestamps
+    .filter(ts => nowMs - ts < windowMs)
+    .sort((a, b) => a - b);
+
+  if (recent.length === 0) return null;
+  if (recent.length === 1) return 1000 / windowMs;
+
+  const spanMs = Math.max(recent[recent.length - 1] - recent[0], windowMs / 5);
+  return recent.length * (1000 / spanMs);
 }
 
 function getProxyUrlValidationError(rawUrl: string): string | null {
@@ -3561,8 +3568,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       const nowMs = eventTimestampMs(uiEvent.ts) || Date.now();
       liveTimestamps.current.push(nowMs);
       liveTimestamps.current = liveTimestamps.current.filter(t => nowMs - t < 60_000);
-      const inWindow = liveTimestamps.current.filter(t => nowMs - t < LIVE_RPS_WINDOW_MS).length;
-      setLiveRps(rateFromWindowCount(inWindow, LIVE_RPS_WINDOW_MS));
+      setLiveRps(estimateRateFromTimestamps(liveTimestamps.current, nowMs, LIVE_RPS_WINDOW_MS));
 
       if (liveScope !== "all" && isExpectedLiveRequest({ path: parsed.path, userAgent: parsed.userAgent })) {
         return;
@@ -3734,8 +3740,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       const pollNowMs = Date.now();
       setLiveEvents(prev => prev.filter(event => pollNowMs - eventTimestampMs(event.ts) < LIVE_EVENT_RETENTION_MS));
       liveTimestamps.current = liveTimestamps.current.filter(t => pollNowMs - t < 60_000);
-      const currentWindowCount = liveTimestamps.current.filter(t => pollNowMs - t < LIVE_RPS_WINDOW_MS).length;
-      setLiveRps(rateFromWindowCount(currentWindowCount, LIVE_RPS_WINDOW_MS));
+      setLiveRps(estimateRateFromTimestamps(liveTimestamps.current, pollNowMs, LIVE_RPS_WINDOW_MS));
       const includeExpectedRequests = liveScope === "all";
       const agentEventsPromise = shouldUseAgentEvents(traceSourceConfig)
         ? fetch(
@@ -3837,8 +3842,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
         if (rawTrafficTimestamps.length > 0) {
           liveTimestamps.current.push(...rawTrafficTimestamps);
           liveTimestamps.current = liveTimestamps.current.filter(t => pollNowMs - t < 60_000);
-          const inWindow = liveTimestamps.current.filter(t => pollNowMs - t < LIVE_RPS_WINDOW_MS).length;
-          setLiveRps(rateFromWindowCount(inWindow, LIVE_RPS_WINDOW_MS));
+          setLiveRps(estimateRateFromTimestamps(liveTimestamps.current, pollNowMs, LIVE_RPS_WINDOW_MS));
         }
 
         if (allEntries.length > 0 || freshAgentEvents.length > 0) {
@@ -3932,8 +3936,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
         const nowMs = Date.now();
         events.forEach(() => liveTimestamps.current.push(nowMs));
         liveTimestamps.current = liveTimestamps.current.filter(t => nowMs - t < 60_000);
-        const inWindow = liveTimestamps.current.filter(t => nowMs - t < 10_000).length;
-        setLiveRps(inWindow / 10);
+        setLiveRps(estimateRateFromTimestamps(liveTimestamps.current, nowMs, LIVE_RPS_WINDOW_MS));
 
         if (liveAnimEnabledRef.current) {
           for (let i = 0; i < targets.length; i++) {
