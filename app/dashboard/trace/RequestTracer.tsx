@@ -1112,6 +1112,13 @@ const METHOD_COLOR: Record<string, string> = {
   HEAD: "text-cyan-400", OPTIONS: "text-violet-400", TRACE: "text-fuchsia-400",
 };
 
+function requestPriority(method?: string, path?: string): number {
+  const normalized = (method ?? "").toUpperCase();
+  if (normalized && normalized !== "GET") return 0;
+  if ((path ?? "").includes("watchmen_trace_probe=")) return 1;
+  return 2;
+}
+
 const ENDPOINT_FILTERS: { id: EndpointFilter; label: string }[] = [
   { id: "all", label: "All" },
   { id: "compute", label: "Compute" },
@@ -2095,6 +2102,20 @@ function NodeDetail({
         if (!searchable.toLowerCase().includes(logSearch.toLowerCase())) return false;
       }
       return true;
+    }).sort((a, b) => {
+      const aParsed = !a.httpRequest ? (parseReqLog(a.message) ?? parseStructuredRequestLog(a.message) ?? parseNginxLog(a.message) ?? parseEnvoyLog(a.message) ?? parseTraceAppLog(a.message)) : null;
+      const bParsed = !b.httpRequest ? (parseReqLog(b.message) ?? parseStructuredRequestLog(b.message) ?? parseNginxLog(b.message) ?? parseEnvoyLog(b.message) ?? parseTraceAppLog(b.message)) : null;
+      const aMethod = a.httpRequest?.method ?? aParsed?.method;
+      const bMethod = b.httpRequest?.method ?? bParsed?.method;
+      const aPath = a.httpRequest
+        ? (() => { try { return new URL(a.httpRequest!.url).pathname; } catch { return a.httpRequest!.url; } })()
+        : aParsed?.path;
+      const bPath = b.httpRequest
+        ? (() => { try { return new URL(b.httpRequest!.url).pathname; } catch { return b.httpRequest!.url; } })()
+        : bParsed?.path;
+      const prio = requestPriority(aMethod, aPath) - requestPriority(bMethod, bPath);
+      if (prio !== 0) return prio;
+      return (b.timestamp ?? "").localeCompare(a.timestamp ?? "");
     });
   }, [canHideGkeHealthLogs, hideGkeHealthLogs, logs, logSearch, logStatusFilter]);
 
@@ -3264,9 +3285,15 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     () => [...liveEvents].sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime()),
     [liveEvents]
   );
-  const liveEventsRecent = useMemo(
-    () => liveEventsOrdered.slice(-6),
-    [liveEventsOrdered]
+  const liveEventsFeatured = useMemo(
+    () => [...liveEvents]
+      .sort((a, b) => {
+        const prio = requestPriority(a.method, a.path) - requestPriority(b.method, b.path);
+        if (prio !== 0) return prio;
+        return new Date(b.ts).getTime() - new Date(a.ts).getTime();
+      })
+      .slice(0, 6),
+    [liveEvents]
   );
 
   useEffect(() => {
@@ -4612,7 +4639,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                   <span className="text-[8px] text-slate-600">{liveScope === "all" ? "All endpoints" : "Active path"}</span>
                 </div>
                 <div ref={liveSummaryRef} className="max-h-28 overflow-auto px-3 pb-2 font-mono text-[10px]">
-                  {liveEventsRecent.map(event => {
+                  {liveEventsFeatured.map(event => {
                     const statusClass = !event.status
                       ? "text-slate-500"
                       : event.status < 300
