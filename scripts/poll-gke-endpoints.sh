@@ -13,6 +13,7 @@ when available.
 Options:
   --email EMAIL              Email label included in each request query string.
   --intervals CSV            Seconds to sleep between polling rounds.
+  --method VERB              Restrict polling to a single HTTP method.
   --watchmen-url URL         Watchmen base URL. Default: https://watchmen-kappa.vercel.app
   --trace-url URL            Public GKE trace-test LoadBalancer URL.
   --cluster NAME             GKE cluster name. Default: Terraform output cluster_name.
@@ -31,6 +32,7 @@ tf_dir="$repo_root/stacks/gcp-gke-cluster"
 
 email=""
 intervals=""
+method_filter=""
 watchmen_url="${WATCHMEN_URL:-https://watchmen-kappa.vercel.app}"
 trace_url="${TRACE_TEST_URL:-}"
 cluster="${GKE_CLUSTER_NAME:-}"
@@ -46,6 +48,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --intervals)
       intervals="${2:-}"
+      shift 2
+      ;;
+    --method)
+      method_filter="${2:-}"
       shift 2
       ;;
     --watchmen-url)
@@ -83,6 +89,18 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ -n "$method_filter" ]]; then
+  method_filter="${method_filter^^}"
+  case "$method_filter" in
+    GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|TRACE) ;;
+    *)
+      echo "Invalid method: $method_filter" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+fi
 
 if [[ -z "$email" || -z "$intervals" ]]; then
   usage >&2
@@ -374,13 +392,38 @@ echo "  cluster:      $cluster"
 echo "  project:      $project"
 echo "  trace_url:    ${trace_url:-<not found>}"
 echo "  intervals:    $intervals"
+echo "  method:       ${method_filter:-<all>}"
 echo
+
+should_poll_method() {
+  local method="$1"
+  if [[ -z "$method_filter" ]]; then
+    return 0
+  fi
+  [[ "$method" == "$method_filter" ]]
+}
+
+if [[ -n "$method_filter" ]]; then
+  matches=0
+  for method in "${endpoint_methods[@]}"; do
+    if [[ "$method" == "$method_filter" ]]; then
+      matches=1
+      break
+    fi
+  done
+  if [[ "$matches" -ne 1 ]]; then
+    echo "No endpoints match method filter: $method_filter" >&2
+    exit 2
+  fi
+fi
 
 for round in "${!sleeps[@]}"; do
   round_no=$((round + 1))
   echo "Round $round_no/$(( ${#sleeps[@]} + 1 ))"
   for i in "${!endpoint_names[@]}"; do
-    poll_url "${endpoint_names[$i]}" "${endpoint_methods[$i]}" "${endpoint_urls[$i]}" "${endpoint_payloads[$i]:-}" "${endpoint_content_types[$i]:-}"
+    if should_poll_method "${endpoint_methods[$i]}"; then
+      poll_url "${endpoint_names[$i]}" "${endpoint_methods[$i]}" "${endpoint_urls[$i]}" "${endpoint_payloads[$i]:-}" "${endpoint_content_types[$i]:-}"
+    fi
   done
   echo
 
@@ -394,5 +437,7 @@ done
 
 echo "Round $(( ${#sleeps[@]} + 1 ))/$(( ${#sleeps[@]} + 1 ))"
 for i in "${!endpoint_names[@]}"; do
-  poll_url "${endpoint_names[$i]}" "${endpoint_methods[$i]}" "${endpoint_urls[$i]}" "${endpoint_payloads[$i]:-}" "${endpoint_content_types[$i]:-}"
+  if should_poll_method "${endpoint_methods[$i]}"; then
+    poll_url "${endpoint_names[$i]}" "${endpoint_methods[$i]}" "${endpoint_urls[$i]}" "${endpoint_payloads[$i]:-}" "${endpoint_content_types[$i]:-}"
+  fi
 done
