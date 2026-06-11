@@ -32,6 +32,7 @@ const LIVE_EVENT_FRESHNESS_MS = 120_000;
 const LIVE_EVENT_RETENTION_MS = 120_000;
 const LIVE_EVENT_LIMIT = 100;
 const LOG_AUTO_REFRESH_MS = 10_000;
+const LOG_DRAWER_LIMIT = 200;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1108,6 +1109,7 @@ const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
 const METHOD_COLOR: Record<string, string> = {
   GET: "text-sky-400", POST: "text-emerald-400", PUT: "text-amber-400",
   PATCH: "text-orange-400", DELETE: "text-red-400",
+  HEAD: "text-cyan-400", OPTIONS: "text-violet-400", TRACE: "text-fuchsia-400",
 };
 
 const ENDPOINT_FILTERS: { id: EndpointFilter; label: string }[] = [
@@ -2010,7 +2012,7 @@ function NodeDetail({
     if (!node.projectId) return;
     if (showLoading) setLoadingLogs(true);
     setLogsError(null);
-    const params = new URLSearchParams({ projectId: node.projectId, limit: "80" });
+    const params = new URLSearchParams({ projectId: node.projectId, limit: String(LOG_DRAWER_LIMIT) });
     if (node.type === "cloudrun") {
       params.set("resourceType", "cloud_run_revision");
       params.set("service", node.resourceName ?? node.label.toLowerCase());
@@ -2188,6 +2190,7 @@ function NodeDetail({
   const METHOD_COLOR: Record<string, string> = {
     GET: "text-sky-400", POST: "text-emerald-400", PUT: "text-amber-400",
     PATCH: "text-orange-400", DELETE: "text-red-400",
+    HEAD: "text-cyan-400", OPTIONS: "text-violet-400", TRACE: "text-fuchsia-400",
   };
 
   return (
