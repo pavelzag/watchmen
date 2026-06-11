@@ -185,6 +185,19 @@ function shouldUseAgentEvents(traceSourceConfig: GcpTraceSourceConfigSummary | n
   return traceSourceConfig?.gkeSource === "ebpf_agent";
 }
 
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function requestIntensityFromRate(rate: number | null): number {
+  if (rate === null || !Number.isFinite(rate) || rate <= 0) {
+    return 0;
+  }
+
+  const normalized = Math.log1p(rate * 1.6) / Math.log1p(36);
+  return clamp01(normalized);
+}
+
 function getProxyUrlValidationError(rawUrl: string): string | null {
   let parsed: URL;
   try {
@@ -236,6 +249,86 @@ function HoverTooltip({
           )}
         />
         {content}
+      </div>
+    </div>
+  );
+}
+
+function TraceActivityRail({
+  intensity,
+  label,
+  rateLabel,
+}: {
+  intensity: number;
+  label: string;
+  rateLabel: string;
+}) {
+  const [phase, setPhase] = useState(0);
+
+  useEffect(() => {
+    let frame = 0;
+    const tick = (now: number) => {
+      setPhase(now / 1000);
+      frame = window.requestAnimationFrame(tick);
+    };
+
+    frame = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  const bars = useMemo(() => {
+    return Array.from({ length: 24 }, (_, index) => {
+      const ripple = (Math.sin(phase * 1.9 + index * 0.45) + 1) / 2;
+      const drift = (Math.cos(phase * 0.8 - index * 0.28) + 1) / 2;
+      const height = clamp01(0.12 + intensity * (0.32 + ripple * 0.4 + drift * 0.14));
+      const opacity = 0.16 + intensity * 0.72;
+      return { height, opacity };
+    });
+  }, [intensity, phase]);
+
+  const headOffset = `${((phase * (0.16 + intensity * 0.42)) % 1) * 100}%`;
+
+  return (
+    <div className="shrink-0 border-b border-slate-800/50 bg-[#050805]/90 px-3 py-2">
+      <div className="flex items-center gap-3">
+        <div className="flex items-center gap-1.5 shrink-0 text-[8px] uppercase tracking-widest text-slate-500">
+          <Sparkles size={8} className={intensity > 0.2 ? "text-emerald-400" : "text-slate-600"} />
+          {label}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="relative flex h-5 items-end gap-[2px] overflow-hidden rounded-sm border border-slate-800/80 bg-[#070b07] px-[2px] py-[2px]">
+            <div
+              className="absolute inset-y-0 w-6 bg-emerald-500/10"
+              style={{ left: headOffset }}
+            />
+            {bars.map((bar, index) => (
+              <motion.span
+                key={index}
+                className="flex-1 origin-bottom rounded-[1px] border border-emerald-950/80 bg-emerald-500/70"
+                style={{
+                  height: `${Math.max(12, Math.round(bar.height * 100))}%`,
+                  opacity: bar.opacity,
+                }}
+                animate={{
+                  scaleY: 0.9 + intensity * 0.45,
+                }}
+                transition={{
+                  duration: 0.18,
+                  ease: "easeOut",
+                }}
+              />
+            ))}
+          </div>
+        </div>
+        <div className="shrink-0 text-right">
+          <div className={cn(
+            "text-[10px] font-mono font-bold leading-none",
+            intensity > 0.72 ? "text-red-400" : intensity > 0.42 ? "text-amber-400" : "text-emerald-400"
+          )}>
+            {rateLabel}
+          </div>
+          <div className="text-[8px] uppercase tracking-widest text-slate-600">req intensity</div>
+        </div>
       </div>
     </div>
   );
@@ -2938,6 +3031,28 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const [demoRequestCount, setDemoRequestCount] = useState(0);
   const demoRunningRef = useRef(false);
   const demoReqCountRef = useRef(0);
+  const requestActivityRate = liveMode ? liveRps : demoMode ? demoRps : null;
+  const requestActivityTarget = useMemo(
+    () => requestIntensityFromRate(requestActivityRate),
+    [requestActivityRate]
+  );
+  const [requestActivityIntensity, setRequestActivityIntensity] = useState(0);
+
+  useEffect(() => {
+    let frame = 0;
+    const tick = () => {
+      setRequestActivityIntensity(prev => {
+        const next = prev + (requestActivityTarget - prev) * 0.16;
+        if (Math.abs(next - requestActivityTarget) > 0.01) {
+          frame = window.requestAnimationFrame(tick);
+        }
+        return next;
+      });
+    };
+
+    frame = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(frame);
+  }, [requestActivityTarget]);
 
   // Fullscreen graph
   const [graphFullscreen, setGraphFullscreen] = useState(false);
@@ -4279,6 +4394,20 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
           </div>
         </div>
 
+        {(liveMode || demoMode) && (
+          <TraceActivityRail
+            intensity={requestActivityIntensity}
+            label={liveMode ? "LIVE TRAFFIC" : "SIM TRAFFIC"}
+            rateLabel={
+              requestActivityRate === null
+                ? "0.0/s"
+                : requestActivityRate >= 10
+                  ? `${requestActivityRate.toFixed(0)}/s`
+                  : `${requestActivityRate.toFixed(1)}/s`
+            }
+          />
+        )}
+
         {/* Graph canvas */}
         <div
           ref={containerRef}
@@ -4329,6 +4458,11 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
               // part of the inferred path; otherwise "internet" keeps every
               // outbound edge faintly visible because it is always active.
               const lineVisible = !url.trim() || isPath || concurrentBursts.length > 0;
+              const pulseGlowOpacity = 0.18 + requestActivityIntensity * 0.28;
+              const pulseCoreOpacity = 0.88 + requestActivityIntensity * 0.08;
+              const pulseGlowWidth = 5 + requestActivityIntensity * 2.5;
+              const pulseCoreWidth = 1.8 + requestActivityIntensity * 0.85;
+              const pulseDuration = Math.max(0.22, 0.38 - requestActivityIntensity * 0.12);
 
               return (
                 <g key={line.id} opacity={lineVisible ? 1 : 0}>
@@ -4349,13 +4483,13 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                         d={bezierPath(line)}
                         fill="none"
                         stroke="#00ff41"
-                        strokeWidth={6}
+                        strokeWidth={pulseGlowWidth}
                         strokeLinecap="round"
-                        opacity={0.25}
+                        opacity={pulseGlowOpacity}
                         filter="url(#pulse-glow)"
                         initial={{ pathLength: 0 }}
                         animate={{ pathLength: 1 }}
-                        transition={{ duration: 0.38, ease: "easeOut" }}
+                        transition={{ duration: pulseDuration, ease: "easeOut" }}
                       />
                       {/* Sharp core */}
                       <motion.path
@@ -4363,11 +4497,11 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                         d={bezierPath(line)}
                         fill="none"
                         stroke="#00ff41"
-                        strokeWidth={2}
+                        strokeWidth={pulseCoreWidth}
                         strokeLinecap="round"
-                        initial={{ pathLength: 0, opacity: 0.95 }}
+                        initial={{ pathLength: 0, opacity: pulseCoreOpacity }}
                         animate={{ pathLength: 1, opacity: 1 }}
-                        transition={{ duration: 0.35, ease: "easeOut" }}
+                        transition={{ duration: Math.max(0.2, pulseDuration - 0.03), ease: "easeOut" }}
                       />
                     </>
                   )}
@@ -4377,23 +4511,23 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                         d={bezierPath(line)}
                         fill="none"
                         stroke="#00ff41"
-                        strokeWidth={6}
+                        strokeWidth={pulseGlowWidth + 0.5}
                         strokeLinecap="round"
-                        opacity={0.25}
+                        opacity={pulseGlowOpacity}
                         filter="url(#pulse-glow)"
                         initial={{ pathLength: 0 }}
                         animate={{ pathLength: 1 }}
-                        transition={{ duration: 0.42, ease: "easeOut" }}
+                        transition={{ duration: Math.max(0.22, pulseDuration + 0.02), ease: "easeOut" }}
                       />
                       <motion.path
                         d={bezierPath(line)}
                         fill="none"
                         stroke="#00ff41"
-                        strokeWidth={2}
+                        strokeWidth={pulseCoreWidth}
                         strokeLinecap="round"
-                        initial={{ pathLength: 0, opacity: 0.95 }}
+                        initial={{ pathLength: 0, opacity: pulseCoreOpacity }}
                         animate={{ pathLength: 1, opacity: 1 }}
-                        transition={{ duration: 0.38, ease: "easeOut" }}
+                        transition={{ duration: Math.max(0.2, pulseDuration - 0.01), ease: "easeOut" }}
                       />
                     </g>
                   ))}
