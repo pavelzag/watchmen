@@ -130,6 +130,50 @@ append_query() {
   fi
 }
 
+format_curl_command() {
+  local method="$1"
+  local url="$2"
+  local payload="${3:-}"
+  local content_type="${4:-}"
+  local trace_id="$5"
+  local rendered_payload="${payload//__TRACE_ID__/$trace_id}"
+  rendered_payload="${rendered_payload//__EMAIL__/$email}"
+  rendered_payload="${rendered_payload//__CLUSTER__/$cluster}"
+  rendered_payload="${rendered_payload//__PROJECT__/$project}"
+
+  local -a cmd=(
+    curl
+    -sS
+    --location
+    --max-time "$timeout"
+    --user-agent "watchmen-trace-poller/1.0"
+    --header "X-Watchmen-Trace-Source: poll-gke-endpoints"
+    --header "X-Watchmen-Trace-Id: $trace_id"
+    --header "X-Watchmen-Trace-Method: $method"
+  )
+
+  if [[ "$method" == "HEAD" ]]; then
+    cmd+=(--head)
+  else
+    cmd+=(-X "$method")
+  fi
+
+  if [[ -n "$rendered_payload" && "$method" != "GET" && "$method" != "HEAD" ]]; then
+    cmd+=(--header "Content-Type: ${content_type:-application/octet-stream}")
+    cmd+=(--header "X-Watchmen-Payload-Bytes: ${#rendered_payload}")
+    cmd+=(--data-binary "$rendered_payload")
+  fi
+
+  cmd+=("$url")
+
+  local quoted=""
+  local arg
+  for arg in "${cmd[@]}"; do
+    printf -v quoted '%s %q' "$quoted" "$arg"
+  done
+  printf '%s' "${quoted# }"
+}
+
 status_label() {
   local code="$1"
   if [[ "$code" =~ ^2|^3 ]]; then
@@ -193,6 +237,10 @@ poll_url() {
   label="$(status_label "$code")"
 
   printf '%s %-10s %-28s %-7s http=%s time=%ss %s\n' "$started" "$label" "$name" "$method" "$code" "$timing" "$request_url"
+
+  if [[ "$name" == gke-trace-* || "$label" != "ok" ]]; then
+    printf '  repro: %s\n' "$(format_curl_command "$method" "$request_url" "$payload" "$content_type" "$trace_id")"
+  fi
 
   if [[ "$label" == "failed" && -s /tmp/watchmen-poll-error.$$ ]]; then
     sed 's/^/  curl: /' /tmp/watchmen-poll-error.$$
