@@ -3212,11 +3212,19 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     });
     return base;
   }, [url, nodes, edges]);
+  const graphFocusPath = useMemo(() => {
+    if (!selectedNode) return activePath;
+    const base = buildPathForNode(selectedNode.id, edges);
+    nodes.forEach(n => {
+      if (n.type === "sidecar" && n.parentId && base.has(n.parentId)) base.add(n.id);
+    });
+    return base;
+  }, [activePath, edges, nodes, selectedNode]);
   const focusedPos = useMemo(
-    () => (url.trim() && activePath.size > 1
-      ? calcFocusedPathPositions(nodes, activePath, containerSize.w, graphH)
+    () => (graphFocusPath.size > 1
+      ? calcFocusedPathPositions(nodes, graphFocusPath, containerSize.w, graphH)
       : {}),
-    [activePath, containerSize.w, graphH, nodes, url]
+    [containerSize.w, graphFocusPath, graphH, nodes]
   );
   const pos = useMemo(() => ({ ...basePos, ...focusedPos, ...nodePositions }), [basePos, focusedPos, nodePositions]);
   const lines = useMemo(() => buildSvgLines(edges, pos), [edges, pos]);
@@ -4487,8 +4495,8 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
             </defs>
 
             {lines.map(line => {
-              const fromActive = activePath.has(line.fromId);
-              const toActive = activePath.has(line.toId);
+              const fromActive = graphFocusPath.has(line.fromId);
+              const toActive = graphFocusPath.has(line.toId);
               const isLit = nodeStatus[line.fromId] === "done" || nodeStatus[line.fromId] === "active";
               const isPath = fromActive && toActive;
               const concurrentBursts = livePulseBursts.filter(
@@ -4510,7 +4518,9 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
               const pulseGlowWidth = useIntensityStyling ? 5 + lineActivity * 2.5 : 6;
               const pulseCoreWidth = useIntensityStyling ? 1.8 + lineActivity * 0.85 : 2;
               const pulseDuration = useIntensityStyling ? Math.max(0.22, 0.38 - lineActivity * 0.12) : 0.38;
-              const lineVisible = !selectedNode && (!url.trim() || isPath || concurrentBursts.length > 0);
+              const lineVisible = graphFocusPath.size > 1
+                ? fromActive && toActive
+                : (!url.trim() || isPath || concurrentBursts.length > 0);
 
               return (
                 <g key={line.id} opacity={lineVisible ? 1 : 0}>
@@ -4593,8 +4603,8 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
               : NODE_META[node.type];
             const status = nodeStatus[node.id] ?? "idle";
             const isSelected = selectedNode?.id === node.id;
-            const inPath = activePath.has(node.id);
-            const graphFocusActive = Boolean(selectedNode);
+            const inPath = graphFocusPath.has(node.id);
+            const graphFocusActive = graphFocusPath.size > 1;
 
             const isBeingDragged = draggingNodeId === node.id;
 
@@ -4643,18 +4653,18 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                   height: NODE_H,
                 }}
                 animate={{
-                  opacity: graphFocusActive ? (isSelected ? 1 : 0) : (inPath ? 1 : (url.trim() ? 0 : 0.3)),
-                  scale: status === "active" ? 1.04 : isBeingDragged ? 1.06 : isSelected ? 1.02 : 1,
+                  opacity: graphFocusActive ? (inPath ? (isSelected ? 1 : 0.92) : 0) : (inPath ? 1 : (url.trim() ? 0 : 0.3)),
+                  scale: status === "active" ? 1.04 : isBeingDragged ? 1.06 : isSelected ? 1.015 : 1,
                 }}
-                transition={{ duration: isSelected ? 0.08 : 0.15 }}
+                transition={{ duration: isSelected ? 0.24 : 0.15, ease: "easeOut" }}
                 className={cn(
-                  "border flex items-center gap-2.5 px-3 select-none transition-colors duration-200",
+                  "border flex items-center gap-2.5 px-3 select-none transition-[opacity,transform,box-shadow,border-color,background-color] duration-300 ease-out",
                   isBeingDragged ? "cursor-grabbing shadow-xl shadow-black/40" : "cursor-grab",
                   STATUS_OVERLAY[status],
                   status === "active" && "shadow-lg shadow-emerald-500/20",
                   status === "done" && meta.border,
                   status === "error" && "border-red-700",
-                  isSelected && "ring-2 ring-emerald-300/90 border-emerald-300/70 bg-emerald-950/35 shadow-[0_0_24px_rgba(16,185,129,0.42),0_0_0_1px_rgba(16,185,129,0.22)]",
+                  isSelected && "ring-1 ring-emerald-400/35 border-emerald-300/60 bg-emerald-950/28 shadow-[0_0_34px_rgba(16,185,129,0.22),0_0_72px_rgba(16,185,129,0.12)]",
                 )}
               >
                 {/* Icon */}
@@ -4822,7 +4832,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
             <NodeDetail
               node={selectedNode}
               status={nodeStatus[selectedNode.id] ?? "idle"}
-              inPath={activePath.has(selectedNode.id)}
+              inPath={graphFocusPath.has(selectedNode.id)}
               response={response}
               url={url}
               method={method}
