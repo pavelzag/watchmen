@@ -4643,7 +4643,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                   height: NODE_H,
                 }}
                 animate={{
-                  opacity: inPath ? 1 : (url.trim() ? 0 : 0.3),
+                  opacity: isSelected ? 1 : (inPath ? 1 : (url.trim() ? 0 : 0.3)),
                   scale: status === "active" ? 1.04 : isBeingDragged ? 1.06 : isSelected ? 1.01 : 1,
                 }}
                 transition={{ duration: isSelected ? 0.3 : 0.15, ease: "easeOut" }}
