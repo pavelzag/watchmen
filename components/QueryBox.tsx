@@ -34,6 +34,15 @@ export interface QueryResult {
   fetchedAt: string;
 }
 
+async function readApiResponse(res: Response): Promise<any> {
+  try {
+    return await res.json();
+  } catch {
+    const text = await res.text().catch(() => "");
+    return { error: text || `Request failed with HTTP ${res.status}` };
+  }
+}
+
 export default function QueryBox({ onResult }: QueryBoxProps) {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
@@ -80,7 +89,7 @@ export default function QueryBox({ onResult }: QueryBoxProps) {
         }),
       });
 
-      const data = await res.json();
+      const data = await readApiResponse(res);
       if (!res.ok) throw new Error(data.error ?? "Request failed");
       const result = data as QueryResult;
       onResult(result);

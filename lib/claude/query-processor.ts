@@ -91,7 +91,7 @@ Return JSON matching this exact schema:
 
 queryType rules:
 - Use "auth_logs" for questions about authentication failures, login failures, access denied errors, permission denied events, or unauthorized access attempts. Set logHours to the number of hours to look back (default 2 if unspecified).
-- Use "request_logs" for questions about HTTP requests, responses, request traces, application traffic, paths, status codes, or logs for requests received since the system started.
+- Use "request_logs" for questions about HTTP requests, responses, request traces, application traffic, paths, status codes, failed/error/erroneous requests, or logs for requests received since the system started.
 - Use "connected_projects" for questions about the state of connected cloud projects, accounts, clusters, endpoints, agents, or discovered infrastructure inventory.
 - Use "data_sources" for questions about where information is stored, where Ask AI searches, which database tables/APIs are used, or data retention/coverage.
 - Use "security_findings" for general security posture questions (firewalls, public buckets).

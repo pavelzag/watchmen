@@ -77,6 +77,15 @@ function isEditableTarget(target: EventTarget | null): boolean {
     return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable;
 }
 
+async function readApiResponse(res: Response): Promise<any> {
+    try {
+        return await res.json();
+    } catch {
+        const text = await res.text().catch(() => "");
+        return { error: text || `Request failed with HTTP ${res.status}` };
+    }
+}
+
 export default function CommandPalette() {
     const pathname = usePathname();
     const isAws = pathname?.startsWith("/dashboard/aws") ?? false;
@@ -144,7 +153,7 @@ export default function CommandPalette() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ query: query.trim() }),
             });
-            const data = await res.json();
+            const data = await readApiResponse(res);
             if (!res.ok) throw new Error(data.error ?? "Request failed");
             saveQuery(data.query, data.answer);
             setResult({
