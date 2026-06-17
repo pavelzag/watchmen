@@ -85,14 +85,32 @@ function parseCapturedHttp(raw: unknown): {
 type QueryLogger = {
   queryId: string;
   startedAt: number;
+  currentStep?: string;
 };
 
 function logQueryStep(logger: QueryLogger | undefined, step: string, data: Record<string, unknown> = {}) {
   if (!logger) return;
+  logger.currentStep = step;
   console.info(`[api/query:${logger.queryId}] ${step}`, {
     elapsedMs: Date.now() - logger.startedAt,
     ...data,
   });
+}
+
+function createQueryWatchdogs(logger: QueryLogger): Array<ReturnType<typeof setTimeout>> {
+  return [5000, 15000, 25000].map((ms) =>
+    setTimeout(() => {
+      console.warn(`[api/query:${logger.queryId}] watchdog`, {
+        elapsedMs: Date.now() - logger.startedAt,
+        thresholdMs: ms,
+        currentStep: logger.currentStep ?? "unknown",
+      });
+    }, ms)
+  );
+}
+
+function clearQueryWatchdogs(watchdogs: Array<ReturnType<typeof setTimeout>>) {
+  for (const watchdog of watchdogs) clearTimeout(watchdog);
 }
 
 function increment(map: Record<string, number>, key: unknown) {
@@ -612,25 +630,68 @@ async function buildGkeEntryPointContext(params: {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await auth();
+  const queryId = crypto.randomUUID().slice(0, 8);
+  const startedAt = Date.now();
+  const logger: QueryLogger = { queryId, startedAt, currentStep: "route invoked" };
+  const watchdogs = createQueryWatchdogs(logger);
+  const done = <T extends Response>(response: T): T => {
+    clearQueryWatchdogs(watchdogs);
+    return response;
+  };
+
+  logQueryStep(logger, "route invoked", {
+    method: req.method,
+    urlPath: req.nextUrl.pathname,
+    vercelRegion: process.env.VERCEL_REGION ?? process.env.AWS_REGION ?? "unknown",
+    hasProcessorUrl: Boolean(process.env.PROCESSOR_URL),
+  });
+
+  logQueryStep(logger, "auth start");
+  let session;
+  try {
+    session = await auth();
+  } catch (err) {
+    console.error(`[api/query:${queryId}] auth failed`, {
+      elapsedMs: Date.now() - startedAt,
+      message: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    return done(NextResponse.json({ error: "Authentication failed. Check server logs." }, { status: 500 }));
+  }
+  logQueryStep(logger, "auth complete", {
+    authenticated: Boolean(session?.user?.email),
+    isDemoUser: Boolean(session?.isDemoUser),
+    sessionError: session?.error,
+  });
   if (!session?.user?.email) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return done(NextResponse.json({ error: "Unauthorized" }, { status: 401 }));
   }
   const email = session.user.email;
 
-  const queryId = crypto.randomUUID().slice(0, 8);
-  const startedAt = Date.now();
-  const logger = { queryId, startedAt };
-  const body = await req.json();
+  logQueryStep(logger, "request body parse start");
+  let body: any;
+  try {
+    body = await req.json();
+  } catch (err) {
+    console.error(`[api/query:${queryId}] request body parse failed`, {
+      elapsedMs: Date.now() - startedAt,
+      message: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    return done(NextResponse.json({ error: "Invalid request body." }, { status: 400 }));
+  }
+  logQueryStep(logger, "request body parse complete", {
+    hasDemoCredentials: Boolean((body as any)?.demoCredentials),
+  });
 
   const query: string = body?.query?.trim();
   if (!query || query.length < 3) {
     console.warn(`[api/query:${queryId}] invalid query`, { reason: "too_short", queryLength: query?.length ?? 0 });
-    return NextResponse.json({ error: "Query must be at least 3 characters." }, { status: 400 });
+    return done(NextResponse.json({ error: "Query must be at least 3 characters." }, { status: 400 }));
   }
   if (query.length > 500) {
     console.warn(`[api/query:${queryId}] invalid query`, { reason: "too_long", queryLength: query.length });
-    return NextResponse.json({ error: "Query must be under 500 characters." }, { status: 400 });
+    return done(NextResponse.json({ error: "Query must be under 500 characters." }, { status: 400 }));
   }
 
   let provider: AIProvider | null = null;
@@ -645,7 +706,7 @@ export async function POST(req: NextRequest) {
     if (browserKey && browserProvider) {
       logQueryStep(logger, "ai provider resolve from browser key", { browserProvider });
       if (!ALLOWED_PROVIDERS.includes(browserProvider)) {
-        return NextResponse.json({ error: "Invalid AI provider." }, { status: 400 });
+        return done(NextResponse.json({ error: "Invalid AI provider." }, { status: 400 }));
       }
       provider = browserProvider as AIProvider;
       apiKey = browserKey;
@@ -662,24 +723,24 @@ export async function POST(req: NextRequest) {
     } catch (err: any) {
       logQueryStep(logger, "ai provider resolve failed", { message: err?.message ?? String(err) });
       if (err.message === "DEMO_LIMIT_REACHED") {
-        return NextResponse.json(
+        return done(NextResponse.json(
           { error: "Daily demo AI limit reached (20 queries). Please provide your own Gemini/Claude key in Settings to continue." },
           { status: 429 }
-        );
+        ));
       }
       if (err.message === "GLOBAL_LIMIT_REACHED") {
-        return NextResponse.json(
+        return done(NextResponse.json(
           { error: "Global daily demo AI limit reached. Please try again tomorrow or provide your own API key in Settings." },
           { status: 429 }
-        );
+        ));
       }
       const demoMsg = session.isDemoUser
         ? " (or provide your own API key in Settings)"
         : " in Settings";
-      return NextResponse.json(
+      return done(NextResponse.json(
         { error: `No AI key configured${demoMsg}.` },
         { status: 422 }
-      );
+      ));
     }
   };
 
@@ -750,7 +811,7 @@ export async function POST(req: NextRequest) {
 
     if (!fastIntent) {
       const aiError = await resolveAiOrResponse();
-      if (aiError) return aiError;
+      if (aiError) return done(aiError);
     }
 
     const intent = fastIntent ?? await extractIntent(query, provider!, apiKey!);
@@ -763,10 +824,10 @@ export async function POST(req: NextRequest) {
     });
     const canAnswerWithoutSnapshots = intent.queryType === "request_logs" || intent.queryType === "data_sources";
     if (!gcpSnapshot && !awsSnapshot && !canAnswerWithoutSnapshots) {
-      return NextResponse.json(
+      return done(NextResponse.json(
         { error: "No snapshots yet. Please wait for the initial scan." },
         { status: 404 }
-      );
+      ));
     }
 
     const combinedSnapshot: any = { gcp: gcpSnapshot, aws: awsSnapshot };
@@ -853,13 +914,13 @@ export async function POST(req: NextRequest) {
         elapsedMs: Date.now() - startedAt,
         answerLength: answer.length,
       });
-      return NextResponse.json({
+      return done(NextResponse.json({
         query,
         intent,
         answer,
         resources: [],
         fetchedAt: gcpSnapshot?.fetchedAt || awsSnapshot?.fetchedAt || new Date().toISOString(),
-      });
+      }));
     }
 
     if (gcpSnapshot && shouldFetchGkeEntryPoints(query, intent)) {
@@ -880,7 +941,7 @@ export async function POST(req: NextRequest) {
 
     console.info(`[api/query:${queryId}] answer generation start`, { elapsedMs: Date.now() - startedAt });
     const aiError = await resolveAiOrResponse();
-    if (aiError) return aiError;
+    if (aiError) return done(aiError);
     const [answer, resources] = await Promise.all([
       generateAnswer(query, intent, combinedSnapshot, provider!, apiKey!),
       Promise.resolve(extractResources(intent, { gcp: gcpSnapshot, aws: awsSnapshot })),
@@ -890,19 +951,19 @@ export async function POST(req: NextRequest) {
       resourceCount: resources.length,
     });
 
-    return NextResponse.json({
+    return done(NextResponse.json({
       query,
       intent,
       answer,
       resources,
       fetchedAt: gcpSnapshot?.fetchedAt || awsSnapshot?.fetchedAt
-    });
+    }));
   } catch (err) {
     console.error(`[api/query:${queryId}] error`, {
       elapsedMs: Date.now() - startedAt,
       message: err instanceof Error ? err.message : String(err),
       stack: err instanceof Error ? err.stack : undefined,
     });
-    return NextResponse.json({ error: "Failed to process query. Check server logs." }, { status: 500 });
+    return done(NextResponse.json({ error: "Failed to process query. Check server logs." }, { status: 500 }));
   }
 }
