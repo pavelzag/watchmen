@@ -21,7 +21,6 @@ export default function NavbarLink({ href, icon, label, danger }: NavbarLinkProp
             className={`flex items-center gap-1.5 px-3 h-full text-xs uppercase tracking-widest transition-colors ${danger ? "terminal-nav-link-danger" : "terminal-nav-link"
                 }`}
             style={{
-                borderRight: "1px solid var(--bg-card2)",
                 background: isActive ? "var(--bg-card2)" : "transparent",
                 color: isActive && !danger ? "var(--text-primary)" : undefined,
                 boxShadow: isActive ? "0 0 0 1px #00ff41, 0 0 18px #00ff4166" : undefined,
