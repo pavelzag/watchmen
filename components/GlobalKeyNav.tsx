@@ -20,6 +20,10 @@ function isTypingTarget(target: EventTarget | null): boolean {
     return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable;
 }
 
+function isCommandPaletteOpen(): boolean {
+    return Boolean(document.querySelector("[data-command-palette-open='true']"));
+}
+
 /**
  * Adds/removes the `nav-selected` CSS class instead of relying on browser
  * focus(), giving us full control over the visual selection indicator.
@@ -60,6 +64,8 @@ export default function GlobalKeyNav() {
         }
 
         function handleKeyDown(e: KeyboardEvent) {
+            if (isCommandPaletteOpen()) return;
+
             // Never intercept when the user is typing
             if (isTypingTarget(e.target)) return;
 

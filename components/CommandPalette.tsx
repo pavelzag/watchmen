@@ -70,6 +70,13 @@ function linkifyResources(text: string, resources: ResourceItem[]): string {
     return linkifyText(text, resources, resourceHref);
 }
 
+function isEditableTarget(target: EventTarget | null): boolean {
+    const el = target as HTMLElement | null;
+    if (!el) return false;
+    const tag = el.tagName;
+    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable;
+}
+
 export default function CommandPalette() {
     const pathname = usePathname();
     const isAws = pathname?.startsWith("/dashboard/aws") ?? false;
@@ -169,10 +176,13 @@ export default function CommandPalette() {
         if (!open || !result) return;
 
         function handleCopyKey(e: KeyboardEvent) {
+            if (isEditableTarget(e.target)) return;
             if (e.key.toLowerCase() !== "c" || e.metaKey || e.ctrlKey || e.altKey) return;
             const selection = window.getSelection()?.toString();
             if (selection) return;
             e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
             void copyResult();
         }
 
@@ -205,6 +215,7 @@ export default function CommandPalette() {
 
     return (
         <div
+            data-command-palette-open="true"
             className="fixed inset-0 z-[9999] flex items-start justify-center pt-24 px-4"
             style={{ background: "rgba(0,0,0,0.85)" }}
             onClick={(e) => { if (e.target === e.currentTarget) setOpen(false); }}
