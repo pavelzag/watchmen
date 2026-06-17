@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Check, Copy, Loader2, X, Terminal } from "lucide-react";
-import { usePathname } from "next/navigation";
 import { saveQuery, getHistory } from "@/lib/query-history";
 import type { ResourceItem } from "@/lib/claude/query-processor";
 import { linkifyText } from "@/lib/utils/linkify";
@@ -87,8 +86,6 @@ async function readApiResponse(res: Response): Promise<any> {
 }
 
 export default function CommandPalette() {
-    const pathname = usePathname();
-    const isAws = pathname?.startsWith("/dashboard/aws") ?? false;
     const [open, setOpen] = useState(false);
     const [query, setQuery] = useState("");
     const [loading, setLoading] = useState(false);
@@ -147,8 +144,7 @@ export default function CommandPalette() {
         setError(null);
         setResult(null);
         try {
-            const endpoint = isAws ? "/api/aws/query" : "/api/query";
-            const res = await fetch(endpoint, {
+            const res = await fetch("/api/query", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ query: query.trim() }),
@@ -168,7 +164,7 @@ export default function CommandPalette() {
         } finally {
             setLoading(false);
         }
-    }, [query, loading, isAws]); // Added isAws to dependency array
+    }, [query, loading]);
 
     const copyResult = useCallback(async () => {
         if (!result?.answer) return;

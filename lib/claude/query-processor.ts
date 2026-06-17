@@ -320,6 +320,9 @@ function buildGcpContext(intent: QueryIntent, snapshot: GcpSnapshot): any {
   const openFirewalls = snapshot.firewallRules.filter(r =>
     !r.disabled && r.direction === "INGRESS" && (r.sourceRanges ?? []).includes("0.0.0.0/0")
   );
+  const publicCloudRunServices = snapshot.cloudRunServices.filter(service =>
+    service.url || service.iamPolicy.bindings.some(bind => bind.members.some(member => member === "allUsers" || member === "allAuthenticatedUsers"))
+  );
 
   const ctx: any = {
     counts: {
@@ -393,6 +396,32 @@ function buildGcpContext(intent: QueryIntent, snapshot: GcpSnapshot): any {
     }));
   }
 
+  if (
+    resourceType === "cloud_run" ||
+    resourceType === "load_balancer" ||
+    queryType === "security_findings" ||
+    (queryType === "list_resources" && !resourceType)
+  ) {
+    ctx.publicEndpoints = {
+      cloudRun: publicCloudRunServices.map(service => ({
+        name: service.name,
+        projectId: service.projectId,
+        region: service.region,
+        url: service.url ?? null,
+        status: service.status,
+        publicInvoker: service.iamPolicy.bindings.some(bind => bind.members.some(member => member === "allUsers" || member === "allAuthenticatedUsers")),
+        serviceAccount: service.serviceAccount,
+      })),
+      loadBalancers: (snapshot.loadBalancers ?? []).filter(lb => lb.ipAddress).map(lb => ({
+        name: lb.name,
+        projectId: lb.projectId,
+        region: lb.region,
+        ipAddress: lb.ipAddress,
+        type: lb.type,
+      })),
+    };
+  }
+
   if (queryType === "list_resources" && (resourceType === "cloud_sql" || !resourceType)) {
     ctx.cloudSqlInstances = snapshot.cloudSqlInstances.map(db => ({
       name: db.name,
@@ -453,6 +482,17 @@ function buildGcpContext(intent: QueryIntent, snapshot: GcpSnapshot): any {
       total: snapshot.storageBuckets.length,
       publicCount: publicBuckets.length,
       publicBucketNames: publicBuckets.map(b => b.name),
+    };
+    ctx.cloudRunPublicServices = {
+      total: snapshot.cloudRunServices.length,
+      publicEndpointCount: publicCloudRunServices.length,
+      services: publicCloudRunServices.map(service => ({
+        name: service.name,
+        projectId: service.projectId,
+        region: service.region,
+        url: service.url ?? null,
+        publicInvoker: service.iamPolicy.bindings.some(bind => bind.members.some(member => member === "allUsers" || member === "allAuthenticatedUsers")),
+      })),
     };
     ctx.firewalls = {
       openToInternetCount: openFirewalls.length,
