@@ -128,6 +128,7 @@ export async function generateAnswer(
   const isAuthLogs = intent.queryType === "auth_logs";
   const isRequestLogs = intent.queryType === "request_logs";
   const isDataSources = intent.queryType === "data_sources";
+  const hasGkeEndpointAnalysis = Boolean((snapshot as any).gkeEntryPoints);
   const prompt = `You are a Cloud Security analyst assistant. Answer the user's question using ONLY the provided GCP/AWS data below.
 
 Be specific and factual. Format your answer clearly:
@@ -137,6 +138,7 @@ Be specific and factual. Format your answer clearly:
 ${isAuthLogs ? "- Group failures by principal, show counts, highlight any suspicious patterns (repeated failures, unknown principals, unusual IPs)\n- Show the time window and total count prominently at the top" : ""}
 ${isRequestLogs ? "- Summarize request volume, methods, paths, response status classes, clusters/hosts, and the oldest/newest timestamps covered\n- Distinguish durable agent event logs from the request processor's in-memory recent history\n- If only sampled detail is present, say so explicitly and use aggregate totals for the full log set" : ""}
 ${isDataSources ? "- Explain where each data category is stored or fetched from, and call out any retention or coverage limits in the provided metadata" : ""}
+${hasGkeEndpointAnalysis ? "- For GKE endpoint questions, list each public entry point with cluster name, type, IP/name, Kubernetes service, and whether it is public. Also state if live endpoint discovery failed or was skipped." : ""}
 
 Cloud Data:
 ${JSON.stringify(context, null, 2)}
@@ -169,6 +171,7 @@ function buildContext(intent: QueryIntent, snapshot: CombinedSnapshot): unknown 
   if (intent.queryType === "connected_projects") {
     context.connectedProjects = buildConnectedProjectsContext(snapshot);
     context.sourceInventory = (snapshot as any).sourceInventory;
+    if ((snapshot as any).gkeEntryPoints) context.gkeEndpointAnalysis = (snapshot as any).gkeEntryPoints;
     return context;
   }
 
@@ -176,6 +179,7 @@ function buildContext(intent: QueryIntent, snapshot: CombinedSnapshot): unknown 
     context.sourceInventory = (snapshot as any).sourceInventory;
     context.connectedProjects = buildConnectedProjectsContext(snapshot);
     context.requestLogs = (snapshot as any).requestLogs ?? { available: false };
+    if ((snapshot as any).gkeEntryPoints) context.gkeEndpointAnalysis = (snapshot as any).gkeEntryPoints;
     return context;
   }
 
@@ -189,6 +193,9 @@ function buildContext(intent: QueryIntent, snapshot: CombinedSnapshot): unknown 
 
   if (snapshot.gcp) {
     context.gcp = buildGcpContext(intent, snapshot.gcp);
+    if ((snapshot as any).gkeEntryPoints) {
+      context.gcp.gkeEndpointAnalysis = (snapshot as any).gkeEntryPoints;
+    }
   }
   if (snapshot.aws) {
     context.aws = buildAwsContext(intent, snapshot.aws);

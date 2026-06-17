@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Loader2, X, Terminal } from "lucide-react";
+import { Check, Copy, Loader2, X, Terminal } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { saveQuery, getHistory } from "@/lib/query-history";
 import type { ResourceItem } from "@/lib/claude/query-processor";
@@ -43,6 +43,7 @@ const RESOURCE_LINKS: Record<string, string> = {
     iam_user: "/dashboard/aws/iam",
     iam_role: "/dashboard/aws/iam",
     aws_account: "/dashboard/aws",
+    load_balancer: "/dashboard/trace",
 };
 
 function resourceHref(item: ResourceItem): string {
@@ -79,6 +80,7 @@ export default function CommandPalette() {
     const [result, setResult] = useState<ResultPeek | null>(null);
     const [historyItems, setHistoryItems] = useState<string[]>([]);
     const [histIdx, setHistIdx] = useState(-1);
+    const [copied, setCopied] = useState(false);
     const inputRef = useRef<HTMLTextAreaElement>(null);
 
     // Load history on open
@@ -89,6 +91,7 @@ export default function CommandPalette() {
             setResult(null);
             setError(null);
             setQuery("");
+            setCopied(false);
             setTimeout(() => inputRef.current?.focus(), 50);
         }
     }, [open]);
@@ -143,12 +146,39 @@ export default function CommandPalette() {
                 resources: data.resources,
                 fetchedAt: data.fetchedAt || new Date().toISOString()
             });
+            setCopied(false);
         } catch (err) {
             setError(err instanceof Error ? err.message : "Unknown error");
         } finally {
             setLoading(false);
         }
     }, [query, loading, isAws]); // Added isAws to dependency array
+
+    const copyResult = useCallback(async () => {
+        if (!result?.answer) return;
+        try {
+            await navigator.clipboard.writeText(result.answer);
+            setCopied(true);
+            window.setTimeout(() => setCopied(false), 1200);
+        } catch {
+            setError("Failed to copy response.");
+        }
+    }, [result]);
+
+    useEffect(() => {
+        if (!open || !result) return;
+
+        function handleCopyKey(e: KeyboardEvent) {
+            if (e.key.toLowerCase() !== "c" || e.metaKey || e.ctrlKey || e.altKey) return;
+            const selection = window.getSelection()?.toString();
+            if (selection) return;
+            e.preventDefault();
+            void copyResult();
+        }
+
+        window.addEventListener("keydown", handleCopyKey, { capture: true });
+        return () => window.removeEventListener("keydown", handleCopyKey, { capture: true });
+    }, [open, result, copyResult]);
 
     function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
         if (e.key === "Enter" && !e.shiftKey) {
@@ -274,9 +304,21 @@ export default function CommandPalette() {
                             className="mx-4 mb-4 p-3 text-sm"
                             style={{ border: "1px solid #005c16", background: "#050d05" }}
                         >
-                            <p className="text-xs mb-2 uppercase tracking-widest" style={{ color: "#005c16" }}>
-              // OUTPUT
-                            </p>
+                            <div className="mb-2 flex items-center justify-between gap-3">
+                                <p className="text-xs uppercase tracking-widest" style={{ color: "#005c16" }}>
+                  // OUTPUT
+                                </p>
+                                <button
+                                    type="button"
+                                    onClick={copyResult}
+                                    className="inline-flex items-center gap-1.5 px-2 py-1 text-[10px] uppercase tracking-widest transition-colors"
+                                    style={{ border: "1px solid #003010", color: copied ? "#00ff41" : "#00aa2b" }}
+                                    title="Copy response (C)"
+                                >
+                                    {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                                    {copied ? "[COPIED]" : "[COPY] C"}
+                                </button>
+                            </div>
                             <div
                                 className="prose-answer text-[11px] md:text-xs leading-relaxed break-words"
                                 dangerouslySetInnerHTML={{ __html: linkifyText(renderMarkdown(result.answer), result.resources ?? [], resourceHref) }}

@@ -17,6 +17,7 @@ export const RESOURCE_LINKS: Record<string, { path: string; label: string; Icon:
     pubsub: { path: "/dashboard/pubsub", label: "Pub/Sub", Icon: Radio },
     secret: { path: "/dashboard/secrets", label: "Secrets", Icon: Lock },
     firewall: { path: "/dashboard/firewall", label: "Firewall Rules", Icon: Flame },
+    load_balancer: { path: "/dashboard/trace", label: "Load Balancers", Icon: Server },
     iam_user: { path: "/dashboard/aws/iam", label: "IAM Users", Icon: User },
     iam_role: { path: "/dashboard/aws/iam", label: "IAM Roles", Icon: KeySquare },
     aws_account: { path: "/dashboard/aws", label: "AWS Account", Icon: Server },

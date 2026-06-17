@@ -2,11 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { fetchGcpSnapshot } from "@/lib/gcp";
 import { fetchAwsSnapshot } from "@/lib/aws"; // Integrated AWS
-import { useMockData } from "@/lib/gcp/client";
+import { initGoogleAuthFromKey, initUserAuth, useMockData } from "@/lib/gcp/client";
 import { useMockAwsData } from "@/lib/aws/client"; // Integrated AWS
 import { extractIntent, generateAnswer, extractResources } from "@/lib/claude/query-processor";
 import { callAI, resolveAI, type AIProvider } from "@/lib/ai/client";
 import { sql, ensureGcpSnapshotTable, ensureAwsSnapshotTable, ensureAgentInstallTables } from "@/lib/db"; // Added AWS table ensure
+import { getUserCloudCredentials } from "@/lib/credentials";
+import { getClusterEntryPoints } from "@/lib/gcp/cluster-entrypoints";
 import { getGcpAuthFailures } from "@/lib/gcp/auth-failures";
 import { getAwsAuthFailures } from "@/lib/aws/auth-failures";
 import { getMockScanResults } from "@/lib/container-scanning";
@@ -310,6 +312,138 @@ function buildSourceInventory(params: {
   };
 }
 
+function shouldFetchGkeEntryPoints(query: string, intent: Awaited<ReturnType<typeof extractIntent>>): boolean {
+  const q = query.toLowerCase();
+  const asksAboutPublicEndpoint =
+    /\b(public|open|external|internet|exposed|endpoint|ingress|load\s*balancer|loadbalancer|api server|master)\b/.test(q);
+  const asksAboutGke = /\b(gke|kubernetes|cluster)\b/.test(q) || intent.resourceType === "gke_cluster";
+  return Boolean(gcpRelatedIntent(intent) && asksAboutGke && asksAboutPublicEndpoint);
+}
+
+function gcpRelatedIntent(intent: Awaited<ReturnType<typeof extractIntent>>): boolean {
+  return !intent.resourceType || [
+    "gke_cluster",
+    "project",
+    "load_balancer",
+    "firewall",
+    "vm",
+  ].includes(intent.resourceType);
+}
+
+function matchesLoose(value: unknown, needle: string | undefined): boolean {
+  if (!needle) return true;
+  if (typeof value !== "string") return false;
+  const normalizedValue = value.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const normalizedNeedle = needle.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return value.toLowerCase().includes(needle.toLowerCase()) || normalizedValue.includes(normalizedNeedle);
+}
+
+async function buildGkeEntryPointContext(params: {
+  email: string;
+  accessToken: unknown;
+  gcpSnapshot: any;
+  isGcpMock: boolean;
+  intent: Awaited<ReturnType<typeof extractIntent>>;
+}) {
+  const allClusters = params.gcpSnapshot?.gkeClusters ?? [];
+  let filterWarning: string | undefined;
+  let clusters = allClusters.filter((cluster: any) => {
+    const projectMatch = matchesLoose(cluster.projectId, params.intent.projectId);
+    const nameMatch = matchesLoose(cluster.name, params.intent.resourceName);
+    return projectMatch && nameMatch;
+  });
+
+  if (clusters.length === 0) {
+    clusters = allClusters;
+    filterWarning = "The parsed project/name filters did not match any stored GKE cluster exactly, so endpoint discovery used all GKE clusters from the latest snapshot.";
+  }
+
+  if (clusters.length === 0) {
+    return {
+      available: false,
+      reason: "No GKE clusters were present in the stored snapshot.",
+      parsedProjectOrAccount: params.intent.projectId,
+      parsedResourceName: params.intent.resourceName,
+    };
+  }
+
+  if (params.isGcpMock) {
+    return {
+      available: true,
+      source: "mock/demo mode",
+      note: "GKE endpoint discovery uses live Compute APIs and is skipped in mock/demo mode.",
+      clusterCount: clusters.length,
+      filterWarning,
+      parsedProjectOrAccount: params.intent.projectId,
+      parsedResourceName: params.intent.resourceName,
+      clusters: clusters.map((cluster: any) => ({
+        name: cluster.name,
+        projectId: cluster.projectId,
+        location: cluster.location,
+        privateCluster: cluster.privateCluster,
+        masterApiEndpoint: cluster.endpoint,
+        masterApiIsPublic: !cluster.privateCluster && Boolean(cluster.endpoint),
+      })),
+      entryPoints: clusters.map((cluster: any) => ({
+        clusterName: cluster.name,
+        projectId: cluster.projectId,
+        type: "master-api",
+        ip: cluster.endpoint,
+        k8sService: "Kubernetes API Server",
+        isPublic: !cluster.privateCluster && Boolean(cluster.endpoint),
+      })),
+    };
+  }
+
+  try {
+    const gcpCreds = await getUserCloudCredentials(params.email, "gcp");
+    if (gcpCreds?.serviceAccountKey) {
+      initGoogleAuthFromKey(gcpCreds.serviceAccountKey as string);
+    } else if (typeof params.accessToken === "string" && params.accessToken) {
+      initUserAuth(params.accessToken);
+    } else {
+      return {
+        available: false,
+        reason: "No GCP credentials are available for live GKE endpoint discovery.",
+        clusterCount: clusters.length,
+        filterWarning,
+        parsedProjectOrAccount: params.intent.projectId,
+        parsedResourceName: params.intent.resourceName,
+      };
+    }
+
+    const entryPoints = await getClusterEntryPoints(clusters);
+    return {
+      available: true,
+      source: "live GCP Compute APIs via getClusterEntryPoints",
+      clusterCount: clusters.length,
+      filterWarning,
+      parsedProjectOrAccount: params.intent.projectId,
+      parsedResourceName: params.intent.resourceName,
+      totalEntryPoints: entryPoints.length,
+      publicEntryPoints: entryPoints.filter((entry) => entry.isPublic),
+      privateOrInternalEntryPoints: entryPoints.filter((entry) => !entry.isPublic),
+      clusters: clusters.map((cluster: any) => ({
+        name: cluster.name,
+        projectId: cluster.projectId,
+        location: cluster.location,
+        privateCluster: cluster.privateCluster,
+        masterApiEndpoint: cluster.endpoint,
+      })),
+    };
+  } catch (err) {
+    return {
+      available: false,
+      reason: "Live GKE endpoint discovery failed.",
+      error: err instanceof Error ? err.message : "Unknown error",
+      clusterCount: clusters.length,
+      filterWarning,
+      parsedProjectOrAccount: params.intent.projectId,
+      parsedResourceName: params.intent.resourceName,
+    };
+  }
+}
+
 export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session?.user?.email) {
@@ -499,6 +633,16 @@ export async function POST(req: NextRequest) {
 
     if (intent.queryType === "request_logs" || intent.queryType === "data_sources" || intent.queryType === "connected_projects") {
       combinedSnapshot.requestLogs = await buildRequestLogContext(session.user.email);
+    }
+
+    if (gcpSnapshot && shouldFetchGkeEntryPoints(query, intent)) {
+      combinedSnapshot.gkeEntryPoints = await buildGkeEntryPointContext({
+        email: session.user.email,
+        accessToken: session.accessToken,
+        gcpSnapshot,
+        isGcpMock,
+        intent,
+      });
     }
 
     const [answer, resources] = await Promise.all([
