@@ -7,7 +7,7 @@ export default function NavbarCloudTabs() {
   const pathname = usePathname();
 
   // Specific sub-menus that should dim the cloud tabs
-  const isSubMenu = ["/trace", "/findings", "/history", "/compliance", "/settings"].some(sub =>
+  const isSubMenu = ["/trace", "/findings", "/attack-paths", "/container-scan", "/tasks", "/history", "/compliance", "/settings"].some(sub =>
     pathname.includes(sub)
   );
 
