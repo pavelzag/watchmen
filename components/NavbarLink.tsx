@@ -24,6 +24,7 @@ export default function NavbarLink({ href, icon, label, danger }: NavbarLinkProp
                 borderRight: "1px solid var(--bg-card2)",
                 background: isActive ? "var(--bg-card2)" : "transparent",
                 color: isActive && !danger ? "var(--text-primary)" : undefined,
+                boxShadow: isActive ? "0 0 0 1px #00ff41, 0 0 18px #00ff4166" : undefined,
             }}
         >
             {icon}

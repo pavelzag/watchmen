@@ -24,6 +24,7 @@ export default function NavbarCloudTabs() {
           color: isGcpActive ? "var(--text-primary)" : "var(--text-muted)",
           background: isGcpActive ? "var(--bg-card2)" : "transparent",
           borderColor: "var(--bg-card2)",
+          boxShadow: isGcpActive ? "0 0 0 1px #00ff41, 0 0 18px #00ff4166" : undefined,
         }}
       >
         GCP
@@ -35,6 +36,7 @@ export default function NavbarCloudTabs() {
           color: isAwsActive ? "var(--text-primary)" : "var(--text-muted)",
           background: isAwsActive ? "var(--bg-card2)" : "transparent",
           borderColor: "var(--bg-card2)",
+          boxShadow: isAwsActive ? "0 0 0 1px #00ff41, 0 0 18px #00ff4166" : undefined,
         }}
       >
         AWS
