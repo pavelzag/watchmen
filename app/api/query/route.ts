@@ -187,70 +187,205 @@ async function buildRequestLogContext(userEmail: string, logger?: QueryLogger) {
   await ensureAgentInstallTables();
   logQueryStep(logger, "agent tables ensure complete");
 
+  logQueryStep(logger, "agent query index check start");
+  const indexCheck = await sql`
+    SELECT indexname
+    FROM pg_indexes
+    WHERE schemaname = current_schema()
+      AND tablename = 'agent_events'
+      AND indexname IN (
+        'idx_agent_events_http_errors_by_agent',
+        'idx_agent_events_http_requests_by_agent',
+        'idx_agent_events_http_responses_by_agent'
+      )
+  `;
+  const existingIndexes = new Set(indexCheck.rows.map((row: any) => row.indexname));
+  const hasQueryIndexes =
+    existingIndexes.has("idx_agent_events_http_errors_by_agent") &&
+    existingIndexes.has("idx_agent_events_http_requests_by_agent") &&
+    existingIndexes.has("idx_agent_events_http_responses_by_agent");
+  logQueryStep(logger, "agent query index check complete", {
+    hasQueryIndexes,
+    existingIndexes: [...existingIndexes],
+  });
+
+  if (!hasQueryIndexes) {
+    logQueryStep(logger, "agent aggregate queries skipped", {
+      reason: "missing_agent_event_query_indexes",
+      requiredIndexes: [
+        "idx_agent_events_http_errors_by_agent",
+        "idx_agent_events_http_requests_by_agent",
+        "idx_agent_events_http_responses_by_agent",
+      ],
+    });
+
+    const events = await sql`
+      SELECT e.id, e.agent_id, e.provider, e.project_id, e.event, e.received_at, h.metadata->>'clusterName' AS cluster_name
+      FROM agent_events e
+      JOIN agent_hosts h ON h.id = e.agent_id
+      WHERE h.user_email = ${userEmail}
+         OR h.user_email = 'system'
+      ORDER BY e.received_at DESC
+      LIMIT ${Math.min(REQUEST_LOG_SAMPLE_LIMIT, 20)}
+    `;
+    logQueryStep(logger, "agent recent events query complete", { rows: events.rows.length, mode: "index_missing_sample" });
+
+    const recent = events.rows.map((row: any) => {
+      const ev = row.event ?? {};
+      return {
+        id: row.id,
+        agentId: row.agent_id,
+        provider: row.provider,
+        projectId: row.project_id,
+        clusterName: row.cluster_name,
+        receivedAt: toIso(row.received_at),
+        type: ev.type,
+        method: ev.method ?? (ev.type === "http_response" ? "RESPONSE" : "unknown"),
+        path: ev.path ?? "unknown",
+        status: ev.status ?? null,
+        hostname: ev.hostname,
+        process: ev.comm,
+        pid: ev.pid,
+      };
+    });
+
+    return {
+      durableAgentEvents: {
+        source: "Postgres agent_events joined to agent_hosts by authenticated user",
+        retention: "Durable rows retained until deleted by database maintenance.",
+        exactCountsAvailable: false,
+        missingIndexes: [
+          "idx_agent_events_http_errors_by_agent",
+          "idx_agent_events_http_requests_by_agent",
+          "idx_agent_events_http_responses_by_agent",
+        ].filter((indexName) => !existingIndexes.has(indexName)),
+        remediation: "Run scripts/migrate.sql, or create the missing agent_events query indexes from that file, then retry the question.",
+        sampleLimit: Math.min(REQUEST_LOG_SAMPLE_LIMIT, 20),
+        sampledEvents: recent.length,
+        recent,
+      },
+      requestProcessorHistory: {
+        available: false,
+        source: "Skipped",
+        retention: "Skipped because exact agent event count indexes are missing.",
+        recent: [],
+      },
+    };
+  }
+
   logQueryStep(logger, "agent aggregate query start");
   const aggregate = await sql`
+    WITH scoped_agents AS (
+      SELECT id
+      FROM agent_hosts
+      WHERE user_email = ${userEmail}
+         OR user_email = 'system'
+    )
     SELECT
-      COUNT(*)::int AS total_events,
-      COUNT(*) FILTER (WHERE e.event->>'type' = 'http_request')::int AS total_requests,
-      COUNT(*) FILTER (WHERE e.event->>'type' = 'http_response')::int AS total_responses,
-      COUNT(*) FILTER (
+      (
+        SELECT COUNT(*)::int
+        FROM agent_events e
+        JOIN scoped_agents a ON a.id = e.agent_id
+        WHERE e.event->>'type' = 'http_request'
+      ) AS total_requests,
+      (
+        SELECT COUNT(*)::int
+        FROM agent_events e
+        JOIN scoped_agents a ON a.id = e.agent_id
         WHERE e.event->>'type' = 'http_response'
-          AND e.event->>'status' ~ '^[0-9]{3}$'
-          AND (e.event->>'status')::int >= 400
-      )::int AS erroneous_responses,
-      COUNT(*) FILTER (
+      ) AS total_responses,
+      (
+        SELECT COUNT(*)::int
+        FROM agent_events e
+        JOIN scoped_agents a ON a.id = e.agent_id
         WHERE e.event->>'type' = 'http_response'
-          AND e.event->>'status' ~ '^[0-9]{3}$'
-          AND (e.event->>'status')::int BETWEEN 400 AND 499
-      )::int AS client_error_responses,
-      COUNT(*) FILTER (
+          AND (CASE WHEN e.event->>'status' ~ '^[0-9]{3}$' THEN (e.event->>'status')::int ELSE NULL END) >= 400
+      ) AS erroneous_responses,
+      (
+        SELECT COUNT(*)::int
+        FROM agent_events e
+        JOIN scoped_agents a ON a.id = e.agent_id
         WHERE e.event->>'type' = 'http_response'
-          AND e.event->>'status' ~ '^[0-9]{3}$'
-          AND (e.event->>'status')::int >= 500
-      )::int AS server_error_responses,
-      MIN(e.received_at) AS oldest_received_at,
-      MAX(e.received_at) AS newest_received_at
-    FROM agent_events e
-    JOIN agent_hosts h ON h.id = e.agent_id
-    WHERE h.user_email = ${userEmail}
-       OR h.user_email = 'system'
+          AND (CASE WHEN e.event->>'status' ~ '^[0-9]{3}$' THEN (e.event->>'status')::int ELSE NULL END) BETWEEN 400 AND 499
+      ) AS client_error_responses,
+      (
+        SELECT COUNT(*)::int
+        FROM agent_events e
+        JOIN scoped_agents a ON a.id = e.agent_id
+        WHERE e.event->>'type' = 'http_response'
+          AND (CASE WHEN e.event->>'status' ~ '^[0-9]{3}$' THEN (e.event->>'status')::int ELSE NULL END) >= 500
+      ) AS server_error_responses,
+      (
+        SELECT LEAST(
+          (SELECT MIN(received_at) FROM agent_events e JOIN scoped_agents a ON a.id = e.agent_id WHERE e.event->>'type' = 'http_request'),
+          (SELECT MIN(received_at) FROM agent_events e JOIN scoped_agents a ON a.id = e.agent_id WHERE e.event->>'type' = 'http_response')
+        )
+      ) AS oldest_received_at,
+      (
+        SELECT GREATEST(
+          (SELECT MAX(received_at) FROM agent_events e JOIN scoped_agents a ON a.id = e.agent_id WHERE e.event->>'type' = 'http_request'),
+          (SELECT MAX(received_at) FROM agent_events e JOIN scoped_agents a ON a.id = e.agent_id WHERE e.event->>'type' = 'http_response')
+        )
+      ) AS newest_received_at
   `;
   const totals = aggregate.rows[0] ?? {};
   logQueryStep(logger, "agent aggregate query complete", {
-    totalEvents: Number(totals.total_events ?? 0),
+    totalEvents: Number(totals.total_requests ?? 0) + Number(totals.total_responses ?? 0),
     totalRequests: Number(totals.total_requests ?? 0),
     totalResponses: Number(totals.total_responses ?? 0),
     erroneousResponses: Number(totals.erroneous_responses ?? 0),
   });
-
   logQueryStep(logger, "agent cluster stats query start");
   const clusterStats = await sql`
+    WITH scoped_hosts AS (
+      SELECT id, COALESCE(metadata->>'clusterName', 'unknown') AS cluster_name
+      FROM agent_hosts
+      WHERE user_email = ${userEmail}
+         OR user_email = 'system'
+    ),
+    requests AS (
+      SELECT h.cluster_name, COUNT(*)::int AS requests, MIN(e.received_at) AS oldest_request_at, MAX(e.received_at) AS newest_request_at
+      FROM agent_events e
+      JOIN scoped_hosts h ON h.id = e.agent_id
+      WHERE e.event->>'type' = 'http_request'
+      GROUP BY h.cluster_name
+    ),
+    responses AS (
+      SELECT h.cluster_name, COUNT(*)::int AS responses, MIN(e.received_at) AS oldest_response_at, MAX(e.received_at) AS newest_response_at
+      FROM agent_events e
+      JOIN scoped_hosts h ON h.id = e.agent_id
+      WHERE e.event->>'type' = 'http_response'
+      GROUP BY h.cluster_name
+    ),
+    errors AS (
+      SELECT
+        h.cluster_name,
+        COUNT(*)::int AS erroneous_responses,
+        COUNT(*) FILTER (
+          WHERE (CASE WHEN e.event->>'status' ~ '^[0-9]{3}$' THEN (e.event->>'status')::int ELSE NULL END) BETWEEN 400 AND 499
+        )::int AS client_error_responses,
+        COUNT(*) FILTER (
+          WHERE (CASE WHEN e.event->>'status' ~ '^[0-9]{3}$' THEN (e.event->>'status')::int ELSE NULL END) >= 500
+        )::int AS server_error_responses
+      FROM agent_events e
+      JOIN scoped_hosts h ON h.id = e.agent_id
+      WHERE e.event->>'type' = 'http_response'
+        AND (CASE WHEN e.event->>'status' ~ '^[0-9]{3}$' THEN (e.event->>'status')::int ELSE NULL END) >= 400
+      GROUP BY h.cluster_name
+    )
     SELECT
-      COALESCE(h.metadata->>'clusterName', 'unknown') AS cluster_name,
-      COUNT(*) FILTER (WHERE e.event->>'type' = 'http_request')::int AS requests,
-      COUNT(*) FILTER (WHERE e.event->>'type' = 'http_response')::int AS responses,
-      COUNT(*) FILTER (
-        WHERE e.event->>'type' = 'http_response'
-          AND e.event->>'status' ~ '^[0-9]{3}$'
-          AND (e.event->>'status')::int >= 400
-      )::int AS erroneous_responses,
-      COUNT(*) FILTER (
-        WHERE e.event->>'type' = 'http_response'
-          AND e.event->>'status' ~ '^[0-9]{3}$'
-          AND (e.event->>'status')::int BETWEEN 400 AND 499
-      )::int AS client_error_responses,
-      COUNT(*) FILTER (
-        WHERE e.event->>'type' = 'http_response'
-          AND e.event->>'status' ~ '^[0-9]{3}$'
-          AND (e.event->>'status')::int >= 500
-      )::int AS server_error_responses,
-      MIN(e.received_at) AS oldest_received_at,
-      MAX(e.received_at) AS newest_received_at
-    FROM agent_events e
-    JOIN agent_hosts h ON h.id = e.agent_id
-    WHERE h.user_email = ${userEmail}
-       OR h.user_email = 'system'
-    GROUP BY COALESCE(h.metadata->>'clusterName', 'unknown')
+      h.cluster_name,
+      COALESCE(r.requests, 0)::int AS requests,
+      COALESCE(resp.responses, 0)::int AS responses,
+      COALESCE(err.erroneous_responses, 0)::int AS erroneous_responses,
+      COALESCE(err.client_error_responses, 0)::int AS client_error_responses,
+      COALESCE(err.server_error_responses, 0)::int AS server_error_responses,
+      LEAST(r.oldest_request_at, resp.oldest_response_at) AS oldest_received_at,
+      GREATEST(r.newest_request_at, resp.newest_response_at) AS newest_received_at
+    FROM (SELECT DISTINCT cluster_name FROM scoped_hosts) h
+    LEFT JOIN requests r ON r.cluster_name = h.cluster_name
+    LEFT JOIN responses resp ON resp.cluster_name = h.cluster_name
+    LEFT JOIN errors err ON err.cluster_name = h.cluster_name
     ORDER BY erroneous_responses DESC, requests DESC
     LIMIT 20
   `;
@@ -330,7 +465,7 @@ async function buildRequestLogContext(userEmail: string, logger?: QueryLogger) {
   const processor = await fetchProcessorHistory(logger);
   logQueryStep(logger, "request log context assembled", {
     processorAvailable: processor.available,
-    totalEvents: Number(totals.total_events ?? 0),
+    totalEvents: Number(totals.total_requests ?? 0) + Number(totals.total_responses ?? 0),
     sampledEvents: recent.length,
   });
 
@@ -382,6 +517,20 @@ function findRequestedCluster(query: string, requestLogs: any): string | null {
 
 function formatRequestLogAnswer(query: string, requestLogs: any): string {
   const durable = requestLogs?.durableAgentEvents ?? {};
+  if (durable.exactCountsAvailable === false) {
+    const missing = (durable.missingIndexes ?? []).join(", ") || "agent event query indexes";
+    return [
+      "I could not safely compute the exact request/error counts yet.",
+      "",
+      `The **agent_events** table is large, and the required query indexes are missing: **${missing}**.`,
+      "",
+      "Run **scripts/migrate.sql** against the production Postgres database, then retry this question. Until those indexes exist, exact counting would scan millions of JSON rows and can hit the Vercel function timeout.",
+      "",
+      `Recent sample available: **${durable.sampledEvents ?? 0}** events.`,
+      `Source: **Postgres agent_events** joined to **agent_hosts**.`,
+    ].join("\n");
+  }
+
   const requestedCluster = findRequestedCluster(query, requestLogs);
   const clusterRows = durable.clusterStats ?? [];
   const row = requestedCluster

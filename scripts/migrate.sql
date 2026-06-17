@@ -53,3 +53,50 @@ CREATE TABLE IF NOT EXISTS user_cloud_credentials (
   updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (user_email, provider)
 );
+
+CREATE TABLE IF NOT EXISTS agent_hosts (
+  id              TEXT PRIMARY KEY,
+  user_email      TEXT NOT NULL,
+  provider        TEXT NOT NULL,
+  project_id      TEXT NOT NULL,
+  zone            TEXT NOT NULL,
+  instance_id     TEXT NOT NULL,
+  instance_name   TEXT NOT NULL,
+  hostname        TEXT NOT NULL DEFAULT '',
+  agent_version   TEXT NOT NULL DEFAULT '',
+  kernel_version  TEXT NOT NULL DEFAULT '',
+  status          TEXT NOT NULL DEFAULT 'registered',
+  secret_hash     TEXT NOT NULL DEFAULT '',
+  metadata        JSONB NOT NULL DEFAULT '{}',
+  registered_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_seen_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (user_email, provider, project_id, zone, instance_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_hosts_lookup
+  ON agent_hosts (user_email, provider, project_id, last_seen_at DESC);
+
+CREATE TABLE IF NOT EXISTS agent_events (
+  id            BIGSERIAL PRIMARY KEY,
+  agent_id      TEXT NOT NULL,
+  provider      TEXT NOT NULL,
+  project_id    TEXT NOT NULL,
+  event         JSONB NOT NULL,
+  received_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_events_lookup
+  ON agent_events (agent_id, received_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_agent_events_http_requests_by_agent
+  ON agent_events (agent_id, received_at DESC)
+  WHERE event->>'type' = 'http_request';
+
+CREATE INDEX IF NOT EXISTS idx_agent_events_http_responses_by_agent
+  ON agent_events (agent_id, received_at DESC)
+  WHERE event->>'type' = 'http_response';
+
+CREATE INDEX IF NOT EXISTS idx_agent_events_http_errors_by_agent
+  ON agent_events (agent_id, received_at DESC)
+  WHERE event->>'type' = 'http_response'
+    AND (CASE WHEN event->>'status' ~ '^[0-9]{3}$' THEN (event->>'status')::int ELSE NULL END) >= 400;
