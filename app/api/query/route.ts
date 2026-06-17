@@ -450,6 +450,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const queryId = crypto.randomUUID().slice(0, 8);
+  const startedAt = Date.now();
   const body = await req.json();
 
   // Resolve the user's AI key: check body first (browser-only), then fallback to DB
@@ -502,6 +504,12 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    console.info(`[api/query:${queryId}] start`, {
+      email: session.user.email,
+      queryLength: query.length,
+      isDemoUser: Boolean(session.isDemoUser),
+    });
+
     let gcpSnapshot;
     let awsSnapshot;
     let gcpFetchedAt: unknown;
@@ -557,6 +565,13 @@ export async function POST(req: NextRequest) {
     }
 
     const intent = await extractIntent(query, provider, apiKey);
+    console.info(`[api/query:${queryId}] intent`, {
+      queryType: intent.queryType,
+      resourceType: intent.resourceType,
+      resourceName: intent.resourceName,
+      projectId: intent.projectId,
+      elapsedMs: Date.now() - startedAt,
+    });
     const canAnswerWithoutSnapshots = intent.queryType === "request_logs" || intent.queryType === "data_sources";
     if (!gcpSnapshot && !awsSnapshot && !canAnswerWithoutSnapshots) {
       return NextResponse.json(
@@ -632,10 +647,16 @@ export async function POST(req: NextRequest) {
     }
 
     if (intent.queryType === "request_logs" || intent.queryType === "data_sources" || intent.queryType === "connected_projects") {
+      console.info(`[api/query:${queryId}] request log context start`, { elapsedMs: Date.now() - startedAt });
       combinedSnapshot.requestLogs = await buildRequestLogContext(session.user.email);
+      console.info(`[api/query:${queryId}] request log context complete`, {
+        elapsedMs: Date.now() - startedAt,
+        totalAgentEvents: combinedSnapshot.requestLogs?.durableAgentEvents?.totalEvents,
+      });
     }
 
-    if (gcpSnapshot && shouldFetchGkeEntryPoints(query, intent)) {
+    if (gcpSnapshot && intent.queryType !== "request_logs" && shouldFetchGkeEntryPoints(query, intent)) {
+      console.info(`[api/query:${queryId}] gke entrypoint context start`, { elapsedMs: Date.now() - startedAt });
       combinedSnapshot.gkeEntryPoints = await buildGkeEntryPointContext({
         email: session.user.email,
         accessToken: session.accessToken,
@@ -643,12 +664,22 @@ export async function POST(req: NextRequest) {
         isGcpMock,
         intent,
       });
+      console.info(`[api/query:${queryId}] gke entrypoint context complete`, {
+        elapsedMs: Date.now() - startedAt,
+        available: combinedSnapshot.gkeEntryPoints?.available,
+        totalEntryPoints: combinedSnapshot.gkeEntryPoints?.totalEntryPoints,
+      });
     }
 
+    console.info(`[api/query:${queryId}] answer generation start`, { elapsedMs: Date.now() - startedAt });
     const [answer, resources] = await Promise.all([
       generateAnswer(query, intent, combinedSnapshot, provider, apiKey),
       Promise.resolve(extractResources(intent, { gcp: gcpSnapshot, aws: awsSnapshot })),
     ]);
+    console.info(`[api/query:${queryId}] complete`, {
+      elapsedMs: Date.now() - startedAt,
+      resourceCount: resources.length,
+    });
 
     return NextResponse.json({
       query,
