@@ -4,7 +4,7 @@ import { fetchGcpSnapshot } from "@/lib/gcp";
 import { fetchAwsSnapshot } from "@/lib/aws"; // Integrated AWS
 import { initGoogleAuthFromKey, initUserAuth, useMockData } from "@/lib/gcp/client";
 import { useMockAwsData } from "@/lib/aws/client"; // Integrated AWS
-import { extractIntent, generateAnswer, extractResources } from "@/lib/claude/query-processor";
+import { extractIntent, generateAnswer, extractResources, type QueryIntent } from "@/lib/claude/query-processor";
 import { callAI, resolveAI, type AIProvider } from "@/lib/ai/client";
 import { sql, ensureGcpSnapshotTable, ensureAwsSnapshotTable, ensureAgentInstallTables } from "@/lib/db"; // Added AWS table ensure
 import { getUserCloudCredentials } from "@/lib/credentials";
@@ -18,7 +18,7 @@ import { getGhcrVulnerabilities } from "@/lib/github/ghcr-scanning";
 import { getDockerHubVulnerabilities } from "@/lib/dockerhub/dockerhub-scanning";
 import { getAwsRegions } from "@/lib/aws/client";
 
-const REQUEST_LOG_SAMPLE_LIMIT = 200;
+const REQUEST_LOG_SAMPLE_LIMIT = 50;
 
 type SnapshotRow = {
   snapshot: any;
@@ -82,14 +82,28 @@ function parseCapturedHttp(raw: unknown): {
   };
 }
 
+type QueryLogger = {
+  queryId: string;
+  startedAt: number;
+};
+
+function logQueryStep(logger: QueryLogger | undefined, step: string, data: Record<string, unknown> = {}) {
+  if (!logger) return;
+  console.info(`[api/query:${logger.queryId}] ${step}`, {
+    elapsedMs: Date.now() - logger.startedAt,
+    ...data,
+  });
+}
+
 function increment(map: Record<string, number>, key: unknown) {
   const normalized = String(key || "unknown");
   map[normalized] = (map[normalized] ?? 0) + 1;
 }
 
-async function fetchProcessorHistory() {
+async function fetchProcessorHistory(logger?: QueryLogger) {
   const processorUrl = process.env.PROCESSOR_URL;
   if (!processorUrl) {
+    logQueryStep(logger, "processor history skipped", { reason: "PROCESSOR_URL missing" });
     return {
       available: false,
       source: "PROCESSOR_URL is not configured",
@@ -100,11 +114,16 @@ async function fetchProcessorHistory() {
 
   try {
     const baseUrl = processorUrl.replace(/\/$/, "");
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2000);
+    logQueryStep(logger, "processor history fetch start", { source: `${baseUrl}/api/history` });
     const resp = await fetch(`${baseUrl}/api/history`, {
       method: "GET",
       headers: { Accept: "application/json", "Cache-Control": "no-cache" },
       next: { revalidate: 0 },
-    });
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timeout));
+    logQueryStep(logger, "processor history fetch complete", { status: resp.status, ok: resp.ok });
     if (!resp.ok) {
       return {
         available: false,
@@ -116,6 +135,7 @@ async function fetchProcessorHistory() {
     }
     const data = await resp.json();
     const history = Array.isArray(data) ? data : (data?.history ?? []);
+    logQueryStep(logger, "processor history parsed", { returned: history.length });
     return {
       available: true,
       source: `${baseUrl}/api/history`,
@@ -131,6 +151,9 @@ async function fetchProcessorHistory() {
       })),
     };
   } catch (err) {
+    logQueryStep(logger, "processor history fetch failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return {
       available: false,
       source: `${processorUrl.replace(/\/$/, "")}/api/history`,
@@ -141,12 +164,32 @@ async function fetchProcessorHistory() {
   }
 }
 
-async function buildRequestLogContext(userEmail: string) {
+async function buildRequestLogContext(userEmail: string, logger?: QueryLogger) {
+  logQueryStep(logger, "agent tables ensure start");
   await ensureAgentInstallTables();
+  logQueryStep(logger, "agent tables ensure complete");
 
+  logQueryStep(logger, "agent aggregate query start");
   const aggregate = await sql`
     SELECT
-      COUNT(*)::int AS total,
+      COUNT(*)::int AS total_events,
+      COUNT(*) FILTER (WHERE e.event->>'type' = 'http_request')::int AS total_requests,
+      COUNT(*) FILTER (WHERE e.event->>'type' = 'http_response')::int AS total_responses,
+      COUNT(*) FILTER (
+        WHERE e.event->>'type' = 'http_response'
+          AND e.event->>'status' ~ '^[0-9]{3}$'
+          AND (e.event->>'status')::int >= 400
+      )::int AS erroneous_responses,
+      COUNT(*) FILTER (
+        WHERE e.event->>'type' = 'http_response'
+          AND e.event->>'status' ~ '^[0-9]{3}$'
+          AND (e.event->>'status')::int BETWEEN 400 AND 499
+      )::int AS client_error_responses,
+      COUNT(*) FILTER (
+        WHERE e.event->>'type' = 'http_response'
+          AND e.event->>'status' ~ '^[0-9]{3}$'
+          AND (e.event->>'status')::int >= 500
+      )::int AS server_error_responses,
       MIN(e.received_at) AS oldest_received_at,
       MAX(e.received_at) AS newest_received_at
     FROM agent_events e
@@ -154,7 +197,51 @@ async function buildRequestLogContext(userEmail: string) {
     WHERE h.user_email = ${userEmail}
        OR h.user_email = 'system'
   `;
+  const totals = aggregate.rows[0] ?? {};
+  logQueryStep(logger, "agent aggregate query complete", {
+    totalEvents: Number(totals.total_events ?? 0),
+    totalRequests: Number(totals.total_requests ?? 0),
+    totalResponses: Number(totals.total_responses ?? 0),
+    erroneousResponses: Number(totals.erroneous_responses ?? 0),
+  });
 
+  logQueryStep(logger, "agent cluster stats query start");
+  const clusterStats = await sql`
+    SELECT
+      COALESCE(h.metadata->>'clusterName', 'unknown') AS cluster_name,
+      COUNT(*) FILTER (WHERE e.event->>'type' = 'http_request')::int AS requests,
+      COUNT(*) FILTER (WHERE e.event->>'type' = 'http_response')::int AS responses,
+      COUNT(*) FILTER (
+        WHERE e.event->>'type' = 'http_response'
+          AND e.event->>'status' ~ '^[0-9]{3}$'
+          AND (e.event->>'status')::int >= 400
+      )::int AS erroneous_responses,
+      COUNT(*) FILTER (
+        WHERE e.event->>'type' = 'http_response'
+          AND e.event->>'status' ~ '^[0-9]{3}$'
+          AND (e.event->>'status')::int BETWEEN 400 AND 499
+      )::int AS client_error_responses,
+      COUNT(*) FILTER (
+        WHERE e.event->>'type' = 'http_response'
+          AND e.event->>'status' ~ '^[0-9]{3}$'
+          AND (e.event->>'status')::int >= 500
+      )::int AS server_error_responses,
+      MIN(e.received_at) AS oldest_received_at,
+      MAX(e.received_at) AS newest_received_at
+    FROM agent_events e
+    JOIN agent_hosts h ON h.id = e.agent_id
+    WHERE h.user_email = ${userEmail}
+       OR h.user_email = 'system'
+    GROUP BY COALESCE(h.metadata->>'clusterName', 'unknown')
+    ORDER BY erroneous_responses DESC, requests DESC
+    LIMIT 20
+  `;
+  logQueryStep(logger, "agent cluster stats query complete", {
+    clusterRows: clusterStats.rows.length,
+    clusters: clusterStats.rows.slice(0, 5).map((row: any) => row.cluster_name),
+  });
+
+  logQueryStep(logger, "agent recent events query start", { limit: REQUEST_LOG_SAMPLE_LIMIT });
   const events = await sql`
     SELECT e.id, e.agent_id, e.provider, e.project_id, e.event, e.received_at, h.metadata->>'clusterName' AS cluster_name
     FROM agent_events e
@@ -164,6 +251,7 @@ async function buildRequestLogContext(userEmail: string) {
     ORDER BY e.received_at DESC
     LIMIT ${REQUEST_LOG_SAMPLE_LIMIT}
   `;
+  logQueryStep(logger, "agent recent events query complete", { rows: events.rows.length });
 
   const methods: Record<string, number> = {};
   const paths: Record<string, number> = {};
@@ -211,20 +299,45 @@ async function buildRequestLogContext(userEmail: string) {
       contentType: parsed.contentType,
       payloadBytes: parsed.payloadBytes,
       queryParams: parsed.queryParams,
-      rawPreview: typeof ev.data === "string" ? ev.data.slice(0, 500) : undefined,
+      rawPreview: typeof ev.data === "string" ? ev.data.slice(0, 200) : undefined,
     };
   });
 
-  const processor = await fetchProcessorHistory();
-  const totals = aggregate.rows[0] ?? {};
+  logQueryStep(logger, "agent recent events normalize complete", {
+    sampledEvents: recent.length,
+    methodKeys: Object.keys(methods),
+    statusClassKeys: Object.keys(statusClasses),
+  });
+
+  const processor = await fetchProcessorHistory(logger);
+  logQueryStep(logger, "request log context assembled", {
+    processorAvailable: processor.available,
+    totalEvents: Number(totals.total_events ?? 0),
+    sampledEvents: recent.length,
+  });
 
   return {
     durableAgentEvents: {
       source: "Postgres agent_events joined to agent_hosts by authenticated user",
       retention: "Durable rows retained until deleted by database maintenance; this query aggregates all matching rows and includes the newest sample.",
-      totalEvents: Number(totals.total ?? 0),
+      totalEvents: Number(totals.total_events ?? 0),
+      totalRequests: Number(totals.total_requests ?? 0),
+      totalResponses: Number(totals.total_responses ?? 0),
+      erroneousResponses: Number(totals.erroneous_responses ?? 0),
+      clientErrorResponses: Number(totals.client_error_responses ?? 0),
+      serverErrorResponses: Number(totals.server_error_responses ?? 0),
       oldestReceivedAt: toIso(totals.oldest_received_at),
       newestReceivedAt: toIso(totals.newest_received_at),
+      clusterStats: clusterStats.rows.map((row: any) => ({
+        clusterName: row.cluster_name,
+        requests: Number(row.requests ?? 0),
+        responses: Number(row.responses ?? 0),
+        erroneousResponses: Number(row.erroneous_responses ?? 0),
+        clientErrorResponses: Number(row.client_error_responses ?? 0),
+        serverErrorResponses: Number(row.server_error_responses ?? 0),
+        oldestReceivedAt: toIso(row.oldest_received_at),
+        newestReceivedAt: toIso(row.newest_received_at),
+      })),
       sampleLimit: REQUEST_LOG_SAMPLE_LIMIT,
       sampledEvents: recent.length,
       breakdownsFromSample: {
@@ -241,6 +354,48 @@ async function buildRequestLogContext(userEmail: string) {
     },
     requestProcessorHistory: processor,
   };
+}
+
+function findRequestedCluster(query: string, requestLogs: any): string | null {
+  const clusters: string[] = requestLogs?.durableAgentEvents?.clusterStats?.map((row: any) => row.clusterName).filter(Boolean) ?? [];
+  const normalizedQuery = query.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return clusters.find((cluster) => normalizedQuery.includes(cluster.toLowerCase().replace(/[^a-z0-9]/g, ""))) ?? null;
+}
+
+function formatRequestLogAnswer(query: string, requestLogs: any): string {
+  const durable = requestLogs?.durableAgentEvents ?? {};
+  const requestedCluster = findRequestedCluster(query, requestLogs);
+  const clusterRows = durable.clusterStats ?? [];
+  const row = requestedCluster
+    ? clusterRows.find((item: any) => item.clusterName === requestedCluster)
+    : null;
+  const scope = row ?? durable;
+  const scopeLabel = requestedCluster ? `cluster **${requestedCluster}**` : "all observed clusters";
+
+  const lines = [
+    `For ${scopeLabel}:`,
+    `- **Requests observed:** ${scope.requests ?? durable.totalRequests ?? 0}`,
+    `- **Responses observed:** ${scope.responses ?? durable.totalResponses ?? 0}`,
+    `- **Erroneous responses (HTTP 4xx/5xx):** ${scope.erroneousResponses ?? durable.erroneousResponses ?? 0}`,
+    `- **Client errors (4xx):** ${scope.clientErrorResponses ?? durable.clientErrorResponses ?? 0}`,
+    `- **Server errors (5xx):** ${scope.serverErrorResponses ?? durable.serverErrorResponses ?? 0}`,
+    `- **Window:** ${scope.oldestReceivedAt ?? durable.oldestReceivedAt ?? "unknown"} to ${scope.newestReceivedAt ?? durable.newestReceivedAt ?? "unknown"}`,
+    "",
+    `Source: **Postgres agent_events** joined to **agent_hosts**. These are Watchmen agent-captured HTTP events, not a Cloud Logging poll.`,
+  ];
+
+  if (!requestedCluster && clusterRows.length > 0) {
+    lines.push("", "By cluster:");
+    for (const cluster of clusterRows.slice(0, 10)) {
+      lines.push(`- **${cluster.clusterName}**: ${cluster.requests} requests, ${cluster.erroneousResponses} erroneous responses (${cluster.clientErrorResponses} 4xx, ${cluster.serverErrorResponses} 5xx)`);
+    }
+  }
+
+  if (requestLogs?.requestProcessorHistory?.available === false) {
+    lines.push("", `Note: request processor in-memory history was not included: ${requestLogs.requestProcessorHistory.source}.`);
+  }
+
+  return lines.join("\n");
 }
 
 function buildSourceInventory(params: {
@@ -318,6 +473,18 @@ function shouldFetchGkeEntryPoints(query: string, intent: Awaited<ReturnType<typ
     /\b(public|open|external|internet|exposed|endpoint|ingress|load\s*balancer|loadbalancer|api server|master)\b/.test(q);
   const asksAboutGke = /\b(gke|kubernetes|cluster)\b/.test(q) || intent.resourceType === "gke_cluster";
   return Boolean(gcpRelatedIntent(intent) && asksAboutGke && asksAboutPublicEndpoint);
+}
+
+function inferFastIntent(query: string): QueryIntent | null {
+  const q = query.toLowerCase();
+  const mentionsRequests = /\b(requests?|responses?|traffic|http|status|4xx|5xx|errors?|erroneous|erroroneous|failed|failures?)\b/.test(q);
+  const mentionsLogsOrEndpoints = /\b(logs?|gke|kubernetes|clusters?|endpoints?|ingress|load\s*balancer|sent|received)\b/.test(q);
+  if (!mentionsRequests || !mentionsLogsOrEndpoints) return null;
+
+  return {
+    queryType: "request_logs",
+    resourceType: /\b(gke|kubernetes|clusters?)\b/.test(q) ? "gke_cluster" : undefined,
+  };
 }
 
 function gcpRelatedIntent(intent: Awaited<ReturnType<typeof extractIntent>>): boolean {
@@ -449,30 +616,51 @@ export async function POST(req: NextRequest) {
   if (!session?.user?.email) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const email = session.user.email;
 
   const queryId = crypto.randomUUID().slice(0, 8);
   const startedAt = Date.now();
+  const logger = { queryId, startedAt };
   const body = await req.json();
 
-  // Resolve the user's AI key: check body first (browser-only), then fallback to DB
-  let provider: AIProvider;
-  let apiKey: string;
-  const ALLOWED_PROVIDERS: AIProvider[] = ["openai", "anthropic", "google"];
-  const browserKey = (body as any)?.demoCredentials?.aiKey;
-  const browserProvider = (body as any)?.demoCredentials?.aiProvider;
+  const query: string = body?.query?.trim();
+  if (!query || query.length < 3) {
+    console.warn(`[api/query:${queryId}] invalid query`, { reason: "too_short", queryLength: query?.length ?? 0 });
+    return NextResponse.json({ error: "Query must be at least 3 characters." }, { status: 400 });
+  }
+  if (query.length > 500) {
+    console.warn(`[api/query:${queryId}] invalid query`, { reason: "too_long", queryLength: query.length });
+    return NextResponse.json({ error: "Query must be under 500 characters." }, { status: 400 });
+  }
 
-  if (browserKey && browserProvider) {
-    if (!ALLOWED_PROVIDERS.includes(browserProvider)) {
-      return NextResponse.json({ error: "Invalid AI provider." }, { status: 400 });
+  let provider: AIProvider | null = null;
+  let apiKey: string | null = null;
+  const resolveAiOrResponse = async (): Promise<NextResponse | null> => {
+    if (provider && apiKey) return null;
+
+    const ALLOWED_PROVIDERS: AIProvider[] = ["openai", "anthropic", "google"];
+    const browserKey = (body as any)?.demoCredentials?.aiKey;
+    const browserProvider = (body as any)?.demoCredentials?.aiProvider;
+
+    if (browserKey && browserProvider) {
+      logQueryStep(logger, "ai provider resolve from browser key", { browserProvider });
+      if (!ALLOWED_PROVIDERS.includes(browserProvider)) {
+        return NextResponse.json({ error: "Invalid AI provider." }, { status: 400 });
+      }
+      provider = browserProvider as AIProvider;
+      apiKey = browserKey;
+      return null;
     }
-    provider = browserProvider as AIProvider;
-    apiKey = browserKey;
-  } else {
+
     try {
-      const resolved = await resolveAI(session.user.email, session.isDemoUser);
+      logQueryStep(logger, "ai provider resolve start");
+      const resolved = await resolveAI(email, session.isDemoUser);
       provider = resolved.provider;
       apiKey = resolved.key;
+      logQueryStep(logger, "ai provider resolve complete", { provider });
+      return null;
     } catch (err: any) {
+      logQueryStep(logger, "ai provider resolve failed", { message: err?.message ?? String(err) });
       if (err.message === "DEMO_LIMIT_REACHED") {
         return NextResponse.json(
           { error: "Daily demo AI limit reached (20 queries). Please provide your own Gemini/Claude key in Settings to continue." },
@@ -493,21 +681,15 @@ export async function POST(req: NextRequest) {
         { status: 422 }
       );
     }
-  }
-
-  const query: string = body?.query?.trim();
-  if (!query || query.length < 3) {
-    return NextResponse.json({ error: "Query must be at least 3 characters." }, { status: 400 });
-  }
-  if (query.length > 500) {
-    return NextResponse.json({ error: "Query must be under 500 characters." }, { status: 400 });
-  }
+  };
 
   try {
+    const fastIntent = inferFastIntent(query);
     console.info(`[api/query:${queryId}] start`, {
-      email: session.user.email,
+      email,
       queryLength: query.length,
       isDemoUser: Boolean(session.isDemoUser),
+      fastIntent: fastIntent?.queryType,
     });
 
     let gcpSnapshot;
@@ -517,37 +699,39 @@ export async function POST(req: NextRequest) {
     const isGcpMock = useMockData() || Boolean(session.isDemoUser);
     const isAwsMock = useMockAwsData() || Boolean(session.isDemoUser);
 
-    // GCP Snapshot fetch
-    if (isGcpMock) {
-      gcpSnapshot = await fetchGcpSnapshot({ forceMock: true });
-      gcpFetchedAt = gcpSnapshot?.fetchedAt;
-    } else {
-      await ensureGcpSnapshotTable();
-      const result = await sql`
-        SELECT snapshot, fetched_at FROM user_snapshots WHERE user_email = ${session.user.email}
-      `;
-      if (result.rows.length > 0) {
-        const row = result.rows[0] as SnapshotRow;
-        gcpSnapshot = row.snapshot;
-        gcpFetchedAt = row.fetched_at;
-        if (gcpSnapshot && gcpFetchedAt) gcpSnapshot.fetchedAt = toIso(gcpFetchedAt) ?? gcpSnapshot.fetchedAt;
+    if (fastIntent?.queryType !== "request_logs") {
+      // GCP Snapshot fetch
+      if (isGcpMock) {
+        gcpSnapshot = await fetchGcpSnapshot({ forceMock: true });
+        gcpFetchedAt = gcpSnapshot?.fetchedAt;
+      } else {
+        await ensureGcpSnapshotTable();
+        const result = await sql`
+        SELECT snapshot, fetched_at FROM user_snapshots WHERE user_email = ${email}
+        `;
+        if (result.rows.length > 0) {
+          const row = result.rows[0] as SnapshotRow;
+          gcpSnapshot = row.snapshot;
+          gcpFetchedAt = row.fetched_at;
+          if (gcpSnapshot && gcpFetchedAt) gcpSnapshot.fetchedAt = toIso(gcpFetchedAt) ?? gcpSnapshot.fetchedAt;
+        }
       }
-    }
 
-    // AWS Snapshot fetch
-    if (isAwsMock) {
-      awsSnapshot = await fetchAwsSnapshot({ forceMock: true });
-      awsFetchedAt = awsSnapshot?.fetchedAt;
-    } else {
-      await ensureAwsSnapshotTable();
-      const result = await sql`
-        SELECT snapshot, fetched_at FROM aws_snapshots WHERE user_email = ${session.user.email}
-      `;
-      if (result.rows.length > 0) {
-        const row = result.rows[0] as SnapshotRow;
-        awsSnapshot = row.snapshot;
-        awsFetchedAt = row.fetched_at;
-        if (awsSnapshot && awsFetchedAt) awsSnapshot.fetchedAt = toIso(awsFetchedAt) ?? awsSnapshot.fetchedAt;
+      // AWS Snapshot fetch
+      if (isAwsMock) {
+        awsSnapshot = await fetchAwsSnapshot({ forceMock: true });
+        awsFetchedAt = awsSnapshot?.fetchedAt;
+      } else {
+        await ensureAwsSnapshotTable();
+        const result = await sql`
+          SELECT snapshot, fetched_at FROM aws_snapshots WHERE user_email = ${email}
+        `;
+        if (result.rows.length > 0) {
+          const row = result.rows[0] as SnapshotRow;
+          awsSnapshot = row.snapshot;
+          awsFetchedAt = row.fetched_at;
+          if (awsSnapshot && awsFetchedAt) awsSnapshot.fetchedAt = toIso(awsFetchedAt) ?? awsSnapshot.fetchedAt;
+        }
       }
     }
 
@@ -564,7 +748,12 @@ export async function POST(req: NextRequest) {
       }));
     }
 
-    const intent = await extractIntent(query, provider, apiKey);
+    if (!fastIntent) {
+      const aiError = await resolveAiOrResponse();
+      if (aiError) return aiError;
+    }
+
+    const intent = fastIntent ?? await extractIntent(query, provider!, apiKey!);
     console.info(`[api/query:${queryId}] intent`, {
       queryType: intent.queryType,
       resourceType: intent.resourceType,
@@ -629,8 +818,8 @@ export async function POST(req: NextRequest) {
         const [gcpResultsList, awsResultsList, ghcrResults, dockerHubResults] = await Promise.all([
           Promise.all(gcpProjects.map((pid: string) => (!isMock ? getGcpContainerVulnerabilities(pid) : []))),
           Promise.all(awsRegions.map((region: string) => (!isAwsMock ? getAwsContainerVulnerabilities(region) : []))),
-          getGhcrVulnerabilities(session.user.email),
-          getDockerHubVulnerabilities(session.user.email)
+          getGhcrVulnerabilities(email),
+          getDockerHubVulnerabilities(email)
         ]);
 
         const results = [
@@ -648,17 +837,35 @@ export async function POST(req: NextRequest) {
 
     if (intent.queryType === "request_logs" || intent.queryType === "data_sources" || intent.queryType === "connected_projects") {
       console.info(`[api/query:${queryId}] request log context start`, { elapsedMs: Date.now() - startedAt });
-      combinedSnapshot.requestLogs = await buildRequestLogContext(session.user.email);
+      combinedSnapshot.requestLogs = await buildRequestLogContext(email, logger);
       console.info(`[api/query:${queryId}] request log context complete`, {
         elapsedMs: Date.now() - startedAt,
         totalAgentEvents: combinedSnapshot.requestLogs?.durableAgentEvents?.totalEvents,
+        totalRequests: combinedSnapshot.requestLogs?.durableAgentEvents?.totalRequests,
+        erroneousResponses: combinedSnapshot.requestLogs?.durableAgentEvents?.erroneousResponses,
+        clusterStatsRows: combinedSnapshot.requestLogs?.durableAgentEvents?.clusterStats?.length,
       });
     }
 
-    if (gcpSnapshot && intent.queryType !== "request_logs" && shouldFetchGkeEntryPoints(query, intent)) {
+    if (intent.queryType === "request_logs") {
+      const answer = formatRequestLogAnswer(query, combinedSnapshot.requestLogs);
+      console.info(`[api/query:${queryId}] complete deterministic request_logs`, {
+        elapsedMs: Date.now() - startedAt,
+        answerLength: answer.length,
+      });
+      return NextResponse.json({
+        query,
+        intent,
+        answer,
+        resources: [],
+        fetchedAt: gcpSnapshot?.fetchedAt || awsSnapshot?.fetchedAt || new Date().toISOString(),
+      });
+    }
+
+    if (gcpSnapshot && shouldFetchGkeEntryPoints(query, intent)) {
       console.info(`[api/query:${queryId}] gke entrypoint context start`, { elapsedMs: Date.now() - startedAt });
       combinedSnapshot.gkeEntryPoints = await buildGkeEntryPointContext({
-        email: session.user.email,
+        email,
         accessToken: session.accessToken,
         gcpSnapshot,
         isGcpMock,
@@ -672,8 +879,10 @@ export async function POST(req: NextRequest) {
     }
 
     console.info(`[api/query:${queryId}] answer generation start`, { elapsedMs: Date.now() - startedAt });
+    const aiError = await resolveAiOrResponse();
+    if (aiError) return aiError;
     const [answer, resources] = await Promise.all([
-      generateAnswer(query, intent, combinedSnapshot, provider, apiKey),
+      generateAnswer(query, intent, combinedSnapshot, provider!, apiKey!),
       Promise.resolve(extractResources(intent, { gcp: gcpSnapshot, aws: awsSnapshot })),
     ]);
     console.info(`[api/query:${queryId}] complete`, {
@@ -689,7 +898,11 @@ export async function POST(req: NextRequest) {
       fetchedAt: gcpSnapshot?.fetchedAt || awsSnapshot?.fetchedAt
     });
   } catch (err) {
-    console.error("[api/query] error:", err);
+    console.error(`[api/query:${queryId}] error`, {
+      elapsedMs: Date.now() - startedAt,
+      message: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
     return NextResponse.json({ error: "Failed to process query. Check server logs." }, { status: 500 });
   }
 }
