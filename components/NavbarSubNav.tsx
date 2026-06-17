@@ -33,6 +33,7 @@ export default function NavbarSubNav({ children }: { children: React.ReactNode }
             }
 
             if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+                e.preventDefault();
                 const currentIndex = NAV_ITEMS.findIndex(item =>
                     item.href === "/dashboard" || item.href === "/dashboard/aws"
                         ? pathname === item.href
