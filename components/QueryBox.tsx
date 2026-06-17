@@ -162,6 +162,7 @@ export default function QueryBox({ onResult }: QueryBoxProps) {
                 </div>
               )}
               <span className="hidden sm:inline" style={{ color: "var(--border-dim)" }}>// Enter to execute</span>
+              <span className="hidden md:inline" style={{ color: "var(--border-dim)" }}>// raw request data retained 30 days max</span>
             </div>
             <button
               type="submit"

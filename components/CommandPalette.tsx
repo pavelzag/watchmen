@@ -344,7 +344,7 @@ export default function CommandPalette() {
                                 dangerouslySetInnerHTML={{ __html: linkifyText(renderMarkdown(result.answer), result.resources ?? [], resourceHref) }}
                             />
                             <div className="mt-3 pt-2 text-xs" style={{ borderTop: "1px solid #003010", color: "#005c16" }}>
-              // query saved to history · close overlay to return to dashboard
+              // query saved to history · raw request data retained 30 days max
                             </div>
                         </div>
                     )}

@@ -182,7 +182,7 @@ async function fetchProcessorHistory(logger?: QueryLogger) {
   }
 }
 
-async function buildRequestLogContext(userEmail: string, logger?: QueryLogger) {
+async function buildRequestLogContext(userEmail: string, logger?: QueryLogger, options: { includeProcessorHistory?: boolean } = {}) {
   logQueryStep(logger, "agent tables ensure start");
   await ensureAgentInstallTables();
   logQueryStep(logger, "agent tables ensure complete");
@@ -196,14 +196,18 @@ async function buildRequestLogContext(userEmail: string, logger?: QueryLogger) {
       AND indexname IN (
         'idx_agent_events_http_errors_by_agent',
         'idx_agent_events_http_requests_by_agent',
-        'idx_agent_events_http_responses_by_agent'
+        'idx_agent_events_http_responses_by_agent',
+        'idx_agent_events_cluster_analytics',
+        'idx_agent_events_retention'
       )
   `;
   const existingIndexes = new Set(indexCheck.rows.map((row: any) => row.indexname));
   const hasQueryIndexes =
     existingIndexes.has("idx_agent_events_http_errors_by_agent") &&
     existingIndexes.has("idx_agent_events_http_requests_by_agent") &&
-    existingIndexes.has("idx_agent_events_http_responses_by_agent");
+    existingIndexes.has("idx_agent_events_http_responses_by_agent") &&
+    existingIndexes.has("idx_agent_events_cluster_analytics") &&
+    existingIndexes.has("idx_agent_events_retention");
   logQueryStep(logger, "agent query index check complete", {
     hasQueryIndexes,
     existingIndexes: [...existingIndexes],
@@ -216,15 +220,28 @@ async function buildRequestLogContext(userEmail: string, logger?: QueryLogger) {
         "idx_agent_events_http_errors_by_agent",
         "idx_agent_events_http_requests_by_agent",
         "idx_agent_events_http_responses_by_agent",
+        "idx_agent_events_cluster_analytics",
+        "idx_agent_events_retention",
       ],
     });
 
     const events = await sql`
-      SELECT e.id, e.agent_id, e.provider, e.project_id, e.event, e.received_at, h.metadata->>'clusterName' AS cluster_name
+      SELECT
+        e.id,
+        e.agent_id,
+        e.provider,
+        e.project_id,
+        e.event,
+        e.event_type,
+        e.http_status,
+        e.http_method,
+        e.http_path,
+        COALESCE(e.cluster_name, h.metadata->>'clusterName') AS cluster_name,
+        e.received_at
       FROM agent_events e
       JOIN agent_hosts h ON h.id = e.agent_id
-      WHERE h.user_email = ${userEmail}
-         OR h.user_email = 'system'
+      WHERE (h.user_email = ${userEmail} OR h.user_email = 'system')
+        AND e.received_at >= NOW() - INTERVAL '30 days'
       ORDER BY e.received_at DESC
       LIMIT ${Math.min(REQUEST_LOG_SAMPLE_LIMIT, 20)}
     `;
@@ -239,10 +256,10 @@ async function buildRequestLogContext(userEmail: string, logger?: QueryLogger) {
         projectId: row.project_id,
         clusterName: row.cluster_name,
         receivedAt: toIso(row.received_at),
-        type: ev.type,
-        method: ev.method ?? (ev.type === "http_response" ? "RESPONSE" : "unknown"),
-        path: ev.path ?? "unknown",
-        status: ev.status ?? null,
+        type: row.event_type ?? ev.type,
+        method: row.http_method ?? ev.method ?? ((row.event_type ?? ev.type) === "http_response" ? "RESPONSE" : "unknown"),
+        path: row.http_path ?? ev.path ?? "unknown",
+        status: row.http_status ?? ev.status ?? null,
         hostname: ev.hostname,
         process: ev.comm,
         pid: ev.pid,
@@ -252,14 +269,16 @@ async function buildRequestLogContext(userEmail: string, logger?: QueryLogger) {
     return {
       durableAgentEvents: {
         source: "Postgres agent_events joined to agent_hosts by authenticated user",
-        retention: "Durable rows retained until deleted by database maintenance.",
+        retention: "Raw agent events are retained for 30 days maximum.",
         exactCountsAvailable: false,
         missingIndexes: [
           "idx_agent_events_http_errors_by_agent",
           "idx_agent_events_http_requests_by_agent",
           "idx_agent_events_http_responses_by_agent",
+          "idx_agent_events_cluster_analytics",
+          "idx_agent_events_retention",
         ].filter((indexName) => !existingIndexes.has(indexName)),
-        remediation: "Run scripts/migrate.sql, or create the missing agent_events query indexes from that file, then retry the question.",
+        remediation: "Run scripts/migrate.sql, or create the missing agent_events analytics columns/indexes from that file, then retry the question.",
         sampleLimit: Math.min(REQUEST_LOG_SAMPLE_LIMIT, 20),
         sampledEvents: recent.length,
         recent,
@@ -286,45 +305,50 @@ async function buildRequestLogContext(userEmail: string, logger?: QueryLogger) {
         SELECT COUNT(*)::int
         FROM agent_events e
         JOIN scoped_agents a ON a.id = e.agent_id
-        WHERE e.event->>'type' = 'http_request'
+        WHERE e.event_type = 'http_request'
+          AND e.received_at >= NOW() - INTERVAL '30 days'
       ) AS total_requests,
       (
         SELECT COUNT(*)::int
         FROM agent_events e
         JOIN scoped_agents a ON a.id = e.agent_id
-        WHERE e.event->>'type' = 'http_response'
+        WHERE e.event_type = 'http_response'
+          AND e.received_at >= NOW() - INTERVAL '30 days'
       ) AS total_responses,
       (
         SELECT COUNT(*)::int
         FROM agent_events e
         JOIN scoped_agents a ON a.id = e.agent_id
-        WHERE e.event->>'type' = 'http_response'
-          AND (CASE WHEN e.event->>'status' ~ '^[0-9]{3}$' THEN (e.event->>'status')::int ELSE NULL END) >= 400
+        WHERE e.event_type = 'http_response'
+          AND e.http_status >= 400
+          AND e.received_at >= NOW() - INTERVAL '30 days'
       ) AS erroneous_responses,
       (
         SELECT COUNT(*)::int
         FROM agent_events e
         JOIN scoped_agents a ON a.id = e.agent_id
-        WHERE e.event->>'type' = 'http_response'
-          AND (CASE WHEN e.event->>'status' ~ '^[0-9]{3}$' THEN (e.event->>'status')::int ELSE NULL END) BETWEEN 400 AND 499
+        WHERE e.event_type = 'http_response'
+          AND e.http_status BETWEEN 400 AND 499
+          AND e.received_at >= NOW() - INTERVAL '30 days'
       ) AS client_error_responses,
       (
         SELECT COUNT(*)::int
         FROM agent_events e
         JOIN scoped_agents a ON a.id = e.agent_id
-        WHERE e.event->>'type' = 'http_response'
-          AND (CASE WHEN e.event->>'status' ~ '^[0-9]{3}$' THEN (e.event->>'status')::int ELSE NULL END) >= 500
+        WHERE e.event_type = 'http_response'
+          AND e.http_status >= 500
+          AND e.received_at >= NOW() - INTERVAL '30 days'
       ) AS server_error_responses,
       (
         SELECT LEAST(
-          (SELECT MIN(received_at) FROM agent_events e JOIN scoped_agents a ON a.id = e.agent_id WHERE e.event->>'type' = 'http_request'),
-          (SELECT MIN(received_at) FROM agent_events e JOIN scoped_agents a ON a.id = e.agent_id WHERE e.event->>'type' = 'http_response')
+          (SELECT MIN(received_at) FROM agent_events e JOIN scoped_agents a ON a.id = e.agent_id WHERE e.event_type = 'http_request' AND e.received_at >= NOW() - INTERVAL '30 days'),
+          (SELECT MIN(received_at) FROM agent_events e JOIN scoped_agents a ON a.id = e.agent_id WHERE e.event_type = 'http_response' AND e.received_at >= NOW() - INTERVAL '30 days')
         )
       ) AS oldest_received_at,
       (
         SELECT GREATEST(
-          (SELECT MAX(received_at) FROM agent_events e JOIN scoped_agents a ON a.id = e.agent_id WHERE e.event->>'type' = 'http_request'),
-          (SELECT MAX(received_at) FROM agent_events e JOIN scoped_agents a ON a.id = e.agent_id WHERE e.event->>'type' = 'http_response')
+          (SELECT MAX(received_at) FROM agent_events e JOIN scoped_agents a ON a.id = e.agent_id WHERE e.event_type = 'http_request' AND e.received_at >= NOW() - INTERVAL '30 days'),
+          (SELECT MAX(received_at) FROM agent_events e JOIN scoped_agents a ON a.id = e.agent_id WHERE e.event_type = 'http_response' AND e.received_at >= NOW() - INTERVAL '30 days')
         )
       ) AS newest_received_at
   `;
@@ -347,14 +371,16 @@ async function buildRequestLogContext(userEmail: string, logger?: QueryLogger) {
       SELECT h.cluster_name, COUNT(*)::int AS requests, MIN(e.received_at) AS oldest_request_at, MAX(e.received_at) AS newest_request_at
       FROM agent_events e
       JOIN scoped_hosts h ON h.id = e.agent_id
-      WHERE e.event->>'type' = 'http_request'
+      WHERE e.event_type = 'http_request'
+        AND e.received_at >= NOW() - INTERVAL '30 days'
       GROUP BY h.cluster_name
     ),
     responses AS (
       SELECT h.cluster_name, COUNT(*)::int AS responses, MIN(e.received_at) AS oldest_response_at, MAX(e.received_at) AS newest_response_at
       FROM agent_events e
       JOIN scoped_hosts h ON h.id = e.agent_id
-      WHERE e.event->>'type' = 'http_response'
+      WHERE e.event_type = 'http_response'
+        AND e.received_at >= NOW() - INTERVAL '30 days'
       GROUP BY h.cluster_name
     ),
     errors AS (
@@ -362,15 +388,16 @@ async function buildRequestLogContext(userEmail: string, logger?: QueryLogger) {
         h.cluster_name,
         COUNT(*)::int AS erroneous_responses,
         COUNT(*) FILTER (
-          WHERE (CASE WHEN e.event->>'status' ~ '^[0-9]{3}$' THEN (e.event->>'status')::int ELSE NULL END) BETWEEN 400 AND 499
+          WHERE e.http_status BETWEEN 400 AND 499
         )::int AS client_error_responses,
         COUNT(*) FILTER (
-          WHERE (CASE WHEN e.event->>'status' ~ '^[0-9]{3}$' THEN (e.event->>'status')::int ELSE NULL END) >= 500
+          WHERE e.http_status >= 500
         )::int AS server_error_responses
       FROM agent_events e
       JOIN scoped_hosts h ON h.id = e.agent_id
-      WHERE e.event->>'type' = 'http_response'
-        AND (CASE WHEN e.event->>'status' ~ '^[0-9]{3}$' THEN (e.event->>'status')::int ELSE NULL END) >= 400
+      WHERE e.event_type = 'http_response'
+        AND e.http_status >= 400
+        AND e.received_at >= NOW() - INTERVAL '30 days'
       GROUP BY h.cluster_name
     )
     SELECT
@@ -396,11 +423,22 @@ async function buildRequestLogContext(userEmail: string, logger?: QueryLogger) {
 
   logQueryStep(logger, "agent recent events query start", { limit: REQUEST_LOG_SAMPLE_LIMIT });
   const events = await sql`
-    SELECT e.id, e.agent_id, e.provider, e.project_id, e.event, e.received_at, h.metadata->>'clusterName' AS cluster_name
+    SELECT
+      e.id,
+      e.agent_id,
+      e.provider,
+      e.project_id,
+      e.event,
+      e.event_type,
+      e.http_status,
+      e.http_method,
+      e.http_path,
+      COALESCE(e.cluster_name, h.metadata->>'clusterName') AS cluster_name,
+      e.received_at
     FROM agent_events e
     JOIN agent_hosts h ON h.id = e.agent_id
-    WHERE h.user_email = ${userEmail}
-       OR h.user_email = 'system'
+    WHERE (h.user_email = ${userEmail} OR h.user_email = 'system')
+      AND e.received_at >= NOW() - INTERVAL '30 days'
     ORDER BY e.received_at DESC
     LIMIT ${REQUEST_LOG_SAMPLE_LIMIT}
   `;
@@ -418,12 +456,13 @@ async function buildRequestLogContext(userEmail: string, logger?: QueryLogger) {
   const recent = events.rows.map((row: any) => {
     const ev = row.event ?? {};
     const parsed = parseCapturedHttp(ev.data);
-    const method = ev.method ?? (ev.type === "http_response" ? "RESPONSE" : "unknown");
-    const path = ev.path ?? "unknown";
-    const status = ev.status ?? null;
+    const eventType = row.event_type ?? ev.type;
+    const method = row.http_method ?? ev.method ?? (eventType === "http_response" ? "RESPONSE" : "unknown");
+    const path = row.http_path ?? ev.path ?? "unknown";
+    const status = row.http_status ?? ev.status ?? null;
 
     increment(methods, method);
-    if (ev.path) increment(paths, path);
+    if (path && path !== "unknown") increment(paths, path);
     if (status) {
       increment(statuses, status);
       increment(statusClasses, classifyStatus(status));
@@ -440,7 +479,7 @@ async function buildRequestLogContext(userEmail: string, logger?: QueryLogger) {
       projectId: row.project_id,
       clusterName: row.cluster_name,
       receivedAt: toIso(row.received_at),
-      type: ev.type,
+      type: eventType,
       method,
       path,
       status,
@@ -462,7 +501,14 @@ async function buildRequestLogContext(userEmail: string, logger?: QueryLogger) {
     statusClassKeys: Object.keys(statusClasses),
   });
 
-  const processor = await fetchProcessorHistory(logger);
+  const processor = options.includeProcessorHistory
+    ? await fetchProcessorHistory(logger)
+    : {
+        available: false,
+        source: "Skipped",
+        retention: "Skipped for count/analytics request. Ask explicitly for processor history to include it.",
+        recent: [],
+      };
   logQueryStep(logger, "request log context assembled", {
     processorAvailable: processor.available,
     totalEvents: Number(totals.total_requests ?? 0) + Number(totals.total_responses ?? 0),
@@ -472,7 +518,7 @@ async function buildRequestLogContext(userEmail: string, logger?: QueryLogger) {
   return {
     durableAgentEvents: {
       source: "Postgres agent_events joined to agent_hosts by authenticated user",
-      retention: "Durable rows retained until deleted by database maintenance; this query aggregates all matching rows and includes the newest sample.",
+      retention: "Raw agent events are retained for 30 days maximum. This query only reads the retained 30-day window.",
       totalEvents: Number(totals.total_events ?? 0),
       totalRequests: Number(totals.total_requests ?? 0),
       totalResponses: Number(totals.total_responses ?? 0),
@@ -527,6 +573,7 @@ function formatRequestLogAnswer(query: string, requestLogs: any): string {
       "Run **scripts/migrate.sql** against the production Postgres database, then retry this question. Until those indexes exist, exact counting would scan millions of JSON rows and can hit the Vercel function timeout.",
       "",
       `Recent sample available: **${durable.sampledEvents ?? 0}** events.`,
+      `Retention: **${durable.retention ?? "Raw agent events are retained for 30 days maximum."}**`,
       `Source: **Postgres agent_events** joined to **agent_hosts**.`,
     ].join("\n");
   }
@@ -548,6 +595,7 @@ function formatRequestLogAnswer(query: string, requestLogs: any): string {
     `- **Server errors (5xx):** ${scope.serverErrorResponses ?? durable.serverErrorResponses ?? 0}`,
     `- **Window:** ${scope.oldestReceivedAt ?? durable.oldestReceivedAt ?? "unknown"} to ${scope.newestReceivedAt ?? durable.newestReceivedAt ?? "unknown"}`,
     "",
+    `Retention: **${durable.retention ?? "Raw agent events are retained for 30 days maximum."}**`,
     `Source: **Postgres agent_events** joined to **agent_hosts**. These are Watchmen agent-captured HTTP events, not a Cloud Logging poll.`,
   ];
 
@@ -563,6 +611,10 @@ function formatRequestLogAnswer(query: string, requestLogs: any): string {
   }
 
   return lines.join("\n");
+}
+
+function wantsProcessorHistory(query: string): boolean {
+  return /\b(processor history|request processor|processor_url|in-memory|memory history)\b/i.test(query);
 }
 
 function buildSourceInventory(params: {
@@ -1047,7 +1099,9 @@ export async function POST(req: NextRequest) {
 
     if (intent.queryType === "request_logs" || intent.queryType === "data_sources" || intent.queryType === "connected_projects") {
       console.info(`[api/query:${queryId}] request log context start`, { elapsedMs: Date.now() - startedAt });
-      combinedSnapshot.requestLogs = await buildRequestLogContext(email, logger);
+      combinedSnapshot.requestLogs = await buildRequestLogContext(email, logger, {
+        includeProcessorHistory: wantsProcessorHistory(query),
+      });
       console.info(`[api/query:${queryId}] request log context complete`, {
         elapsedMs: Date.now() - startedAt,
         totalAgentEvents: combinedSnapshot.requestLogs?.durableAgentEvents?.totalEvents,

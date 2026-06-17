@@ -82,21 +82,60 @@ CREATE TABLE IF NOT EXISTS agent_events (
   provider      TEXT NOT NULL,
   project_id    TEXT NOT NULL,
   event         JSONB NOT NULL,
+  event_type    TEXT,
+  http_status   INT,
+  http_method   TEXT,
+  http_path     TEXT,
+  cluster_name  TEXT,
   received_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE agent_events ADD COLUMN IF NOT EXISTS event_type TEXT;
+ALTER TABLE agent_events ADD COLUMN IF NOT EXISTS http_status INT;
+ALTER TABLE agent_events ADD COLUMN IF NOT EXISTS http_method TEXT;
+ALTER TABLE agent_events ADD COLUMN IF NOT EXISTS http_path TEXT;
+ALTER TABLE agent_events ADD COLUMN IF NOT EXISTS cluster_name TEXT;
+
+UPDATE agent_events e
+SET
+  event_type = COALESCE(event_type, e.event->>'type'),
+  http_status = COALESCE(
+    http_status,
+    CASE WHEN e.event->>'status' ~ '^[0-9]{3}$' THEN (e.event->>'status')::int ELSE NULL END
+  ),
+  http_method = COALESCE(http_method, e.event->>'method'),
+  http_path = COALESCE(http_path, e.event->>'path'),
+  cluster_name = COALESCE(cluster_name, h.metadata->>'clusterName')
+FROM agent_hosts h
+WHERE h.id = e.agent_id
+  AND (
+    e.event_type IS NULL
+    OR e.http_status IS NULL
+    OR e.http_method IS NULL
+    OR e.http_path IS NULL
+    OR e.cluster_name IS NULL
+  );
 
 CREATE INDEX IF NOT EXISTS idx_agent_events_lookup
   ON agent_events (agent_id, received_at DESC);
 
+CREATE INDEX IF NOT EXISTS idx_agent_events_retention
+  ON agent_events (received_at);
+
 CREATE INDEX IF NOT EXISTS idx_agent_events_http_requests_by_agent
   ON agent_events (agent_id, received_at DESC)
-  WHERE event->>'type' = 'http_request';
+  WHERE event_type = 'http_request';
 
 CREATE INDEX IF NOT EXISTS idx_agent_events_http_responses_by_agent
   ON agent_events (agent_id, received_at DESC)
-  WHERE event->>'type' = 'http_response';
+  WHERE event_type = 'http_response';
 
 CREATE INDEX IF NOT EXISTS idx_agent_events_http_errors_by_agent
   ON agent_events (agent_id, received_at DESC)
-  WHERE event->>'type' = 'http_response'
-    AND (CASE WHEN event->>'status' ~ '^[0-9]{3}$' THEN (event->>'status')::int ELSE NULL END) >= 400;
+  WHERE event_type = 'http_response' AND http_status >= 400;
+
+CREATE INDEX IF NOT EXISTS idx_agent_events_cluster_analytics
+  ON agent_events (cluster_name, event_type, http_status, received_at DESC);
+
+DELETE FROM agent_events
+WHERE received_at < NOW() - INTERVAL '30 days';

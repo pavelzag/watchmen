@@ -223,11 +223,48 @@ export async function ensureAgentInstallTables(): Promise<void> {
       provider      TEXT NOT NULL,
       project_id    TEXT NOT NULL,
       event         JSONB NOT NULL,
+      event_type    TEXT,
+      http_status   INT,
+      http_method   TEXT,
+      http_path     TEXT,
+      cluster_name  TEXT,
       received_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `;
+  await sql`ALTER TABLE agent_events ADD COLUMN IF NOT EXISTS event_type TEXT`;
+  await sql`ALTER TABLE agent_events ADD COLUMN IF NOT EXISTS http_status INT`;
+  await sql`ALTER TABLE agent_events ADD COLUMN IF NOT EXISTS http_method TEXT`;
+  await sql`ALTER TABLE agent_events ADD COLUMN IF NOT EXISTS http_path TEXT`;
+  await sql`ALTER TABLE agent_events ADD COLUMN IF NOT EXISTS cluster_name TEXT`;
   await sql`
     CREATE INDEX IF NOT EXISTS idx_agent_events_lookup
       ON agent_events (agent_id, received_at DESC)
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_agent_events_retention
+      ON agent_events (received_at)
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_agent_events_http_requests_by_agent
+      ON agent_events (agent_id, received_at DESC)
+      WHERE event_type = 'http_request'
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_agent_events_http_responses_by_agent
+      ON agent_events (agent_id, received_at DESC)
+      WHERE event_type = 'http_response'
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_agent_events_http_errors_by_agent
+      ON agent_events (agent_id, received_at DESC)
+      WHERE event_type = 'http_response' AND http_status >= 400
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_agent_events_cluster_analytics
+      ON agent_events (cluster_name, event_type, http_status, received_at DESC)
+  `;
+  await sql`
+    DELETE FROM agent_events
+    WHERE received_at < NOW() - INTERVAL '30 days'
   `;
 }
