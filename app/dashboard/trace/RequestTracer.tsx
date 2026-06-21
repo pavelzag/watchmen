@@ -192,7 +192,7 @@ function shouldPollLiveTarget(
   target: LiveMonitorTarget,
   traceSourceConfig: GcpTraceSourceConfigSummary | null,
 ): boolean {
-  if (target.cloud === "aws") return false;
+  if (target.cloud === "aws") return target.kind === "cloudrun";
   return sourceForKind(target.kind, traceSourceConfig) === "cloud_logging";
 }
 
@@ -671,7 +671,18 @@ function buildLiveLogParams(target: LiveMonitorTarget, after: string): URLSearch
     after,
     limit: String(LIVE_LOG_FETCH_LIMIT),
   });
-  if (target.kind === "gke") {
+  if (target.cloud === "aws") {
+    params.set("accountId", target.projectId);
+    if (target.kind === "cloudrun") {
+      params.set("functionName", target.service);
+      if (target.region) params.set("region", target.region);
+    } else if (target.kind === "vm") {
+      params.set("instanceId", target.instance);
+      if (target.region) params.set("region", target.region);
+    } else if (target.kind === "gke") {
+      params.set("clusterName", target.resourceName ?? target.container);
+    }
+  } else if (target.kind === "gke") {
     params.set("container", target.container);
   } else if (target.kind === "cloudrun") {
     params.set("resourceType", "cloud_run_revision");
@@ -3915,6 +3926,13 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       });
     });
     eventSource.addEventListener("error", (event) => {
+      if (eventSource.readyState === EventSource.CONNECTING) {
+        console.info("[trace/live] event source reconnecting", {
+          endpointCloud,
+          readyState: eventSource.readyState,
+        });
+        return;
+      }
       console.error("[trace/live] event source error", {
         endpointCloud,
         readyState: eventSource.readyState,
@@ -4128,8 +4146,6 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       setLiveEvents([]);
       return;
     }
-    if (endpointCloud === "aws") return;
-
     const allTargets = liveScope === "all"
       ? allLiveMonitorTargets
       : (liveMonitorTarget ? [liveMonitorTarget] : []);
@@ -4190,7 +4206,14 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
               const key = liveTargetKey(target);
               const after = liveLastTsByTarget.current[key] ?? startTs;
               const params = buildLiveLogParams(target, after);
-              const res = await fetch(`/api/gcp/logs?${params}`);
+              const logsEndpoint = target.cloud === "aws" ? "/api/aws/logs" : "/api/gcp/logs";
+              console.info("[trace/live] polling target logs", {
+                endpointCloud,
+                logsEndpoint,
+                target: serializeLiveTraceTarget(target),
+                after,
+              });
+              const res = await fetch(`${logsEndpoint}?${params}`);
               const data = await res.json().catch(() => ({}));
               if (res.status === 429 || data?.code === "rate_limited") {
                 const retryAfterSec = Number(data?.retryAfterSec ?? 30);
@@ -4198,9 +4221,22 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                 return { target, entries: [] as LogEntry[], rateLimited: true };
               }
               if (!res.ok) {
+                console.warn("[trace/live] target log poll failed", {
+                  endpointCloud,
+                  logsEndpoint,
+                  target: serializeLiveTraceTarget(target),
+                  status: res.status,
+                  error: data?.error,
+                });
                 return { target, entries: [] as LogEntry[], rateLimited: false };
               }
               const entries: LogEntry[] = data.entries ?? [];
+              console.info("[trace/live] target log poll complete", {
+                endpointCloud,
+                logsEndpoint,
+                target: serializeLiveTraceTarget(target),
+                count: entries.length,
+              });
               if (entries.length > 0) {
                 const latest = entries.reduce((a, b) => a.timestamp > b.timestamp ? a : b);
                 liveLastTsByTarget.current[key] = latest.timestamp;
