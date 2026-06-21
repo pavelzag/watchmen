@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type MouseEvent } from "react";
 import Link from "next/link";
 import { ArrowLeft, ShieldAlert, ShieldCheck, RefreshCw, Sparkles, Loader2, ChevronDown, ChevronUp, AlertCircle, GitPullRequest } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -83,6 +83,10 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+function decodeEscapedHtml(s: string): string {
+  return s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+}
+
 // Minimal markdown renderer for AI recommendations
 function renderMd(text: string, finding: CloudFinding): string {
   // We manufacture a resource item for the primary finding resource to ensure it's always linkable
@@ -92,8 +96,15 @@ function renderMd(text: string, finding: CloudFinding): string {
 
   const html = escapeHtml(text)
     // Code blocks
-    .replace(/```[\w]*\n?([\s\S]*?)```/g, (_, code) =>
-      `<pre class="bg-slate-900 border border-slate-700/50 rounded-lg px-3 py-2 text-xs font-mono text-slate-300 overflow-x-auto my-2 whitespace-pre-wrap">${code}</pre>`
+    .replace(/```[\w]*\n?([\s\S]*?)```/g, (_, code) => {
+      const command = encodeURIComponent(decodeEscapedHtml(String(code)).trim());
+      return `<div class="my-2 rounded-lg border border-slate-700/50 bg-slate-900 overflow-hidden">
+        <div class="flex justify-end border-b border-slate-800 px-2 py-1">
+          <button type="button" data-copy-command="${command}" class="px-2 py-0.5 text-[9px] uppercase tracking-widest text-violet-300 border border-violet-900/60 bg-violet-950/20 hover:text-violet-200 hover:border-violet-700">Copy command</button>
+        </div>
+        <pre class="px-3 py-2 text-xs font-mono text-slate-300 overflow-x-auto whitespace-pre-wrap">${code}</pre>
+      </div>`;
+    }
     )
     // Inline code
     .replace(/`([^`]+)`/g, '<code class="px-1 py-0.5 rounded bg-slate-800 text-sky-300 text-xs font-mono">$1</code>')
@@ -147,6 +158,33 @@ function FindingCard({ finding, cfg }: { finding: CloudFinding; cfg: typeof SEVE
     } catch (e) {
       setRec({ loading: false, text: null, error: e instanceof Error ? e.message : "Error" });
     }
+  }
+
+  async function copySuggestedCommand(event: MouseEvent<HTMLDivElement>) {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-copy-command]");
+    if (!button) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const command = decodeURIComponent(button.dataset.copyCommand ?? "");
+    if (!command) return;
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(command);
+    } else {
+      const textarea = document.createElement("textarea");
+      textarea.value = command;
+      textarea.setAttribute("readonly", "true");
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }
+    const previous = button.textContent;
+    button.textContent = "Copied";
+    window.setTimeout(() => {
+      button.textContent = previous ?? "Copy command";
+    }, 1200);
   }
 
   return (
@@ -243,6 +281,7 @@ function FindingCard({ finding, cfg }: { finding: CloudFinding; cfg: typeof SEVE
               <CopyAiResponseButton text={rec.text} compact />
             </div>
             <div
+              onClick={copySuggestedCommand}
               className="mt-3 text-xs text-slate-300 leading-relaxed prose-answer"
               dangerouslySetInnerHTML={{ __html: renderMd(rec.text, finding) }}
             />
