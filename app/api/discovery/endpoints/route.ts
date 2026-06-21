@@ -142,13 +142,15 @@ export async function GET(req: NextRequest) {
         if (awsResult.rows.length > 0) {
             const snapshot = awsResult.rows[0].snapshot as AwsSnapshot;
 
-            // Extract Lambda Functions
+            // Extract Lambda Function URLs. These URLs contain AWS-generated URL IDs;
+            // do not synthesize them from function names.
             if (snapshot.lambdaFunctions) {
                 snapshot.lambdaFunctions.forEach(fn => {
+                    if (!fn.functionUrl) return;
                     endpoints.push({
                         id: `aws-lambda-${fn.functionName}`,
                         label: `λ: ${fn.functionName}`,
-                        url: `https://${fn.functionName}.lambda-url.${fn.region}.on.aws`,
+                        url: fn.functionUrl,
                         provider: "aws",
                         type: "Lambda",
                         description: `AWS Lambda function in ${fn.region}`
@@ -163,7 +165,7 @@ export async function GET(req: NextRequest) {
                         endpoints.push({
                             id: `aws-lb-${lb.name}`,
                             label: `ELB: ${lb.name}`,
-                            url: `http://${lb.dnsName}`,
+                            url: `https://${lb.dnsName}`,
                             provider: "aws",
                             type: "Elastic Load Balancer",
                             description: `AWS ${lb.type} LB (often EKS Ingress)`

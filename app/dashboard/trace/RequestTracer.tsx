@@ -11,6 +11,7 @@ import {
 import { cn } from "@/lib/utils";
 import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
 import type { GcpSnapshot, GkeEntryPoint } from "@/lib/gcp/types";
+import type { AwsSnapshot } from "@/lib/aws/types";
 import type { LiveTraceIngressEvent } from "@/lib/live-trace-bus";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -41,7 +42,7 @@ const LOG_DRAWER_LIMIT = 200;
 type NodeType = "internet" | "lb" | "gke" | "cloudrun" | "cloudsql" | "vm" | "sidecar";
 type NodeStatus = "idle" | "active" | "done" | "error";
 type LiveScope = "active" | "all";
-type EndpointFilter = "all" | "compute" | "k8s" | "cloudrun";
+type EndpointFilter = "all" | "compute" | "k8s" | "cloudrun" | "aws";
 type LiveMonitorTarget =
   | {
       kind: "gke";
@@ -352,6 +353,7 @@ function TraceActivityRail({
 
 function buildTopology(
   snapshot: GcpSnapshot | null,
+  awsSnapshot: AwsSnapshot | null,
   entryPoints: GkeEntryPoint[] = [],
 ): { nodes: GraphNode[]; edges: GraphEdge[] } {
   const nodes: GraphNode[] = [];
@@ -359,7 +361,7 @@ function buildTopology(
 
   nodes.push({ id: "internet", type: "internet", col: 0, label: "INTERNET", sublabel: "Entry point" });
 
-  if (!snapshot) {
+  if (!snapshot && !awsSnapshot) {
     nodes.push({ id: "lb-ph", type: "lb", col: 1, label: "LOAD BALANCER", sublabel: "Scan to populate" });
     nodes.push({ id: "compute-ph", type: "gke", col: 2, label: "GKE / CLOUD RUN", sublabel: "Scan to populate" });
     nodes.push({ id: "data-ph", type: "cloudsql", col: 3, label: "CLOUD SQL", sublabel: "Scan to populate" });
@@ -367,14 +369,24 @@ function buildTopology(
     return { nodes, edges };
   }
 
-  const lbs  = snapshot.loadBalancers ?? [];
-  const gkes = snapshot.gkeClusters ?? [];
-  const runs = snapshot.cloudRunServices ?? [];
-  const sqls = snapshot.cloudSqlInstances ?? [];
+  const lbs  = snapshot?.loadBalancers ?? [];
+  const gkes = snapshot?.gkeClusters ?? [];
+  const runs = snapshot?.cloudRunServices ?? [];
+  const sqls = snapshot?.cloudSqlInstances ?? [];
   // VMs: exclude GKE node VMs and stopped instances
-  const vms  = (snapshot.vms ?? []).filter(
+  const vms  = (snapshot?.vms ?? []).filter(
     v => !v.name.startsWith("gke-") && v.status === "RUNNING"
   );
+  const awsLbs = (awsSnapshot?.loadBalancers ?? []).filter(
+    lb => lb.dnsName && lb.scheme === "internet-facing" && lb.state !== "failed"
+  );
+  const awsEc2s = (awsSnapshot?.ec2Instances ?? []).filter(
+    instance => instance.state === "running" && instance.publicIpAddress
+  );
+  const awsEksClusters = (awsSnapshot?.eksClusters ?? []).filter(
+    cluster => cluster.endpointPublicAccess
+  );
+  const awsLambdaUrls = (awsSnapshot?.lambdaFunctions ?? []).filter(fn => fn.functionUrl);
 
   // Snapshot load balancers (managed/global LBs from GCP)
   lbs.forEach((lb, i) => {
@@ -503,6 +515,75 @@ function buildTopology(
     if (computeInProject.length > 0) {
       computeInProject.forEach(c => edges.push({ from: c.id, to: id }));
     }
+  });
+
+  // AWS load balancers
+  awsLbs.forEach((lb, i) => {
+    const id = `aws-lb-${i}`;
+    nodes.push({
+      id,
+      type: "lb",
+      col: 1,
+      label: lb.name.slice(0, 22).toUpperCase(),
+      sublabel: `AWS ELB · ${lb.region}`,
+      matchUrl: lb.dnsName,
+      resourceName: lb.name,
+    });
+    edges.push({ from: "internet", to: id });
+  });
+
+  // Public EKS clusters, attached to same account/region ELBs when possible.
+  awsEksClusters.forEach((cluster, i) => {
+    const id = `aws-eks-${i}`;
+    nodes.push({
+      id,
+      type: "gke",
+      col: 2,
+      label: cluster.clusterName.slice(0, 22).toUpperCase(),
+      sublabel: `EKS · ${cluster.region}`,
+      resourceName: cluster.clusterName,
+    });
+    const parentLbs = awsLbs
+      .map((lb, li) => ({ lb, id: `aws-lb-${li}` }))
+      .filter(({ lb }) => lb.accountId === cluster.accountId && lb.region === cluster.region);
+    if (parentLbs.length > 0) {
+      parentLbs.forEach(({ id: lbId }) => edges.push({ from: lbId, to: id }));
+    } else {
+      edges.push({ from: "internet", to: id });
+    }
+  });
+
+  // Public EC2 instances
+  awsEc2s.forEach((instance, i) => {
+    const id = `aws-ec2-${i}`;
+    const name = instance.tags.Name || instance.instanceId;
+    nodes.push({
+      id,
+      type: "vm",
+      col: 2,
+      label: name.slice(0, 22).toUpperCase(),
+      sublabel: `EC2 · ${instance.region}`,
+      region: instance.region,
+      matchUrl: instance.publicIpAddress ?? undefined,
+      resourceName: instance.instanceId,
+    });
+    edges.push({ from: "internet", to: id });
+  });
+
+  // Lambda Function URLs are directly reachable HTTPS origins.
+  awsLambdaUrls.forEach((fn, i) => {
+    const id = `aws-lambda-${i}`;
+    nodes.push({
+      id,
+      type: "cloudrun",
+      col: 2,
+      label: fn.functionName.slice(0, 22).toUpperCase(),
+      sublabel: `Lambda URL · ${fn.region}`,
+      region: fn.region,
+      matchUrl: fn.functionUrl,
+      resourceName: fn.functionName,
+    });
+    edges.push({ from: "internet", to: id });
   });
 
   return { nodes, edges };
@@ -1233,6 +1314,7 @@ const ENDPOINT_FILTERS: { id: EndpointFilter; label: string }[] = [
   { id: "compute", label: "Compute" },
   { id: "k8s", label: "K8s" },
   { id: "cloudrun", label: "CloudRun" },
+  { id: "aws", label: "AWS" },
 ];
 
 // ─── Node type labels ─────────────────────────────────────────────────────────
@@ -1249,9 +1331,9 @@ const NODE_TYPE_LABEL: Record<NodeType, string> = {
 
 const NODE_ROLE_DESC: Record<NodeType, string> = {
   internet:  "Origin of the outgoing HTTP request.",
-  lb:        "GCP external load balancer that forwards traffic to backend services.",
-  gke:       "Google Kubernetes Engine cluster running containerised workloads.",
-  cloudrun:  "Serverless Cloud Run service — the request is delivered directly here.",
+  lb:        "Cloud load balancer that forwards traffic to backend services.",
+  gke:       "Kubernetes cluster running containerised workloads.",
+  cloudrun:  "Serverless HTTP service — the request is delivered directly here.",
   cloudsql:  "Managed relational database — not reachable via HTTP, accessed internally.",
   vm:        "Compute Engine VM instance — direct or LB-fronted HTTP workload.",
   sidecar:   "Sidecar container injected alongside the main app in the same pod.",
@@ -2891,6 +2973,7 @@ function MetaRow({ label, value, mono }: { label: string; value: string | number
 export default function RequestTracer({ demoMode = false }: { demoMode?: boolean }) {
   // Snapshot + topology
   const [snapshot, setSnapshot] = useState<GcpSnapshot | null>(null);
+  const [awsSnapshot, setAwsSnapshot] = useState<AwsSnapshot | null>(null);
   const [loadingSnapshot, setLoadingSnapshot] = useState(true);
   const [entryPoints, setEntryPoints] = useState<GkeEntryPoint[]>([]);
   const [loadingEntryPoints, setLoadingEntryPoints] = useState(true);
@@ -2898,8 +2981,8 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
   // Topology derived from snapshot + entry points — auto-updates when either changes
   const { nodes: baseNodes, edges: baseEdges } = useMemo(
-    () => buildTopology(snapshot, entryPoints),
-    [snapshot, entryPoints],
+    () => buildTopology(snapshot, awsSnapshot, entryPoints),
+    [snapshot, awsSnapshot, entryPoints],
   );
 
   // Containers discovered per GKE node (used to build sidecar nodes)
@@ -3153,7 +3236,13 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
         setEntryPoints((data.entryPoints ?? []).filter((ep: GkeEntryPoint) => ep.ip));
       }).catch(() => {}).finally(() => setLoadingEntryPoints(false));
 
-      await Promise.all([snapPromise, epPromise]);
+      const awsPromise = fetch("/api/aws/snapshot").then(async r => {
+        if (!r.ok) return;
+        const data = await r.json();
+        setAwsSnapshot(data as AwsSnapshot);
+      }).catch(() => {});
+
+      await Promise.all([snapPromise, epPromise, awsPromise]);
     } catch { /* ignore */ }
     finally {
       setLoadingSnapshot(false);
@@ -3351,6 +3440,18 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const filteredVmTargets = useMemo(
     () => (snapshot?.vms ?? []).filter(vm => !vm.name.startsWith("gke-") && vm.status === "RUNNING" && vm.externalIp),
     [snapshot]
+  );
+  const filteredAwsLoadBalancers = useMemo(
+    () => (awsSnapshot?.loadBalancers ?? []).filter(lb => lb.dnsName && lb.scheme === "internet-facing" && lb.state !== "failed"),
+    [awsSnapshot]
+  );
+  const filteredAwsEc2Targets = useMemo(
+    () => (awsSnapshot?.ec2Instances ?? []).filter(instance => instance.state === "running" && instance.publicIpAddress),
+    [awsSnapshot]
+  );
+  const filteredAwsLambdaUrls = useMemo(
+    () => (awsSnapshot?.lambdaFunctions ?? []).filter(fn => fn.functionUrl),
+    [awsSnapshot]
   );
 
   const allLiveMonitorTargets = useMemo<LiveMonitorTarget[]>(() => {
@@ -4115,7 +4216,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
         <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar flex flex-col gap-2">
 
           {/* URL suggestions */}
-          {(loadingEntryPoints || snapshot || entryPoints.length > 0) && (
+          {(loadingEntryPoints || snapshot || awsSnapshot || entryPoints.length > 0) && (
             <div className="flex flex-col gap-1">
               <div className="flex flex-wrap gap-1 px-1 pb-1">
                 {ENDPOINT_FILTERS.map(filter => (
@@ -4286,6 +4387,108 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                   })}
                 </>
               )}
+              {awsSnapshot && (
+                <>
+                  {(endpointFilter === "all" || endpointFilter === "aws") &&
+                    (filteredAwsLoadBalancers.length > 0 || filteredAwsEc2Targets.length > 0 || filteredAwsLambdaUrls.length > 0) && (
+                      <div className="text-[9px] uppercase tracking-widest text-slate-600 px-1 pt-1">AWS Discovery</div>
+                  )}
+                  {(endpointFilter === "all" || endpointFilter === "aws") && filteredAwsLoadBalancers.map(lb => {
+                    const value = `https://${lb.dnsName}`;
+                    const isSelected = isEndpointSelected(value);
+                    return (
+                      <HoverTooltip
+                        key={`aws-lb-${lb.region}-${lb.name}-${lb.dnsName}`}
+                        content={
+                          <>
+                            <div className="text-amber-300 font-bold uppercase tracking-widest text-[8px] mb-1">{lb.name}</div>
+                            <div className="text-sky-300 font-mono break-all">{value}</div>
+                            <div className="text-slate-500 mt-1">{lb.type} · {lb.region}</div>
+                          </>
+                        }
+                      >
+                        <button onClick={() => toggleEndpointSelection(value)}
+                          className={cn(
+                            "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm relative overflow-hidden",
+                            isSelected
+                              ? "bg-amber-950/45 ring-2 ring-amber-500/80 border border-amber-500/35 shadow-[inset_0_0_0_1px_rgba(245,158,11,0.18)]"
+                              : "bg-[#0a0a0a]/60 hover:bg-[#12100b]"
+                          )}
+                        >
+                          <div className={cn("break-words", isSelected ? "text-slate-200" : "text-slate-400")}>
+                            ELB · {lb.name}
+                            {isSelected && <span className="ml-2 text-[8px] text-amber-300 uppercase tracking-widest">Selected</span>}
+                          </div>
+                          <div className={cn("mt-0.5 font-mono whitespace-pre-wrap break-all", isSelected ? "text-amber-300" : "text-amber-400")}>{value}</div>
+                        </button>
+                      </HoverTooltip>
+                    );
+                  })}
+                  {(endpointFilter === "all" || endpointFilter === "aws") && filteredAwsEc2Targets.map(instance => {
+                    const value = `https://${instance.publicIpAddress}`;
+                    const label = instance.tags.Name || instance.instanceId;
+                    const isSelected = isEndpointSelected(value);
+                    return (
+                      <HoverTooltip
+                        key={`aws-ec2-${instance.region}-${instance.instanceId}`}
+                        content={
+                          <>
+                            <div className="text-orange-300 font-bold uppercase tracking-widest text-[8px] mb-1">{label}</div>
+                            <div className="text-sky-300 font-mono">{value}</div>
+                            <div className="text-slate-500 mt-1">{instance.instanceType} · {instance.region}</div>
+                          </>
+                        }
+                      >
+                        <button onClick={() => toggleEndpointSelection(value)}
+                          className={cn(
+                            "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm relative overflow-hidden",
+                            isSelected
+                              ? "bg-orange-950/45 ring-2 ring-orange-500/80 border border-orange-500/35 shadow-[inset_0_0_0_1px_rgba(249,115,22,0.18)]"
+                              : "bg-[#0a0a0a]/60 hover:bg-[#120f0b]"
+                          )}
+                        >
+                          <div className={cn("break-words", isSelected ? "text-slate-200" : "text-slate-400")}>
+                            EC2 · {label}
+                            {isSelected && <span className="ml-2 text-[8px] text-orange-300 uppercase tracking-widest">Selected</span>}
+                          </div>
+                          <div className={cn("mt-0.5 font-mono whitespace-pre-wrap break-all", isSelected ? "text-orange-300" : "text-orange-400")}>{value}</div>
+                        </button>
+                      </HoverTooltip>
+                    );
+                  })}
+                  {(endpointFilter === "all" || endpointFilter === "aws") && filteredAwsLambdaUrls.map(fn => {
+                    const value = fn.functionUrl!;
+                    const isSelected = isEndpointSelected(value);
+                    return (
+                      <HoverTooltip
+                        key={`aws-lambda-${fn.region}-${fn.functionName}`}
+                        content={
+                          <>
+                            <div className="text-fuchsia-300 font-bold uppercase tracking-widest text-[8px] mb-1">{fn.functionName}</div>
+                            <div className="text-sky-300 font-mono break-all">{value}</div>
+                            <div className="text-slate-500 mt-1">{fn.runtime} · {fn.region}</div>
+                          </>
+                        }
+                      >
+                        <button onClick={() => toggleEndpointSelection(value)}
+                          className={cn(
+                            "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm relative overflow-hidden",
+                            isSelected
+                              ? "bg-fuchsia-950/45 ring-2 ring-fuchsia-500/80 border border-fuchsia-500/35 shadow-[inset_0_0_0_1px_rgba(217,70,239,0.18)]"
+                              : "bg-[#0a0a0a]/60 hover:bg-[#120b12]"
+                          )}
+                        >
+                          <div className={cn("break-words", isSelected ? "text-slate-200" : "text-slate-400")}>
+                            Lambda · {fn.functionName}
+                            {isSelected && <span className="ml-2 text-[8px] text-fuchsia-300 uppercase tracking-widest">Selected</span>}
+                          </div>
+                          <div className={cn("mt-0.5 font-mono whitespace-pre-wrap break-all", isSelected ? "text-fuchsia-300" : "text-fuchsia-400")}>{value}</div>
+                        </button>
+                      </HoverTooltip>
+                    );
+                  })}
+                </>
+              )}
             </div>
           )}
 
@@ -4323,7 +4526,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
           <div className="flex items-center justify-between text-[9px] text-slate-600">
             <span>
               {loadingSnapshot ? "Loading topology…" :
-               snapshot ? `${nodes.length - 1} resources` : "No snapshot"}
+               (snapshot || awsSnapshot) ? `${nodes.length - 1} resources` : "No snapshot"}
               {!loadingSnapshot && loadingEntryPoints && " · scanning…"}
               {!loadingSnapshot && !loadingEntryPoints && entryPoints.length > 0 && ` · ${entryPoints.length} entry pts`}
             </span>

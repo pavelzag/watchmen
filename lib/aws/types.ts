@@ -119,6 +119,7 @@ export interface AwsLambdaFunction {
   timeout: number;
   memorySize: number;
   state?: string;
+  functionUrl?: string;
   resourcePolicy: AwsIamStatement[];
   vpcConfig?: {
     vpcId?: string;

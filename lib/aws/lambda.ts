@@ -1,4 +1,4 @@
-import { LambdaClient, ListFunctionsCommand, GetPolicyCommand } from "@aws-sdk/client-lambda";
+import { LambdaClient, ListFunctionsCommand, GetPolicyCommand, ListFunctionUrlConfigsCommand } from "@aws-sdk/client-lambda";
 import { useMockAwsData, getAwsRegions, logAwsWarning, getAwsClientOptions, type AwsCredentials } from "./client";
 import type { AwsLambdaFunction, AwsIamStatement } from "./types";
 
@@ -25,6 +25,7 @@ async function getRealLambdaFunctions(creds?: AwsCredentials): Promise<AwsLambda
             const accountId = fn.FunctionArn!.split(":")[4];
 
             let resourcePolicy: AwsIamStatement[] = [];
+            let functionUrl: string | undefined;
             try {
               const policyRes = await client.send(new GetPolicyCommand({ FunctionName: functionName }));
               if (policyRes.Policy) {
@@ -42,6 +43,11 @@ async function getRealLambdaFunctions(creds?: AwsCredentials): Promise<AwsLambda
               }
             } catch { }
 
+            try {
+              const urlsRes = await client.send(new ListFunctionUrlConfigsCommand({ FunctionName: functionName }));
+              functionUrl = urlsRes.FunctionUrlConfigs?.[0]?.FunctionUrl;
+            } catch { }
+
             return {
               functionName,
               functionArn: fn.FunctionArn!,
@@ -54,6 +60,7 @@ async function getRealLambdaFunctions(creds?: AwsCredentials): Promise<AwsLambda
               timeout: fn.Timeout ?? 3,
               memorySize: fn.MemorySize ?? 128,
               state: fn.State,
+              functionUrl,
               resourcePolicy,
               vpcConfig: fn.VpcConfig?.VpcId
                 ? {
