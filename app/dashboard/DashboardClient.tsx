@@ -5,11 +5,20 @@ import Link from "next/link";
 import QueryBox, { type QueryResult } from "@/components/QueryBox";
 import ResultCard from "@/components/ResultCard";
 import SnapshotStats from "@/components/SnapshotStats";
-import { Trash2 } from "lucide-react";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { saveSnapshot } from "@/lib/snapshot-history";
 import type { GcpSnapshot } from "@/lib/gcp/types";
 import { getDemoCredentials, getDemoGcpSnapshot, setDemoGcpSnapshot } from "@/lib/demo-credentials";
 import { useTaskCenter } from "@/components/TaskCenterProvider";
+
+const GCP_SUGGESTED_QUERIES = [
+  "Which Cloud Storage buckets are publicly accessible?",
+  "List all expired service account keys",
+  "Which VMs have external IPs?",
+  "Who has owner or editor access?",
+  "What secrets does allUsers have access to?",
+  "Show all firewall rules open to the internet",
+];
 
 export default function DashboardClient() {
   const [results, setResults] = useState<QueryResult[]>([]);
@@ -20,6 +29,8 @@ export default function DashboardClient() {
   const [demoSnapshot, setDemoSnapshot] = useState<object | null>(() => getDemoGcpSnapshot());
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [syncLog, setSyncLog] = useState<string[]>([]);
+  const [syncLogOpen, setSyncLogOpen] = useState(true);
+  const [askAiOpen, setAskAiOpen] = useState(true);
   const { tasks, startGcpScan, clearFinishedTasks, clearAllTasks } = useTaskCenter();
   const hasLoadedInitialSnapshotRef = useRef(false);
   const scanRequestCountRef = useRef(0);
@@ -195,17 +206,65 @@ export default function DashboardClient() {
           </div>
         )}
         {syncLog.length > 0 && (
-          <div className="p-3 space-y-1" style={{ border: "1px solid var(--border-dim)", background: "#050505" }}>
-            <p className="text-[10px] uppercase tracking-widest font-mono" style={{ color: "var(--border-dim)" }}>
-              // GCP sync log
-            </p>
-            {syncLog.map((line, index) => (
+          <div className="p-3 space-y-2" style={{ border: "1px solid var(--border-dim)", background: "#050505" }}>
+            <button
+              type="button"
+              onClick={() => setSyncLogOpen((open) => !open)}
+              className="flex w-full items-center justify-between gap-3 text-left"
+            >
+              <span className="text-[10px] uppercase tracking-widest font-mono" style={{ color: "var(--border-dim)" }}>
+                // GCP sync log
+              </span>
+              <span className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono" style={{ color: "var(--text-muted)" }}>
+                {syncLog.length} entries
+                {syncLogOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+              </span>
+            </button>
+            {syncLogOpen && syncLog.map((line, index) => (
               <p key={`${line}-${index}`} className="text-[10px] font-mono break-all" style={{ color: index === 0 ? "#e5e7eb" : "#6b7280" }}>
                 {line}
               </p>
             ))}
           </div>
         )}
+
+        <section className="space-y-3">
+          <button
+            type="button"
+            onClick={() => setAskAiOpen((open) => !open)}
+            className="flex w-full items-start justify-between gap-3 text-left"
+          >
+            <div>
+              <p className="text-[10px] uppercase tracking-widest font-mono" style={{ color: "var(--border-dim)" }}>
+                // GCP Ask AI
+              </p>
+              <p className="mt-1 text-xs font-mono" style={{ color: "var(--text-muted)" }}>
+                Query the latest GCP snapshot: IAM, Cloud Storage, GKE, Compute Engine, Cloud Run, Cloud SQL, BigQuery, Pub/Sub, Secret Manager, firewall rules, findings, and compliance.
+              </p>
+            </div>
+            <span className="mt-1 flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono" style={{ color: "var(--text-muted)" }}>
+              {askAiOpen ? "minimize" : "expand"}
+              {askAiOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+            </span>
+          </button>
+          {askAiOpen && (
+            <>
+              <QueryBox
+                apiEndpoint="/api/query"
+                onResult={handleResult}
+                suggestedQueries={GCP_SUGGESTED_QUERIES}
+                placeholder="Ask anything about your GCP infrastructure..."
+              />
+              {results.length > 0 && (
+                <div className="space-y-3">
+                  {results.map((result, index) => (
+                    <ResultCard key={`${result.query}-${result.fetchedAt}-${index}`} result={result} index={index} />
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </section>
       </div>
 
       {/* Status bar */}

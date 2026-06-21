@@ -8,6 +8,7 @@ import ResultCard from "@/components/ResultCard";
 import { getDemoCredentials, getDemoAwsSnapshot, setDemoAwsSnapshot } from "@/lib/demo-credentials";
 import type { AwsSnapshot } from "@/lib/aws/types";
 import { useTaskCenter } from "@/components/TaskCenterProvider";
+import { ChevronDown, ChevronUp } from "lucide-react";
 
 const AWS_SUGGESTED_QUERIES = [
   "Which S3 buckets are publicly accessible?",
@@ -26,6 +27,8 @@ export default function AwsDashboardClient() {
   const [demoSnapshot, setDemoSnapshot] = useState<AwsSnapshot | null>(() => getDemoAwsSnapshot() as AwsSnapshot | null);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [syncLog, setSyncLog] = useState<string[]>([]);
+  const [syncLogOpen, setSyncLogOpen] = useState(true);
+  const [askAiOpen, setAskAiOpen] = useState(true);
   const { tasks, startAwsScan } = useTaskCenter();
   const hasLoadedInitialSnapshotRef = useRef(false);
   const scanRequestCountRef = useRef(0);
@@ -182,11 +185,21 @@ export default function AwsDashboardClient() {
           </div>
         )}
         {syncLog.length > 0 && (
-          <div className="p-3 space-y-1" style={{ border: "1px solid var(--border-dim)", background: "#050505" }}>
-            <p className="text-[10px] uppercase tracking-widest font-mono" style={{ color: "var(--border-dim)" }}>
-              // AWS sync log
-            </p>
-            {syncLog.map((line, index) => (
+          <div className="p-3 space-y-2" style={{ border: "1px solid var(--border-dim)", background: "#050505" }}>
+            <button
+              type="button"
+              onClick={() => setSyncLogOpen((open) => !open)}
+              className="flex w-full items-center justify-between gap-3 text-left"
+            >
+              <span className="text-[10px] uppercase tracking-widest font-mono" style={{ color: "var(--border-dim)" }}>
+                // AWS sync log
+              </span>
+              <span className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono" style={{ color: "var(--text-muted)" }}>
+                {syncLog.length} entries
+                {syncLogOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+              </span>
+            </button>
+            {syncLogOpen && syncLog.map((line, index) => (
               <p key={`${line}-${index}`} className="text-[10px] font-mono break-all" style={{ color: index === 0 ? "#e5e7eb" : "#6b7280" }}>
                 {line}
               </p>
@@ -195,26 +208,40 @@ export default function AwsDashboardClient() {
         )}
 
         <section className="space-y-3">
-          <div>
-            <p className="text-[10px] uppercase tracking-widest font-mono" style={{ color: "var(--border-dim)" }}>
-              // AWS Ask AI
-            </p>
-            <p className="mt-1 text-xs font-mono" style={{ color: "var(--text-muted)" }}>
-              Query the latest AWS snapshot: IAM, S3, EKS, EC2, Lambda, RDS, Redshift, SNS, Secrets Manager, security groups, findings, and compliance.
-            </p>
-          </div>
-          <QueryBox
-            apiEndpoint="/api/aws/query"
-            onResult={handleResult}
-            suggestedQueries={AWS_SUGGESTED_QUERIES}
-            placeholder="Ask anything about your AWS infrastructure..."
-          />
-          {results.length > 0 && (
-            <div className="space-y-3">
-              {results.map((result, index) => (
-                <ResultCard key={`${result.query}-${result.fetchedAt}-${index}`} result={result} index={index} />
-              ))}
+          <button
+            type="button"
+            onClick={() => setAskAiOpen((open) => !open)}
+            className="flex w-full items-start justify-between gap-3 text-left"
+          >
+            <div>
+              <p className="text-[10px] uppercase tracking-widest font-mono" style={{ color: "var(--border-dim)" }}>
+                // AWS Ask AI
+              </p>
+              <p className="mt-1 text-xs font-mono" style={{ color: "var(--text-muted)" }}>
+                Query the latest AWS snapshot: IAM, S3, EKS, EC2, Lambda, RDS, Redshift, SNS, Secrets Manager, security groups, findings, and compliance.
+              </p>
             </div>
+            <span className="mt-1 flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono" style={{ color: "var(--text-muted)" }}>
+              {askAiOpen ? "minimize" : "expand"}
+              {askAiOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+            </span>
+          </button>
+          {askAiOpen && (
+            <>
+              <QueryBox
+                apiEndpoint="/api/aws/query"
+                onResult={handleResult}
+                suggestedQueries={AWS_SUGGESTED_QUERIES}
+                placeholder="Ask anything about your AWS infrastructure..."
+              />
+              {results.length > 0 && (
+                <div className="space-y-3">
+                  {results.map((result, index) => (
+                    <ResultCard key={`${result.query}-${result.fetchedAt}-${index}`} result={result} index={index} />
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </section>
       </div>
