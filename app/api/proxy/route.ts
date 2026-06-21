@@ -22,6 +22,7 @@ function isBlockedUrl(rawUrl: string): boolean {
 }
 
 export async function POST(req: NextRequest) {
+  const requestId = crypto.randomUUID().slice(0, 8);
   const session = await auth();
   const email = session?.user?.email;
   if (!session?.user || !email) {
@@ -51,9 +52,28 @@ export async function POST(req: NextRequest) {
   const timeout = setTimeout(() => controller.abort(), 15_000);
   const start = Date.now();
   const requestMethod = method.toUpperCase();
+  let hostname = "<invalid>";
+  try {
+    hostname = new URL(url).hostname;
+  } catch {}
+
+  console.info(`[api/proxy:${requestId}] request start`, {
+    email,
+    method: requestMethod,
+    hostname,
+    hasTraceTarget: Boolean(traceTarget),
+    traceTarget,
+  });
 
   const publishTraceEvent = (status?: number, latencyMs?: number) => {
-    if (!traceTarget || typeof traceTarget !== "object") return;
+    if (!traceTarget || typeof traceTarget !== "object") {
+      console.info(`[api/proxy:${requestId}] live trace publish skipped`, {
+        reason: "missing_trace_target",
+        status,
+        latencyMs,
+      });
+      return;
+    }
     const target = traceTarget as Partial<LiveTraceIngressEvent>;
     if (
       (target.cloud !== "gcp" && target.cloud !== "aws") ||
@@ -61,6 +81,12 @@ export async function POST(req: NextRequest) {
       !target.projectId ||
       !target.resourceName
     ) {
+      console.info(`[api/proxy:${requestId}] live trace publish skipped`, {
+        reason: "invalid_trace_target",
+        status,
+        latencyMs,
+        traceTarget,
+      });
       return;
     }
 
@@ -69,7 +95,7 @@ export async function POST(req: NextRequest) {
       path = new URL(url).pathname || "/";
     } catch {}
 
-    publishLiveTraceEvent(email, {
+    const event: LiveTraceIngressEvent = {
       id: `proxy:${Date.now()}:${Math.random().toString(36).slice(2)}`,
       cloud: target.cloud,
       kind: target.kind,
@@ -84,7 +110,18 @@ export async function POST(req: NextRequest) {
       latency: typeof latencyMs === "number" ? `${latencyMs}ms` : undefined,
       userAgent: req.headers.get("user-agent") ?? undefined,
       count: 1,
+    };
+    console.info(`[api/proxy:${requestId}] live trace publish`, {
+      eventId: event.id,
+      cloud: event.cloud,
+      kind: event.kind,
+      projectId: event.projectId,
+      resourceName: event.resourceName,
+      status: event.status,
+      path: event.path,
+      latency: event.latency,
     });
+    publishLiveTraceEvent(email, event);
   };
 
   try {
@@ -101,6 +138,12 @@ export async function POST(req: NextRequest) {
     const res = await fetch(url, fetchOptions);
     const timing = Date.now() - start;
     const responseText = await res.text();
+    console.info(`[api/proxy:${requestId}] upstream complete`, {
+      hostname,
+      status: res.status,
+      timing,
+      bodyBytes: responseText.length,
+    });
     publishTraceEvent(res.status, timing);
 
     return NextResponse.json({
@@ -112,6 +155,12 @@ export async function POST(req: NextRequest) {
       headers: Object.fromEntries(res.headers.entries()),
     });
   } catch (err: any) {
+    console.error(`[api/proxy:${requestId}] upstream failed`, {
+      hostname,
+      error: err?.message ?? String(err),
+      name: err?.name,
+      timing: Date.now() - start,
+    });
     publishTraceEvent(undefined, Date.now() - start);
     return NextResponse.json(
       {

@@ -3729,6 +3729,19 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     return targets;
   }, [edges, nodeContainers, nodes, traceSourceConfig?.gkeSource]);
 
+  useEffect(() => {
+    console.info("[trace/live] target inventory", {
+      endpointCloud,
+      nodeCount: nodes.length,
+      edgeCount: edges.length,
+      url,
+      selectedEndpointUrl,
+      activePath: [...activePath],
+      liveMonitorTarget: liveMonitorTarget ? serializeLiveTraceTarget(liveMonitorTarget) : null,
+      allLiveTargets: allLiveMonitorTargets.map(serializeLiveTraceTarget),
+    });
+  }, [activePath, allLiveMonitorTargets, edges.length, endpointCloud, liveMonitorTarget, nodes.length, selectedEndpointUrl, url]);
+
   const demoLiveTargets = useMemo<LiveMonitorTarget[]>(() => {
     if (!demoMode) return [];
     const targets: LiveMonitorTarget[] = [];
@@ -3869,16 +3882,67 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
   useEffect(() => {
     const useStreamingLive = endpointCloud === "aws" || shouldUseStreamingLive(demoMode, traceSourceConfig);
+    console.info("[trace/live] streaming effect evaluated", {
+      endpointCloud,
+      liveMode,
+      useStreamingLive,
+      liveScope,
+      hasFocusedLiveTarget,
+      liveMonitorTarget: liveMonitorTarget ? serializeLiveTraceTarget(liveMonitorTarget) : null,
+      allLiveTargets: allLiveMonitorTargets.map(serializeLiveTraceTarget),
+    });
     if (!useStreamingLive || !liveMode) return;
 
+    console.info("[trace/live] opening event source", {
+      endpointCloud,
+      liveScope,
+      target: liveMonitorTarget ? serializeLiveTraceTarget(liveMonitorTarget) : null,
+    });
     const eventSource = new EventSource("/api/trace/live");
+    eventSource.addEventListener("open", () => {
+      console.info("[trace/live] event source open", { endpointCloud, liveScope });
+    });
+    eventSource.addEventListener("ready", (rawEvent) => {
+      console.info("[trace/live] event source ready", {
+        endpointCloud,
+        data: (rawEvent as MessageEvent).data,
+      });
+    });
+    eventSource.addEventListener("error", (event) => {
+      console.error("[trace/live] event source error", {
+        endpointCloud,
+        readyState: eventSource.readyState,
+        event,
+      });
+    });
     eventSource.addEventListener("trace", (rawEvent) => {
       const parsed = JSON.parse((rawEvent as MessageEvent).data) as LiveTraceIngressEvent;
+      console.info("[trace/live] trace event received", {
+        eventId: parsed.id,
+        cloud: parsed.cloud,
+        kind: parsed.kind,
+        projectId: parsed.projectId,
+        resourceName: parsed.resourceName,
+        status: parsed.status,
+        path: parsed.path,
+        endpointCloud,
+        liveScope,
+      });
       liveStreamingLastEventAtRef.current = Date.now();
       if (parsed.cloud === "aws" && endpointCloud !== "aws") {
+        console.info("[trace/live] trace event filtered", {
+          reason: "aws_event_while_not_in_aws_view",
+          eventCloud: parsed.cloud,
+          endpointCloud,
+        });
         return;
       }
       if (parsed.cloud === "gcp" && sourceForKind(parsed.kind, traceSourceConfig) !== "pubsub") {
+        console.info("[trace/live] trace event filtered", {
+          reason: "gcp_event_not_pubsub_source",
+          eventCloud: parsed.cloud,
+          source: sourceForKind(parsed.kind, traceSourceConfig),
+        });
         return;
       }
 
@@ -3889,11 +3953,22 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       setLiveRps(estimateRateFromTimestamps(liveTimestamps.current, nowMs, LIVE_RPS_WINDOW_MS));
 
       if (liveScope !== "all" && isExpectedLiveRequest({ path: parsed.path, userAgent: parsed.userAgent })) {
+        console.info("[trace/live] trace event filtered", {
+          reason: "expected_request_hidden_in_active_scope",
+          path: parsed.path,
+          userAgent: parsed.userAgent,
+          liveScope,
+        });
         return;
       }
 
       if (liveScope === "active" && hasFocusedLiveTarget && liveMonitorTarget) {
         if (!ingressEventMatchesLiveTarget(parsed, liveMonitorTarget)) {
+          console.info("[trace/live] trace event filtered", {
+            reason: "does_not_match_active_target",
+            eventKey: liveTargetKeyFromIngressEvent(parsed),
+            activeTargetKey: liveTargetKey(liveMonitorTarget),
+          });
           return;
         }
       }
@@ -3906,15 +3981,29 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
       if (liveAnimEnabledRef.current) {
         const pathIds = buildPathForIngressEvent(parsed, nodes, edges, liveMonitorTarget);
-        if (!pathIds) return;
+        if (!pathIds) {
+          console.info("[trace/live] trace event has no graph path", {
+            eventId: parsed.id,
+            cloud: parsed.cloud,
+            kind: parsed.kind,
+            projectId: parsed.projectId,
+            resourceName: parsed.resourceName,
+          });
+          return;
+        }
+        console.info("[trace/live] emitting pulse", {
+          eventId: parsed.id,
+          pathIds: [...pathIds],
+        });
         emitLivePulseBurst(pathIds);
       }
     });
 
     return () => {
+      console.info("[trace/live] closing event source", { endpointCloud, liveScope });
       eventSource.close();
     };
-  }, [demoMode, edges, emitLivePulseBurst, endpointCloud, hasFocusedLiveTarget, liveMode, liveMonitorTarget, liveScope, nodes, traceSourceConfig]);
+  }, [allLiveMonitorTargets, demoMode, edges, emitLivePulseBurst, endpointCloud, hasFocusedLiveTarget, liveMode, liveMonitorTarget, liveScope, nodes, traceSourceConfig]);
 
   // ── Demo simulation: auto-animate traffic through topology ──────────────────
   useEffect(() => {
@@ -4288,11 +4377,25 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   // ── Send request ────────────────────────────────────────────────────────────
   const handleSend = useCallback(async () => {
     const targetUrls = [selectedEndpointUrl ?? url.trim()].filter(Boolean);
-    if (sending || targetUrls.length === 0) return;
+    if (sending || targetUrls.length === 0) {
+      console.info("[trace/send] skipped", {
+        sending,
+        targetUrlCount: targetUrls.length,
+        endpointCloud,
+        selectedEndpointUrl,
+        url,
+      });
+      return;
+    }
 
     const invalidUrl = targetUrls.find(targetUrl => getProxyUrlValidationError(targetUrl));
     const validationError = invalidUrl ? getProxyUrlValidationError(invalidUrl) : null;
     if (validationError) {
+      console.warn("[trace/send] validation failed", {
+        endpointCloud,
+        invalidUrl,
+        validationError,
+      });
       setResponse({ ok: false, error: validationError, timing: 0 });
       setRequestTime(new Date());
       setShowTrace(false);
@@ -4315,6 +4418,17 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       parsedBody = p.ok ? p.val : bodyText;
     }
     const traceTarget = serializeLiveTraceTarget(liveMonitorTarget);
+    console.info("[trace/send] proxy request prepared", {
+      endpointCloud,
+      method,
+      targetUrls,
+      selectedEndpointUrl,
+      traceTarget,
+      liveMode,
+      liveScope,
+      liveMonitorTargetKey: liveMonitorTarget ? liveTargetKey(liveMonitorTarget) : null,
+      activePath: [...activePath],
+    });
 
     const httpPromise = targetUrls.length === 1
       ? fetch("/api/proxy", {
@@ -4350,6 +4464,13 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     // Wait for HTTP response
     try {
       const result = await httpPromise;
+      console.info("[trace/send] proxy response", {
+        endpointCloud,
+        ok: result.ok,
+        status: result.status,
+        timing: result.timing,
+        error: result.error,
+      });
       setResponse(result);
       if (!result.ok && result.error) {
         // Mark the last compute/sidecar node in the active path as error
@@ -4362,11 +4483,15 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
         }
       }
     } catch (err: any) {
+      console.error("[trace/send] proxy request failed", {
+        endpointCloud,
+        error: err?.message ?? String(err),
+      });
       setResponse({ ok: false, error: err.message, timing: 0 });
     }
 
     setSending(false);
-  }, [sending, url, method, bodyText, nodes, activePath, runBfsAnimation, selectedEndpointUrl, liveMonitorTarget]);
+  }, [sending, url, method, bodyText, nodes, activePath, runBfsAnimation, selectedEndpointUrl, liveMonitorTarget, endpointCloud, liveMode, liveScope]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
