@@ -2,7 +2,7 @@ export type LiveTraceResourceKind = "cloudrun" | "vm" | "gke";
 
 export interface LiveTraceIngressEvent {
   id: string;
-  cloud: "gcp";
+  cloud: "gcp" | "aws";
   kind: LiveTraceResourceKind;
   projectId: string;
   region?: string;

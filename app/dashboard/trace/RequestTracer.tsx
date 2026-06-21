@@ -49,23 +49,29 @@ type GcpEndpointFilter = "all" | "cloudrun" | "vm" | "gke";
 type AwsEndpointFilter = "all" | "lambda" | "vm" | "eks";
 type LiveMonitorTarget =
   | {
+      cloud?: EndpointCloud;
       kind: "gke";
       projectId: string;
       container: string;
+      resourceName?: string;
       pathIds: Set<string>;
     }
   | {
+      cloud?: EndpointCloud;
       kind: "cloudrun";
       projectId: string;
       service: string;
       region?: string;
+      resourceName?: string;
       pathIds: Set<string>;
     }
   | {
+      cloud?: EndpointCloud;
       kind: "vm";
       projectId: string;
       instance: string;
       region?: string;
+      resourceName?: string;
       pathIds: Set<string>;
     };
 
@@ -114,6 +120,7 @@ interface GraphNode {
   sublabel: string;
   projectId?: string;
   region?: string;   // Cloud Run region or GCE zone — used for log filtering
+  cloud?: EndpointCloud;
   matchUrl?: string; // Cloud Run URL or LB IP
   resourceName?: string; // Exact service/instance name for log lookups
   container?: string; // sidecar: k8s container name
@@ -185,6 +192,7 @@ function shouldPollLiveTarget(
   target: LiveMonitorTarget,
   traceSourceConfig: GcpTraceSourceConfigSummary | null,
 ): boolean {
+  if (target.cloud === "aws") return false;
   return sourceForKind(target.kind, traceSourceConfig) === "cloud_logging";
 }
 
@@ -526,6 +534,9 @@ function buildTopology(
       col: 1,
       label: lb.name.slice(0, 22).toUpperCase(),
       sublabel: `AWS ELB · ${lb.region}`,
+      cloud: "aws",
+      projectId: lb.accountId,
+      region: lb.region,
       matchUrl: lb.dnsName,
       resourceName: lb.name,
     });
@@ -541,6 +552,9 @@ function buildTopology(
       col: 2,
       label: cluster.clusterName.slice(0, 22).toUpperCase(),
       sublabel: `EKS · ${cluster.region}`,
+      cloud: "aws",
+      projectId: cluster.accountId,
+      region: cluster.region,
       matchUrl: cluster.endpointPublicAccess ? cluster.endpoint : undefined,
       resourceName: cluster.clusterName,
     });
@@ -564,6 +578,8 @@ function buildTopology(
       col: 2,
       label: name.slice(0, 22).toUpperCase(),
       sublabel: `EC2 · ${instance.region}`,
+      cloud: "aws",
+      projectId: instance.accountId,
       region: instance.region,
       matchUrl: instance.publicIpAddress ?? undefined,
       resourceName: instance.instanceId,
@@ -580,6 +596,8 @@ function buildTopology(
       col: 2,
       label: fn.functionName.slice(0, 22).toUpperCase(),
       sublabel: fn.functionUrl ? `Lambda URL · ${fn.region}` : `Lambda · ${fn.region}`,
+      cloud: "aws",
+      projectId: fn.accountId,
       region: fn.region,
       matchUrl: fn.functionUrl,
       resourceName: fn.functionName,
@@ -641,9 +659,10 @@ function buildPathForNode(nodeId: string, edges: GraphEdge[]): Set<string> {
 }
 
 function liveTargetKey(target: LiveMonitorTarget): string {
-  if (target.kind === "gke") return `gke:${target.projectId}:${target.container}`;
-  if (target.kind === "cloudrun") return `cloudrun:${target.projectId}:${target.region ?? ""}:${target.service}`;
-  return `vm:${target.projectId}:${target.region ?? ""}:${target.instance}`;
+  const cloud = target.cloud ?? "gcp";
+  if (target.kind === "gke") return `${cloud}:gke:${target.projectId}:${target.container}`;
+  if (target.kind === "cloudrun") return `${cloud}:cloudrun:${target.projectId}:${target.region ?? ""}:${target.service}`;
+  return `${cloud}:vm:${target.projectId}:${target.region ?? ""}:${target.instance}`;
 }
 
 function buildLiveLogParams(target: LiveMonitorTarget, after: string): URLSearchParams {
@@ -667,9 +686,30 @@ function buildLiveLogParams(target: LiveMonitorTarget, after: string): URLSearch
 }
 
 function liveTargetLabel(target: LiveMonitorTarget): string {
+  if (target.cloud === "aws") {
+    if (target.kind === "gke") return `EKS · ${target.resourceName ?? target.container}`;
+    if (target.kind === "cloudrun") return `Lambda · ${target.service}`;
+    return `EC2 · ${target.instance}`;
+  }
   if (target.kind === "gke") return target.container === "ebpf-agent" ? "GKE · eBPF agent" : `GKE · ${target.container}`;
   if (target.kind === "cloudrun") return `RUN · ${target.service}`;
   return `VM · ${target.instance}`;
+}
+
+function serializeLiveTraceTarget(target: LiveMonitorTarget | null) {
+  if (!target) return undefined;
+  return {
+    cloud: target.cloud ?? "gcp",
+    kind: target.kind,
+    projectId: target.projectId,
+    region: target.kind === "gke" ? undefined : target.region,
+    resourceName: target.kind === "cloudrun"
+      ? target.service
+      : target.kind === "vm"
+        ? target.instance
+        : target.resourceName ?? target.container,
+    container: target.kind === "gke" ? target.container : undefined,
+  };
 }
 
 function resolveTargetFromIngressEvent(event: LiveTraceIngressEvent): {
@@ -706,12 +746,13 @@ function resolveTargetFromIngressEvent(event: LiveTraceIngressEvent): {
 
 function liveTargetKeyFromIngressEvent(event: LiveTraceIngressEvent): string {
   const target = resolveTargetFromIngressEvent(event);
-  if (target.kind === "cloudrun") return `cloudrun:${target.projectId}:${target.region ?? ""}:${target.service}`;
-  if (target.kind === "vm") return `vm:${target.projectId}:${target.region ?? ""}:${target.instance}`;
-  return `gke:${target.projectId}:${target.container}`;
+  if (target.kind === "cloudrun") return `${event.cloud}:cloudrun:${target.projectId}:${target.region ?? ""}:${target.service}`;
+  if (target.kind === "vm") return `${event.cloud}:vm:${target.projectId}:${target.region ?? ""}:${target.instance}`;
+  return `${event.cloud}:gke:${target.projectId}:${target.container}`;
 }
 
 function ingressEventMatchesLiveTarget(event: LiveTraceIngressEvent, target: LiveMonitorTarget): boolean {
+  if (event.cloud !== (target.cloud ?? "gcp")) return false;
   if (event.kind !== target.kind || event.projectId !== target.projectId) return false;
   if (target.kind === "gke") return true;
   return liveTargetKeyFromIngressEvent(event) === liveTargetKey(target);
@@ -720,18 +761,18 @@ function ingressEventMatchesLiveTarget(event: LiveTraceIngressEvent, target: Liv
 function resolveLiveTargetNodeId(target: LiveMonitorTarget, nodes: GraphNode[]): string | undefined {
   if (target.kind === "gke") {
     return nodes.find(
-      n => target.pathIds.has(n.id) && n.type === "sidecar" && n.projectId === target.projectId && n.container === target.container
+      n => target.pathIds.has(n.id) && (n.cloud ?? "gcp") === (target.cloud ?? "gcp") && n.type === "sidecar" && n.projectId === target.projectId && n.container === target.container
     )?.id ?? nodes.find(
-      n => target.pathIds.has(n.id) && n.type === "gke" && n.projectId === target.projectId
+      n => target.pathIds.has(n.id) && (n.cloud ?? "gcp") === (target.cloud ?? "gcp") && n.type === "gke" && n.projectId === target.projectId
     )?.id;
   }
   if (target.kind === "cloudrun") {
     return nodes.find(
-      n => target.pathIds.has(n.id) && n.type === "cloudrun" && n.projectId === target.projectId && n.resourceName === target.service
+      n => target.pathIds.has(n.id) && (n.cloud ?? "gcp") === (target.cloud ?? "gcp") && n.type === "cloudrun" && n.projectId === target.projectId && n.resourceName === target.service
     )?.id;
   }
   return nodes.find(
-    n => target.pathIds.has(n.id) && n.type === "vm" && n.projectId === target.projectId && n.resourceName === target.instance
+    n => target.pathIds.has(n.id) && (n.cloud ?? "gcp") === (target.cloud ?? "gcp") && n.type === "vm" && n.projectId === target.projectId && n.resourceName === target.instance
   )?.id;
 }
 
@@ -739,18 +780,18 @@ function resolveLiveEventNodeIdFromIngress(event: LiveTraceIngressEvent, nodes: 
   const target = resolveTargetFromIngressEvent(event);
   if (target.kind === "cloudrun") {
     return nodes.find(
-      n => n.type === "cloudrun" && n.projectId === target.projectId && n.resourceName === target.service
+      n => (n.cloud ?? "gcp") === event.cloud && n.type === "cloudrun" && n.projectId === target.projectId && n.resourceName === target.service
     )?.id;
   }
   if (target.kind === "vm") {
     return nodes.find(
-      n => n.type === "vm" && n.projectId === target.projectId && n.resourceName === target.instance
+      n => (n.cloud ?? "gcp") === event.cloud && n.type === "vm" && n.projectId === target.projectId && n.resourceName === target.instance
     )?.id;
   }
   return nodes.find(
-    n => n.type === "sidecar" && n.projectId === target.projectId && n.container === target.container
+    n => (n.cloud ?? "gcp") === event.cloud && n.type === "sidecar" && n.projectId === target.projectId && n.container === target.container
   )?.id ?? nodes.find(
-    n => n.type === "gke" && n.projectId === target.projectId
+    n => (n.cloud ?? "gcp") === event.cloud && n.type === "gke" && n.projectId === target.projectId
   )?.id;
 }
 
@@ -766,6 +807,7 @@ function buildPathForIngressEvent(
     return new Set(activeTarget.pathIds);
   }
   const fallbackNode = nodes.find(node => {
+    if ((node.cloud ?? "gcp") !== event.cloud) return false;
     if (node.projectId !== event.projectId) return false;
     if (event.kind === "gke") return node.type === "gke";
     if (event.kind === "cloudrun") return node.type === "cloudrun" && node.resourceName === event.resourceName;
@@ -779,11 +821,17 @@ function toLiveEventFromIngress(event: LiveTraceIngressEvent, nodes: GraphNode[]
   return {
     id: event.id,
     ts: event.timestamp,
-    label: target.kind === "cloudrun"
-      ? `RUN · ${target.service}`
-      : target.kind === "vm"
-        ? `VM · ${target.instance}`
-        : `GKE · ${target.container}`,
+    label: event.cloud === "aws"
+      ? target.kind === "cloudrun"
+        ? `Lambda · ${target.service}`
+        : target.kind === "vm"
+          ? `EC2 · ${target.instance}`
+          : `EKS · ${event.resourceName}`
+      : target.kind === "cloudrun"
+        ? `RUN · ${target.service}`
+        : target.kind === "vm"
+          ? `VM · ${target.instance}`
+          : `GKE · ${target.container}`,
     kind: target.kind,
     projectId: target.projectId,
     focusNodeId: resolveLiveEventNodeIdFromIngress(event, nodes),
@@ -3392,11 +3440,23 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     const buildGkeTarget = (pathNodeIds: Set<string>) => {
       const gkeNode = nodes.find(n => pathNodeIds.has(n.id) && n.type === "gke" && n.projectId);
       if (!gkeNode) return null;
+      if (gkeNode.cloud === "aws") {
+        return {
+          cloud: "aws" as const,
+          kind: "gke" as const,
+          projectId: gkeNode.projectId!,
+          container: gkeNode.resourceName ?? gkeNode.label,
+          resourceName: gkeNode.resourceName,
+          pathIds: pathNodeIds,
+        };
+      }
       if (traceSourceConfig?.gkeSource === "ebpf_agent") {
         return {
+          cloud: (gkeNode.cloud ?? "gcp") as EndpointCloud,
           kind: "gke" as const,
           projectId: gkeNode.projectId!,
           container: "ebpf-agent",
+          resourceName: gkeNode.resourceName,
           pathIds: pathNodeIds,
         };
       }
@@ -3404,9 +3464,11 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       const container = SIDECAR_ORDER.find(c => containers.includes(c)) ?? containers[0];
       if (!container) return null;
       return {
+        cloud: (gkeNode.cloud ?? "gcp") as EndpointCloud,
         kind: "gke" as const,
         projectId: gkeNode.projectId!,
         container,
+        resourceName: gkeNode.resourceName,
         pathIds: pathNodeIds,
       };
     };
@@ -3417,10 +3479,12 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       );
       if (!runNode) return null;
       return {
+        cloud: (runNode.cloud ?? "gcp") as EndpointCloud,
         kind: "cloudrun" as const,
         projectId: runNode.projectId!,
         service: runNode.resourceName!,
         region: runNode.region,
+        resourceName: runNode.resourceName,
         pathIds: pathNodeIds,
       };
     };
@@ -3431,10 +3495,12 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       );
       if (!vmNode) return null;
       return {
+        cloud: (vmNode.cloud ?? "gcp") as EndpointCloud,
         kind: "vm" as const,
         projectId: vmNode.projectId!,
         instance: vmNode.resourceName!,
         region: vmNode.region,
+        resourceName: vmNode.resourceName,
         pathIds: pathNodeIds,
       };
     };
@@ -3571,11 +3637,23 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
         const target =
           node.type === "gke"
             ? (() => {
+                if (node.cloud === "aws") {
+                  return {
+                    cloud: "aws" as const,
+                    kind: "gke" as const,
+                    projectId: node.projectId!,
+                    container: node.resourceName ?? node.label,
+                    resourceName: node.resourceName,
+                    pathIds: pathNodeIds,
+                  };
+                }
                 if (traceSourceConfig?.gkeSource === "ebpf_agent") {
                   return {
+                    cloud: (node.cloud ?? "gcp") as EndpointCloud,
                     kind: "gke" as const,
                     projectId: node.projectId!,
                     container: "ebpf-agent",
+                    resourceName: node.resourceName,
                     pathIds: pathNodeIds,
                   };
                 }
@@ -3583,25 +3661,31 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                 const container = SIDECAR_ORDER.find(c => containers.includes(c)) ?? containers[0];
                 if (!container) return null;
                 return {
+                  cloud: (node.cloud ?? "gcp") as EndpointCloud,
                   kind: "gke" as const,
                   projectId: node.projectId!,
                   container,
+                  resourceName: node.resourceName,
                   pathIds: pathNodeIds,
                 };
               })()
             : node.type === "cloudrun"
               ? {
+                  cloud: (node.cloud ?? "gcp") as EndpointCloud,
                   kind: "cloudrun" as const,
                   projectId: node.projectId!,
                   service: node.resourceName!,
                   region: node.region,
+                  resourceName: node.resourceName,
                   pathIds: pathNodeIds,
                 }
               : {
+                  cloud: (node.cloud ?? "gcp") as EndpointCloud,
                   kind: "vm" as const,
                   projectId: node.projectId!,
                   instance: node.resourceName!,
                   region: node.region,
+                  resourceName: node.resourceName,
                   pathIds: pathNodeIds,
                 };
         addTarget(target);
@@ -3750,14 +3834,17 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   }, []);
 
   useEffect(() => {
-    const useStreamingLive = shouldUseStreamingLive(demoMode, traceSourceConfig);
+    const useStreamingLive = endpointCloud === "aws" || shouldUseStreamingLive(demoMode, traceSourceConfig);
     if (!useStreamingLive || !liveMode) return;
 
     const eventSource = new EventSource("/api/trace/live");
     eventSource.addEventListener("trace", (rawEvent) => {
       const parsed = JSON.parse((rawEvent as MessageEvent).data) as LiveTraceIngressEvent;
       liveStreamingLastEventAtRef.current = Date.now();
-      if (sourceForKind(parsed.kind, traceSourceConfig) !== "pubsub") {
+      if (parsed.cloud === "aws" && endpointCloud !== "aws") {
+        return;
+      }
+      if (parsed.cloud === "gcp" && sourceForKind(parsed.kind, traceSourceConfig) !== "pubsub") {
         return;
       }
 
@@ -3793,7 +3880,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     return () => {
       eventSource.close();
     };
-  }, [demoMode, edges, emitLivePulseBurst, hasFocusedLiveTarget, liveMode, liveMonitorTarget, liveScope, nodes, traceSourceConfig]);
+  }, [demoMode, edges, emitLivePulseBurst, endpointCloud, hasFocusedLiveTarget, liveMode, liveMonitorTarget, liveScope, nodes, traceSourceConfig]);
 
   // ── Demo simulation: auto-animate traffic through topology ──────────────────
   useEffect(() => {
@@ -4192,19 +4279,20 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       const p = tryParseJson(bodyText);
       parsedBody = p.ok ? p.val : bodyText;
     }
+    const traceTarget = serializeLiveTraceTarget(liveMonitorTarget);
 
     const httpPromise = targetUrls.length === 1
       ? fetch("/api/proxy", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url: targetUrls[0], method, body: parsedBody }),
+          body: JSON.stringify({ url: targetUrls[0], method, body: parsedBody, traceTarget }),
         }).then(r => r.json() as Promise<ProxyResponse>)
       : Promise.all(
           targetUrls.map(async targetUrl => {
             const res = await fetch("/api/proxy", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ url: targetUrl, method, body: parsedBody }),
+              body: JSON.stringify({ url: targetUrl, method, body: parsedBody, traceTarget }),
             });
             return res.json() as Promise<ProxyResponse>;
           })
@@ -4243,7 +4331,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     }
 
     setSending(false);
-  }, [sending, url, method, bodyText, nodes, activePath, runBfsAnimation, selectedEndpointUrl]);
+  }, [sending, url, method, bodyText, nodes, activePath, runBfsAnimation, selectedEndpointUrl, liveMonitorTarget]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (

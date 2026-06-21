@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { publishLiveTraceEvent, type LiveTraceIngressEvent } from "@/lib/live-trace-bus";
 
 // Blocked headers — never forward credentials or host overrides to upstream.
 const BLOCKED_HEADERS = new Set(["authorization", "cookie", "host", "x-forwarded-for", "x-real-ip"]);
@@ -22,11 +23,12 @@ function isBlockedUrl(rawUrl: string): boolean {
 
 export async function POST(req: NextRequest) {
   const session = await auth();
-  if (!session?.user) {
+  const email = session?.user?.email;
+  if (!session?.user || !email) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { url, method = "GET", headers: reqHeaders, body } = await req.json();
+  const { url, method = "GET", headers: reqHeaders, body, traceTarget } = await req.json();
   if (!url || typeof url !== "string") {
     return NextResponse.json({ error: "url is required" }, { status: 400 });
   }
@@ -48,21 +50,58 @@ export async function POST(req: NextRequest) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15_000);
   const start = Date.now();
+  const requestMethod = method.toUpperCase();
+
+  const publishTraceEvent = (status?: number, latencyMs?: number) => {
+    if (!traceTarget || typeof traceTarget !== "object") return;
+    const target = traceTarget as Partial<LiveTraceIngressEvent>;
+    if (
+      (target.cloud !== "gcp" && target.cloud !== "aws") ||
+      (target.kind !== "cloudrun" && target.kind !== "vm" && target.kind !== "gke") ||
+      !target.projectId ||
+      !target.resourceName
+    ) {
+      return;
+    }
+
+    let path = "/";
+    try {
+      path = new URL(url).pathname || "/";
+    } catch {}
+
+    publishLiveTraceEvent(email, {
+      id: `proxy:${Date.now()}:${Math.random().toString(36).slice(2)}`,
+      cloud: target.cloud,
+      kind: target.kind,
+      projectId: target.projectId,
+      region: typeof target.region === "string" ? target.region : undefined,
+      resourceName: target.resourceName,
+      container: typeof target.container === "string" ? target.container : undefined,
+      timestamp: new Date().toISOString(),
+      method: requestMethod,
+      path,
+      status,
+      latency: typeof latencyMs === "number" ? `${latencyMs}ms` : undefined,
+      userAgent: req.headers.get("user-agent") ?? undefined,
+      count: 1,
+    });
+  };
 
   try {
     const fetchOptions: RequestInit = {
-      method: method.toUpperCase(),
+      method: requestMethod,
       signal: controller.signal,
       headers: { "Content-Type": "application/json", ...safeHeaders },
     };
 
-    if (body !== undefined && method !== "GET" && method !== "HEAD") {
+    if (body !== undefined && requestMethod !== "GET" && requestMethod !== "HEAD") {
       fetchOptions.body = typeof body === "string" ? body : JSON.stringify(body);
     }
 
     const res = await fetch(url, fetchOptions);
     const timing = Date.now() - start;
     const responseText = await res.text();
+    publishTraceEvent(res.status, timing);
 
     return NextResponse.json({
       ok: true,
@@ -73,6 +112,7 @@ export async function POST(req: NextRequest) {
       headers: Object.fromEntries(res.headers.entries()),
     });
   } catch (err: any) {
+    publishTraceEvent(undefined, Date.now() - start);
     return NextResponse.json(
       {
         ok: false,
