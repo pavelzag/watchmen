@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   Globe, Flame, Server, Database, Key, Shield, ChevronRight,
   AlertTriangle, RefreshCw, Lock, User, Cloud, HardDrive, GitPullRequest,
+  Sparkles, Loader2, ChevronDown, ChevronUp, AlertCircle,
 } from "lucide-react";
 import { computeAttackPaths, type AttackNode, type AttackPath } from "@/lib/gcp/attack-paths";
 import type { AwsSecurityFinding, AwsSnapshot } from "@/lib/aws/types";
@@ -11,6 +12,8 @@ import { computeAwsFindings } from "@/lib/aws-findings";
 import RemediateModal from "./RemediateModal";
 import ScanCloudButton from "@/components/ScanCloudButton";
 import { remediationTargetFromAttackPath } from "@/lib/github/remediation-targets";
+import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
+import { linkifyText } from "@/lib/utils/linkify";
 
 // ─── Node icon / colour ───────────────────────────────────────────────────────
 
@@ -96,6 +99,33 @@ const SEV_STYLES = {
   critical: { border: "#ef4444", label: "CRITICAL", color: "#ef4444", bg: "#1a0606" },
   high:     { border: "#f59e0b", label: "HIGH",     color: "#f59e0b", bg: "#1a1206" },
 };
+
+interface AiRecState {
+  loading: boolean;
+  text: string | null;
+  error: string | null;
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function renderAiMarkdown(text: string): string {
+  const html = escapeHtml(text)
+    .replace(/```[\w]*\n?([\s\S]*?)```/g, (_, code) =>
+      `<pre class="bg-slate-900 border border-slate-700/50 rounded-lg px-3 py-2 text-xs font-mono text-slate-300 overflow-x-auto my-2 whitespace-pre-wrap">${code}</pre>`
+    )
+    .replace(/`([^`]+)`/g, '<code class="px-1 py-0.5 rounded bg-slate-800 text-sky-300 text-xs font-mono">$1</code>')
+    .replace(/^### (.+)$/gm, '<p class="text-xs font-semibold text-slate-200 uppercase tracking-wider mt-3 mb-1">$1</p>')
+    .replace(/^## (.+)$/gm, '<p class="text-sm font-semibold text-slate-200 mt-3 mb-1">$1</p>')
+    .replace(/\*\*(.*?)\*\*/g, "<strong class=\"text-slate-200\">$1</strong>")
+    .replace(/^\d+\. (.+)$/gm, '<li class="ml-4 list-decimal">$1</li>')
+    .replace(/^[-*] (.+)$/gm, '<li class="ml-4 list-disc">$1</li>')
+    .replace(/(<li[\s\S]*?<\/li>\n?)+/g, (m) => `<ul class="space-y-1 my-1">${m}</ul>`)
+    .replace(/\n(?!<)/g, "<br />");
+
+  return linkifyText(html, []);
+}
 
 // ─── Node card ────────────────────────────────────────────────────────────────
 
@@ -258,6 +288,8 @@ export default function AttackPathsPage() {
   const [filter, setFilter] = useState<"all" | "critical" | "high">("all");
   const [cloudFilter, setCloudFilter] = useState<CloudFilter>("all");
   const [showRemediate, setShowRemediate] = useState(false);
+  const [aiRec, setAiRec] = useState<AiRecState>({ loading: false, text: null, error: null });
+  const [aiOpen, setAiOpen] = useState(false);
 
   const hasAwsCredentialsConfigured = useCallback(async () => {
     try {
@@ -390,6 +422,35 @@ export default function AttackPathsPage() {
   const highCount = cloudFiltered.filter((p) => p.severity === "high").length;
   const gcpRemediablePaths = visible.filter((path) => path.cloud === "gcp");
 
+  async function askAiForVisiblePaths(forceRegenerate = false) {
+    if (visible.length === 0) return;
+    setAiOpen(true);
+    setAiRec({ loading: true, text: forceRegenerate ? null : aiRec.text, error: null });
+    try {
+      const res = await fetch("/api/attack-paths/recommend", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scope: `${cloudFilter.toUpperCase()} / ${filter.toUpperCase()}`,
+          paths: visible,
+          demoCredentials: (() => {
+            const browserAI = getActiveBrowserAIKey();
+            return browserAI ? { aiKey: browserAI.key, aiProvider: browserAI.provider } : undefined;
+          })(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed");
+      setAiRec({ loading: false, text: data.recommendation, error: null });
+    } catch (error) {
+      setAiRec({
+        loading: false,
+        text: null,
+        error: error instanceof Error ? error.message : "Failed to ask AI",
+      });
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -447,6 +508,63 @@ export default function AttackPathsPage() {
                 <p style={{ fontSize: 28, fontWeight: 700, color, fontFamily: "monospace", lineHeight: 1.2 }}>{value}</p>
               </div>
             ))}
+          </div>
+
+          <div style={{ border: "1px solid var(--border-dim)", background: "#09090b" }}>
+            <div className="px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
+              <div>
+                <p style={{ fontSize: 9, letterSpacing: 3, color: "var(--border-dim)", fontFamily: "monospace" }}>
+                  // ASK AI ABOUT ATTACK PATHS
+                </p>
+                <p style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "monospace", marginTop: 4 }}>
+                  Analyze the {visible.length} currently visible path{visible.length === 1 ? "" : "s"} and produce a prioritized remediation plan.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {aiRec.text && (
+                  <button
+                    type="button"
+                    onClick={() => setAiOpen((open) => !open)}
+                    className="flex items-center gap-1 px-2 py-1 text-xs uppercase tracking-widest transition-all"
+                    style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}
+                  >
+                    {aiOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                    {aiOpen ? "Hide" : "Show"}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => askAiForVisiblePaths(Boolean(aiRec.text))}
+                  disabled={aiRec.loading || visible.length === 0}
+                  className="flex items-center gap-2 px-3 py-1.5 text-xs uppercase tracking-widest transition-all"
+                  style={{
+                    border: "1px solid #a855f7",
+                    color: aiRec.loading ? "#6b7280" : "#c084fc",
+                    background: "rgba(168,85,247,0.08)",
+                    opacity: aiRec.loading || visible.length === 0 ? 0.6 : 1,
+                  }}
+                >
+                  {aiRec.loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                  {aiRec.loading ? "Asking AI..." : aiRec.text ? "Regenerate" : "Ask AI"}
+                </button>
+              </div>
+            </div>
+
+            {aiRec.error && (
+              <div className="px-4 pb-3 flex items-center gap-2 text-xs font-mono" style={{ color: "#f87171" }}>
+                <AlertCircle className="w-3 h-3 shrink-0" />
+                {aiRec.error}
+              </div>
+            )}
+
+            {aiRec.text && aiOpen && (
+              <div className="px-4 py-4 border-t border-slate-800">
+                <div
+                  className="text-xs text-slate-300 leading-relaxed prose-answer"
+                  dangerouslySetInnerHTML={{ __html: renderAiMarkdown(aiRec.text) }}
+                />
+              </div>
+            )}
           </div>
 
           {/* Cloud filter */}
