@@ -545,6 +545,7 @@ function buildTopology(
       col: 2,
       label: cluster.clusterName.slice(0, 22).toUpperCase(),
       sublabel: `EKS · ${cluster.region}`,
+      matchUrl: cluster.endpoint,
       resourceName: cluster.clusterName,
     });
     const parentLbs = awsLbs
@@ -3502,18 +3503,22 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     () => (awsSnapshot?.lambdaFunctions ?? []).filter(fn => fn.functionUrl),
     [awsSnapshot]
   );
+  const filteredAwsEksApiTargets = useMemo(
+    () => (awsSnapshot?.eksClusters ?? []).filter(cluster => cluster.endpointPublicAccess && cluster.endpoint),
+    [awsSnapshot]
+  );
   const hasAwsEndpointForFilter = useMemo(() => {
     if (awsEndpointFilter === "lambda") return filteredAwsLambdaUrls.length > 0;
     if (awsEndpointFilter === "vm") return filteredAwsEc2Targets.length > 0;
-    if (awsEndpointFilter === "eks") return filteredAwsLoadBalancers.length > 0;
-    return filteredAwsLambdaUrls.length > 0 || filteredAwsEc2Targets.length > 0 || filteredAwsLoadBalancers.length > 0;
-  }, [awsEndpointFilter, filteredAwsEc2Targets.length, filteredAwsLambdaUrls.length, filteredAwsLoadBalancers.length]);
+    if (awsEndpointFilter === "eks") return filteredAwsLoadBalancers.length > 0 || filteredAwsEksApiTargets.length > 0;
+    return filteredAwsLambdaUrls.length > 0 || filteredAwsEc2Targets.length > 0 || filteredAwsLoadBalancers.length > 0 || filteredAwsEksApiTargets.length > 0;
+  }, [awsEndpointFilter, filteredAwsEc2Targets.length, filteredAwsEksApiTargets.length, filteredAwsLambdaUrls.length, filteredAwsLoadBalancers.length]);
   const awsEndpointFilterLabel = AWS_ENDPOINT_FILTERS.find(filter => filter.id === awsEndpointFilter)?.label ?? "AWS";
   const awsEmptyMessage = {
     all: "No AWS HTTP endpoints discovered. Run an AWS scan, then look for an internet-facing ELB, a public EC2 IP, or a Lambda Function URL.",
     lambda: "No Lambda Function URLs discovered. Lambda functions only appear here when Function URL configs are enabled.",
     vm: "No public EC2 HTTP targets discovered. EC2 instances only appear here when they have a public IP.",
-    eks: "No EKS/ELB HTTP targets discovered. EKS targets appear here through internet-facing AWS load balancers.",
+    eks: "No EKS API or ELB targets discovered. EKS clusters appear here when their public API endpoint is enabled, and workloads appear through internet-facing AWS load balancers.",
   }[awsEndpointFilter];
 
   const allLiveMonitorTargets = useMemo<LiveMonitorTarget[]>(() => {
@@ -4514,6 +4519,37 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                         >
                           <div className={cn("break-words", isSelected ? "text-slate-200" : "text-slate-400")}>
                             ELB · {lb.name}
+                            {isSelected && <span className="ml-2 text-[8px] text-amber-300 uppercase tracking-widest">Selected</span>}
+                          </div>
+                          <div className={cn("mt-0.5 font-mono whitespace-pre-wrap break-all", isSelected ? "text-amber-300" : "text-amber-400")}>{value}</div>
+                        </button>
+                      </HoverTooltip>
+                    );
+                  })}
+                  {(awsEndpointFilter === "all" || awsEndpointFilter === "eks") && filteredAwsEksApiTargets.map(cluster => {
+                    const value = cluster.endpoint!;
+                    const isSelected = isEndpointSelected(value);
+                    return (
+                      <HoverTooltip
+                        key={`aws-eks-api-${cluster.region}-${cluster.clusterName}`}
+                        content={
+                          <>
+                            <div className="text-amber-300 font-bold uppercase tracking-widest text-[8px] mb-1">{cluster.clusterName}</div>
+                            <div className="text-sky-300 font-mono break-all">{value}</div>
+                            <div className="text-slate-500 mt-1">EKS API · {cluster.region}</div>
+                          </>
+                        }
+                      >
+                        <button onClick={() => toggleEndpointSelection(value)}
+                          className={cn(
+                            "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm relative overflow-hidden",
+                            isSelected
+                              ? "bg-amber-950/45 ring-2 ring-amber-500/80 border border-amber-500/35 shadow-[inset_0_0_0_1px_rgba(245,158,11,0.18)]"
+                              : "bg-[#0a0a0a]/60 hover:bg-[#12100b]"
+                          )}
+                        >
+                          <div className={cn("break-words", isSelected ? "text-slate-200" : "text-slate-400")}>
+                            EKS API · {cluster.clusterName}
                             {isSelected && <span className="ml-2 text-[8px] text-amber-300 uppercase tracking-widest">Selected</span>}
                           </div>
                           <div className={cn("mt-0.5 font-mono whitespace-pre-wrap break-all", isSelected ? "text-amber-300" : "text-amber-400")}>{value}</div>

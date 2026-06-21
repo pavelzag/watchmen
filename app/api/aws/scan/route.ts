@@ -50,13 +50,15 @@ function summarizeTraceableAwsEndpoints(snapshot: AwsSnapshot): Record<string, n
   );
   const lambdaFunctionUrls = snapshot.lambdaFunctions.filter((fn) => Boolean(fn.functionUrl));
   const publicEksClusters = snapshot.eksClusters.filter((cluster) => cluster.endpointPublicAccess);
+  const publicEksApiEndpoints = snapshot.eksClusters.filter((cluster) => cluster.endpointPublicAccess && Boolean(cluster.endpoint));
 
   return {
-    traceableAwsTargets: internetFacingLoadBalancers.length + publicEc2Instances.length + lambdaFunctionUrls.length,
+    traceableAwsTargets: internetFacingLoadBalancers.length + publicEc2Instances.length + lambdaFunctionUrls.length + publicEksApiEndpoints.length,
     internetFacingLoadBalancers: internetFacingLoadBalancers.length,
     publicEc2Instances: publicEc2Instances.length,
     lambdaFunctionUrls: lambdaFunctionUrls.length,
     publicEksClusters: publicEksClusters.length,
+    publicEksApiEndpoints: publicEksApiEndpoints.length,
     totalLoadBalancers: snapshot.loadBalancers.length,
     totalEc2Instances: snapshot.ec2Instances.length,
     totalLambdaFunctions: snapshot.lambdaFunctions.length,
@@ -95,6 +97,7 @@ function logAwsTraceDiscovery(scanId: string, mode: string, snapshot: AwsSnapsho
       clusterName: cluster.clusterName,
       region: cluster.region,
       endpointPublicAccess: cluster.endpointPublicAccess,
+      hasEndpoint: Boolean(cluster.endpoint),
     })),
   });
   return summary;

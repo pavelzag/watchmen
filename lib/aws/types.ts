@@ -74,6 +74,7 @@ export interface AwsEksCluster {
   accountId: string;
   region: string;
   arn: string;
+  endpoint?: string;
   status: string;
   kubernetesVersion: string;
   roleArn: string;

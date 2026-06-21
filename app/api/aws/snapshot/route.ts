@@ -10,10 +10,12 @@ function summarizeTraceableAwsEndpoints(snapshot: AwsSnapshot): Record<string, n
     traceableAwsTargets:
       snapshot.loadBalancers.filter((lb) => lb.dnsName && lb.scheme === "internet-facing" && lb.state !== "failed").length +
       snapshot.ec2Instances.filter((instance) => instance.state === "running" && Boolean(instance.publicIpAddress)).length +
-      snapshot.lambdaFunctions.filter((fn) => Boolean(fn.functionUrl)).length,
+      snapshot.lambdaFunctions.filter((fn) => Boolean(fn.functionUrl)).length +
+      snapshot.eksClusters.filter((cluster) => cluster.endpointPublicAccess && Boolean(cluster.endpoint)).length,
     internetFacingLoadBalancers: snapshot.loadBalancers.filter((lb) => lb.dnsName && lb.scheme === "internet-facing" && lb.state !== "failed").length,
     publicEc2Instances: snapshot.ec2Instances.filter((instance) => instance.state === "running" && Boolean(instance.publicIpAddress)).length,
     lambdaFunctionUrls: snapshot.lambdaFunctions.filter((fn) => Boolean(fn.functionUrl)).length,
+    publicEksApiEndpoints: snapshot.eksClusters.filter((cluster) => cluster.endpointPublicAccess && Boolean(cluster.endpoint)).length,
     totalLoadBalancers: snapshot.loadBalancers.length,
     totalEc2Instances: snapshot.ec2Instances.length,
     totalLambdaFunctions: snapshot.lambdaFunctions.length,
