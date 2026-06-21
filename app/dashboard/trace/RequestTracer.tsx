@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Globe, Server, Box, Database, Play, Loader2,
   Cloud, CheckCircle2, XCircle, ChevronDown, RefreshCw,
-  ZoomIn, ZoomOut, Maximize2, Minimize2, X, Info, Cpu, Copy, Search, Shield, Activity, Zap, Sparkles,
+  ZoomIn, ZoomOut, Maximize2, Minimize2, X, Info, Cpu, Copy, Search, Shield, Activity, Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
@@ -2257,7 +2257,8 @@ function NodeDetail({
 
   // Tabs — only nodes that have their own logs/routes get the tab bar.
   // LBs are infrastructure (no container logs); they only get routes if matchUrl is set.
-  const hasLogs   = node.cloud !== "aws" && (node.type === "gke" || node.type === "cloudrun" || node.type === "vm" || node.type === "sidecar");
+  const hasAwsLambdaLogs = node.cloud === "aws" && node.type === "cloudrun";
+  const hasLogs = hasAwsLambdaLogs || (node.cloud !== "aws" && (node.type === "gke" || node.type === "cloudrun" || node.type === "vm" || node.type === "sidecar"));
   const hasRoutes = node.type === "gke" || node.type === "cloudrun" || node.type === "lb" || node.type === "vm";
   const showTabs  = hasLogs || hasRoutes;
   const [tab, setTab] = useState<NodeDetailTab>("info");
@@ -2300,12 +2301,17 @@ function NodeDetail({
   }, [tab, node.cloud, node.id, node.projectId, node.type, onIstioDetected]);
 
   const refreshLogs = useCallback(async ({ showLoading = false }: { showLoading?: boolean } = {}) => {
-    if (node.cloud === "aws") return;
     if (!node.projectId) return;
     if (showLoading) setLoadingLogs(true);
     setLogsError(null);
     const params = new URLSearchParams({ projectId: node.projectId, limit: String(LOG_DRAWER_LIMIT) });
-    if (node.type === "cloudrun") {
+    const endpoint = node.cloud === "aws" ? "/api/aws/logs" : "/api/gcp/logs";
+    if (node.cloud === "aws") {
+      if (node.type !== "cloudrun") return;
+      params.set("accountId", node.projectId);
+      params.set("functionName", node.resourceName ?? node.label.toLowerCase());
+      if (node.region) params.set("region", node.region);
+    } else if (node.type === "cloudrun") {
       params.set("resourceType", "cloud_run_revision");
       params.set("service", node.resourceName ?? node.label.toLowerCase());
       if (node.region) params.set("region", node.region);
@@ -2327,7 +2333,7 @@ function NodeDetail({
     }
 
     try {
-      const res = await fetch(`/api/gcp/logs?${params}`);
+      const res = await fetch(`${endpoint}?${params}`);
       const d = await res.json();
       if (d.error) { setLogsError(d.error); return; }
       setLogs(d.entries ?? []);
@@ -2609,7 +2615,9 @@ function NodeDetail({
           <>
             {/* Header row */}
             <div className="flex items-center gap-1.5">
-              <span className="text-[9px] uppercase tracking-widest text-slate-600 flex-1 truncate">Cloud Logging · {node.projectId}</span>
+              <span className="text-[9px] uppercase tracking-widest text-slate-600 flex-1 truncate">
+                {node.cloud === "aws" ? "CloudWatch Logs" : "Cloud Logging"} · {node.projectId}
+              </span>
               <button
                 onClick={handleCopyLogs}
                 title="Copy logs (C)"
@@ -2895,7 +2903,9 @@ function NodeDetail({
                   >
                     {/* Modal header */}
                     <div className="flex items-center gap-3 px-4 py-2.5 border-b border-slate-800 shrink-0">
-                      <span className="text-[9px] uppercase tracking-widest text-slate-500 flex-1">{node.label} · Cloud Logging</span>
+                      <span className="text-[9px] uppercase tracking-widest text-slate-500 flex-1">
+                        {node.label} · {node.cloud === "aws" ? "CloudWatch Logs" : "Cloud Logging"}
+                      </span>
                       <span className="text-[8px] text-slate-600">{filteredLogs.length} entries</span>
                       <button onClick={handleCopyLogs} title="Copy (C)" className={cn("transition-colors", copyFlash ? "text-emerald-400" : "text-slate-600 hover:text-slate-300")}><Copy size={11} /></button>
                       <button onClick={() => setLogsExpanded(false)} className="text-slate-600 hover:text-slate-300 transition-colors"><X size={11} /></button>
@@ -3200,13 +3210,12 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const [showTrace, setShowTrace] = useState(false);
 
   // Live monitoring
-  const [liveMode, setLiveMode] = useState(false);
+  const [liveMode, setLiveMode] = useState(true);
   const [liveScope, setLiveScope] = useState<LiveScope>("active");
-  const [liveAnimEnabled, setLiveAnimEnabled] = useState(true);
   const [liveIntensityEnabled, setLiveIntensityEnabled] = useState(false);
   const liveAnimEnabledRef = useRef(true);
   const liveIntensityEnabledRef = useRef(true);
-  const liveModeRef = useRef(false);
+  const liveModeRef = useRef(true);
   const liveLastTsByTarget = useRef<Record<string, string>>({});
   const liveLastAgentEventAtRef = useRef("");
   const livePollCursorRef = useRef(0);
@@ -3223,10 +3232,6 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   useEffect(() => {
     liveModeRef.current = liveMode;
   }, [liveMode]);
-
-  useEffect(() => {
-    liveAnimEnabledRef.current = liveAnimEnabled;
-  }, [liveAnimEnabled]);
 
   useEffect(() => {
     liveIntensityEnabledRef.current = liveIntensityEnabled;
@@ -3252,8 +3257,8 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     setHoveredNode(null);
     setSelectedEndpointUrl(null);
     setUrl("");
-    setLiveMode(false);
-    liveModeRef.current = false;
+    setLiveMode(true);
+    liveModeRef.current = true;
     setLiveEvents([]);
     setSelectedLiveEvent(null);
     setNodeStatus({});
@@ -5078,26 +5083,6 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                     >
                     <Globe size={8} />
                     ALL
-                  </button>
-                )}
-                {liveMode && (
-                  <button
-                    onClick={() => {
-                      const next = !liveAnimEnabled;
-                      liveAnimEnabledRef.current = next;
-                      setLiveAnimEnabled(next);
-                      if (!next) setNodeStatus({});
-                    }}
-                    title={liveAnimEnabled ? "Disable pulse animation" : "Enable pulse animation"}
-                    className={cn(
-                      "flex items-center gap-1 text-[8px] px-1.5 py-0.5 border transition-colors tracking-widest",
-                      liveAnimEnabled
-                        ? "border-emerald-800 text-emerald-600 hover:border-emerald-700"
-                        : "border-slate-700 text-slate-600 hover:border-slate-500 hover:text-slate-400"
-                    )}
-                    >
-                    <Zap size={8} />
-                    ANIM
                   </button>
                 )}
                 {/* Adaptive intensity styling is currently hidden from the UI. */}
