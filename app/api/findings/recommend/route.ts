@@ -3,6 +3,11 @@ import { auth } from "@/lib/auth";
 import { resolveAI, callAI, type AIProvider } from "@/lib/ai/client";
 import type { SecurityFinding } from "@/lib/gcp/types";
 
+type CloudFindingRequest = SecurityFinding & {
+  cloud?: "gcp" | "aws";
+  region?: string;
+};
+
 export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session?.user?.email) {
@@ -42,15 +47,23 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const finding: SecurityFinding = bodyData;
+  const finding = bodyData as CloudFindingRequest;
+  const cloud = finding.cloud === "aws" ? "aws" : "gcp";
+  const cloudName = cloud === "aws" ? "AWS" : "GCP";
+  const engineerRole = cloud === "aws" ? "senior AWS security engineer" : "senior GCP security engineer";
+  const cliTool = cloud === "aws" ? "AWS CLI" : "gcloud";
+  const consoleName = cloud === "aws" ? "AWS Console" : "GCP Console";
+  const accountLabel = cloud === "aws" ? "Account" : "Project";
+  const regionLine = finding.region ? `- Region: ${finding.region}\n` : "";
 
-  const prompt = `You are a senior GCP security engineer. A security scanner found the following issue in a GCP environment. Provide a detailed, actionable remediation guide.
+  const prompt = `You are a ${engineerRole}. A security scanner found the following issue in a ${cloudName} environment. Provide a detailed, actionable remediation guide.
 
 **Finding**
 - Title: ${finding.title}
 - Severity: ${finding.severity?.toUpperCase()}
 - Resource: ${finding.resourceName} (type: ${finding.resourceType})
-- Project: ${finding.projectId}
+- ${accountLabel}: ${finding.projectId}
+${regionLine}- Cloud: ${cloudName}
 - Description: ${finding.description}
 - Initial hint: ${finding.remediationHint ?? "N/A"}
 
@@ -60,7 +73,7 @@ Respond with exactly these four sections in markdown:
 Explain the security risk in 2–4 sentences. Be specific about what an attacker could do.
 
 ### Step-by-Step Remediation
-Provide numbered steps with concrete \`gcloud\` CLI commands or GCP Console navigation paths. Make commands copy-paste ready (use placeholder values like PROJECT_ID where appropriate).
+Provide numbered steps with concrete \`${cliTool}\` commands or ${consoleName} navigation paths. Make commands copy-paste ready (use placeholder values like ${cloud === "aws" ? "ACCOUNT_ID, REGION, RESOURCE_NAME" : "PROJECT_ID"} where appropriate).
 
 ### How to Prevent Recurrence
 2–3 bullet points on org policy, IaC guardrails, or process changes that prevent this class of finding.

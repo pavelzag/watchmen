@@ -123,7 +123,7 @@ interface RecState {
 function FindingCard({ finding, cfg }: { finding: CloudFinding; cfg: typeof SEVERITY_CONFIG[SecurityFindingSeverity] }) {
   const [rec, setRec] = useState<RecState>({ loading: false, text: null, error: null });
   const [open, setOpen] = useState(false);
-  const canAskAI = finding.cloud === "gcp";
+  const canAskAI = true;
 
   async function askAI() {
     setRec({ loading: true, text: null, error: null });
