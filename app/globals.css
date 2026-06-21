@@ -283,6 +283,33 @@
   animation: blink 1s step-end infinite;
 }
 
+@media print {
+  @page {
+    size: A4;
+    margin: 14mm;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+    color: #020617 !important;
+  }
+
+  body {
+    user-select: text;
+    -webkit-user-select: text;
+  }
+
+  body::after {
+    display: none !important;
+  }
+
+  * {
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+}
+
 /* Flicker animation for boot effect */
 @keyframes flicker {
 

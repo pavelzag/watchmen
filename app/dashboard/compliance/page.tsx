@@ -349,6 +349,129 @@ function ProjectBreakdown({ report }: { report: ComplianceReport }) {
   );
 }
 
+// ── Print report ──────────────────────────────────────────────────────────
+
+function PrintableComplianceReport({
+  report,
+  categories,
+  standard,
+  cloudFilter,
+  statusFilter,
+  score,
+  passing,
+  failing,
+  warnings,
+  suppressed,
+}: {
+  report: ComplianceReport;
+  categories: ComplianceCategory[];
+  standard: Standard;
+  cloudFilter: CloudFilter;
+  statusFilter: StatusFilter;
+  score: number;
+  passing: number;
+  failing: number;
+  warnings: number;
+  suppressed: number;
+}) {
+  const controls = categories.flatMap((category) => category.controls);
+  const standardLabel = standard === "soc2" ? "SOC 2 Type II" : "ISO 27001:2022";
+  const cloudLabel = cloudFilter === "all" ? "AWS and GCP" : cloudFilter.toUpperCase();
+  const statusLabel = statusFilter === "all" ? "All statuses" : statusFilter.toUpperCase();
+  const generatedAt = new Date(report.generatedAt).toLocaleString();
+
+  return (
+    <section className="hidden print:block print:bg-white print:text-slate-950">
+      <div className="mx-auto max-w-[760px] space-y-6 text-slate-950">
+        <header className="border-b border-slate-300 pb-4">
+          <p className="text-[10px] uppercase tracking-[0.28em] text-slate-500">Watchmen Compliance Report</p>
+          <h1 className="mt-2 text-2xl font-bold text-slate-950">{standardLabel}</h1>
+          <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-slate-600">
+            <p><span className="font-semibold text-slate-800">Cloud:</span> {cloudLabel}</p>
+            <p><span className="font-semibold text-slate-800">Status filter:</span> {statusLabel}</p>
+            <p><span className="font-semibold text-slate-800">Generated:</span> {generatedAt}</p>
+            <p><span className="font-semibold text-slate-800">Controls in report:</span> {controls.length}</p>
+          </div>
+        </header>
+
+        <section className="grid grid-cols-5 gap-2">
+          {[
+            ["Score", `${score}%`],
+            ["Passing", passing],
+            ["Failing", failing],
+            ["Warnings", warnings],
+            ["Suppressed", suppressed],
+          ].map(([label, value]) => (
+            <div key={label} className="border border-slate-300 p-3">
+              <p className="text-[9px] uppercase tracking-widest text-slate-500">{label}</p>
+              <p className="mt-1 text-xl font-bold text-slate-950">{value}</p>
+            </div>
+          ))}
+        </section>
+
+        <section className="space-y-4">
+          {categories.map((category) => {
+            const categoryCloud = cloudPrefix(category.id);
+            const rawCategoryId = category.id.replace(/^(gcp|aws):/, "");
+            return (
+              <article key={category.id} className="break-inside-avoid border border-slate-300">
+                <div className="border-b border-slate-300 bg-slate-100 px-3 py-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <h2 className="text-sm font-bold text-slate-950">{rawCategoryId} · {category.name}</h2>
+                    {categoryCloud && <span className="text-[10px] font-bold text-slate-600">{categoryCloud}</span>}
+                  </div>
+                  <p className="mt-1 text-[10px] leading-relaxed text-slate-600">{category.description}</p>
+                </div>
+                <div className="divide-y divide-slate-200">
+                  {category.controls.map((control) => {
+                    const rawControlId = baseControlId(control.id);
+                    return (
+                      <div key={control.id} className="break-inside-avoid px-3 py-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-xs font-bold text-slate-950">{rawControlId} · {control.title}</p>
+                            <p className="mt-1 text-[10px] leading-relaxed text-slate-600">{control.description}</p>
+                          </div>
+                          <div className="shrink-0 text-right">
+                            <p className="text-[10px] font-bold uppercase text-slate-900">{control.status}</p>
+                            <p className="text-[9px] uppercase text-slate-500">{control.impact} impact</p>
+                          </div>
+                        </div>
+                        {control.evidence.length > 0 && (
+                          <div className="mt-2">
+                            <p className="text-[9px] font-bold uppercase tracking-widest text-slate-500">Evidence</p>
+                            <ul className="mt-1 space-y-0.5 text-[10px] text-slate-700">
+                              {control.evidence.map((e, i) => (
+                                <li key={`${e.projectId}-${e.name}-${i}`}>
+                                  {e.name}{e.projectId ? ` (${e.projectId})` : ""}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {control.status !== "pass" && (
+                          <p className="mt-2 text-[10px] leading-relaxed text-slate-700">
+                            <span className="font-bold text-slate-900">Remediation:</span> {control.remediationHint}
+                          </p>
+                        )}
+                        {control.status === "suppressed" && control.justification && (
+                          <p className="mt-2 text-[10px] italic text-slate-600">
+                            Suppression justification: {control.justification}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </article>
+            );
+          })}
+        </section>
+      </div>
+    </section>
+  );
+}
+
 // ── ControlCard ───────────────────────────────────────────────────────────
 
 interface RecState { loading: boolean; text: string | null; error: string | null }
@@ -825,14 +948,17 @@ export default function CompliancePage() {
 
   const handlePrint = useCallback(() => {
     setIsPrinting(true);
+    const previousTitle = document.title;
+    document.title = `watchmen-${standard}-compliance-${new Date().toISOString().slice(0, 10)}`;
     const onAfterPrint = () => {
       setIsPrinting(false);
+      document.title = previousTitle;
       window.removeEventListener("afterprint", onAfterPrint);
     };
     window.addEventListener("afterprint", onAfterPrint);
-    // Small delay to let React flush the expanded/filter state before the browser captures
-    setTimeout(() => window.print(), 50);
-  }, []);
+    // Let React mount the dedicated print report before the browser captures the page.
+    setTimeout(() => window.print(), 150);
+  }, [standard]);
 
   const cloudFilteredCategories = report?.categories.filter((category) => {
     if (cloudFilter === "all") return true;
@@ -873,13 +999,34 @@ export default function CompliancePage() {
     if (filter === "all") return category.controls.length > 0;
     return category.controls.some((control) => control.status === filter);
   });
+  const printCategories = cloudFilteredCategories
+    .map((category) => ({
+      ...category,
+      controls: filter === "all" ? category.controls : category.controls.filter((control) => control.status === filter),
+    }))
+    .filter((category) => category.controls.length > 0);
 
   const scoreColor = report
     ? visibleScore >= 80 ? "text-emerald-400" : visibleScore >= 60 ? "text-amber-400" : "text-red-400"
     : "text-slate-400";
 
   return (
-    <div className="space-y-6 print:space-y-4">
+    <>
+    {visibleReport && (
+      <PrintableComplianceReport
+        report={visibleReport}
+        categories={printCategories}
+        standard={standard}
+        cloudFilter={cloudFilter}
+        statusFilter={filter}
+        score={visibleScore}
+        passing={visiblePassing}
+        failing={visibleFailing}
+        warnings={visibleWarnings}
+        suppressed={visibleSuppressed}
+      />
+    )}
+    <div className="space-y-6 print:hidden">
       {/* Header */}
       <div className="flex items-center gap-4 flex-wrap print:hidden">
         <Link href="/dashboard" className="flex items-center gap-1.5 text-sm text-slate-400 hover:text-slate-200 transition-colors shrink-0">
@@ -1114,5 +1261,6 @@ export default function CompliancePage() {
         </div>
       )}
     </div>
+    </>
   );
 }
