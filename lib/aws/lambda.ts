@@ -27,6 +27,7 @@ async function getRealLambdaFunctions(creds?: AwsCredentials): Promise<AwsLambda
 
             let resourcePolicy: AwsIamStatement[] = [];
             let functionUrl: string | undefined;
+            let functionUrlError: string | undefined;
             try {
               const policyRes = await client.send(new GetPolicyCommand({ FunctionName: functionName }));
               if (policyRes.Policy) {
@@ -47,7 +48,10 @@ async function getRealLambdaFunctions(creds?: AwsCredentials): Promise<AwsLambda
             try {
               const urlsRes = await client.send(new ListFunctionUrlConfigsCommand({ FunctionName: functionName }));
               functionUrl = urlsRes.FunctionUrlConfigs?.[0]?.FunctionUrl;
-            } catch { }
+            } catch (err) {
+              functionUrlError = err instanceof Error ? err.message : String(err);
+              logAwsWarning("lambda", `${region}/${functionName}/function-url`, err);
+            }
 
             return {
               functionName,
@@ -62,6 +66,7 @@ async function getRealLambdaFunctions(creds?: AwsCredentials): Promise<AwsLambda
               memorySize: fn.MemorySize ?? 128,
               state: fn.State,
               functionUrl,
+              functionUrlError,
               resourcePolicy,
               vpcConfig: fn.VpcConfig?.VpcId
                 ? {
@@ -92,6 +97,7 @@ async function getRealLambdaFunctions(creds?: AwsCredentials): Promise<AwsLambda
           functionName: fn.functionName,
           state: fn.state,
           hasFunctionUrl: Boolean(fn.functionUrl),
+          functionUrlError: fn.functionUrlError,
         })),
       });
       return functions;
@@ -108,6 +114,7 @@ async function getRealLambdaFunctions(creds?: AwsCredentials): Promise<AwsLambda
     regions: regions.length,
     functions: loaded.length,
     withFunctionUrl: loaded.filter((fn) => Boolean(fn.functionUrl)).length,
+    functionUrlLookupErrors: loaded.filter((fn) => Boolean(fn.functionUrlError)).length,
   });
   return loaded;
 }

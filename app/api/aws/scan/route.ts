@@ -91,6 +91,7 @@ function logAwsTraceDiscovery(scanId: string, mode: string, snapshot: AwsSnapsho
       region: fn.region,
       state: fn.state,
       hasFunctionUrl: Boolean(fn.functionUrl),
+      functionUrlError: fn.functionUrlError,
       traceable: Boolean(fn.functionUrl),
     })),
     eksSamples: snapshot.eksClusters.slice(0, 5).map((cluster) => ({
@@ -183,7 +184,7 @@ export async function POST(req: NextRequest) {
         ...snapshotSummary,
         ...traceSummary,
       });
-      return { ok: true as const, fetchedAt: snapshot.fetchedAt, snapshotSummary };
+      return { ok: true as const, snapshot, fetchedAt: snapshot.fetchedAt, snapshotSummary };
     }
 
     const awsCreds = await getUserCloudCredentials(email, "aws");
@@ -237,7 +238,7 @@ export async function POST(req: NextRequest) {
       ...traceSummary,
     });
 
-    return { ok: true as const, fetchedAt: snapshot.fetchedAt, snapshotSummary };
+    return { ok: true as const, snapshot, fetchedAt: snapshot.fetchedAt, snapshotSummary };
   };
 
   if (body.stream) {

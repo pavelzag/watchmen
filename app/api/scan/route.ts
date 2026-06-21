@@ -142,7 +142,17 @@ export async function POST(req: NextRequest) {
         fetchedAt: snapshot.fetchedAt,
         ...snapshotSummary,
       });
-      return { ok: true as const, fetchedAt: snapshot.fetchedAt, snapshotSummary };
+      return {
+        ok: true as const,
+        fetchedAt: snapshot.fetchedAt,
+        snapshotSummary,
+        snapshot: {
+          ...snapshot,
+          users: extractUsers(snapshot),
+          serviceAccountEmails: extractServiceAccountEmails(snapshot),
+          fetchedAt: snapshot.fetchedAt,
+        },
+      };
     }
 
     const gcpCreds = await getUserCloudCredentials(email, "gcp");
@@ -208,7 +218,17 @@ export async function POST(req: NextRequest) {
       ...snapshotSummary,
     });
 
-    return { ok: true as const, fetchedAt: snapshot.fetchedAt, snapshotSummary };
+    return {
+      ok: true as const,
+      fetchedAt: snapshot.fetchedAt,
+      snapshotSummary,
+      snapshot: {
+        ...snapshot,
+        users: extractUsers(snapshot),
+        serviceAccountEmails: extractServiceAccountEmails(snapshot),
+        fetchedAt: snapshot.fetchedAt,
+      },
+    };
   };
 
   if (body.stream) {

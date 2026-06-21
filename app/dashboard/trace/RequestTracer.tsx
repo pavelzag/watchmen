@@ -1399,6 +1399,26 @@ const NODE_ROLE_DESC: Record<NodeType, string> = {
   sidecar:   "Sidecar container injected alongside the main app in the same pod.",
 };
 
+function nodeTypeLabel(node: GraphNode): string {
+  if (node.cloud === "aws") {
+    if (node.type === "gke") return "EKS Cluster";
+    if (node.type === "cloudrun") return "Lambda Function";
+    if (node.type === "vm") return "EC2 Instance";
+    if (node.type === "lb") return "AWS Load Balancer";
+  }
+  return NODE_TYPE_LABEL[node.type];
+}
+
+function nodeRoleDescription(node: GraphNode): string {
+  if (node.cloud === "aws") {
+    if (node.type === "gke") return "AWS EKS cluster API or workloads relevant to trace routing.";
+    if (node.type === "cloudrun") return "AWS Lambda function; directly traceable only when a Function URL exists.";
+    if (node.type === "vm") return "AWS EC2 instance; directly traceable only when it has a public HTTP endpoint.";
+    if (node.type === "lb") return "AWS load balancer that can receive public HTTP traffic.";
+  }
+  return NODE_ROLE_DESC[node.type];
+}
+
 // ─── TraceModal sub-component ─────────────────────────────────────────────────
 
 const CONTAINER_COLORS: Record<string, string> = {
@@ -2226,7 +2246,7 @@ function NodeDetail({
 
   // Tabs — only nodes that have their own logs/routes get the tab bar.
   // LBs are infrastructure (no container logs); they only get routes if matchUrl is set.
-  const hasLogs   = node.type === "gke" || node.type === "cloudrun" || node.type === "vm" || node.type === "sidecar";
+  const hasLogs   = node.cloud !== "aws" && (node.type === "gke" || node.type === "cloudrun" || node.type === "vm" || node.type === "sidecar");
   const hasRoutes = node.type === "gke" || node.type === "cloudrun" || node.type === "lb" || node.type === "vm";
   const showTabs  = hasLogs || hasRoutes;
   const [tab, setTab] = useState<NodeDetailTab>("info");
@@ -2254,6 +2274,7 @@ function NodeDetail({
 
   // Fetch available containers for GKE and sidecar nodes (for the container selector)
   useEffect(() => {
+    if (node.cloud === "aws") return;
     if (tab !== "logs" || !node.projectId) return;
     if (node.type !== "gke" && node.type !== "sidecar") return;
     const params = new URLSearchParams({ projectId: node.projectId, mode: "containers" });
@@ -2265,9 +2286,10 @@ function NodeDetail({
         if (containers.includes("istio-proxy")) onIstioDetected?.(node.id);
       })
       .catch(() => {});
-  }, [tab, node.id, node.projectId, node.type, onIstioDetected]);
+  }, [tab, node.cloud, node.id, node.projectId, node.type, onIstioDetected]);
 
   const refreshLogs = useCallback(async ({ showLoading = false }: { showLoading?: boolean } = {}) => {
+    if (node.cloud === "aws") return;
     if (!node.projectId) return;
     if (showLoading) setLoadingLogs(true);
     setLogsError(null);
@@ -2303,7 +2325,7 @@ function NodeDetail({
     } finally {
       if (showLoading) setLoadingLogs(false);
     }
-  }, [node.projectId, node.type, node.resourceName, node.label, node.region, node.container, selectedContainer]);
+  }, [node.cloud, node.projectId, node.type, node.resourceName, node.label, node.region, node.container, selectedContainer]);
 
   // Fetch logs when tab or container selection changes, then keep them fresh while visible.
   useEffect(() => {
@@ -2503,10 +2525,10 @@ function NodeDetail({
         {tab === "info" && (
           <>
             <div className="flex items-center justify-between">
-              <span className="text-[9px] uppercase tracking-widest text-slate-600">{NODE_TYPE_LABEL[node.type]}</span>
+              <span className="text-[9px] uppercase tracking-widest text-slate-600">{nodeTypeLabel(node)}</span>
               <span className={cn("text-[8px] font-bold border px-1.5 py-0.5", statusLabelColor)}>{statusLabel}</span>
             </div>
-            <p className="text-[10px] text-slate-500 leading-relaxed">{NODE_ROLE_DESC[node.type]}</p>
+            <p className="text-[10px] text-slate-500 leading-relaxed">{nodeRoleDescription(node)}</p>
             <div className="border border-slate-800 bg-[#0d0d0d] divide-y divide-slate-800">
               <MetaRow label="Name" value={node.label} mono />
               {node.sublabel && <MetaRow label="Info" value={node.sublabel} />}
@@ -3075,7 +3097,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
   // Eagerly fetch container lists for all GKE nodes so sidecar nodes appear
   useEffect(() => {
-    const gkeNodes = baseNodes.filter(n => n.type === "gke" && n.projectId);
+    const gkeNodes = baseNodes.filter(n => n.type === "gke" && (n.cloud ?? "gcp") === "gcp" && n.projectId);
     for (const node of gkeNodes) {
       if (nodeContainers[node.id] !== undefined) continue; // already fetched/fetching
       setNodeContainers(prev => ({ ...prev, [node.id]: [] })); // mark as in-progress
@@ -3094,7 +3116,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   // Build display topology: add sidecar nodes alongside existing col-3 nodes (SQL stays at col 3)
   const { nodes, edges } = useMemo(() => {
     const hasSidecars = baseNodes.some(
-      n => n.type === "gke" && (nodeContainers[n.id] ?? []).length > 0
+      n => n.type === "gke" && (n.cloud ?? "gcp") === "gcp" && (nodeContainers[n.id] ?? []).length > 0
     );
     if (!hasSidecars) return { nodes: baseNodes, edges: baseEdges };
 
@@ -3102,7 +3124,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     const newNodes: GraphNode[] = [...baseNodes];
     const newEdges: GraphEdge[] = [...baseEdges];
 
-    baseNodes.filter(n => n.type === "gke").forEach(gkeNode => {
+    baseNodes.filter(n => n.type === "gke" && (n.cloud ?? "gcp") === "gcp").forEach(gkeNode => {
       // Sort containers by canonical request-processing order (istio-proxy, nginx, app...)
       const containers = [...(nodeContainers[gkeNode.id] ?? [])]
         .sort((a, b) => sidecarSortKey(a).localeCompare(sidecarSortKey(b)));
@@ -3213,6 +3235,18 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const traceScanTask = traceScanTaskId ? tasks.find(task => task.id === traceScanTaskId) : null;
   const traceScanRunning = traceScanTask?.status === "queued" || traceScanTask?.status === "running";
   const selectedCloudHasSnapshot = endpointCloud === "aws" ? Boolean(awsSnapshot) : Boolean(snapshot);
+
+  useEffect(() => {
+    setSelectedNode(null);
+    setHoveredNode(null);
+    setSelectedEndpointUrl(null);
+    setUrl("");
+    setLiveMode(false);
+    liveModeRef.current = false;
+    setLiveEvents([]);
+    setSelectedLiveEvent(null);
+    setNodeStatus({});
+  }, [endpointCloud]);
 
   useEffect(() => {
     let frame = 0;
@@ -3999,6 +4033,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       setLiveEvents([]);
       return;
     }
+    if (endpointCloud === "aws") return;
 
     const allTargets = liveScope === "all"
       ? allLiveMonitorTargets
@@ -4193,7 +4228,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     const id = setInterval(poll, pollIntervalMs);
     poll(); // immediate first check
     return () => { clearInterval(id); };
-  }, [allLiveMonitorTargets, demoMode, liveMode, liveMonitorTarget, liveScope, nodes, runBfsAnimation, traceSourceConfig]);
+  }, [allLiveMonitorTargets, demoMode, endpointCloud, liveMode, liveMonitorTarget, liveScope, nodes, runBfsAnimation, traceSourceConfig]);
 
   useEffect(() => {
     if (!demoMode || !liveMode || demoLiveTargets.length === 0) return;
@@ -4716,6 +4751,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                   {(awsEndpointFilter === "all" || awsEndpointFilter === "lambda") && filteredAwsLambdaFunctions.map(fn => {
                     const value = fn.functionUrl;
                     const isRequestable = Boolean(value);
+                    const unavailableLabel = fn.functionUrlError ? "URL lookup failed" : "No Function URL";
                     const isSelected = value ? isEndpointSelected(value) : false;
                     return (
                       <HoverTooltip
@@ -4723,7 +4759,8 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                         content={
                           <>
                             <div className="text-fuchsia-300 font-bold uppercase tracking-widest text-[8px] mb-1">{fn.functionName}</div>
-                            {value ? <div className="text-sky-300 font-mono break-all">{value}</div> : <div className="text-slate-500">No Lambda Function URL</div>}
+                            {value ? <div className="text-sky-300 font-mono break-all">{value}</div> : <div className="text-slate-500">{unavailableLabel}</div>}
+                            {fn.functionUrlError && <div className="text-red-400 mt-1 break-words">{fn.functionUrlError}</div>}
                             <div className="text-slate-500 mt-1">{fn.runtime} · {fn.region}</div>
                           </>
                         }
@@ -4741,7 +4778,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                           <div className={cn("break-words", isSelected ? "text-slate-200" : "text-slate-400")}>
                             Lambda · {fn.functionName}
                             {isSelected && <span className="ml-2 text-[8px] text-fuchsia-300 uppercase tracking-widest">Selected</span>}
-                            {!isRequestable && <span className="ml-2 text-[8px] text-slate-500 uppercase tracking-widest">No Function URL</span>}
+                            {!isRequestable && <span className={cn("ml-2 text-[8px] uppercase tracking-widest", fn.functionUrlError ? "text-red-400" : "text-slate-500")}>{unavailableLabel}</span>}
                           </div>
                           <div className={cn("mt-0.5 font-mono whitespace-pre-wrap break-all", isSelected ? "text-fuchsia-300" : isRequestable ? "text-fuchsia-400" : "text-slate-600")}>{value ?? fn.functionArn}</div>
                         </button>
@@ -5235,7 +5272,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                         <m.Icon size={10} className={m.text} />
                         <span className="text-[9px] font-bold text-slate-200 uppercase tracking-wide truncate">{hoveredNode.label}</span>
                       </div>
-                      <div className="text-[9px] text-slate-500 mb-0.5">{NODE_TYPE_LABEL[hoveredNode.type]}</div>
+                      <div className="text-[9px] text-slate-500 mb-0.5">{nodeTypeLabel(hoveredNode)}</div>
                       {hoveredNode.sublabel && <div className="text-[9px] text-slate-600 font-mono truncate">{hoveredNode.sublabel}</div>}
                       {st !== "idle" && (
                         <div className={cn("text-[8px] font-bold mt-1.5 uppercase",
@@ -5313,7 +5350,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
           <TraceModal
             requestTime={requestTime}
             nodeContainers={nodeContainers}
-            gkeNodes={baseNodes.filter(n => n.type === "gke" && n.projectId)}
+            gkeNodes={baseNodes.filter(n => n.type === "gke" && (n.cloud ?? "gcp") === "gcp" && n.projectId)}
             onClose={() => setShowTrace(false)}
           />
         )}
