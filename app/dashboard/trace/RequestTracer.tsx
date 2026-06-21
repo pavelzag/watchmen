@@ -15,6 +15,7 @@ import { useTaskCenter } from "@/components/TaskCenterProvider";
 import type { GcpSnapshot, GkeEntryPoint } from "@/lib/gcp/types";
 import type { AwsSnapshot } from "@/lib/aws/types";
 import type { LiveTraceIngressEvent } from "@/lib/live-trace-bus";
+import CopyAiResponseButton from "@/components/CopyAiResponseButton";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -2874,10 +2875,15 @@ function NodeDetail({
                   )}
                   {aiState.error && <p className="text-red-400 text-[9px]">{aiState.error}</p>}
                   {aiState.text && (
-                    <div
-                      className="text-[10px] leading-relaxed"
-                      dangerouslySetInnerHTML={{ __html: renderAiMd(aiState.text) }}
-                    />
+                    <>
+                      <div className="mb-2 flex justify-end">
+                        <CopyAiResponseButton text={aiState.text} compact />
+                      </div>
+                      <div
+                        className="text-[10px] leading-relaxed"
+                        dangerouslySetInnerHTML={{ __html: renderAiMd(aiState.text) }}
+                      />
+                    </>
                   )}
                 </div>
               </div>

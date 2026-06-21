@@ -18,6 +18,8 @@ import {
 import { cn } from "@/lib/utils";
 import type { ComplianceReport, ComplianceCategory, ControlResult, ControlStatus, ControlImpact } from "@/lib/compliance/types";
 import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
+import CopyAiResponseButton from "@/components/CopyAiResponseButton";
+import ScanCloudButton from "@/components/ScanCloudButton";
 
 // ── Config ────────────────────────────────────────────────────────────────
 
@@ -587,6 +589,9 @@ function ControlCard({
 
         {rec.text && open && (
           <div className="px-4 pb-4 border-t border-slate-700/30">
+            <div className="mt-3 flex justify-end">
+              <CopyAiResponseButton text={rec.text} compact />
+            </div>
             <div
               className="mt-3 text-xs text-slate-300 leading-relaxed"
               dangerouslySetInnerHTML={{ __html: renderMd(rec.text) }}
@@ -868,6 +873,7 @@ export default function CompliancePage() {
               </button>
             </>
           )}
+          <ScanCloudButton onScanComplete={() => load(standard)} variant="modern" />
           <button
             onClick={() => load(standard)}
             disabled={loading}

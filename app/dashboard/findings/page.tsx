@@ -14,6 +14,7 @@ import type { ResourceItem } from "@/lib/claude/query-processor";
 import RemediateModal from "@/app/dashboard/attack-paths/RemediateModal";
 import ScanCloudButton from "@/components/ScanCloudButton";
 import { remediationTargetFromFinding } from "@/lib/github/remediation-targets";
+import CopyAiResponseButton from "@/components/CopyAiResponseButton";
 
 const SEVERITY_CONFIG: Record<SecurityFindingSeverity, { label: string; color: string; bg: string; border: string; dot: string }> = {
   critical: {
@@ -238,6 +239,9 @@ function FindingCard({ finding, cfg }: { finding: CloudFinding; cfg: typeof SEVE
         {/* Recommendation */}
         {rec.text && open && (
           <div className="px-4 pb-4 border-t border-slate-700/30">
+            <div className="mt-3 flex justify-end">
+              <CopyAiResponseButton text={rec.text} compact />
+            </div>
             <div
               className="mt-3 text-xs text-slate-300 leading-relaxed prose-answer"
               dangerouslySetInnerHTML={{ __html: renderMd(rec.text, finding) }}

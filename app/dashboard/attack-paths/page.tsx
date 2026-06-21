@@ -14,6 +14,7 @@ import ScanCloudButton from "@/components/ScanCloudButton";
 import { remediationTargetFromAttackPath } from "@/lib/github/remediation-targets";
 import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
 import { linkifyText } from "@/lib/utils/linkify";
+import CopyAiResponseButton from "@/components/CopyAiResponseButton";
 
 // ─── Node icon / colour ───────────────────────────────────────────────────────
 
@@ -179,12 +180,17 @@ function PathCard({ path, index }: { path: CloudAttackPath; index: number }) {
   const s = SEV_STYLES[path.severity];
 
   return (
-    <div style={{ border: `1px solid ${s.border}33`, background: "#09090b", marginBottom: 12 }}>
+    <div
+      data-nav
+      tabIndex={0}
+      role="button"
+      aria-expanded={open}
+      onClick={() => setOpen((v) => !v)}
+      className="rounded-xl border space-y-0 group transition-all outline-none"
+      style={{ borderColor: `${s.border}33`, background: "#09090b", marginBottom: 12 }}
+    >
       {/* Header */}
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="w-full text-left flex items-start gap-4 p-4 transition-colors hover:bg-white/[0.02]"
-      >
+      <div className="w-full text-left flex items-start gap-4 p-4 transition-colors group-hover:bg-white/[0.02]">
         <div
           style={{
             fontSize: 9, letterSpacing: 2, fontFamily: "monospace",
@@ -230,11 +236,11 @@ function PathCard({ path, index }: { path: CloudAttackPath; index: number }) {
           className="w-4 h-4 shrink-0 mt-1 transition-transform"
           style={{ color: "#4b5563", transform: open ? "rotate(90deg)" : "none" }}
         />
-      </button>
+      </div>
 
       {/* Expanded content */}
       {open && (
-        <div style={{ borderTop: `1px solid ${s.border}22`, padding: 20 }}>
+        <div onClick={(event) => event.stopPropagation()} style={{ borderTop: `1px solid ${s.border}22`, padding: 20 }}>
           {/* Description */}
           <p style={{ fontSize: 11, color: "#9ca3af", fontFamily: "monospace", lineHeight: 1.7, marginBottom: 20 }}>
             {path.description}
@@ -559,6 +565,9 @@ export default function AttackPathsPage() {
 
             {aiRec.text && aiOpen && (
               <div className="px-4 py-4 border-t border-slate-800">
+                <div className="mb-3 flex justify-end">
+                  <CopyAiResponseButton text={aiRec.text} compact />
+                </div>
                 <div
                   className="text-xs text-slate-300 leading-relaxed prose-answer"
                   dangerouslySetInnerHTML={{ __html: renderAiMarkdown(aiRec.text) }}

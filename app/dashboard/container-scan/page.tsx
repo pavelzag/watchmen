@@ -6,6 +6,7 @@ import type { ImageScanResult, ContainerVulnerability, CveSeverity } from "@/lib
 import { cn } from "@/lib/utils";
 import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
 import { linkifyText } from "@/lib/utils/linkify";
+import CopyAiResponseButton from "@/components/CopyAiResponseButton";
 
 const SEV_STYLES: Record<CveSeverity, { label: string; color: string; border: string; bg: string }> = {
   critical: { label: "CRITICAL", color: "#f87171", border: "#ef4444", bg: "#1a0606" },
@@ -164,6 +165,9 @@ function CveRow({ cve, imageRef, cloud }: { cve: ContainerVulnerability; imageRe
 
         {rec.text && open && (
           <div className="mt-2 bg-[#09090b] border border-slate-800 rounded p-3">
+            <div className="mb-2 flex justify-end">
+              <CopyAiResponseButton text={rec.text} compact />
+            </div>
             <div
               className="text-[11px] text-slate-300 leading-relaxed font-sans prose-answer"
               dangerouslySetInnerHTML={{ __html: renderMd(rec.text) }}
