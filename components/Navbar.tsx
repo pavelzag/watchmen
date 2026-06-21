@@ -2,7 +2,6 @@ import { auth, signOut } from "@/lib/auth";
 import { ShieldAlert, Clock, ClipboardCheck, Settings, LogOut, IterationCw, Network, Swords, Container } from "lucide-react";
 import Link from "next/link";
 import NavbarAskButton from "./NavbarAskButton";
-import NavbarCloudTabs from "./NavbarCloudTabs";
 import NavbarSubNav from "./NavbarSubNav";
 import NavbarLink from "./NavbarLink";
 import NavbarTasksButton from "./NavbarTasksButton";
@@ -42,8 +41,6 @@ export default async function Navbar() {
             // press / for brain
           </span>
         </div>
-
-        <NavbarCloudTabs />
 
         {/* Right: ask button + user + logout */}
         <div className="flex items-center gap-3 shrink-0">

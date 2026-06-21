@@ -44,7 +44,9 @@ const LOG_DRAWER_LIMIT = 200;
 type NodeType = "internet" | "lb" | "gke" | "cloudrun" | "cloudsql" | "vm" | "sidecar";
 type NodeStatus = "idle" | "active" | "done" | "error";
 type LiveScope = "active" | "all";
-type EndpointFilter = "all" | "compute" | "k8s" | "cloudrun" | "aws";
+type EndpointCloud = "gcp" | "aws";
+type GcpEndpointFilter = "all" | "cloudrun" | "vm" | "gke";
+type AwsEndpointFilter = "all" | "lambda" | "vm" | "eks";
 type LiveMonitorTarget =
   | {
       kind: "gke";
@@ -1311,12 +1313,23 @@ function requestPriority(method?: string, path?: string): number {
   return 2;
 }
 
-const ENDPOINT_FILTERS: { id: EndpointFilter; label: string }[] = [
-  { id: "all", label: "All" },
-  { id: "compute", label: "Compute" },
-  { id: "k8s", label: "K8s" },
-  { id: "cloudrun", label: "CloudRun" },
+const ENDPOINT_CLOUDS: { id: EndpointCloud; label: string }[] = [
+  { id: "gcp", label: "GCP" },
   { id: "aws", label: "AWS" },
+];
+
+const GCP_ENDPOINT_FILTERS: { id: GcpEndpointFilter; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "cloudrun", label: "CloudRun" },
+  { id: "vm", label: "VM" },
+  { id: "gke", label: "GKE" },
+];
+
+const AWS_ENDPOINT_FILTERS: { id: AwsEndpointFilter; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "lambda", label: "Lambda" },
+  { id: "vm", label: "VM" },
+  { id: "eks", label: "EKS" },
 ];
 
 // ─── Node type labels ─────────────────────────────────────────────────────────
@@ -3071,7 +3084,9 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const [url, setUrl] = useState("");
   const [bodyText, setBodyText] = useState('{\n  "key": "value"\n}');
   const [methodOpen, setMethodOpen] = useState(false);
-  const [endpointFilter, setEndpointFilter] = useState<EndpointFilter>("all");
+  const [endpointCloud, setEndpointCloud] = useState<EndpointCloud>("gcp");
+  const [gcpEndpointFilter, setGcpEndpointFilter] = useState<GcpEndpointFilter>("all");
+  const [awsEndpointFilter, setAwsEndpointFilter] = useState<AwsEndpointFilter>("all");
   const [selectedEndpointUrl, setSelectedEndpointUrl] = useState<string | null>(null);
 
   const usesPubSubSource = traceSourceConfig?.computeSource === "pubsub" || traceSourceConfig?.gkeSource === "pubsub";
@@ -3487,6 +3502,13 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     () => (awsSnapshot?.lambdaFunctions ?? []).filter(fn => fn.functionUrl),
     [awsSnapshot]
   );
+  const hasAwsEndpointForFilter = useMemo(() => {
+    if (awsEndpointFilter === "lambda") return filteredAwsLambdaUrls.length > 0;
+    if (awsEndpointFilter === "vm") return filteredAwsEc2Targets.length > 0;
+    if (awsEndpointFilter === "eks") return filteredAwsLoadBalancers.length > 0;
+    return filteredAwsLambdaUrls.length > 0 || filteredAwsEc2Targets.length > 0 || filteredAwsLoadBalancers.length > 0;
+  }, [awsEndpointFilter, filteredAwsEc2Targets.length, filteredAwsLambdaUrls.length, filteredAwsLoadBalancers.length]);
+  const awsEndpointFilterLabel = AWS_ENDPOINT_FILTERS.find(filter => filter.id === awsEndpointFilter)?.label ?? "AWS";
 
   const allLiveMonitorTargets = useMemo<LiveMonitorTarget[]>(() => {
     const targets: LiveMonitorTarget[] = [];
@@ -4252,34 +4274,58 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
           {/* URL suggestions */}
           {(loadingEntryPoints || snapshot || awsSnapshot || entryPoints.length > 0) && (
             <div className="flex flex-col gap-1">
-              <div className="flex flex-wrap gap-1 px-1 pb-1">
-                {ENDPOINT_FILTERS.map(filter => (
+              <div className="flex flex-col gap-1 px-1 pb-1">
+                <div className="grid grid-cols-2 gap-1">
+                  {ENDPOINT_CLOUDS.map(cloud => (
+                    <button
+                      key={cloud.id}
+                      onClick={() => {
+                        setEndpointCloud(cloud.id);
+                      }}
+                      className={cn(
+                        "px-2 py-1.5 text-[9px] uppercase tracking-widest border transition-colors font-bold",
+                        endpointCloud === cloud.id
+                          ? "border-emerald-800/80 bg-emerald-950/30 text-emerald-300"
+                          : "border-slate-800/70 bg-[#090909] text-slate-500 hover:text-slate-300 hover:border-slate-700"
+                      )}
+                    >
+                      {cloud.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {(endpointCloud === "gcp" ? GCP_ENDPOINT_FILTERS : AWS_ENDPOINT_FILTERS).map(filter => (
                   <button
                     key={filter.id}
                     onClick={() => {
-                      setEndpointFilter(filter.id);
+                      if (endpointCloud === "gcp") {
+                        setGcpEndpointFilter(filter.id as GcpEndpointFilter);
+                      } else {
+                        setAwsEndpointFilter(filter.id as AwsEndpointFilter);
+                      }
                     }}
                     className={cn(
                       "px-2 py-1 text-[9px] uppercase tracking-widest border transition-colors",
-                      endpointFilter === filter.id
+                      (endpointCloud === "gcp" ? gcpEndpointFilter : awsEndpointFilter) === filter.id
                         ? "border-emerald-800/80 bg-emerald-950/30 text-emerald-300"
                         : "border-slate-800/70 bg-[#090909] text-slate-500 hover:text-slate-300 hover:border-slate-700"
                     )}
                   >
                     {filter.label}
                   </button>
-                ))}
+                  ))}
+                </div>
               </div>
 
-              {loadingEntryPoints ? (
+              {endpointCloud === "gcp" && loadingEntryPoints ? (
                 <div className="flex items-center gap-2 px-2 py-1.5 text-[10px] text-slate-600">
                   <Loader2 size={9} className="animate-spin shrink-0" />
                   <span>Scanning GKE entry points…</span>
                 </div>
-              ) : (endpointFilter === "all" || endpointFilter === "k8s") && filteredK8sEntryPoints.length > 0 && (
+              ) : endpointCloud === "gcp" && (gcpEndpointFilter === "all" || gcpEndpointFilter === "gke") && filteredK8sEntryPoints.length > 0 && (
                 <div className="text-[9px] uppercase tracking-widest text-slate-600 px-1">GKE Entry Points</div>
               )}
-              {!loadingEntryPoints && (endpointFilter === "all" || endpointFilter === "k8s") && filteredK8sEntryPoints.map(ep => {
+              {endpointCloud === "gcp" && !loadingEntryPoints && (gcpEndpointFilter === "all" || gcpEndpointFilter === "gke") && filteredK8sEntryPoints.map(ep => {
                 const proto = "http";
                 const value = `${proto}://${ep.ip}`;
                 const svcLabel = ep.k8sService ? ` · ${ep.k8sService}` : "";
@@ -4319,13 +4365,13 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                   </HoverTooltip>
                 );
               })}
-              {snapshot && (
+              {endpointCloud === "gcp" && snapshot && (
                 <>
-                  {(endpointFilter === "all" || endpointFilter === "compute") &&
+                  {gcpEndpointFilter === "all" &&
                     (filteredLoadBalancers.length > 0 || filteredVmTargets.length > 0) && (
                       <div className="text-[9px] uppercase tracking-widest text-slate-600 px-1 pt-1">Compute Endpoints</div>
                   )}
-                  {(endpointFilter === "all" || endpointFilter === "compute") && filteredLoadBalancers.map(lb => {
+                  {gcpEndpointFilter === "all" && filteredLoadBalancers.map(lb => {
                     const value = `http://${lb.ipAddress}`;
                     const isSelected = isEndpointSelected(value);
                     return (
@@ -4355,7 +4401,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                       </HoverTooltip>
                     );
                   })}
-                  {(endpointFilter === "all" || endpointFilter === "compute") && filteredVmTargets.map(vm => {
+                  {(gcpEndpointFilter === "all" || gcpEndpointFilter === "vm") && filteredVmTargets.map(vm => {
                     const value = `http://${vm.externalIp}`;
                     const isSelected = isEndpointSelected(value);
                     return (
@@ -4386,10 +4432,10 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                       </HoverTooltip>
                     );
                   })}
-                  {(endpointFilter === "all" || endpointFilter === "cloudrun") && filteredCloudRunServices.length > 0 && (
+                  {(gcpEndpointFilter === "all" || gcpEndpointFilter === "cloudrun") && filteredCloudRunServices.length > 0 && (
                     <div className="text-[9px] uppercase tracking-widest text-slate-600 px-1 pt-1">Cloud Run</div>
                   )}
-                  {(endpointFilter === "all" || endpointFilter === "cloudrun") && filteredCloudRunServices.map(s => {
+                  {(gcpEndpointFilter === "all" || gcpEndpointFilter === "cloudrun") && filteredCloudRunServices.map(s => {
                     const value = s.url!;
                     const isSelected = isEndpointSelected(value);
                     return (
@@ -4421,21 +4467,24 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                   })}
                 </>
               )}
-              {awsSnapshot && (
+              {endpointCloud === "aws" && !awsSnapshot && (
+                <div className="px-2 py-2 text-[10px] text-slate-500 border border-slate-800/60 bg-[#0a0a0a]/60">
+                  No AWS snapshot loaded. Run an AWS scan from the AWS dashboard or configure AWS credentials in Settings.
+                </div>
+              )}
+              {endpointCloud === "aws" && awsSnapshot && (
                 <>
-                  {(endpointFilter === "all" || endpointFilter === "aws") &&
-                    (filteredAwsLoadBalancers.length > 0 || filteredAwsEc2Targets.length > 0 || filteredAwsLambdaUrls.length > 0) && (
-                      <div className="text-[9px] uppercase tracking-widest text-slate-600 px-1 pt-1">AWS Discovery</div>
+                  {hasAwsEndpointForFilter && (
+                    <div className="text-[9px] uppercase tracking-widest text-slate-600 px-1 pt-1">
+                      AWS Discovery · {awsEndpointFilterLabel}
+                    </div>
                   )}
-                  {(endpointFilter === "aws") &&
-                    filteredAwsLoadBalancers.length === 0 &&
-                    filteredAwsEc2Targets.length === 0 &&
-                    filteredAwsLambdaUrls.length === 0 && (
-                      <div className="px-2 py-2 text-[10px] text-slate-500 border border-slate-800/60 bg-[#0a0a0a]/60">
-                        No AWS HTTP endpoints discovered. Trace targets require an internet-facing ELB, a public EC2 IP, or a Lambda Function URL.
-                      </div>
+                  {!hasAwsEndpointForFilter && (
+                    <div className="px-2 py-2 text-[10px] text-slate-500 border border-slate-800/60 bg-[#0a0a0a]/60">
+                      No AWS HTTP endpoints discovered for {awsEndpointFilterLabel}. Trace targets require an internet-facing ELB, a public EC2 IP, or a Lambda Function URL.
+                    </div>
                   )}
-                  {(endpointFilter === "all" || endpointFilter === "aws") && filteredAwsLoadBalancers.map(lb => {
+                  {(awsEndpointFilter === "all" || awsEndpointFilter === "eks") && filteredAwsLoadBalancers.map(lb => {
                     const value = `https://${lb.dnsName}`;
                     const isSelected = isEndpointSelected(value);
                     return (
@@ -4466,7 +4515,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                       </HoverTooltip>
                     );
                   })}
-                  {(endpointFilter === "all" || endpointFilter === "aws") && filteredAwsEc2Targets.map(instance => {
+                  {(awsEndpointFilter === "all" || awsEndpointFilter === "vm") && filteredAwsEc2Targets.map(instance => {
                     const value = `https://${instance.publicIpAddress}`;
                     const label = instance.tags.Name || instance.instanceId;
                     const isSelected = isEndpointSelected(value);
@@ -4498,7 +4547,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                       </HoverTooltip>
                     );
                   })}
-                  {(endpointFilter === "all" || endpointFilter === "aws") && filteredAwsLambdaUrls.map(fn => {
+                  {(awsEndpointFilter === "all" || awsEndpointFilter === "lambda") && filteredAwsLambdaUrls.map(fn => {
                     const value = fn.functionUrl!;
                     const isSelected = isEndpointSelected(value);
                     return (

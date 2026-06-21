@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
+import NavbarCloudTabs from "./NavbarCloudTabs";
 
 const NAV_ITEMS = [
     { href: "/dashboard", label: "GCP" },
@@ -61,6 +62,7 @@ export default function NavbarSubNav({ children }: { children: React.ReactNode }
             className="max-w-7xl mx-auto px-4 md:px-6 h-8 flex items-center gap-0 overflow-x-auto no-scrollbar scroll-smooth"
             style={{ borderTop: "1px solid var(--bg-card2)" }}
         >
+            <NavbarCloudTabs />
             {children}
         </div>
     );
