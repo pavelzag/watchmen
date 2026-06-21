@@ -3908,6 +3908,12 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
         data: (rawEvent as MessageEvent).data,
       });
     });
+    eventSource.addEventListener("reconnect", (rawEvent) => {
+      console.info("[trace/live] event source reconnect requested", {
+        endpointCloud,
+        data: (rawEvent as MessageEvent).data,
+      });
+    });
     eventSource.addEventListener("error", (event) => {
       console.error("[trace/live] event source error", {
         endpointCloud,
