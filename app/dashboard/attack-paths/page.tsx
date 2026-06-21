@@ -177,7 +177,37 @@ function NodeCard({ node }: { node: AttackNode }) {
 
 function PathCard({ path, index }: { path: CloudAttackPath; index: number }) {
   const [open, setOpen] = useState(false);
+  const [rec, setRec] = useState<AiRecState>({ loading: false, text: null, error: null });
+  const [recOpen, setRecOpen] = useState(false);
   const s = SEV_STYLES[path.severity];
+
+  async function askAiForPath(forceRegenerate = false) {
+    setRecOpen(true);
+    setRec({ loading: true, text: forceRegenerate ? null : rec.text, error: null });
+    try {
+      const res = await fetch("/api/attack-paths/recommend", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scope: `${path.cloud.toUpperCase()} / ${path.severity.toUpperCase()} / ${path.title}`,
+          paths: [path],
+          demoCredentials: (() => {
+            const browserAI = getActiveBrowserAIKey();
+            return browserAI ? { aiKey: browserAI.key, aiProvider: browserAI.provider } : undefined;
+          })(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed");
+      setRec({ loading: false, text: data.recommendation, error: null });
+    } catch (error) {
+      setRec({
+        loading: false,
+        text: null,
+        error: error instanceof Error ? error.message : "Failed to ask AI",
+      });
+    }
+  }
 
   return (
     <div
@@ -215,9 +245,25 @@ function PathCard({ path, index }: { path: CloudAttackPath; index: number }) {
           {path.cloud}
         </div>
         <div className="flex-1 min-w-0">
-          <p style={{ fontSize: 12, fontWeight: 700, color: "#e5e7eb", fontFamily: "monospace", marginBottom: 4 }}>
-            {String(index + 1).padStart(2, "0")}. {path.title}
-          </p>
+          <div className="flex items-center gap-2 flex-wrap mb-1">
+            <p style={{ fontSize: 12, fontWeight: 700, color: "#e5e7eb", fontFamily: "monospace" }}>
+              {String(index + 1).padStart(2, "0")}. {path.title}
+            </p>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                void askAiForPath(Boolean(rec.text));
+              }}
+              disabled={rec.loading}
+              className="opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity flex items-center gap-1 px-1.5 py-0.5 text-[9px] uppercase tracking-widest"
+              style={{ border: "1px solid #3b0764", color: rec.loading ? "#6b7280" : "#c084fc", background: "rgba(88,28,135,0.12)" }}
+              title="Explain this attack path with AI"
+            >
+              {rec.loading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Sparkles className="w-2.5 h-2.5" />}
+              {rec.loading ? "Asking" : rec.text ? "Regenerate" : "Ask AI"}
+            </button>
+          </div>
           {/* Mini node chain */}
           <div className="flex items-center gap-1 flex-wrap">
             {path.nodes.map((n, i) => (
@@ -279,6 +325,50 @@ function PathCard({ path, index }: { path: CloudAttackPath; index: number }) {
           </div>
         </div>
       )}
+
+      {(rec.loading || rec.error || rec.text) && (
+        <div onClick={(event) => event.stopPropagation()} className="border-t border-violet-900/30">
+          <div className="px-4 py-2 flex items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={() => rec.text ? setRecOpen((value) => !value) : void askAiForPath()}
+              disabled={rec.loading}
+              className="flex items-center gap-1.5 text-xs font-medium transition-all duration-150 rounded-lg px-2.5 py-1 text-violet-400 hover:text-violet-300 bg-violet-500/10 hover:bg-violet-500/15"
+            >
+              {rec.loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+              {rec.loading ? "Asking AI..." : "Attack Path AI"}
+            </button>
+            {rec.text && (
+              <div className="flex items-center gap-2">
+                <CopyAiResponseButton text={rec.text} compact />
+                <button
+                  type="button"
+                  onClick={() => setRecOpen((value) => !value)}
+                  className="text-slate-500 hover:text-slate-300 transition-colors"
+                >
+                  {recOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {rec.error && (
+            <div className="px-4 pb-3 flex items-center gap-2 text-xs font-mono" style={{ color: "#f87171" }}>
+              <AlertCircle className="w-3 h-3 shrink-0" />
+              {rec.error}
+            </div>
+          )}
+
+          {rec.text && recOpen && (
+            <div className="px-4 pb-4 border-t border-violet-900/20">
+              <div
+                className="mt-3 text-xs text-slate-300 leading-relaxed prose-answer"
+                dangerouslySetInnerHTML={{ __html: renderAiMarkdown(rec.text) }}
+              />
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -294,8 +384,6 @@ export default function AttackPathsPage() {
   const [filter, setFilter] = useState<"all" | "critical" | "high">("all");
   const [cloudFilter, setCloudFilter] = useState<CloudFilter>("all");
   const [showRemediate, setShowRemediate] = useState(false);
-  const [aiRec, setAiRec] = useState<AiRecState>({ loading: false, text: null, error: null });
-  const [aiOpen, setAiOpen] = useState(false);
 
   const hasAwsCredentialsConfigured = useCallback(async () => {
     try {
@@ -428,35 +516,6 @@ export default function AttackPathsPage() {
   const highCount = cloudFiltered.filter((p) => p.severity === "high").length;
   const gcpRemediablePaths = visible.filter((path) => path.cloud === "gcp");
 
-  async function askAiForVisiblePaths(forceRegenerate = false) {
-    if (visible.length === 0) return;
-    setAiOpen(true);
-    setAiRec({ loading: true, text: forceRegenerate ? null : aiRec.text, error: null });
-    try {
-      const res = await fetch("/api/attack-paths/recommend", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          scope: `${cloudFilter.toUpperCase()} / ${filter.toUpperCase()}`,
-          paths: visible,
-          demoCredentials: (() => {
-            const browserAI = getActiveBrowserAIKey();
-            return browserAI ? { aiKey: browserAI.key, aiProvider: browserAI.provider } : undefined;
-          })(),
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed");
-      setAiRec({ loading: false, text: data.recommendation, error: null });
-    } catch (error) {
-      setAiRec({
-        loading: false,
-        text: null,
-        error: error instanceof Error ? error.message : "Failed to ask AI",
-      });
-    }
-  }
-
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -514,66 +573,6 @@ export default function AttackPathsPage() {
                 <p style={{ fontSize: 28, fontWeight: 700, color, fontFamily: "monospace", lineHeight: 1.2 }}>{value}</p>
               </div>
             ))}
-          </div>
-
-          <div style={{ border: "1px solid var(--border-dim)", background: "#09090b" }}>
-            <div className="px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
-              <div>
-                <p style={{ fontSize: 9, letterSpacing: 3, color: "var(--border-dim)", fontFamily: "monospace" }}>
-                  // ASK AI ABOUT ATTACK PATHS
-                </p>
-                <p style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "monospace", marginTop: 4 }}>
-                  Analyze the {visible.length} currently visible path{visible.length === 1 ? "" : "s"} and produce a prioritized remediation plan.
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                {aiRec.text && (
-                  <button
-                    type="button"
-                    onClick={() => setAiOpen((open) => !open)}
-                    className="flex items-center gap-1 px-2 py-1 text-xs uppercase tracking-widest transition-all"
-                    style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}
-                  >
-                    {aiOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                    {aiOpen ? "Hide" : "Show"}
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => askAiForVisiblePaths(Boolean(aiRec.text))}
-                  disabled={aiRec.loading || visible.length === 0}
-                  className="flex items-center gap-2 px-3 py-1.5 text-xs uppercase tracking-widest transition-all"
-                  style={{
-                    border: "1px solid #a855f7",
-                    color: aiRec.loading ? "#6b7280" : "#c084fc",
-                    background: "rgba(168,85,247,0.08)",
-                    opacity: aiRec.loading || visible.length === 0 ? 0.6 : 1,
-                  }}
-                >
-                  {aiRec.loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-                  {aiRec.loading ? "Asking AI..." : aiRec.text ? "Regenerate" : "Ask AI"}
-                </button>
-              </div>
-            </div>
-
-            {aiRec.error && (
-              <div className="px-4 pb-3 flex items-center gap-2 text-xs font-mono" style={{ color: "#f87171" }}>
-                <AlertCircle className="w-3 h-3 shrink-0" />
-                {aiRec.error}
-              </div>
-            )}
-
-            {aiRec.text && aiOpen && (
-              <div className="px-4 py-4 border-t border-slate-800">
-                <div className="mb-3 flex justify-end">
-                  <CopyAiResponseButton text={aiRec.text} compact />
-                </div>
-                <div
-                  className="text-xs text-slate-300 leading-relaxed prose-answer"
-                  dangerouslySetInnerHTML={{ __html: renderAiMarkdown(aiRec.text) }}
-                />
-              </div>
-            )}
           </div>
 
           {/* Cloud filter */}

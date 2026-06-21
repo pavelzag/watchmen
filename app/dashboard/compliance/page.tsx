@@ -421,7 +421,7 @@ function ControlCard({
   }
 
   return (
-    <div className={cn("rounded-xl border glass", statusCfg.border)}>
+    <div data-nav tabIndex={0} className={cn("rounded-xl border glass", statusCfg.border)}>
       <div className="p-4 space-y-2">
         {/* Header row */}
         <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -874,14 +874,6 @@ export default function CompliancePage() {
             </>
           )}
           <ScanCloudButton onScanComplete={() => load(standard)} variant="modern" />
-          <button
-            onClick={() => load(standard)}
-            disabled={loading}
-            className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors"
-          >
-            <RefreshCw className={cn("w-3.5 h-3.5", loading && "animate-spin")} />
-            Refresh
-          </button>
         </div>
       </div>
 
