@@ -3,11 +3,23 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import AwsSnapshotStats from "@/components/AwsSnapshotStats";
+import QueryBox, { type QueryResult } from "@/components/QueryBox";
+import ResultCard from "@/components/ResultCard";
 import { getDemoCredentials, getDemoAwsSnapshot, setDemoAwsSnapshot } from "@/lib/demo-credentials";
 import type { AwsSnapshot } from "@/lib/aws/types";
 import { useTaskCenter } from "@/components/TaskCenterProvider";
 
+const AWS_SUGGESTED_QUERIES = [
+  "Which S3 buckets are publicly accessible?",
+  "List Lambda functions with public invoke policies",
+  "Which EC2 instances have public IPs?",
+  "Show EKS clusters with public API endpoints",
+  "Which security groups are open to the internet?",
+  "What can watchmen-scanner access?",
+];
+
 export default function AwsDashboardClient() {
+  const [results, setResults] = useState<QueryResult[]>([]);
   const [scanVersion, setScanVersion] = useState(0);
   const [scanning, setScanning] = useState(false);
   const [awsCredsRequired, setAwsCredsRequired] = useState(false);
@@ -142,6 +154,10 @@ export default function AwsDashboardClient() {
     }
   }, [activeTaskId, appendSyncLog, tasks]);
 
+  function handleResult(result: QueryResult) {
+    setResults((prev) => [result, ...prev]);
+  }
+
   return (
     <div className="min-h-screen p-4 flex flex-col" style={{ background: "#090909" }}>
       <div className="max-w-4xl mx-auto w-full space-y-4 flex-1">
@@ -177,6 +193,30 @@ export default function AwsDashboardClient() {
             ))}
           </div>
         )}
+
+        <section className="space-y-3">
+          <div>
+            <p className="text-[10px] uppercase tracking-widest font-mono" style={{ color: "var(--border-dim)" }}>
+              // AWS Ask AI
+            </p>
+            <p className="mt-1 text-xs font-mono" style={{ color: "var(--text-muted)" }}>
+              Query the latest AWS snapshot: IAM, S3, EKS, EC2, Lambda, RDS, Redshift, SNS, Secrets Manager, security groups, findings, and compliance.
+            </p>
+          </div>
+          <QueryBox
+            apiEndpoint="/api/aws/query"
+            onResult={handleResult}
+            suggestedQueries={AWS_SUGGESTED_QUERIES}
+            placeholder="Ask anything about your AWS infrastructure..."
+          />
+          {results.length > 0 && (
+            <div className="space-y-3">
+              {results.map((result, index) => (
+                <ResultCard key={`${result.query}-${result.fetchedAt}-${index}`} result={result} index={index} />
+              ))}
+            </div>
+          )}
+        </section>
       </div>
 
       {/* Status bar */}

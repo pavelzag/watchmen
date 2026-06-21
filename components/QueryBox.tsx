@@ -17,6 +17,9 @@ const SUGGESTED_QUERIES = [
 
 interface QueryBoxProps {
   onResult: (result: QueryResult) => void;
+  apiEndpoint?: string;
+  suggestedQueries?: string[];
+  placeholder?: string;
 }
 
 export interface QueryResult {
@@ -43,7 +46,12 @@ async function readApiResponse(res: Response): Promise<any> {
   }
 }
 
-export default function QueryBox({ onResult }: QueryBoxProps) {
+export default function QueryBox({
+  onResult,
+  apiEndpoint = "/api/query",
+  suggestedQueries = SUGGESTED_QUERIES,
+  placeholder = "Ask anything about your cloud infrastructure...",
+}: QueryBoxProps) {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -80,7 +88,7 @@ export default function QueryBox({ onResult }: QueryBoxProps) {
       const browserAI = getActiveBrowserAIKey();
       const demoCredentials = browserAI ? { aiKey: browserAI.key, aiProvider: browserAI.provider } : undefined;
 
-      const res = await fetch("/api/query", {
+      const res = await fetch(apiEndpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -140,7 +148,7 @@ export default function QueryBox({ onResult }: QueryBoxProps) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask anything about your cloud infrastructure..."
+            placeholder={placeholder}
             className="w-full bg-transparent p-4 md:p-6 focus:outline-none resize-none no-scrollbar placeholder:opacity-30"
             style={{ color: "var(--text-primary)", minHeight: "80px", fontFamily: "JetBrains Mono, monospace" }}
           />
@@ -203,7 +211,7 @@ export default function QueryBox({ onResult }: QueryBoxProps) {
             // suggested commands
             </p>
             <div className="flex flex-wrap gap-2">
-              {SUGGESTED_QUERIES.map((q) => (
+              {suggestedQueries.map((q) => (
                 <button
                   key={q}
                   onClick={() => useQuery(q)}
