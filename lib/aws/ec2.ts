@@ -9,6 +9,7 @@ async function getMockEc2Instances(): Promise<AwsEc2Instance[]> {
 
 async function getRealEc2Instances(creds?: AwsCredentials): Promise<AwsEc2Instance[]> {
   const regions = getAwsRegions();
+  console.info("[aws/ec2] scanning regions", { regions });
   const results = await Promise.allSettled(
     regions.map(async (region) => {
       const client = new EC2Client(getAwsClientOptions(region, creds));
@@ -45,16 +46,35 @@ async function getRealEc2Instances(creds?: AwsCredentials): Promise<AwsEc2Instan
         nextToken = res.NextToken;
       } while (nextToken);
 
+      console.info("[aws/ec2] region complete", {
+        region,
+        instances: instances.length,
+        running: instances.filter((instance) => instance.state === "running").length,
+        withPublicIp: instances.filter((instance) => Boolean(instance.publicIpAddress)).length,
+        traceable: instances.filter((instance) => instance.state === "running" && Boolean(instance.publicIpAddress)).length,
+        samples: instances.slice(0, 3).map((instance) => ({
+          instanceId: instance.instanceId,
+          state: instance.state,
+          hasPublicIp: Boolean(instance.publicIpAddress),
+          name: instance.tags.Name,
+        })),
+      });
       return instances;
     })
   );
 
-  return results
+  const loaded = results
     .filter((r, i): r is PromiseFulfilledResult<AwsEc2Instance[]> => {
       if (r.status === "rejected") logAwsWarning("ec2", regions[i], r.reason);
       return r.status === "fulfilled";
     })
     .flatMap((r) => r.value);
+  console.info("[aws/ec2] scan complete", {
+    regions: regions.length,
+    instances: loaded.length,
+    traceable: loaded.filter((instance) => instance.state === "running" && Boolean(instance.publicIpAddress)).length,
+  });
+  return loaded;
 }
 
 export async function getEc2Instances(creds?: AwsCredentials, forceMock?: boolean): Promise<AwsEc2Instance[]> {

@@ -3509,6 +3509,12 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     return filteredAwsLambdaUrls.length > 0 || filteredAwsEc2Targets.length > 0 || filteredAwsLoadBalancers.length > 0;
   }, [awsEndpointFilter, filteredAwsEc2Targets.length, filteredAwsLambdaUrls.length, filteredAwsLoadBalancers.length]);
   const awsEndpointFilterLabel = AWS_ENDPOINT_FILTERS.find(filter => filter.id === awsEndpointFilter)?.label ?? "AWS";
+  const awsEmptyMessage = {
+    all: "No AWS HTTP endpoints discovered. Run an AWS scan, then look for an internet-facing ELB, a public EC2 IP, or a Lambda Function URL.",
+    lambda: "No Lambda Function URLs discovered. Lambda functions only appear here when Function URL configs are enabled.",
+    vm: "No public EC2 HTTP targets discovered. EC2 instances only appear here when they have a public IP.",
+    eks: "No EKS/ELB HTTP targets discovered. EKS targets appear here through internet-facing AWS load balancers.",
+  }[awsEndpointFilter];
 
   const allLiveMonitorTargets = useMemo<LiveMonitorTarget[]>(() => {
     const targets: LiveMonitorTarget[] = [];
@@ -4481,7 +4487,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                   )}
                   {!hasAwsEndpointForFilter && (
                     <div className="px-2 py-2 text-[10px] text-slate-500 border border-slate-800/60 bg-[#0a0a0a]/60">
-                      No AWS HTTP endpoints discovered for {awsEndpointFilterLabel}. Trace targets require an internet-facing ELB, a public EC2 IP, or a Lambda Function URL.
+                      {awsEmptyMessage}
                     </div>
                   )}
                   {(awsEndpointFilter === "all" || awsEndpointFilter === "eks") && filteredAwsLoadBalancers.map(lb => {
