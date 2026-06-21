@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
-import { getDemoAwsSnapshot, getDemoGcpSnapshot, setDemoAwsSnapshot, setDemoGcpSnapshot } from "@/lib/demo-credentials";
+import { getDemoAwsSnapshot, getDemoCredentials, getDemoGcpSnapshot, setDemoAwsSnapshot, setDemoGcpSnapshot } from "@/lib/demo-credentials";
 import { useTaskCenter } from "@/components/TaskCenterProvider";
 import type { GcpSnapshot, GkeEntryPoint } from "@/lib/gcp/types";
 import type { AwsSnapshot } from "@/lib/aws/types";
@@ -384,13 +384,9 @@ function buildTopology(
   const awsLbs = (awsSnapshot?.loadBalancers ?? []).filter(
     lb => lb.dnsName && lb.scheme === "internet-facing" && lb.state !== "failed"
   );
-  const awsEc2s = (awsSnapshot?.ec2Instances ?? []).filter(
-    instance => instance.state === "running" && instance.publicIpAddress
-  );
-  const awsEksClusters = (awsSnapshot?.eksClusters ?? []).filter(
-    cluster => cluster.endpointPublicAccess
-  );
-  const awsLambdaUrls = (awsSnapshot?.lambdaFunctions ?? []).filter(fn => fn.functionUrl);
+  const awsEc2s = (awsSnapshot?.ec2Instances ?? []).filter(instance => instance.state !== "terminated");
+  const awsEksClusters = awsSnapshot?.eksClusters ?? [];
+  const awsLambdas = awsSnapshot?.lambdaFunctions ?? [];
 
   // Snapshot load balancers (managed/global LBs from GCP)
   lbs.forEach((lb, i) => {
@@ -545,7 +541,7 @@ function buildTopology(
       col: 2,
       label: cluster.clusterName.slice(0, 22).toUpperCase(),
       sublabel: `EKS · ${cluster.region}`,
-      matchUrl: cluster.endpoint,
+      matchUrl: cluster.endpointPublicAccess ? cluster.endpoint : undefined,
       resourceName: cluster.clusterName,
     });
     const parentLbs = awsLbs
@@ -575,15 +571,15 @@ function buildTopology(
     edges.push({ from: "internet", to: id });
   });
 
-  // Lambda Function URLs are directly reachable HTTPS origins.
-  awsLambdaUrls.forEach((fn, i) => {
+  // Lambda functions are assets; only functions with Function URLs are directly requestable.
+  awsLambdas.forEach((fn, i) => {
     const id = `aws-lambda-${i}`;
     nodes.push({
       id,
       type: "cloudrun",
       col: 2,
       label: fn.functionName.slice(0, 22).toUpperCase(),
-      sublabel: `Lambda URL · ${fn.region}`,
+      sublabel: fn.functionUrl ? `Lambda URL · ${fn.region}` : `Lambda · ${fn.region}`,
       region: fn.region,
       matchUrl: fn.functionUrl,
       resourceName: fn.functionName,
@@ -2987,7 +2983,7 @@ function MetaRow({ label, value, mono }: { label: string; value: string | number
 }
 
 export default function RequestTracer({ demoMode = false }: { demoMode?: boolean }) {
-  const { tasks } = useTaskCenter();
+  const { tasks, startAwsScan, startGcpScan } = useTaskCenter();
   // Snapshot + topology
   const [snapshot, setSnapshot] = useState<GcpSnapshot | null>(null);
   const [awsSnapshot, setAwsSnapshot] = useState<AwsSnapshot | null>(null);
@@ -2995,11 +2991,17 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const [entryPoints, setEntryPoints] = useState<GkeEntryPoint[]>([]);
   const [loadingEntryPoints, setLoadingEntryPoints] = useState(true);
   const [traceSourceConfig, setTraceSourceConfig] = useState<GcpTraceSourceConfigSummary | null>(null);
+  const [endpointCloud, setEndpointCloud] = useState<EndpointCloud>("gcp");
+  const [traceScanTaskId, setTraceScanTaskId] = useState<string | null>(null);
 
-  // Topology derived from snapshot + entry points — auto-updates when either changes
+  // Topology derived from the selected cloud snapshot — auto-updates when either changes.
   const { nodes: baseNodes, edges: baseEdges } = useMemo(
-    () => buildTopology(snapshot, awsSnapshot, entryPoints),
-    [snapshot, awsSnapshot, entryPoints],
+    () => buildTopology(
+      endpointCloud === "gcp" ? snapshot : null,
+      endpointCloud === "aws" ? awsSnapshot : null,
+      endpointCloud === "gcp" ? entryPoints : [],
+    ),
+    [awsSnapshot, endpointCloud, entryPoints, snapshot],
   );
 
   // Containers discovered per GKE node (used to build sidecar nodes)
@@ -3085,7 +3087,6 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const [url, setUrl] = useState("");
   const [bodyText, setBodyText] = useState('{\n  "key": "value"\n}');
   const [methodOpen, setMethodOpen] = useState(false);
-  const [endpointCloud, setEndpointCloud] = useState<EndpointCloud>("gcp");
   const [gcpEndpointFilter, setGcpEndpointFilter] = useState<GcpEndpointFilter>("all");
   const [awsEndpointFilter, setAwsEndpointFilter] = useState<AwsEndpointFilter>("all");
   const [selectedEndpointUrl, setSelectedEndpointUrl] = useState<string | null>(null);
@@ -3161,6 +3162,9 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     [requestActivityRate]
   );
   const [requestActivityIntensity, setRequestActivityIntensity] = useState(0);
+  const traceScanTask = traceScanTaskId ? tasks.find(task => task.id === traceScanTaskId) : null;
+  const traceScanRunning = traceScanTask?.status === "queued" || traceScanTask?.status === "running";
+  const selectedCloudHasSnapshot = endpointCloud === "aws" ? Boolean(awsSnapshot) : Boolean(snapshot);
 
   useEffect(() => {
     let frame = 0;
@@ -3275,6 +3279,20 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     }
   }, []);
 
+  const triggerTraceScan = useCallback(() => {
+    const demoCreds = getDemoCredentials();
+    const taskId = endpointCloud === "aws"
+      ? startAwsScan(demoCreds.aws ? { demoCredentials: { aws: demoCreds.aws } } : {})
+      : startGcpScan(demoCreds.gcp ? { demoCredentials: { gcp: demoCreds.gcp } } : {});
+    setTraceScanTaskId(taskId);
+    if (endpointCloud === "gcp") {
+      setLoadingSnapshot(true);
+      setLoadingEntryPoints(true);
+    } else {
+      setLoadingSnapshot(true);
+    }
+  }, [endpointCloud, startAwsScan, startGcpScan]);
+
   useEffect(() => { fetchSnapshot(); }, [fetchSnapshot]);
 
   useEffect(() => {
@@ -3301,6 +3319,16 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
     fetchSnapshot();
   }, [tasks, fetchSnapshot]);
+
+  useEffect(() => {
+    if (!traceScanTaskId) return;
+    const task = tasks.find(item => item.id === traceScanTaskId);
+    if (!task) return;
+    if (task.status === "queued" || task.status === "running") return;
+    setTraceScanTaskId(null);
+    setLoadingSnapshot(false);
+    setLoadingEntryPoints(false);
+  }, [tasks, traceScanTaskId]);
 
   // Pre-fill URL in demo mode once snapshot is loaded
   useEffect(() => {
@@ -3496,29 +3524,29 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     [awsSnapshot]
   );
   const filteredAwsEc2Targets = useMemo(
-    () => (awsSnapshot?.ec2Instances ?? []).filter(instance => instance.state === "running" && instance.publicIpAddress),
+    () => (awsSnapshot?.ec2Instances ?? []).filter(instance => instance.state !== "terminated"),
     [awsSnapshot]
   );
-  const filteredAwsLambdaUrls = useMemo(
-    () => (awsSnapshot?.lambdaFunctions ?? []).filter(fn => fn.functionUrl),
+  const filteredAwsLambdaFunctions = useMemo(
+    () => awsSnapshot?.lambdaFunctions ?? [],
     [awsSnapshot]
   );
-  const filteredAwsEksApiTargets = useMemo(
-    () => (awsSnapshot?.eksClusters ?? []).filter(cluster => cluster.endpointPublicAccess && cluster.endpoint),
+  const filteredAwsEksClusters = useMemo(
+    () => awsSnapshot?.eksClusters ?? [],
     [awsSnapshot]
   );
   const hasAwsEndpointForFilter = useMemo(() => {
-    if (awsEndpointFilter === "lambda") return filteredAwsLambdaUrls.length > 0;
+    if (awsEndpointFilter === "lambda") return filteredAwsLambdaFunctions.length > 0;
     if (awsEndpointFilter === "vm") return filteredAwsEc2Targets.length > 0;
-    if (awsEndpointFilter === "eks") return filteredAwsLoadBalancers.length > 0 || filteredAwsEksApiTargets.length > 0;
-    return filteredAwsLambdaUrls.length > 0 || filteredAwsEc2Targets.length > 0 || filteredAwsLoadBalancers.length > 0 || filteredAwsEksApiTargets.length > 0;
-  }, [awsEndpointFilter, filteredAwsEc2Targets.length, filteredAwsEksApiTargets.length, filteredAwsLambdaUrls.length, filteredAwsLoadBalancers.length]);
+    if (awsEndpointFilter === "eks") return filteredAwsLoadBalancers.length > 0 || filteredAwsEksClusters.length > 0;
+    return filteredAwsLambdaFunctions.length > 0 || filteredAwsEc2Targets.length > 0 || filteredAwsLoadBalancers.length > 0 || filteredAwsEksClusters.length > 0;
+  }, [awsEndpointFilter, filteredAwsEc2Targets.length, filteredAwsEksClusters.length, filteredAwsLambdaFunctions.length, filteredAwsLoadBalancers.length]);
   const awsEndpointFilterLabel = AWS_ENDPOINT_FILTERS.find(filter => filter.id === awsEndpointFilter)?.label ?? "AWS";
   const awsEmptyMessage = {
-    all: "No AWS HTTP endpoints discovered. Run an AWS scan, then look for an internet-facing ELB, a public EC2 IP, or a Lambda Function URL.",
-    lambda: "No Lambda Function URLs discovered. Lambda functions only appear here when Function URL configs are enabled.",
-    vm: "No public EC2 HTTP targets discovered. EC2 instances only appear here when they have a public IP.",
-    eks: "No EKS API or ELB targets discovered. EKS clusters appear here when their public API endpoint is enabled, and workloads appear through internet-facing AWS load balancers.",
+    all: "No AWS assets discovered. Run an AWS scan, then check Lambda, VM, and EKS filters.",
+    lambda: "No Lambda functions discovered in the AWS snapshot.",
+    vm: "No EC2 instances discovered in the AWS snapshot.",
+    eks: "No EKS clusters or AWS load balancers discovered in the AWS snapshot.",
   }[awsEndpointFilter];
 
   const allLiveMonitorTargets = useMemo<LiveMonitorTarget[]>(() => {
@@ -4526,96 +4554,108 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                       </HoverTooltip>
                     );
                   })}
-                  {(awsEndpointFilter === "all" || awsEndpointFilter === "eks") && filteredAwsEksApiTargets.map(cluster => {
-                    const value = cluster.endpoint!;
-                    const isSelected = isEndpointSelected(value);
+                  {(awsEndpointFilter === "all" || awsEndpointFilter === "eks") && filteredAwsEksClusters.map(cluster => {
+                    const value = cluster.endpointPublicAccess ? cluster.endpoint : undefined;
+                    const isRequestable = Boolean(value);
+                    const isSelected = value ? isEndpointSelected(value) : false;
                     return (
                       <HoverTooltip
                         key={`aws-eks-api-${cluster.region}-${cluster.clusterName}`}
                         content={
                           <>
                             <div className="text-amber-300 font-bold uppercase tracking-widest text-[8px] mb-1">{cluster.clusterName}</div>
-                            <div className="text-sky-300 font-mono break-all">{value}</div>
-                            <div className="text-slate-500 mt-1">EKS API · {cluster.region}</div>
+                            {value ? <div className="text-sky-300 font-mono break-all">{value}</div> : <div className="text-slate-500">No public API endpoint</div>}
+                            <div className="text-slate-500 mt-1">EKS · {cluster.status} · {cluster.region}</div>
                           </>
                         }
                       >
-                        <button onClick={() => toggleEndpointSelection(value)}
+                        <button
+                          onClick={() => value && toggleEndpointSelection(value)}
+                          disabled={!isRequestable}
                           className={cn(
                             "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm relative overflow-hidden",
                             isSelected
                               ? "bg-amber-950/45 ring-2 ring-amber-500/80 border border-amber-500/35 shadow-[inset_0_0_0_1px_rgba(245,158,11,0.18)]"
-                              : "bg-[#0a0a0a]/60 hover:bg-[#12100b]"
+                              : isRequestable ? "bg-[#0a0a0a]/60 hover:bg-[#12100b]" : "bg-[#0a0a0a]/40 opacity-70 cursor-not-allowed"
                           )}
                         >
                           <div className={cn("break-words", isSelected ? "text-slate-200" : "text-slate-400")}>
-                            EKS API · {cluster.clusterName}
+                            EKS · {cluster.clusterName}
                             {isSelected && <span className="ml-2 text-[8px] text-amber-300 uppercase tracking-widest">Selected</span>}
+                            {!isRequestable && <span className="ml-2 text-[8px] text-slate-500 uppercase tracking-widest">No public API</span>}
                           </div>
-                          <div className={cn("mt-0.5 font-mono whitespace-pre-wrap break-all", isSelected ? "text-amber-300" : "text-amber-400")}>{value}</div>
+                          <div className={cn("mt-0.5 font-mono whitespace-pre-wrap break-all", isSelected ? "text-amber-300" : isRequestable ? "text-amber-400" : "text-slate-600")}>{value ?? cluster.arn}</div>
                         </button>
                       </HoverTooltip>
                     );
                   })}
                   {(awsEndpointFilter === "all" || awsEndpointFilter === "vm") && filteredAwsEc2Targets.map(instance => {
-                    const value = `https://${instance.publicIpAddress}`;
+                    const value = instance.publicIpAddress ? `https://${instance.publicIpAddress}` : undefined;
+                    const isRequestable = Boolean(value);
                     const label = instance.tags.Name || instance.instanceId;
-                    const isSelected = isEndpointSelected(value);
+                    const isSelected = value ? isEndpointSelected(value) : false;
                     return (
                       <HoverTooltip
                         key={`aws-ec2-${instance.region}-${instance.instanceId}`}
                         content={
                           <>
                             <div className="text-orange-300 font-bold uppercase tracking-widest text-[8px] mb-1">{label}</div>
-                            <div className="text-sky-300 font-mono">{value}</div>
-                            <div className="text-slate-500 mt-1">{instance.instanceType} · {instance.region}</div>
+                            {value ? <div className="text-sky-300 font-mono">{value}</div> : <div className="text-slate-500">No public IP</div>}
+                            <div className="text-slate-500 mt-1">{instance.instanceType} · {instance.state} · {instance.region}</div>
                           </>
                         }
                       >
-                        <button onClick={() => toggleEndpointSelection(value)}
+                        <button
+                          onClick={() => value && toggleEndpointSelection(value)}
+                          disabled={!isRequestable}
                           className={cn(
                             "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm relative overflow-hidden",
                             isSelected
                               ? "bg-orange-950/45 ring-2 ring-orange-500/80 border border-orange-500/35 shadow-[inset_0_0_0_1px_rgba(249,115,22,0.18)]"
-                              : "bg-[#0a0a0a]/60 hover:bg-[#120f0b]"
+                              : isRequestable ? "bg-[#0a0a0a]/60 hover:bg-[#120f0b]" : "bg-[#0a0a0a]/40 opacity-70 cursor-not-allowed"
                           )}
                         >
                           <div className={cn("break-words", isSelected ? "text-slate-200" : "text-slate-400")}>
                             EC2 · {label}
                             {isSelected && <span className="ml-2 text-[8px] text-orange-300 uppercase tracking-widest">Selected</span>}
+                            {!isRequestable && <span className="ml-2 text-[8px] text-slate-500 uppercase tracking-widest">No public IP</span>}
                           </div>
-                          <div className={cn("mt-0.5 font-mono whitespace-pre-wrap break-all", isSelected ? "text-orange-300" : "text-orange-400")}>{value}</div>
+                          <div className={cn("mt-0.5 font-mono whitespace-pre-wrap break-all", isSelected ? "text-orange-300" : isRequestable ? "text-orange-400" : "text-slate-600")}>{value ?? instance.privateIpAddress}</div>
                         </button>
                       </HoverTooltip>
                     );
                   })}
-                  {(awsEndpointFilter === "all" || awsEndpointFilter === "lambda") && filteredAwsLambdaUrls.map(fn => {
-                    const value = fn.functionUrl!;
-                    const isSelected = isEndpointSelected(value);
+                  {(awsEndpointFilter === "all" || awsEndpointFilter === "lambda") && filteredAwsLambdaFunctions.map(fn => {
+                    const value = fn.functionUrl;
+                    const isRequestable = Boolean(value);
+                    const isSelected = value ? isEndpointSelected(value) : false;
                     return (
                       <HoverTooltip
                         key={`aws-lambda-${fn.region}-${fn.functionName}`}
                         content={
                           <>
                             <div className="text-fuchsia-300 font-bold uppercase tracking-widest text-[8px] mb-1">{fn.functionName}</div>
-                            <div className="text-sky-300 font-mono break-all">{value}</div>
+                            {value ? <div className="text-sky-300 font-mono break-all">{value}</div> : <div className="text-slate-500">No Lambda Function URL</div>}
                             <div className="text-slate-500 mt-1">{fn.runtime} · {fn.region}</div>
                           </>
                         }
                       >
-                        <button onClick={() => toggleEndpointSelection(value)}
+                        <button
+                          onClick={() => value && toggleEndpointSelection(value)}
+                          disabled={!isRequestable}
                           className={cn(
                             "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm relative overflow-hidden",
                             isSelected
                               ? "bg-fuchsia-950/45 ring-2 ring-fuchsia-500/80 border border-fuchsia-500/35 shadow-[inset_0_0_0_1px_rgba(217,70,239,0.18)]"
-                              : "bg-[#0a0a0a]/60 hover:bg-[#120b12]"
+                              : isRequestable ? "bg-[#0a0a0a]/60 hover:bg-[#120b12]" : "bg-[#0a0a0a]/40 opacity-70 cursor-not-allowed"
                           )}
                         >
                           <div className={cn("break-words", isSelected ? "text-slate-200" : "text-slate-400")}>
                             Lambda · {fn.functionName}
                             {isSelected && <span className="ml-2 text-[8px] text-fuchsia-300 uppercase tracking-widest">Selected</span>}
+                            {!isRequestable && <span className="ml-2 text-[8px] text-slate-500 uppercase tracking-widest">No Function URL</span>}
                           </div>
-                          <div className={cn("mt-0.5 font-mono whitespace-pre-wrap break-all", isSelected ? "text-fuchsia-300" : "text-fuchsia-400")}>{value}</div>
+                          <div className={cn("mt-0.5 font-mono whitespace-pre-wrap break-all", isSelected ? "text-fuchsia-300" : isRequestable ? "text-fuchsia-400" : "text-slate-600")}>{value ?? fn.functionArn}</div>
                         </button>
                       </HoverTooltip>
                     );
@@ -4658,13 +4698,23 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
           <div className="flex items-center justify-between text-[9px] text-slate-600">
             <span>
-              {loadingSnapshot ? "Loading topology…" :
-               (snapshot || awsSnapshot) ? `${nodes.length - 1} resources` : "No snapshot"}
-              {!loadingSnapshot && loadingEntryPoints && " · scanning…"}
-              {!loadingSnapshot && !loadingEntryPoints && entryPoints.length > 0 && ` · ${entryPoints.length} entry pts`}
+              {traceScanRunning ? `Scanning ${endpointCloud.toUpperCase()}…` :
+               loadingSnapshot ? "Loading topology…" :
+               selectedCloudHasSnapshot ? `${nodes.length - 1} ${endpointCloud.toUpperCase()} resources` : `No ${endpointCloud.toUpperCase()} snapshot`}
+              {endpointCloud === "gcp" && !loadingSnapshot && loadingEntryPoints && " · scanning…"}
+              {endpointCloud === "gcp" && !loadingSnapshot && !loadingEntryPoints && entryPoints.length > 0 && ` · ${entryPoints.length} entry pts`}
             </span>
-            <button onClick={fetchSnapshot} className="hover:text-slate-400 transition-colors">
-              <RefreshCw size={10} className={loadingSnapshot ? "animate-spin" : ""} />
+            <button
+              onClick={triggerTraceScan}
+              disabled={traceScanRunning}
+              className={cn(
+                "flex items-center gap-1 hover:text-slate-400 transition-colors uppercase tracking-widest",
+                traceScanRunning && "cursor-not-allowed opacity-60"
+              )}
+              title={`Run full ${endpointCloud.toUpperCase()} scan`}
+            >
+              <RefreshCw size={10} className={traceScanRunning ? "animate-spin" : ""} />
+              <span>{traceScanRunning ? "Scanning" : `Scan ${endpointCloud.toUpperCase()}`}</span>
             </button>
           </div>
         </div>
