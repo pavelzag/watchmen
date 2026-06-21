@@ -53,10 +53,17 @@ export default function GlobalKeyNav() {
         }
 
         function current(): HTMLElement | null {
-            return document.querySelector(`.${SEL}`);
+            const selected = document.querySelector(`.${SEL}`) as HTMLElement | null;
+            if (selected) return selected;
+            const active = document.activeElement as HTMLElement | null;
+            return active?.matches("[data-nav]") ? active : null;
         }
 
         function select(el: HTMLElement | null) {
+            const active = document.activeElement as HTMLElement | null;
+            if (active?.matches("[data-nav]") && active !== el) {
+                active.blur();
+            }
             items().forEach((i) => i.classList.remove(SEL));
             if (!el) return;
             el.classList.add(SEL);

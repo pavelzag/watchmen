@@ -192,7 +192,7 @@ export default function SnapshotStats({
           {/* Findings alert */}
           {findings.length > 0 && (
             <Link
-              href="/dashboard/findings"
+              href="/dashboard/findings?cloud=gcp"
               className="flex items-center justify-between px-3 py-2 text-xs uppercase tracking-widest transition-all"
               style={{ border: "1px solid #440000", background: "#0a0000" }}
               onMouseEnter={(e) => {

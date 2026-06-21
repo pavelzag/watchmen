@@ -267,6 +267,14 @@ export default function FindingsPage() {
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
   const [showRemediate, setShowRemediate] = useState(false);
 
+  useEffect(() => {
+    const cloud = new URLSearchParams(window.location.search).get("cloud");
+    if (cloud === "gcp" || cloud === "aws") {
+      setCloudFilter(cloud);
+      setFilter("all");
+    }
+  }, []);
+
   async function load() {
     setLoading(true);
     setError(null);
@@ -393,11 +401,15 @@ export default function FindingsPage() {
             onClick={() => {
               setCloudFilter(cloud.key);
               setFilter("all");
+              const url = new URL(window.location.href);
+              if (cloud.key === "all") url.searchParams.delete("cloud");
+              else url.searchParams.set("cloud", cloud.key);
+              window.history.replaceState(null, "", url.toString());
             }}
             className={cn(
               "px-3 py-1.5 rounded-lg text-xs font-medium border transition-all duration-150 uppercase tracking-wider",
               cloudFilter === cloud.key
-                ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/30"
+                ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/40 ring-1 ring-emerald-400/50 shadow-[0_0_18px_rgba(16,185,129,0.28)]"
                 : "text-slate-400 bg-slate-800/40 border-slate-700/50 hover:border-slate-600"
             )}
           >
@@ -418,8 +430,16 @@ export default function FindingsPage() {
                 "px-3 py-1.5 rounded-lg text-xs font-medium border transition-all duration-150",
                 filter === f
                   ? cfg
-                    ? cn(cfg.color, cfg.bg, cfg.border)
-                    : "bg-slate-700 text-white border-slate-600"
+                    ? cn(
+                        cfg.color,
+                        cfg.bg,
+                        cfg.border,
+                        f === "critical" && "ring-1 ring-red-400/60 shadow-[0_0_18px_rgba(248,113,113,0.30)]",
+                        f === "high" && "ring-1 ring-orange-400/60 shadow-[0_0_18px_rgba(251,146,60,0.30)]",
+                        f === "medium" && "ring-1 ring-amber-400/60 shadow-[0_0_18px_rgba(251,191,36,0.28)]",
+                        f === "low" && "ring-1 ring-slate-300/60 shadow-[0_0_18px_rgba(148,163,184,0.28)]"
+                      )
+                    : "bg-slate-700 text-white border-slate-500 ring-1 ring-slate-300/50 shadow-[0_0_18px_rgba(148,163,184,0.24)]"
                   : "text-slate-400 bg-slate-800/40 border-slate-700/50 hover:border-slate-600"
               )}
             >
