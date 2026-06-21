@@ -43,7 +43,7 @@ export default async function Navbar() {
           </span>
         </div>
 
-        {/* Cloud tabs - scrollable on mobile */}
+        <NavbarCloudTabs />
 
         {/* Right: ask button + user + logout */}
         <div className="flex items-center gap-3 shrink-0">
@@ -88,4 +88,3 @@ export default async function Navbar() {
     </header>
   );
 }
-

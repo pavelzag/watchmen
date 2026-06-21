@@ -10,6 +10,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
+import { getDemoAwsSnapshot, getDemoGcpSnapshot, setDemoAwsSnapshot, setDemoGcpSnapshot } from "@/lib/demo-credentials";
+import { useTaskCenter } from "@/components/TaskCenterProvider";
 import type { GcpSnapshot, GkeEntryPoint } from "@/lib/gcp/types";
 import type { AwsSnapshot } from "@/lib/aws/types";
 import type { LiveTraceIngressEvent } from "@/lib/live-trace-bus";
@@ -2971,6 +2973,7 @@ function MetaRow({ label, value, mono }: { label: string; value: string | number
 }
 
 export default function RequestTracer({ demoMode = false }: { demoMode?: boolean }) {
+  const { tasks } = useTaskCenter();
   // Snapshot + topology
   const [snapshot, setSnapshot] = useState<GcpSnapshot | null>(null);
   const [awsSnapshot, setAwsSnapshot] = useState<AwsSnapshot | null>(null);
@@ -3117,6 +3120,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const [selectedLiveEvent, setSelectedLiveEvent] = useState<LiveEvent | null>(null);
   const livePulseTimeoutsRef = useRef<Map<string, number>>(new Map());
   const liveStreamingLastEventAtRef = useRef(0);
+  const lastAppliedScanTaskIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     liveModeRef.current = liveMode;
@@ -3223,6 +3227,11 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     setLoadingSnapshot(true);
     setLoadingEntryPoints(true);
     try {
+      const cachedDemoGcp = getDemoGcpSnapshot() as GcpSnapshot | null;
+      if (cachedDemoGcp) setSnapshot(cachedDemoGcp);
+      const cachedDemoAws = getDemoAwsSnapshot() as AwsSnapshot | null;
+      if (cachedDemoAws) setAwsSnapshot(cachedDemoAws);
+
       // Snapshot resolves quickly (DB read); entry points require GCP API calls — run in parallel
       const snapPromise = fetch("/api/gcp/snapshot").then(async r => {
         if (!r.ok) return;
@@ -3251,6 +3260,31 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   }, []);
 
   useEffect(() => { fetchSnapshot(); }, [fetchSnapshot]);
+
+  useEffect(() => {
+    const lastCompletedScan = [...tasks]
+      .reverse()
+      .find(task =>
+        (task.kind === "gcp_scan" || task.kind === "aws_scan") &&
+        task.status === "completed"
+      );
+    if (!lastCompletedScan) return;
+    if (lastAppliedScanTaskIdRef.current === lastCompletedScan.id) return;
+    lastAppliedScanTaskIdRef.current = lastCompletedScan.id;
+
+    if (lastCompletedScan.kind === "gcp_scan" && lastCompletedScan.result?.snapshot) {
+      const nextSnapshot = lastCompletedScan.result.snapshot as GcpSnapshot;
+      setDemoGcpSnapshot(nextSnapshot);
+      setSnapshot(nextSnapshot);
+    }
+    if (lastCompletedScan.kind === "aws_scan" && lastCompletedScan.result?.snapshot) {
+      const nextSnapshot = lastCompletedScan.result.snapshot as AwsSnapshot;
+      setDemoAwsSnapshot(nextSnapshot);
+      setAwsSnapshot(nextSnapshot);
+    }
+
+    fetchSnapshot();
+  }, [tasks, fetchSnapshot]);
 
   // Pre-fill URL in demo mode once snapshot is loaded
   useEffect(() => {
@@ -4392,6 +4426,14 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                   {(endpointFilter === "all" || endpointFilter === "aws") &&
                     (filteredAwsLoadBalancers.length > 0 || filteredAwsEc2Targets.length > 0 || filteredAwsLambdaUrls.length > 0) && (
                       <div className="text-[9px] uppercase tracking-widest text-slate-600 px-1 pt-1">AWS Discovery</div>
+                  )}
+                  {(endpointFilter === "aws") &&
+                    filteredAwsLoadBalancers.length === 0 &&
+                    filteredAwsEc2Targets.length === 0 &&
+                    filteredAwsLambdaUrls.length === 0 && (
+                      <div className="px-2 py-2 text-[10px] text-slate-500 border border-slate-800/60 bg-[#0a0a0a]/60">
+                        No AWS HTTP endpoints discovered. Trace targets require an internet-facing ELB, a public EC2 IP, or a Lambda Function URL.
+                      </div>
                   )}
                   {(endpointFilter === "all" || endpointFilter === "aws") && filteredAwsLoadBalancers.map(lb => {
                     const value = `https://${lb.dnsName}`;
