@@ -1,17 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Globe, Flame, Server, Database, Key, Shield, ChevronRight,
   AlertTriangle, RefreshCw, Lock, User, Cloud, HardDrive, GitPullRequest,
 } from "lucide-react";
-import type { AttackPath, AttackNode } from "@/lib/gcp/attack-paths";
+import { computeAttackPaths, type AttackNode, type AttackPath } from "@/lib/gcp/attack-paths";
 import type { AwsSecurityFinding, AwsSnapshot } from "@/lib/aws/types";
 import { computeAwsFindings } from "@/lib/aws-findings";
 import RemediateModal from "./RemediateModal";
 import ScanCloudButton from "@/components/ScanCloudButton";
 import { remediationTargetFromAttackPath } from "@/lib/github/remediation-targets";
-import { useTaskCenter } from "@/components/TaskCenterProvider";
 
 // ─── Node icon / colour ───────────────────────────────────────────────────────
 
@@ -259,10 +258,8 @@ export default function AttackPathsPage() {
   const [filter, setFilter] = useState<"all" | "critical" | "high">("all");
   const [cloudFilter, setCloudFilter] = useState<CloudFilter>("all");
   const [showRemediate, setShowRemediate] = useState(false);
-  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
-  const { tasks, startAttackPathAnalysis } = useTaskCenter();
 
-  async function hasAwsCredentialsConfigured() {
+  const hasAwsCredentialsConfigured = useCallback(async () => {
     try {
       const res = await fetch("/api/settings/credentials");
       if (!res.ok) return false;
@@ -271,62 +268,115 @@ export default function AttackPathsPage() {
     } catch {
       return false;
     }
-  }
+  }, []);
 
-  async function loadAwsPaths() {
-    try {
-      const hasAwsCredentials = await hasAwsCredentialsConfigured();
-      if (!hasAwsCredentials) {
-        setAwsPaths([]);
-        return;
-      }
-      const res = await fetch("/api/aws/snapshot");
-      if (!res.ok) {
-        if (res.status === 404) setAwsPaths([]);
-        return;
-      }
-      const snap: AwsSnapshot = await res.json();
-      const nextAwsPaths = computeAwsFindings(snap)
-        .filter((finding) => finding.severity === "critical" || finding.severity === "high")
-        .map(awsFindingToAttackPath);
-      setAwsPaths(nextAwsPaths);
-    } catch {
-      setAwsPaths([]);
-    }
-  }
-
-  function load() {
+  const load = useCallback(async () => {
+    const startedAt = performance.now();
     setLoading(true);
     setError(null);
-    void loadAwsPaths();
-    const taskId = startAttackPathAnalysis();
-    setActiveTaskId(taskId);
-  }
+    console.info("[attack-paths] load started");
 
-  useEffect(() => { load(); }, []);
+    const errors: string[] = [];
+    const fetchedAts: string[] = [];
+    let nextGcpPaths: CloudAttackPath[] = [];
+    let nextAwsPaths: CloudAttackPath[] = [];
+
+    const gcpStartedAt = performance.now();
+    const gcpSnapshotPromise = fetch("/api/gcp/snapshot")
+      .then(async (res) => {
+        if (res.status === 404) return null;
+        if (!res.ok) throw new Error(`GCP snapshot request failed: HTTP ${res.status}`);
+        return res.json() as Promise<import("@/lib/gcp/types").GcpSnapshot>;
+      })
+      .then((snapshot) => {
+        if (!snapshot) {
+          console.info("[attack-paths] GCP snapshot missing", {
+            durationMs: Math.round(performance.now() - gcpStartedAt),
+          });
+          return;
+        }
+        nextGcpPaths = computeAttackPaths(snapshot).map((path) => ({ ...path, cloud: "gcp" as const }));
+        if (snapshot.fetchedAt) fetchedAts.push(snapshot.fetchedAt);
+        console.info("[attack-paths] GCP paths computed", {
+          paths: nextGcpPaths.length,
+          snapshotId: snapshot.snapshotId,
+          durationMs: Math.round(performance.now() - gcpStartedAt),
+        });
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push(message);
+        console.warn("[attack-paths] GCP analysis failed", { error: message });
+      });
+
+    const awsStartedAt = performance.now();
+    const awsSnapshotPromise = hasAwsCredentialsConfigured()
+      .then(async (hasAwsCredentials) => {
+        if (!hasAwsCredentials) {
+          console.info("[attack-paths] AWS skipped: no credentials configured", {
+            durationMs: Math.round(performance.now() - awsStartedAt),
+          });
+          return null;
+        }
+        const res = await fetch("/api/aws/snapshot");
+        if (res.status === 404) return null;
+        if (!res.ok) throw new Error(`AWS snapshot request failed: HTTP ${res.status}`);
+        return res.json() as Promise<AwsSnapshot>;
+      })
+      .then((snapshot) => {
+        if (!snapshot) return;
+        nextAwsPaths = computeAwsFindings(snapshot)
+          .filter((finding) => finding.severity === "critical" || finding.severity === "high")
+          .map(awsFindingToAttackPath);
+        if (snapshot.fetchedAt) fetchedAts.push(snapshot.fetchedAt);
+        console.info("[attack-paths] AWS paths computed", {
+          paths: nextAwsPaths.length,
+          snapshotId: snapshot.snapshotId,
+          durationMs: Math.round(performance.now() - awsStartedAt),
+        });
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push(message);
+        console.warn("[attack-paths] AWS analysis failed", { error: message });
+      });
+
+    await Promise.all([gcpSnapshotPromise, awsSnapshotPromise]);
+
+    setGcpPaths(nextGcpPaths);
+    setAwsPaths(nextAwsPaths);
+    setFetchedAt(fetchedAts.sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] ?? null);
+    setError(errors.length > 0 ? errors.join("; ") : null);
+    setLoading(false);
+    console.info("[attack-paths] load completed", {
+      gcpPaths: nextGcpPaths.length,
+      awsPaths: nextAwsPaths.length,
+      errors,
+      durationMs: Math.round(performance.now() - startedAt),
+    });
+  }, [hasAwsCredentialsConfigured]);
 
   useEffect(() => {
-    if (!activeTaskId) return;
-    const task = tasks.find((item) => item.id === activeTaskId);
-    if (!task) return;
-    if (task.status === "running" || task.status === "queued") {
-      setLoading(true);
-      return;
-    }
+    void load();
+  }, [load]);
 
-    if (task.status === "failed") {
-      setLoading(false);
-      setError(task.error ?? "Unknown error");
-      return;
-    }
+  function handleLoad() {
+    void load();
+  }
 
-    if (task.status === "completed" && task.kind === "attack_paths" && task.result?.paths) {
-      setGcpPaths((task.result.paths as AttackPath[]).map((path) => ({ ...path, cloud: "gcp" as const })));
-      setFetchedAt(task.result.fetchedAt ?? null);
-      setLoading(false);
-      setError(null);
+  function handleRefreshClick() {
+    if (loading) return;
+    void load();
+  }
+
+  function emptyMessage() {
+    if (error) {
+      return "Attack path analysis could not load all cloud snapshots. Check the error above, then scan again.";
     }
-  }, [activeTaskId, tasks]);
+    if (cloudFilter === "aws") return "No AWS attack paths found in the current AWS snapshot.";
+    if (cloudFilter === "gcp") return "No GCP attack paths found in the current GCP snapshot.";
+    return "No attack paths found in the current cloud snapshots.";
+  }
 
   const paths = [...gcpPaths, ...awsPaths];
   const cloudCounts = {
@@ -364,9 +414,9 @@ export default function AttackPathsPage() {
               Fix GCP with GitHub PR
             </button>
           )}
-          <ScanCloudButton onScanComplete={load} variant="terminal" />
+          <ScanCloudButton onScanComplete={handleLoad} variant="terminal" />
           <button
-            onClick={load}
+            onClick={handleRefreshClick}
             disabled={loading}
             className="flex items-center gap-2 px-3 py-1.5 text-xs uppercase tracking-widest transition-all"
             style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}
@@ -468,7 +518,7 @@ export default function AttackPathsPage() {
         >
           <AlertTriangle className="w-8 h-8" style={{ color: "var(--green)" }} />
           <p style={{ color: "var(--text-muted)", fontFamily: "monospace", fontSize: 12 }}>
-            No attack paths found — your configuration looks clean.
+            {emptyMessage()}
           </p>
         </div>
       )}
@@ -477,7 +527,7 @@ export default function AttackPathsPage() {
         <div className="flex items-center justify-center py-20 gap-3" style={{ border: "1px solid var(--border-dim)" }}>
           <RefreshCw className="w-4 h-4 animate-spin" style={{ color: "var(--green)" }} />
           <p style={{ color: "var(--text-muted)", fontFamily: "monospace", fontSize: 12 }}>
-            Traversing IAM graph…
+            Loading cached snapshots and computing attack paths…
           </p>
         </div>
       )}
