@@ -97,13 +97,9 @@ function renderMd(text: string, finding: CloudFinding): string {
   const html = escapeHtml(text)
     // Code blocks
     .replace(/```[\w]*\n?([\s\S]*?)```/g, (_, code) => {
-      const command = encodeURIComponent(decodeEscapedHtml(String(code)).trim());
-      return `<div class="my-2 rounded-lg border border-slate-700/50 bg-slate-900 overflow-hidden">
-        <div class="flex justify-end border-b border-slate-800 px-2 py-1">
-          <button type="button" data-copy-command="${command}" class="px-2 py-0.5 text-[9px] uppercase tracking-widest text-violet-300 border border-violet-900/60 bg-violet-950/20 hover:text-violet-200 hover:border-violet-700">Copy command</button>
-        </div>
-        <pre class="px-3 py-2 text-xs font-mono text-slate-300 overflow-x-auto whitespace-pre-wrap">${code}</pre>
-      </div>`;
+      const commandText = decodeEscapedHtml(String(code)).trim();
+      const command = encodeURIComponent(commandText);
+      return `<div class="group/command my-1.5 flex items-start gap-2 rounded-md border border-slate-800 bg-slate-950/70 px-2 py-1.5"><pre class="min-w-0 flex-1 overflow-x-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed font-mono text-slate-300">${escapeHtml(commandText)}</pre><button type="button" data-copy-command="${command}" class="shrink-0 px-1.5 py-0.5 text-[8px] uppercase tracking-widest text-violet-300 border border-violet-900/60 bg-violet-950/20 hover:text-violet-200 hover:border-violet-700">Copy</button></div>`;
     }
     )
     // Inline code

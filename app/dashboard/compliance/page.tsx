@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, type MouseEvent } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -158,11 +158,17 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+function decodeEscapedHtml(s: string): string {
+  return s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+}
+
 function renderMd(text: string): string {
   return escapeHtml(text)
-    .replace(/```[\w]*\n?([\s\S]*?)```/g, (_, code) =>
-      `<pre class="bg-slate-900 border border-slate-700/50 rounded-lg px-3 py-2 text-xs font-mono text-slate-300 overflow-x-auto my-2 whitespace-pre-wrap">${code}</pre>`
-    )
+    .replace(/```[\w]*\n?([\s\S]*?)```/g, (_, code) => {
+      const commandText = decodeEscapedHtml(String(code)).trim();
+      const command = encodeURIComponent(commandText);
+      return `<div class="group/command my-1.5 flex items-start gap-2 rounded-md border border-slate-800 bg-slate-950/70 px-2 py-1.5"><pre class="min-w-0 flex-1 overflow-x-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed font-mono text-slate-300">${escapeHtml(commandText)}</pre><button type="button" data-copy-command="${command}" class="shrink-0 px-1.5 py-0.5 text-[8px] uppercase tracking-widest text-violet-300 border border-violet-900/60 bg-violet-950/20 hover:text-violet-200 hover:border-violet-700">Copy</button></div>`;
+    })
     .replace(/`([^`]+)`/g, '<code class="px-1 py-0.5 rounded bg-slate-800 text-sky-300 text-xs font-mono">$1</code>')
     .replace(/^### (.+)$/gm, '<p class="text-xs font-semibold text-slate-200 uppercase tracking-wider mt-3 mb-1">$1</p>')
     .replace(/^## (.+)$/gm, '<p class="text-sm font-semibold text-slate-200 mt-3 mb-1">$1</p>')
@@ -244,17 +250,18 @@ function ScoreTrendChart({ history }: { history: HistoryPoint[] }) {
   if (history.length < 2) return null;
 
   const W = 400;
-  const H = 80;
-  const PAD = { t: 8, r: 8, b: 20, l: 28 };
+  const H = 96;
+  const PAD = { t: 12, r: 12, b: 24, l: 34 };
   const chartW = W - PAD.l - PAD.r;
   const chartH = H - PAD.t - PAD.b;
 
   const scores = history.map((h) => h.score);
   const minScore = Math.max(0, Math.min(...scores) - 10);
   const maxScore = Math.min(100, Math.max(...scores) + 10);
+  const scoreRange = Math.max(1, maxScore - minScore);
 
   const toX = (i: number) => PAD.l + (i / (history.length - 1)) * chartW;
-  const toY = (s: number) => PAD.t + chartH - ((s - minScore) / (maxScore - minScore)) * chartH;
+  const toY = (s: number) => PAD.t + chartH - ((s - minScore) / scoreRange) * chartH;
 
   const points = history.map((h, i) => `${toX(i)},${toY(h.score)}`).join(" ");
   const lastScore = scores[scores.length - 1];
@@ -270,7 +277,13 @@ function ScoreTrendChart({ history }: { history: HistoryPoint[] }) {
   return (
     <div className="mt-4 pt-4 border-t border-slate-700/50">
       <p className="text-xs text-slate-500 mb-2">Score trend (last {history.length} snapshots)</p>
-      <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="max-h-20">
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="xMidYMid meet"
+        className="block h-24 w-full overflow-visible"
+        role="img"
+        aria-label={`Compliance score trend from ${firstDate} to ${lastDate}`}
+      >
         <defs>
           <linearGradient id={fillId} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor={fillColor} stopOpacity="0.25" />
@@ -284,8 +297,8 @@ function ScoreTrendChart({ history }: { history: HistoryPoint[] }) {
           </text>
         ))}
         {/* X-axis labels */}
-        <text x={PAD.l} y={H - 4} fontSize="7" fill="#64748b">{firstDate}</text>
-        <text x={W - PAD.r} y={H - 4} fontSize="7" fill="#64748b" textAnchor="end">{lastDate}</text>
+        <text x={PAD.l} y={H - 6} fontSize="7" fill="#64748b">{firstDate}</text>
+        <text x={W - PAD.r} y={H - 6} fontSize="7" fill="#64748b" textAnchor="end">{lastDate}</text>
         {/* Fill area */}
         <polygon points={areaPoints} fill={`url(#${fillId})`} />
         {/* Line */}
@@ -388,6 +401,33 @@ function ControlCard({
     } catch (e) {
       setRec({ loading: false, text: null, error: e instanceof Error ? e.message : "Error" });
     }
+  }
+
+  async function copySuggestedCommand(event: MouseEvent<HTMLDivElement>) {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-copy-command]");
+    if (!button) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const command = decodeURIComponent(button.dataset.copyCommand ?? "");
+    if (!command) return;
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(command);
+    } else {
+      const textarea = document.createElement("textarea");
+      textarea.value = command;
+      textarea.setAttribute("readonly", "true");
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }
+    const previous = button.textContent;
+    button.textContent = "Copied";
+    window.setTimeout(() => {
+      button.textContent = previous ?? "Copy";
+    }, 1200);
   }
 
   async function confirmSuppress() {
@@ -593,6 +633,7 @@ function ControlCard({
               <CopyAiResponseButton text={rec.text} compact />
             </div>
             <div
+              onClick={copySuggestedCommand}
               className="mt-3 text-xs text-slate-300 leading-relaxed"
               dangerouslySetInnerHTML={{ __html: renderMd(rec.text) }}
             />
