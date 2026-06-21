@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type MouseEvent } from "react";
 import {
   Globe, Flame, Server, Database, Key, Shield, ChevronRight,
   AlertTriangle, RefreshCw, Lock, User, Cloud, HardDrive, GitPullRequest,
@@ -111,11 +111,17 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+function decodeEscapedHtml(s: string): string {
+  return s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+}
+
 function renderAiMarkdown(text: string): string {
   const html = escapeHtml(text)
-    .replace(/```[\w]*\n?([\s\S]*?)```/g, (_, code) =>
-      `<pre class="bg-slate-900 border border-slate-700/50 rounded-lg px-3 py-2 text-xs font-mono text-slate-300 overflow-x-auto my-2 whitespace-pre-wrap">${code}</pre>`
-    )
+    .replace(/```[\w]*\n?([\s\S]*?)```/g, (_, code) => {
+      const commandText = decodeEscapedHtml(String(code)).trim();
+      const command = encodeURIComponent(commandText);
+      return `<div class="group/command my-1.5 flex items-start gap-2 rounded-md border border-slate-800 bg-slate-950/70 px-2 py-1.5"><pre class="min-w-0 flex-1 overflow-x-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed font-mono text-slate-300">${escapeHtml(commandText)}</pre><button type="button" data-copy-command="${command}" class="shrink-0 px-1.5 py-0.5 text-[8px] uppercase tracking-widest text-violet-300 border border-violet-900/60 bg-violet-950/20 hover:text-violet-200 hover:border-violet-700">Copy</button></div>`;
+    })
     .replace(/`([^`]+)`/g, '<code class="px-1 py-0.5 rounded bg-slate-800 text-sky-300 text-xs font-mono">$1</code>')
     .replace(/^### (.+)$/gm, '<p class="text-xs font-semibold text-slate-200 uppercase tracking-wider mt-3 mb-1">$1</p>')
     .replace(/^## (.+)$/gm, '<p class="text-sm font-semibold text-slate-200 mt-3 mb-1">$1</p>')
@@ -209,6 +215,33 @@ function PathCard({ path, index }: { path: CloudAttackPath; index: number }) {
     }
   }
 
+  async function copySuggestedCommand(event: MouseEvent<HTMLDivElement>) {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-copy-command]");
+    if (!button) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const command = decodeURIComponent(button.dataset.copyCommand ?? "");
+    if (!command) return;
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(command);
+    } else {
+      const textarea = document.createElement("textarea");
+      textarea.value = command;
+      textarea.setAttribute("readonly", "true");
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }
+    const previous = button.textContent;
+    button.textContent = "Copied";
+    window.setTimeout(() => {
+      button.textContent = previous ?? "Copy";
+    }, 1200);
+  }
+
   return (
     <div
       data-nav
@@ -249,20 +282,6 @@ function PathCard({ path, index }: { path: CloudAttackPath; index: number }) {
             <p style={{ fontSize: 12, fontWeight: 700, color: "#e5e7eb", fontFamily: "monospace" }}>
               {String(index + 1).padStart(2, "0")}. {path.title}
             </p>
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                void askAiForPath(Boolean(rec.text));
-              }}
-              disabled={rec.loading}
-              className="opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity flex items-center gap-1 px-1.5 py-0.5 text-[9px] uppercase tracking-widest"
-              style={{ border: "1px solid #3b0764", color: rec.loading ? "#6b7280" : "#c084fc", background: "rgba(88,28,135,0.12)" }}
-              title="Explain this attack path with AI"
-            >
-              {rec.loading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Sparkles className="w-2.5 h-2.5" />}
-              {rec.loading ? "Asking" : rec.text ? "Regenerate" : "Ask AI"}
-            </button>
           </div>
           {/* Mini node chain */}
           <div className="flex items-center gap-1 flex-wrap">
@@ -326,49 +345,57 @@ function PathCard({ path, index }: { path: CloudAttackPath; index: number }) {
         </div>
       )}
 
-      {(rec.loading || rec.error || rec.text) && (
-        <div onClick={(event) => event.stopPropagation()} className="border-t border-violet-900/30">
-          <div className="px-4 py-2 flex items-center justify-between gap-2">
-            <button
-              type="button"
-              onClick={() => rec.text ? setRecOpen((value) => !value) : void askAiForPath()}
-              disabled={rec.loading}
-              className="flex items-center gap-1.5 text-xs font-medium transition-all duration-150 rounded-lg px-2.5 py-1 text-violet-400 hover:text-violet-300 bg-violet-500/10 hover:bg-violet-500/15"
-            >
-              {rec.loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-              {rec.loading ? "Asking AI..." : "Attack Path AI"}
-            </button>
-            {rec.text && (
-              <div className="flex items-center gap-2">
-                <CopyAiResponseButton text={rec.text} compact />
-                <button
-                  type="button"
-                  onClick={() => setRecOpen((value) => !value)}
-                  className="text-slate-500 hover:text-slate-300 transition-colors"
-                >
-                  {recOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                </button>
-              </div>
-            )}
-          </div>
-
-          {rec.error && (
-            <div className="px-4 pb-3 flex items-center gap-2 text-xs font-mono" style={{ color: "#f87171" }}>
-              <AlertCircle className="w-3 h-3 shrink-0" />
-              {rec.error}
-            </div>
-          )}
-
-          {rec.text && recOpen && (
-            <div className="px-4 pb-4 border-t border-violet-900/20">
-              <div
-                className="mt-3 text-xs text-slate-300 leading-relaxed prose-answer"
-                dangerouslySetInnerHTML={{ __html: renderAiMarkdown(rec.text) }}
-              />
+      <div onClick={(event) => event.stopPropagation()} className="border-t border-slate-700/50">
+        <div className="px-4 py-2 flex items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={() => rec.text ? setRecOpen((value) => !value) : void askAiForPath()}
+            disabled={rec.loading}
+            className="flex items-center gap-1.5 text-xs font-medium transition-all duration-150 rounded-lg px-2.5 py-1 text-slate-400 hover:text-violet-400 hover:bg-violet-500/10 disabled:text-slate-500 disabled:cursor-not-allowed"
+          >
+            {rec.loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+            {rec.loading ? "Asking AI..." : rec.text ? "AI Recommendation" : "Ask AI"}
+          </button>
+          {rec.text && (
+            <div className="flex items-center gap-2">
+              <CopyAiResponseButton text={rec.text} compact />
+              <button
+                type="button"
+                onClick={() => setRecOpen((value) => !value)}
+                className="text-slate-500 hover:text-slate-300 transition-colors"
+              >
+                {recOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </button>
             </div>
           )}
         </div>
-      )}
+
+        {rec.error && (
+          <div className="px-4 pb-3 flex items-center gap-2 text-xs font-mono" style={{ color: "#f87171" }}>
+            <AlertCircle className="w-3 h-3 shrink-0" />
+            {rec.error}
+          </div>
+        )}
+
+        {rec.text && recOpen && (
+          <div className="px-4 pb-4 border-t border-violet-900/20">
+            <div
+              onClick={copySuggestedCommand}
+              className="mt-3 text-xs text-slate-300 leading-relaxed prose-answer"
+              dangerouslySetInnerHTML={{ __html: renderAiMarkdown(rec.text) }}
+            />
+            <button
+              type="button"
+              onClick={() => void askAiForPath(true)}
+              disabled={rec.loading}
+              className="mt-3 flex items-center gap-1 text-xs text-slate-600 hover:text-violet-400 transition-colors disabled:opacity-50"
+            >
+              <RefreshCw className="w-2.5 h-2.5" />
+              Regenerate
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
