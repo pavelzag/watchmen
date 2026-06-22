@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState, type MouseEvent } from "react";
+import { useEffect, useState, useMemo, type MouseEvent } from "react";
 import Link from "next/link";
-import { ArrowLeft, ShieldAlert, ShieldCheck, RefreshCw, Sparkles, Loader2, ChevronDown, ChevronUp, AlertCircle, GitPullRequest } from "lucide-react";
+import { ArrowLeft, ShieldAlert, ShieldCheck, RefreshCw, Sparkles, Loader2, ChevronDown, ChevronUp, AlertCircle, GitPullRequest, Search, X, Download, Star } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { computeFindings } from "@/lib/findings";
 import type { GcpSnapshot, SecurityFinding, SecurityFindingSeverity } from "@/lib/gcp/types";
@@ -87,40 +87,88 @@ function decodeEscapedHtml(s: string): string {
   return s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 }
 
-// Minimal markdown renderer for AI recommendations
 function renderMd(text: string, finding: CloudFinding): string {
-  // We manufacture a resource item for the primary finding resource to ensure it's always linkable
   const resources: ResourceItem[] = [
     { name: finding.resourceName, projectId: finding.projectId, type: finding.resourceType as any, cloud: finding.cloud }
   ];
 
   const html = escapeHtml(text)
-    // Code blocks
     .replace(/```[\w]*\n?([\s\S]*?)```/g, (_, code) => {
       const commandText = decodeEscapedHtml(String(code)).trim();
       const command = encodeURIComponent(commandText);
       return `<div class="group/command my-1.5 flex items-start gap-2 rounded-md border border-slate-800 bg-slate-950/70 px-2 py-1.5"><pre class="min-w-0 flex-1 overflow-x-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed font-mono text-slate-300">${escapeHtml(commandText)}</pre><button type="button" data-copy-command="${command}" class="shrink-0 px-1.5 py-0.5 text-[8px] uppercase tracking-widest text-violet-300 border border-violet-900/60 bg-violet-950/20 hover:text-violet-200 hover:border-violet-700">Copy</button></div>`;
-    }
-    )
-    // Inline code
+    })
     .replace(/`([^`]+)`/g, '<code class="px-1 py-0.5 rounded bg-slate-800 text-sky-300 text-xs font-mono">$1</code>')
-    // ### Headers
     .replace(/^### (.+)$/gm, '<p class="text-xs font-semibold text-slate-200 uppercase tracking-wider mt-3 mb-1">$1</p>')
-    // ## Headers
     .replace(/^## (.+)$/gm, '<p class="text-sm font-semibold text-slate-200 mt-3 mb-1">$1</p>')
-    // Bold
     .replace(/\*\*(.*?)\*\*/g, "<strong class=\"text-slate-200\">$1</strong>")
-    // Numbered list items
     .replace(/^\d+\. (.+)$/gm, '<li class="ml-4 list-decimal">$1</li>')
-    // Bullet list items
     .replace(/^[-*] (.+)$/gm, '<li class="ml-4 list-disc">$1</li>')
-    // Wrap consecutive li elements
     .replace(/(<li[\s\S]*?<\/li>\n?)+/g, (m) => `<ul class="space-y-1 my-1">${m}</ul>`)
-    // Line breaks (non-header, non-list)
     .replace(/\n(?!<)/g, "<br />");
 
   return linkifyText(html, resources);
 }
+
+// ── Pinned findings persistence ───────────────────────────────────────────
+
+const PINNED_KEY = "watchmen.pinned-findings.v1";
+
+function loadPinned(): Set<string> {
+  try {
+    const raw = localStorage.getItem(PINNED_KEY);
+    return raw ? new Set(JSON.parse(raw) as string[]) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function savePinned(ids: Set<string>) {
+  try {
+    localStorage.setItem(PINNED_KEY, JSON.stringify([...ids]));
+  } catch {}
+}
+
+// ── Export helpers ────────────────────────────────────────────────────────
+
+function exportCsv(findings: CloudFinding[]) {
+  const rows = [
+    ["Cloud", "Severity", "Resource Type", "Resource Name", "Project / Account", "Region", "Title", "Description", "Remediation Hint"],
+    ...findings.map((f) => [
+      f.cloud,
+      f.severity,
+      f.resourceType,
+      f.resourceName,
+      f.projectId,
+      f.region ?? "",
+      f.title,
+      f.description,
+      f.remediationHint ?? "",
+    ]),
+  ];
+  const csv = rows
+    .map((r) => r.map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(","))
+    .join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `findings-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportJson(findings: CloudFinding[]) {
+  const blob = new Blob([JSON.stringify(findings, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `findings-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ── FindingCard ───────────────────────────────────────────────────────────
 
 interface RecState {
   loading: boolean;
@@ -128,10 +176,19 @@ interface RecState {
   error: string | null;
 }
 
-function FindingCard({ finding, cfg }: { finding: CloudFinding; cfg: typeof SEVERITY_CONFIG[SecurityFindingSeverity] }) {
+function FindingCard({
+  finding,
+  cfg,
+  pinned,
+  onTogglePin,
+}: {
+  finding: CloudFinding;
+  cfg: typeof SEVERITY_CONFIG[SecurityFindingSeverity];
+  pinned: boolean;
+  onTogglePin: (id: string) => void;
+}) {
   const [rec, setRec] = useState<RecState>({ loading: false, text: null, error: null });
   const [open, setOpen] = useState(false);
-  const canAskAI = true;
 
   async function askAI() {
     setRec({ loading: true, text: null, error: null });
@@ -201,17 +258,30 @@ function FindingCard({ finding, cfg }: { finding: CloudFinding; cfg: typeof SEVE
             <span className="text-xs text-slate-500 font-mono">{finding.resourceType}</span>
             {finding.region && <span className="text-xs text-slate-600 font-mono">{finding.region}</span>}
           </div>
-          <span className="px-1.5 py-0.5 rounded text-xs bg-slate-700/60 text-slate-300 font-mono shrink-0">
-            {finding.projectId}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="px-1.5 py-0.5 rounded text-xs bg-slate-700/60 text-slate-300 font-mono shrink-0">
+              {finding.projectId}
+            </span>
+            <button
+              type="button"
+              onClick={() => onTogglePin(finding.id)}
+              title={pinned ? "Remove from watchlist" : "Add to watchlist"}
+              className={cn(
+                "opacity-0 group-hover:opacity-100 transition-all p-1 rounded",
+                pinned
+                  ? "opacity-100 text-amber-400 hover:text-amber-300"
+                  : "text-slate-600 hover:text-amber-400"
+              )}
+            >
+              <Star className={cn("w-3.5 h-3.5", pinned && "fill-current")} />
+            </button>
+          </div>
         </div>
         <p className="text-sm font-semibold text-white uppercase tracking-tight flex items-center gap-2">
           {finding.title}
-          {canAskAI && (
-            <button onClick={askAI} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-violet-400" title="Explain with AI">
-              <Sparkles className="w-3 h-3" />
-            </button>
-          )}
+          <button onClick={askAI} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-violet-400" title="Explain with AI">
+            <Sparkles className="w-3 h-3" />
+          </button>
         </p>
         <p className="text-xs text-slate-400 leading-relaxed group-hover:text-slate-300 transition-colors">
           {finding.description}
@@ -227,7 +297,6 @@ function FindingCard({ finding, cfg }: { finding: CloudFinding; cfg: typeof SEVE
       </div>
 
       {/* AI recommendation area */}
-      {canAskAI && (
       <div className="border-t border-slate-700/50">
         <div className="px-4 py-2 flex items-center justify-between gap-2">
           <button
@@ -262,7 +331,6 @@ function FindingCard({ finding, cfg }: { finding: CloudFinding; cfg: typeof SEVE
           )}
         </div>
 
-        {/* Error */}
         {rec.error && (
           <div className="px-4 pb-3 flex items-center gap-1.5 text-xs text-red-400">
             <AlertCircle className="w-3 h-3 shrink-0" />
@@ -270,7 +338,6 @@ function FindingCard({ finding, cfg }: { finding: CloudFinding; cfg: typeof SEVE
           </div>
         )}
 
-        {/* Recommendation */}
         {rec.text && open && (
           <div className="px-4 pb-4 border-t border-slate-700/30">
             <div className="mt-3 flex justify-end">
@@ -292,10 +359,48 @@ function FindingCard({ finding, cfg }: { finding: CloudFinding; cfg: typeof SEVE
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ── Export dropdown ───────────────────────────────────────────────────────
+
+function ExportButton({ findings }: { findings: CloudFinding[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        disabled={findings.length === 0}
+        className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-slate-600/50 text-slate-400 hover:text-slate-200 hover:border-slate-500 transition-colors disabled:opacity-40"
+      >
+        <Download className="w-3.5 h-3.5" />
+        Export
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-full mt-1 z-20 min-w-[120px] rounded-lg border border-slate-700 bg-slate-900 shadow-xl overflow-hidden">
+            <button
+              onClick={() => { exportCsv(findings); setOpen(false); }}
+              className="w-full text-left px-3 py-2 text-xs text-slate-300 hover:bg-slate-800 hover:text-white transition-colors"
+            >
+              Download CSV
+            </button>
+            <button
+              onClick={() => { exportJson(findings); setOpen(false); }}
+              className="w-full text-left px-3 py-2 text-xs text-slate-300 hover:bg-slate-800 hover:text-white transition-colors"
+            >
+              Download JSON
+            </button>
+          </div>
+        </>
       )}
     </div>
   );
 }
+
+// ── Main page ─────────────────────────────────────────────────────────────
 
 export default function FindingsPage() {
   const [findings, setFindings] = useState<CloudFinding[]>([]);
@@ -305,6 +410,12 @@ export default function FindingsPage() {
   const [cloudFilter, setCloudFilter] = useState<CloudFilter>("all");
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
   const [showRemediate, setShowRemediate] = useState(false);
+  const [search, setSearch] = useState("");
+  const [showWatchlist, setShowWatchlist] = useState(false);
+  const [pinned, setPinned] = useState<Set<string>>(() => {
+    if (typeof window === "undefined") return new Set();
+    return loadPinned();
+  });
 
   useEffect(() => {
     const cloud = new URLSearchParams(window.location.search).get("cloud");
@@ -313,6 +424,16 @@ export default function FindingsPage() {
       setFilter("all");
     }
   }, []);
+
+  function togglePin(id: string) {
+    setPinned((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      savePinned(next);
+      return next;
+    });
+  }
 
   async function load() {
     setLoading(true);
@@ -364,6 +485,23 @@ export default function FindingsPage() {
   };
 
   const cloudFiltered = cloudFilter === "all" ? findings : findings.filter((f) => f.cloud === cloudFilter);
+  const severityFiltered = filter === "all" ? cloudFiltered : cloudFiltered.filter((f) => f.severity === filter);
+  const watchlistFiltered = showWatchlist ? severityFiltered.filter((f) => pinned.has(f.id)) : severityFiltered;
+
+  const searchQuery = search.trim().toLowerCase();
+  const displayed = useMemo(() => {
+    if (!searchQuery) return watchlistFiltered;
+    return watchlistFiltered.filter((f) =>
+      f.title.toLowerCase().includes(searchQuery) ||
+      f.description.toLowerCase().includes(searchQuery) ||
+      f.resourceName.toLowerCase().includes(searchQuery) ||
+      f.resourceType.toLowerCase().includes(searchQuery) ||
+      f.projectId.toLowerCase().includes(searchQuery) ||
+      (f.remediationHint ?? "").toLowerCase().includes(searchQuery) ||
+      (f.region ?? "").toLowerCase().includes(searchQuery)
+    );
+  }, [watchlistFiltered, searchQuery]);
+
   const counts = {
     all: cloudFiltered.length,
     critical: cloudFiltered.filter((f) => f.severity === "critical").length,
@@ -372,7 +510,6 @@ export default function FindingsPage() {
     low: cloudFiltered.filter((f) => f.severity === "low").length,
   };
 
-  const displayed = filter === "all" ? cloudFiltered : cloudFiltered.filter((f) => f.severity === filter);
   const gcpRemediableFindings = displayed.filter((f) => f.cloud === "gcp");
   const bySeverity = severities
     .map((sev) => ({
@@ -380,6 +517,8 @@ export default function FindingsPage() {
       items: displayed.filter((f) => f.severity === sev),
     }))
     .filter((g) => g.items.length > 0);
+
+  const pinnedCount = pinned.size;
 
   return (
     <div className="space-y-6">
@@ -407,6 +546,7 @@ export default function FindingsPage() {
             Fix GCP with GitHub PR
           </button>
         )}
+        <ExportButton findings={displayed} />
         <ScanCloudButton onScanComplete={load} variant="modern" />
         <button
           onClick={load}
@@ -428,7 +568,27 @@ export default function FindingsPage() {
         <p className="text-sm text-red-400 px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/20">{error}</p>
       )}
 
-      {/* Filter tabs */}
+      {/* Search bar */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 pointer-events-none" />
+        <input
+          type="text"
+          placeholder="Search findings by title, resource, description, hint…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="w-full pl-9 pr-8 py-2 text-sm bg-slate-900/60 border border-slate-700/60 rounded-lg text-slate-200 placeholder-slate-600 focus:outline-none focus:border-slate-500 transition-colors"
+        />
+        {search && (
+          <button
+            onClick={() => setSearch("")}
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+
+      {/* Cloud + watchlist filter row */}
       <div className="flex items-center gap-2 flex-wrap">
         {([
           { key: "all", label: "All clouds" },
@@ -455,8 +615,32 @@ export default function FindingsPage() {
             {cloud.label} <span className="opacity-70">({cloudCounts[cloud.key]})</span>
           </button>
         ))}
+
+        <div className="w-px h-5 bg-slate-700/60 mx-1" />
+
+        <button
+          onClick={() => setShowWatchlist((w) => !w)}
+          className={cn(
+            "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all duration-150",
+            showWatchlist
+              ? "bg-amber-500/10 text-amber-300 border-amber-500/40 ring-1 ring-amber-400/50"
+              : "text-slate-400 bg-slate-800/40 border-slate-700/50 hover:border-slate-600"
+          )}
+        >
+          <Star className={cn("w-3 h-3", showWatchlist && "fill-current")} />
+          Watchlist
+          {pinnedCount > 0 && (
+            <span className={cn(
+              "px-1.5 py-0.5 rounded-full text-[10px] font-bold",
+              showWatchlist ? "bg-amber-400/20 text-amber-300" : "bg-slate-700 text-slate-400"
+            )}>
+              {pinnedCount}
+            </span>
+          )}
+        </button>
       </div>
 
+      {/* Severity filter row */}
       <div className="flex items-center gap-2 flex-wrap">
         {(["all", ...severities] as Filter[]).map((f) => {
           const cfg = f === "all" ? null : SEVERITY_CONFIG[f];
@@ -488,6 +672,12 @@ export default function FindingsPage() {
             </button>
           );
         })}
+
+        {search && (
+          <span className="text-xs text-slate-500 ml-1">
+            — {displayed.length} match{displayed.length !== 1 ? "es" : ""}
+          </span>
+        )}
       </div>
 
       {/* Content */}
@@ -514,7 +704,11 @@ export default function FindingsPage() {
       {!loading && findings.length > 0 && displayed.length === 0 && (
         <div className="text-center py-16">
           <ShieldCheck className="w-10 h-10 text-emerald-400 mx-auto mb-3" />
-          <p className="text-slate-300 font-medium">No findings match the selected filters</p>
+          <p className="text-slate-300 font-medium">
+            {showWatchlist && pinnedCount === 0
+              ? "No findings in your watchlist yet — star findings to track them here"
+              : "No findings match the selected filters"}
+          </p>
         </div>
       )}
 
@@ -538,7 +732,13 @@ export default function FindingsPage() {
 
             <div className="space-y-2 pl-2">
               {items.map((finding) => (
-                <FindingCard key={finding.id} finding={finding} cfg={cfg} />
+                <FindingCard
+                  key={finding.id}
+                  finding={finding}
+                  cfg={cfg}
+                  pinned={pinned.has(finding.id)}
+                  onTogglePin={togglePin}
+                />
               ))}
             </div>
           </div>

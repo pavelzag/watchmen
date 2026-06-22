@@ -14,6 +14,9 @@ import {
   Download,
   Shield,
   Printer,
+  X,
+  ExternalLink,
+  PanelRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ComplianceReport, ComplianceCategory, ControlResult, ControlStatus, ControlImpact } from "@/lib/compliance/types";
@@ -472,6 +475,158 @@ function PrintableComplianceReport({
   );
 }
 
+// ── ControlDrawer ─────────────────────────────────────────────────────────
+
+function ControlDrawer({
+  control,
+  standard,
+  onClose,
+}: {
+  control: ControlResult;
+  standard: Standard;
+  onClose: () => void;
+}) {
+  const statusCfg = STATUS_CONFIG[control.status];
+  const impactCfg = IMPACT_CONFIG[control.impact];
+  const rawControlId = baseControlId(control.id);
+  const controlCloud = cloudPrefix(control.id);
+  const resourcePage = CONTROL_RESOURCE_PAGE[rawControlId];
+  const refUrl = controlRefUrl(control.id, standard);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div
+        className="fixed inset-0 z-40 bg-black/50"
+        onClick={onClose}
+      />
+      {/* Drawer */}
+      <div
+        className="fixed top-0 right-0 h-full z-50 w-full max-w-lg flex flex-col overflow-hidden"
+        style={{ background: "var(--bg-card)", borderLeft: "1px solid var(--border-dim)", boxShadow: "-8px 0 32px rgba(0,0,0,0.6)" }}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700/60 shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className={cn("px-1.5 py-0.5 rounded text-xs font-mono bg-slate-700/60 text-slate-300 shrink-0")}>
+              {rawControlId}
+            </span>
+            {controlCloud && (
+              <span className={cn(
+                "px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border shrink-0",
+                controlCloud === "AWS"
+                  ? "bg-orange-500/10 text-orange-300 border-orange-500/30"
+                  : "bg-sky-500/10 text-sky-300 border-sky-500/30"
+              )}>
+                {controlCloud}
+              </span>
+            )}
+            <StatusBadge status={control.status} />
+          </div>
+          <button
+            onClick={onClose}
+            className="shrink-0 p-1.5 text-slate-500 hover:text-slate-200 hover:bg-slate-700/60 rounded transition-colors ml-2"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Scrollable body */}
+        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+          {/* Title & impact */}
+          <div className="space-y-1">
+            <p className="text-base font-semibold text-white leading-snug">{control.title}</p>
+            <p className={cn("text-xs font-medium", impactCfg.color)}>{impactCfg.label} impact</p>
+          </div>
+
+          {/* Description */}
+          <div className="space-y-1">
+            <p className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Description</p>
+            <p className="text-sm text-slate-300 leading-relaxed">{control.description}</p>
+          </div>
+
+          {/* Remediation */}
+          {control.remediationHint && control.status !== "pass" && control.status !== "suppressed" && (
+            <div className="space-y-1.5 p-3 rounded-lg bg-amber-500/5 border border-amber-500/20">
+              <p className="text-[10px] uppercase tracking-widest text-amber-400/80 font-semibold">Remediation</p>
+              <p className="text-sm text-slate-300 leading-relaxed">{control.remediationHint}</p>
+            </div>
+          )}
+
+          {/* Suppression justification */}
+          {control.status === "suppressed" && control.justification && (
+            <div className="p-3 rounded-lg bg-slate-700/30 border border-slate-600/40">
+              <p className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold mb-1">Suppression justification</p>
+              <p className="text-sm text-slate-400 italic">{control.justification}</p>
+            </div>
+          )}
+
+          {/* Evidence — all items, no truncation */}
+          {control.evidence.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">
+                Evidence — {control.evidence.length} resource{control.evidence.length !== 1 ? "s" : ""}
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {control.evidence.map((e, i) =>
+                  resourcePage ? (
+                    <Link
+                      key={i}
+                      href={`/dashboard/${resourcePage}?search=${encodeURIComponent(e.name)}`}
+                      onClick={onClose}
+                      className="px-2 py-1 rounded-md text-xs bg-slate-800 border border-slate-700/60 text-slate-300 hover:text-white hover:border-slate-500 transition-colors font-mono"
+                    >
+                      {e.name}
+                      {e.projectId && <span className="text-slate-600 ml-1">({e.projectId})</span>}
+                    </Link>
+                  ) : (
+                    <span key={i} className="px-2 py-1 rounded-md text-xs bg-slate-800 border border-slate-700/60 text-slate-300 font-mono">
+                      {e.name}
+                      {e.projectId && <span className="text-slate-600 ml-1">({e.projectId})</span>}
+                    </span>
+                  )
+                )}
+              </div>
+              {resourcePage && (
+                <Link
+                  href={`/dashboard/${resourcePage}`}
+                  onClick={onClose}
+                  className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-300 transition-colors"
+                >
+                  View all {resourcePage.replace("-", " ")} →
+                </Link>
+              )}
+            </div>
+          )}
+
+          {/* Reference link */}
+          {refUrl && (
+            <div className="pt-2 border-t border-slate-700/50">
+              <a
+                href={refUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-xs text-sky-400 hover:text-sky-300 transition-colors"
+              >
+                <ExternalLink className="w-3 h-3" />
+                View {standard === "iso27001" ? "ISO 27001:2022 Annex A" : "AICPA Trust Services Criteria"} reference
+              </a>
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
 // ── ControlCard ───────────────────────────────────────────────────────────
 
 interface RecState { loading: boolean; text: string | null; error: string | null }
@@ -482,11 +637,13 @@ function ControlCard({
   standard,
   onSuppressed,
   onRevoked,
+  onOpenDrawer,
 }: {
   control: ControlResult;
   standard: Standard;
   onSuppressed: (id: string, justification: string) => void;
   onRevoked: (id: string) => void;
+  onOpenDrawer: (control: ControlResult) => void;
 }) {
   const [rec, setRec] = useState<RecState>({ loading: false, text: null, error: null });
   const [open, setOpen] = useState(false);
@@ -619,6 +776,14 @@ function ControlCard({
               {impactCfg.label} impact
             </span>
           </div>
+          <button
+            onClick={() => onOpenDrawer(control)}
+            title="View full details"
+            className="shrink-0 flex items-center gap-1 text-[10px] text-slate-500 hover:text-slate-200 hover:bg-slate-700/60 px-2 py-1 rounded transition-colors uppercase tracking-widest"
+          >
+            <PanelRight className="w-3 h-3" />
+            Details
+          </button>
         </div>
 
         {/* Title + description */}
@@ -787,6 +952,7 @@ function CategorySection({
   forceExpand,
   onSuppressed,
   onRevoked,
+  onOpenDrawer,
 }: {
   category: ComplianceCategory;
   standard: Standard;
@@ -794,6 +960,7 @@ function CategorySection({
   forceExpand: boolean;
   onSuppressed: (id: string, justification: string) => void;
   onRevoked: (id: string) => void;
+  onOpenDrawer: (control: ControlResult) => void;
 }) {
   const visibleControls = (forceExpand || filter === "all")
     ? category.controls
@@ -863,6 +1030,7 @@ function CategorySection({
               standard={standard}
               onSuppressed={onSuppressed}
               onRevoked={onRevoked}
+              onOpenDrawer={onOpenDrawer}
             />
           ))}
         </div>
@@ -889,6 +1057,7 @@ export default function CompliancePage() {
   const [cloudFilter, setCloudFilter] = useState<CloudFilter>("all");
   const [history, setHistory] = useState<HistoryPoint[]>([]);
   const [isPrinting, setIsPrinting] = useState(false);
+  const [drawerControl, setDrawerControl] = useState<ControlResult | null>(null);
 
   async function load(std: Standard = standard) {
     setLoading(true);
@@ -1231,6 +1400,7 @@ export default function CompliancePage() {
               forceExpand={isPrinting}
               onSuppressed={handleSuppressed}
               onRevoked={handleRevoked}
+              onOpenDrawer={setDrawerControl}
             />
           ))}
           {!hasVisibleCategories && (
@@ -1261,6 +1431,14 @@ export default function CompliancePage() {
         </div>
       )}
     </div>
+
+    {drawerControl && (
+      <ControlDrawer
+        control={drawerControl}
+        standard={standard}
+        onClose={() => setDrawerControl(null)}
+      />
+    )}
     </>
   );
 }
