@@ -12,6 +12,7 @@ const DEMO_MODE = process.env.DEMO_MODE === "true";
 const LOCAL_AUTH_ENABLED = process.env.WATCHMEN_LOCAL_AUTH !== "false";
 const LOCAL_AUTH_EMAIL = process.env.WATCHMEN_LOCAL_EMAIL || "local@watchmen.dev";
 const LOCAL_AUTH_PASSWORD = process.env.WATCHMEN_LOCAL_PASSWORD || "";
+const LOCAL_AUTH_ENFORCE_ALLOWLIST = process.env.WATCHMEN_LOCAL_AUTH_ENFORCE_ALLOWLIST === "true";
 
 function hasUsableEnv(value: string | undefined, placeholder: string): value is string {
   return Boolean(value && value.trim() && !value.includes(placeholder) && !value.startsWith("your_"));
@@ -131,7 +132,7 @@ const providers = DEMO_MODE
                   : LOCAL_AUTH_EMAIL;
                 const password = typeof credentials?.password === "string" ? credentials.password : "";
                 if (LOCAL_AUTH_PASSWORD && password !== LOCAL_AUTH_PASSWORD) return null;
-                if (!isAllowed(email)) return null;
+                if (LOCAL_AUTH_ENFORCE_ALLOWLIST && !isAllowed(email)) return null;
                 return {
                   id: `local:${email}`,
                   name: email.split("@")[0] || "Watchmen User",

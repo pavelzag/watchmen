@@ -88,7 +88,7 @@ export default async function LoginPage({
               className="p-3 text-xs"
               style={{ border: "1px solid #5c3b00", background: "#0d0905", color: "#ffb020" }}
             >
-              // session expired; continue with Google to reconnect
+              // session expired; sign in again to reconnect
             </div>
           )}
 
@@ -97,7 +97,7 @@ export default async function LoginPage({
               className="p-3 text-xs"
               style={{ border: "1px solid #5c3b00", background: "#0d0905", color: "#ffb020" }}
             >
-              // sign-in failed; check server network access to Google OAuth
+              // sign-in failed; check your app auth configuration
             </div>
           )}
 
