@@ -255,7 +255,8 @@ export async function POST(req: NextRequest) {
             else send({ type: "result", ...result });
           } catch (err) {
             console.error("[api/aws/scan] streamed POST error:", err);
-            send({ type: "error", error: "AWS scan failed. Check server logs." });
+            const message = err instanceof Error ? err.message : "AWS scan failed. Check server logs.";
+            send({ type: "error", error: message });
           } finally {
             console.info(`[api/aws/scan:${scanId}] stream closed`, { durationMs: Date.now() - startedAt });
             controller.close();
@@ -283,7 +284,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(result);
   } catch (err) {
     console.error("[api/aws/scan] POST error:", err);
-    return NextResponse.json({ error: "AWS scan failed. Check server logs." }, { status: 500 });
+    const message = err instanceof Error ? err.message : "AWS scan failed. Check server logs.";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 

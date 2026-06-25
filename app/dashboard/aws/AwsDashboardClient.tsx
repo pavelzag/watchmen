@@ -153,6 +153,8 @@ export default function AwsDashboardClient({ embedded = false }: { embedded?: bo
       if (noCredentials) {
         setAwsCredsRequired(true);
         appendSyncLog(task.error ?? "[api/aws/scan] no AWS credentials configured", { taskId: task.id });
+      } else {
+        appendSyncLog(task.error ?? "[api/aws/scan] AWS scan failed", { taskId: task.id });
       }
     }
   }, [activeTaskId, appendSyncLog, tasks]);

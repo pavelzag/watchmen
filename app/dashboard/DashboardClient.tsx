@@ -55,14 +55,14 @@ function CloudConnectionCards({ connections }: { connections: CloudConnections }
             <div className="flex h-9 w-9 items-center justify-center bg-orange-500 text-sm font-bold text-white">A</div>
             <div>
               <p className="text-sm font-bold" style={{ color: "var(--amber)" }}>Amazon Web Services</p>
-              <p className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>Use an IAM role with external ID, or access keys for local/dev.</p>
+              <p className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>Use access keys by default, or switch to Role ARN for AssumeRole setups.</p>
             </div>
           </div>
           {connections.aws ? <Check className="h-4 w-4 text-emerald-400" /> : <ShieldCheck className="h-4 w-4 text-orange-300" />}
         </div>
         <Link href="/dashboard/settings" className="inline-flex items-center gap-2 px-3 py-2 text-xs font-bold" style={{ background: "var(--green)", color: "var(--bg)" }}>
           <ShieldCheck className="h-3.5 w-3.5" />
-          Connect role ARN
+          Connect access keys
         </Link>
       </div>
     </section>

@@ -191,7 +191,7 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
   const [cloudCreds, setCloudCreds] = useState<CloudCredRecord[]>([]);
   const [cloudLoading, setCloudLoading] = useState(true);
   const [gcpKeyInput, setGcpKeyInput] = useState("");
-  const [awsAuthMode, setAwsAuthMode] = useState<"role" | "keys">("role");
+  const [awsAuthMode, setAwsAuthMode] = useState<"role" | "keys">("keys");
   const [awsInputs, setAwsInputs] = useState({ accessKeyId: "", secretAccessKey: "", region: "us-east-1" });
   const [awsRoleInputs, setAwsRoleInputs] = useState({ roleArn: "", externalId: "", region: "us-east-1" });
   const [showAwsSecret, setShowAwsSecret] = useState(false);
@@ -1171,7 +1171,7 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
                       <div className="w-9 h-9 flex items-center justify-center text-sm font-bold text-white shrink-0 bg-orange-500">A</div>
                       <div>
                         <span className="text-sm font-bold" style={{ color: "var(--amber)" }}>Amazon Web Services</span>
-                        <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>AssumeRole with external ID is recommended. Access keys remain available for local/dev.</p>
+                        <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>Access keys are the default connection method. Role ARN remains available for AssumeRole setups.</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
@@ -1193,19 +1193,19 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
                     <div className="inline-flex border text-xs font-mono" style={{ borderColor: "var(--border-dim)" }}>
                       <button
                         type="button"
-                        onClick={() => setAwsAuthMode("role")}
-                        className="px-3 py-2"
-                        style={awsAuthMode === "role" ? { background: "var(--green)", color: "var(--bg)" } : { color: "var(--text-muted)" }}
-                      >
-                        Role ARN
-                      </button>
-                      <button
-                        type="button"
                         onClick={() => setAwsAuthMode("keys")}
                         className="px-3 py-2"
                         style={awsAuthMode === "keys" ? { background: "var(--green)", color: "var(--bg)" } : { color: "var(--text-muted)" }}
                       >
                         Access keys
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAwsAuthMode("role")}
+                        className="px-3 py-2"
+                        style={awsAuthMode === "role" ? { background: "var(--green)", color: "var(--bg)" } : { color: "var(--text-muted)" }}
+                      >
+                        Role ARN
                       </button>
                     </div>
                     {awsAuthMode === "role" ? (
