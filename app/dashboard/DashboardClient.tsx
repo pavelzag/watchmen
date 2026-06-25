@@ -327,18 +327,33 @@ export default function DashboardClient({ initialView = "gcp" }: { initialView?:
     }
   }, [cloudConnections]);
 
-  if (!cloudConnections || !hasAnyConnection) {
+  if (!cloudConnections) {
     return (
       <div className="min-h-screen p-4 flex flex-col" style={{ background: "#090909" }}>
         <div className="max-w-4xl mx-auto w-full space-y-4 flex-1">
           <div className="border p-4" style={{ borderColor: "var(--border-dim)", background: "#050505" }}>
             <p className="text-[10px] uppercase tracking-widest font-mono" style={{ color: "var(--border-dim)" }}>
-              {cloudConnections ? "// Connect a cloud provider" : "// Checking cloud connections"}
+              // Checking cloud connections
             </p>
             <p className="mt-2 text-sm font-mono" style={{ color: "var(--text-muted)" }}>
-              {cloudConnections
-                ? "Connect AWS or GCP before the dashboard shows cloud inventory, findings, compliance, and AI query tools."
-                : "The dashboard will show only provider connection actions until AWS or GCP credentials are configured."}
+              Loading dashboard state...
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!hasAnyConnection) {
+    return (
+      <div className="min-h-screen p-4 flex flex-col" style={{ background: "#090909" }}>
+        <div className="max-w-4xl mx-auto w-full space-y-4 flex-1">
+          <div className="border p-4" style={{ borderColor: "var(--border-dim)", background: "#050505" }}>
+            <p className="text-[10px] uppercase tracking-widest font-mono" style={{ color: "var(--border-dim)" }}>
+              // Connect a cloud provider
+            </p>
+            <p className="mt-2 text-sm font-mono" style={{ color: "var(--text-muted)" }}>
+              Connect AWS or GCP before the dashboard shows cloud inventory, findings, compliance, and AI query tools.
             </p>
           </div>
           <CloudConnectionCards connections={effectiveConnections} />
