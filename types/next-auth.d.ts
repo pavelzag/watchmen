@@ -5,6 +5,7 @@ declare module "next-auth" {
     accessToken?: string;
     error?: string;
     isDemoUser?: boolean;
+    isLocalUser?: boolean;
   }
 }
 
@@ -15,5 +16,6 @@ declare module "next-auth/jwt" {
     expiresAt?: number;
     error?: string;
     isDemoUser?: boolean;
+    isLocalUser?: boolean;
   }
 }
