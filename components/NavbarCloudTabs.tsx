@@ -11,9 +11,7 @@ export default function NavbarCloudTabs() {
     pathname.includes(sub)
   );
 
-  const isAwsContext = pathname?.startsWith("/dashboard/aws") ?? false;
-  const isAwsActive = isAwsContext && !isSubMenu;
-  const isGcpActive = !isAwsContext && pathname?.startsWith("/dashboard") && !isSubMenu;
+  const isDashboardActive = pathname === "/dashboard" && !isSubMenu;
 
   return (
     <div className="flex items-center h-full">
@@ -21,23 +19,12 @@ export default function NavbarCloudTabs() {
         href="/dashboard"
         className="flex items-center gap-1.5 px-3 h-full text-xs uppercase tracking-widest transition-colors"
         style={{
-          color: isGcpActive ? "var(--text-primary)" : "var(--text-muted)",
-          background: isGcpActive ? "var(--bg-card2)" : "transparent",
-          boxShadow: isGcpActive ? "0 0 18px #00ff4166" : undefined,
+          color: isDashboardActive ? "var(--text-primary)" : "var(--text-muted)",
+          background: isDashboardActive ? "var(--bg-card2)" : "transparent",
+          boxShadow: isDashboardActive ? "0 0 18px #00ff4166" : undefined,
         }}
       >
-        GCP
-      </Link>
-      <Link
-        href="/dashboard/aws"
-        className="flex items-center gap-1.5 px-3 h-full text-xs uppercase tracking-widest transition-colors"
-        style={{
-          color: isAwsActive ? "var(--text-primary)" : "var(--text-muted)",
-          background: isAwsActive ? "var(--bg-card2)" : "transparent",
-          boxShadow: isAwsActive ? "0 0 18px #00ff4166" : undefined,
-        }}
-      >
-        AWS
+        DASHBOARD
       </Link>
     </div>
   );

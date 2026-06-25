@@ -168,7 +168,7 @@ function indexAws(snap: AwsSnapshot): ResourceEntry[] {
       subtitle: `${u.accountId} · ${u.arn}`,
       type: "IAM User",
       cloud: "aws",
-      href: `/dashboard/aws/iam?search=${encodeURIComponent(u.userName)}`,
+      href: `/dashboard/aws/iam-users?search=${encodeURIComponent(u.userName)}`,
       keywords: `${u.userName} ${u.arn} ${u.accountId}`,
       Icon: User,
     });
@@ -181,7 +181,7 @@ function indexAws(snap: AwsSnapshot): ResourceEntry[] {
       subtitle: `${r.accountId} · ${r.arn}`,
       type: "IAM Role",
       cloud: "aws",
-      href: `/dashboard/aws/iam?search=${encodeURIComponent(r.roleName)}`,
+      href: `/dashboard/aws/iam-roles?search=${encodeURIComponent(r.roleName)}`,
       keywords: `${r.roleName} ${r.arn} ${r.accountId}`,
       Icon: KeySquare,
     });
@@ -207,7 +207,7 @@ function indexAws(snap: AwsSnapshot): ResourceEntry[] {
       subtitle: `${c.accountId} · ${c.region}`,
       type: "EKS Cluster",
       cloud: "aws",
-      href: `/dashboard/aws?search=${encodeURIComponent(c.clusterName)}`,
+      href: `/dashboard/aws/eks?search=${encodeURIComponent(c.clusterName)}`,
       keywords: `${c.clusterName} ${c.arn} ${c.accountId} ${c.region}`,
       Icon: Server,
     });
@@ -234,7 +234,7 @@ function indexAws(snap: AwsSnapshot): ResourceEntry[] {
       subtitle: `${fn.accountId} · ${fn.region}`,
       type: "Lambda",
       cloud: "aws",
-      href: `/dashboard/aws?search=${encodeURIComponent(fn.functionName)}`,
+      href: `/dashboard/aws/lambda?search=${encodeURIComponent(fn.functionName)}`,
       keywords: `${fn.functionName} ${fn.functionArn} ${fn.accountId} ${fn.region}`,
       Icon: Play,
     });
@@ -247,7 +247,7 @@ function indexAws(snap: AwsSnapshot): ResourceEntry[] {
       subtitle: `${db.accountId} · ${db.region} · ${db.dbEngine}`,
       type: "RDS Instance",
       cloud: "aws",
-      href: `/dashboard/aws?search=${encodeURIComponent(db.dbInstanceIdentifier)}`,
+      href: `/dashboard/aws/rds?search=${encodeURIComponent(db.dbInstanceIdentifier)}`,
       keywords: `${db.dbInstanceIdentifier} ${db.dbInstanceArn} ${db.accountId} ${db.region}`,
       Icon: Database,
     });
@@ -260,7 +260,7 @@ function indexAws(snap: AwsSnapshot): ResourceEntry[] {
       subtitle: `${rs.accountId} · ${rs.region}`,
       type: "Redshift",
       cloud: "aws",
-      href: `/dashboard/aws?search=${encodeURIComponent(rs.clusterIdentifier)}`,
+      href: `/dashboard/aws/redshift?search=${encodeURIComponent(rs.clusterIdentifier)}`,
       keywords: `${rs.clusterIdentifier} ${rs.accountId} ${rs.region}`,
       Icon: Database,
     });
@@ -273,7 +273,7 @@ function indexAws(snap: AwsSnapshot): ResourceEntry[] {
       subtitle: `${t.accountId} · ${t.region}`,
       type: "SNS Topic",
       cloud: "aws",
-      href: `/dashboard/aws?search=${encodeURIComponent(t.topicName)}`,
+      href: `/dashboard/aws/sns?search=${encodeURIComponent(t.topicName)}`,
       keywords: `${t.topicName} ${t.topicArn} ${t.accountId} ${t.region}`,
       Icon: Radio,
     });
@@ -286,7 +286,7 @@ function indexAws(snap: AwsSnapshot): ResourceEntry[] {
       subtitle: `${s.accountId} · ${s.region}`,
       type: "AWS Secret",
       cloud: "aws",
-      href: `/dashboard/aws?search=${encodeURIComponent(s.name)}`,
+      href: `/dashboard/aws/secrets?search=${encodeURIComponent(s.name)}`,
       keywords: `${s.name} ${s.arn} ${s.accountId} ${s.region}`,
       Icon: Lock,
     });
@@ -299,7 +299,7 @@ function indexAws(snap: AwsSnapshot): ResourceEntry[] {
       subtitle: `${sg.accountId} · ${sg.region} · ${sg.groupId}`,
       type: "Security Group",
       cloud: "aws",
-      href: `/dashboard/aws?search=${encodeURIComponent(sg.groupId)}`,
+      href: `/dashboard/aws/security-groups?search=${encodeURIComponent(sg.groupId)}`,
       keywords: `${sg.groupId} ${sg.groupName} ${sg.accountId} ${sg.region}`,
       Icon: Shield,
     });

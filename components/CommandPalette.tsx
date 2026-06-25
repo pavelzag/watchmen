@@ -39,16 +39,17 @@ const RESOURCE_LINKS: Record<string, string> = {
     rds_instance: "/dashboard/aws/rds",
     eks_cluster: "/dashboard/aws/eks",
     lambda_function: "/dashboard/aws/lambda",
-    iam_user: "/dashboard/aws/iam",
-    iam_role: "/dashboard/aws/iam",
-    aws_account: "/dashboard/aws",
+    iam_user: "/dashboard/aws/iam-users",
+    iam_role: "/dashboard/aws/iam-roles",
+    aws_account: "/dashboard?cloud=aws",
     load_balancer: "/dashboard/trace",
 };
 
 function resourceHref(item: ResourceItem): string {
     const base = RESOURCE_LINKS[item.type ?? ""];
     if (!base) return "#";
-    return `${base}?search=${encodeURIComponent(item.name)}`;
+    const separator = base.includes("?") ? "&" : "?";
+    return `${base}${separator}search=${encodeURIComponent(item.name)}`;
 }
 
 function escapeHtml(s: string): string {

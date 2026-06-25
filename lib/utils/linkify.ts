@@ -5,29 +5,30 @@ export const RESOURCE_LINKS: Record<string, { path: string; label: string; Icon:
     bucket: { path: "/dashboard/buckets", label: "Buckets", Icon: HardDrive },
     s3_bucket: { path: "/dashboard/buckets", label: "Buckets", Icon: HardDrive },
     gke_cluster: { path: "/dashboard/clusters", label: "GKE Clusters", Icon: Server },
-    eks_cluster: { path: "/dashboard/aws", label: "EKS Clusters", Icon: Server },
+    eks_cluster: { path: "/dashboard/aws/eks", label: "EKS Clusters", Icon: Server },
     service_account: { path: "/dashboard/service-accounts", label: "Service Accounts", Icon: KeySquare },
     vm: { path: "/dashboard/vms", label: "VMs", Icon: MonitorDot },
     ec2_instance: { path: "/dashboard/aws/ec2", label: "EC2 Instances", Icon: MonitorDot },
     cloud_run: { path: "/dashboard/cloud-run", label: "Cloud Run", Icon: Play },
-    lambda_function: { path: "/dashboard/aws", label: "Lambda Functions", Icon: Play },
+    lambda_function: { path: "/dashboard/aws/lambda", label: "Lambda Functions", Icon: Play },
     cloud_sql: { path: "/dashboard/cloud-sql", label: "Cloud SQL", Icon: Database },
-    rds_instance: { path: "/dashboard/aws", label: "RDS Instances", Icon: Database },
+    rds_instance: { path: "/dashboard/aws/rds", label: "RDS Instances", Icon: Database },
     bigquery: { path: "/dashboard/bigquery", label: "BigQuery", Icon: BarChart3 },
     pubsub: { path: "/dashboard/pubsub", label: "Pub/Sub", Icon: Radio },
     secret: { path: "/dashboard/secrets", label: "Secrets", Icon: Lock },
     firewall: { path: "/dashboard/firewall", label: "Firewall Rules", Icon: Flame },
     load_balancer: { path: "/dashboard/trace", label: "Load Balancers", Icon: Server },
-    iam_user: { path: "/dashboard/aws/iam", label: "IAM Users", Icon: User },
-    iam_role: { path: "/dashboard/aws/iam", label: "IAM Roles", Icon: KeySquare },
-    aws_account: { path: "/dashboard/aws", label: "AWS Account", Icon: Server },
+    iam_user: { path: "/dashboard/aws/iam-users", label: "IAM Users", Icon: User },
+    iam_role: { path: "/dashboard/aws/iam-roles", label: "IAM Roles", Icon: KeySquare },
+    aws_account: { path: "/dashboard?cloud=aws", label: "AWS Account", Icon: Server },
     container_image: { path: "/dashboard/container-scan", label: "Container Images", Icon: Server },
 };
 
 export function getResourceHref(item: ResourceItem): string {
     const base = RESOURCE_LINKS[item.type ?? ""]?.path;
     if (!base) return "#";
-    return `${base}?search=${encodeURIComponent(item.name)}`;
+    const separator = base.includes("?") ? "&" : "?";
+    return `${base}${separator}search=${encodeURIComponent(item.name)}`;
 }
 
 function escapeRegex(s: string): string {

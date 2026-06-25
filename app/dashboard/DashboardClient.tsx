@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import QueryBox, { type QueryResult } from "@/components/QueryBox";
 import ResultCard from "@/components/ResultCard";
 import SnapshotStats from "@/components/SnapshotStats";
@@ -89,7 +90,7 @@ function DashboardViewSwitch({
           // Dashboard view
         </p>
         <p className="mt-1 text-xs font-mono" style={{ color: "var(--text-muted)" }}>
-          Switch between the same GCP and AWS overviews available in the standalone cloud menus.
+          Switch between GCP and AWS without leaving the main dashboard.
         </p>
       </div>
       <div className="flex gap-2">
@@ -115,14 +116,15 @@ function DashboardViewSwitch({
   );
 }
 
-export default function DashboardClient() {
+export default function DashboardClient({ initialView = "gcp" }: { initialView?: DashboardView }) {
+  const router = useRouter();
   const [results, setResults] = useState<QueryResult[]>([]);
   const [scanVersion, setScanVersion] = useState(0);
   const [scanning, setScanning] = useState(false);
   const [hasAiKey, setHasAiKey] = useState<boolean | null>(null);
   const [gcpCredsRequired, setGcpCredsRequired] = useState(false);
   const [cloudConnections, setCloudConnections] = useState<CloudConnections | null>(null);
-  const [activeView, setActiveView] = useState<DashboardView>("gcp");
+  const [activeView, setActiveView] = useState<DashboardView>(initialView);
   const [demoSnapshot, setDemoSnapshot] = useState<object | null>(() => getDemoGcpSnapshot());
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [syncLog, setSyncLog] = useState<string[]>([]);
@@ -133,6 +135,11 @@ export default function DashboardClient() {
   const scanRequestCountRef = useRef(0);
   const taskCount = tasks.length;
   const finishedTaskCount = tasks.filter((task) => task.status === "completed" || task.status === "failed").length;
+
+  const handleViewChange = useCallback((view: DashboardView) => {
+    setActiveView(view);
+    router.replace(view === "aws" ? "/dashboard?cloud=aws" : "/dashboard?cloud=gcp", { scroll: false });
+  }, [router]);
 
   const appendSyncLog = useCallback((message: string, detail?: Record<string, unknown>) => {
     const suffix = detail ? ` ${JSON.stringify(detail)}` : "";
@@ -173,6 +180,10 @@ export default function DashboardClient() {
       .then((d) => setHasAiKey((d.keys ?? []).length > 0))
       .catch(() => setHasAiKey(null));
   }, []);
+
+  useEffect(() => {
+    setActiveView(initialView);
+  }, [initialView]);
 
   useEffect(() => {
     if (hasLoadedInitialSnapshotRef.current) return;
@@ -334,7 +345,7 @@ export default function DashboardClient() {
     return (
       <div className="min-h-screen p-4 flex flex-col" style={{ background: "#090909" }}>
         <div className="max-w-4xl mx-auto w-full space-y-4 flex-1">
-          <DashboardViewSwitch activeView={activeView} connections={effectiveConnections} onChange={setActiveView} />
+          <DashboardViewSwitch activeView={activeView} connections={effectiveConnections} onChange={handleViewChange} />
           <AwsDashboardClient embedded />
         </div>
       </div>
@@ -344,7 +355,7 @@ export default function DashboardClient() {
   return (
     <div className="min-h-screen p-4 flex flex-col" style={{ background: "#090909" }}>
       <div className="max-w-4xl mx-auto w-full space-y-4 flex-1">
-        <DashboardViewSwitch activeView={activeView} connections={effectiveConnections} onChange={setActiveView} />
+        <DashboardViewSwitch activeView={activeView} connections={effectiveConnections} onChange={handleViewChange} />
         <SnapshotStats
           scanVersion={scanVersion}
           onSyncRequest={() => triggerScan("manual")}

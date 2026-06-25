@@ -1,5 +1,5 @@
-import AwsDashboardClient from "./AwsDashboardClient";
+import { redirect } from "next/navigation";
 
 export default function AwsDashboardPage() {
-  return <AwsDashboardClient />;
+  redirect("/dashboard?cloud=aws");
 }

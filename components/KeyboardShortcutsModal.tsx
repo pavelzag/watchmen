@@ -3,8 +3,8 @@
 import { X } from "lucide-react";
 
 export const ROUTE_SHORTCUTS = [
-    { key: "G", href: "/dashboard", label: "GCP menu" },
-    { key: "A", href: "/dashboard/aws", label: "AWS menu" },
+    { key: "G", href: "/dashboard?cloud=gcp", label: "Dashboard: GCP" },
+    { key: "A", href: "/dashboard?cloud=aws", label: "Dashboard: AWS" },
     { key: "T", href: "/dashboard/tasks", label: "Tasks menu" },
     { key: "R", href: "/dashboard/trace", label: "Trace menu" },
     { key: "F", href: "/dashboard/findings", label: "Findings" },
