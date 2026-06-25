@@ -73,10 +73,12 @@ function DashboardViewSwitch({
   activeView,
   connections,
   onChange,
+  onConnect,
 }: {
   activeView: DashboardView;
   connections: CloudConnections;
   onChange: (view: DashboardView) => void;
+  onConnect: () => void;
 }) {
   const items: { view: DashboardView; label: string; connected: boolean }[] = [
     { view: "gcp", label: "GCP", connected: connections.gcp },
@@ -98,15 +100,15 @@ function DashboardViewSwitch({
           <button
             key={item.view}
             type="button"
-            disabled={!item.connected}
-            onClick={() => onChange(item.view)}
-            className="px-3 py-2 text-xs font-bold tracking-widest disabled:cursor-not-allowed disabled:opacity-40"
+            onClick={() => item.connected ? onChange(item.view) : onConnect()}
+            className="px-3 py-2 text-xs font-bold tracking-widest transition-opacity hover:opacity-90"
             style={{
               border: "1px solid var(--border-dim)",
               background: activeView === item.view ? "var(--green)" : "transparent",
-              color: activeView === item.view ? "var(--bg)" : "var(--text-muted)",
+              color: activeView === item.view ? "var(--bg)" : item.connected ? "var(--text-muted)" : "var(--amber)",
+              opacity: item.connected ? 1 : 0.75,
             }}
-            title={item.connected ? `Show ${item.label}` : `Connect ${item.label} in Settings first`}
+            title={item.connected ? `Show ${item.label}` : `Connect ${item.label} in Settings`}
           >
             {item.label}
           </button>
@@ -139,6 +141,10 @@ export default function DashboardClient({ initialView = "gcp" }: { initialView?:
   const handleViewChange = useCallback((view: DashboardView) => {
     setActiveView(view);
     router.replace(view === "aws" ? "/dashboard?cloud=aws" : "/dashboard?cloud=gcp", { scroll: false });
+  }, [router]);
+
+  const handleCloudConnect = useCallback(() => {
+    router.push("/dashboard/settings");
   }, [router]);
 
   const appendSyncLog = useCallback((message: string, detail?: Record<string, unknown>) => {
@@ -345,7 +351,7 @@ export default function DashboardClient({ initialView = "gcp" }: { initialView?:
     return (
       <div className="min-h-screen p-4 flex flex-col" style={{ background: "#090909" }}>
         <div className="max-w-4xl mx-auto w-full space-y-4 flex-1">
-          <DashboardViewSwitch activeView={activeView} connections={effectiveConnections} onChange={handleViewChange} />
+          <DashboardViewSwitch activeView={activeView} connections={effectiveConnections} onChange={handleViewChange} onConnect={handleCloudConnect} />
           <AwsDashboardClient embedded />
         </div>
       </div>
@@ -355,7 +361,7 @@ export default function DashboardClient({ initialView = "gcp" }: { initialView?:
   return (
     <div className="min-h-screen p-4 flex flex-col" style={{ background: "#090909" }}>
       <div className="max-w-4xl mx-auto w-full space-y-4 flex-1">
-        <DashboardViewSwitch activeView={activeView} connections={effectiveConnections} onChange={handleViewChange} />
+        <DashboardViewSwitch activeView={activeView} connections={effectiveConnections} onChange={handleViewChange} onConnect={handleCloudConnect} />
         <SnapshotStats
           scanVersion={scanVersion}
           onSyncRequest={() => triggerScan("manual")}
