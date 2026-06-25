@@ -5,7 +5,7 @@ import Link from "next/link";
 import QueryBox, { type QueryResult } from "@/components/QueryBox";
 import ResultCard from "@/components/ResultCard";
 import SnapshotStats from "@/components/SnapshotStats";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Cloud, KeyRound, ShieldCheck } from "lucide-react";
 import { saveSnapshot } from "@/lib/snapshot-history";
 import type { GcpSnapshot } from "@/lib/gcp/types";
 import { getDemoCredentials, getDemoGcpSnapshot, setDemoGcpSnapshot } from "@/lib/demo-credentials";
@@ -26,6 +26,7 @@ export default function DashboardClient() {
   const [scanning, setScanning] = useState(false);
   const [hasAiKey, setHasAiKey] = useState<boolean | null>(null);
   const [gcpCredsRequired, setGcpCredsRequired] = useState(false);
+  const [cloudConnections, setCloudConnections] = useState<{ gcp: boolean; aws: boolean } | null>(null);
   const [demoSnapshot, setDemoSnapshot] = useState<object | null>(() => getDemoGcpSnapshot());
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [syncLog, setSyncLog] = useState<string[]>([]);
@@ -48,10 +49,11 @@ export default function DashboardClient() {
     const requestNumber = scanRequestCountRef.current;
     const demoCreds = getDemoCredentials();
     if (reason === "manual") setSyncLog([]);
-    if (!demoCreds.gcp && gcpCredsRequired) {
+    if (!demoCreds.gcp && (gcpCredsRequired || cloudConnections?.gcp === false)) {
       appendSyncLog("[gcp-dashboard] scan blocked: no GCP credentials configured", { reason });
       console.info("[gcp-dashboard] scan blocked: no GCP credentials configured", { reason });
       setScanning(false);
+      setGcpCredsRequired(true);
       return;
     }
     const taskId = startGcpScan(demoCreds.gcp ? { demoCredentials: { gcp: demoCreds.gcp } } : {});
@@ -67,7 +69,7 @@ export default function DashboardClient() {
     });
     setActiveTaskId(taskId);
     setScanning(true);
-  }, [appendSyncLog, gcpCredsRequired, startGcpScan]);
+  }, [appendSyncLog, cloudConnections?.gcp, gcpCredsRequired, startGcpScan]);
 
   useEffect(() => {
     fetch("/api/settings/keys")
@@ -92,10 +94,15 @@ export default function DashboardClient() {
     fetch("/api/settings/credentials")
       .then((r) => r.json())
       .then((data: { credentials?: { provider: string }[] }) => {
-        hasGcpServiceAccount = (data.credentials ?? []).some((credential) => credential.provider === "gcp");
+        const providers = data.credentials ?? [];
+        hasGcpServiceAccount = providers.some((credential) => credential.provider === "gcp");
+        setCloudConnections({
+          gcp: hasGcpServiceAccount,
+          aws: providers.some((credential) => credential.provider === "aws"),
+        });
         appendSyncLog("[gcp-dashboard] GCP credential state", {
           serviceAccountConfigured: hasGcpServiceAccount,
-          googleSessionFallback: true,
+          googleSessionFallback: false,
         });
         return fetch("/api/scan");
       })
@@ -110,7 +117,9 @@ export default function DashboardClient() {
           fetchedAt: data.fetchedAt ?? data.snapshot?.fetchedAt ?? null,
         });
         if (!data.snapshot && !hasGcpServiceAccount) {
-          appendSyncLog("[gcp-dashboard] no saved GCP service account; sync will use Google session if available");
+          setGcpCredsRequired(true);
+          appendSyncLog("[gcp-dashboard] no saved GCP service account; connect one before syncing");
+          return;
         }
         if (!data.snapshot) triggerScan("initial_missing_snapshot");
         if (data.snapshot?.snapshotId) saveSnapshot(data.snapshot as GcpSnapshot);
@@ -119,6 +128,7 @@ export default function DashboardClient() {
         appendSyncLog("[gcp-dashboard] failed to load GCP snapshot", {
           error: error instanceof Error ? error.message : String(error),
         });
+        setCloudConnections((current) => current ?? { gcp: false, aws: false });
       });
   }, [appendSyncLog, triggerScan]);
 
@@ -192,8 +202,49 @@ export default function DashboardClient() {
           isSyncing={scanning}
           overrideSnapshot={demoSnapshot}
           syncDisabled={gcpCredsRequired}
-          syncDisabledReason="Add GCP credentials in Settings or sign in again before syncing GCP."
+          syncDisabledReason="Add GCP credentials in Settings before syncing GCP."
         />
+        {cloudConnections && (!cloudConnections.gcp || !cloudConnections.aws) && (
+          <section className="grid gap-3 md:grid-cols-2">
+            <div className="border p-4 space-y-3" style={{ borderColor: "rgba(59, 130, 246, 0.28)", background: "rgba(59, 130, 246, 0.06)" }}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-9 w-9 items-center justify-center bg-blue-500 text-sm font-bold text-white">G</div>
+                  <div>
+                    <p className="text-sm font-bold text-blue-400">Google Cloud</p>
+                    <p className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>Connect a service account for live GCP scans.</p>
+                  </div>
+                </div>
+                {cloudConnections.gcp ? <Check className="h-4 w-4 text-emerald-400" /> : <Cloud className="h-4 w-4 text-blue-300" />}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Link href="/dashboard/settings" className="inline-flex items-center gap-2 px-3 py-2 text-xs font-bold" style={{ background: "#3b82f6", color: "#fff" }}>
+                  <KeyRound className="h-3.5 w-3.5" />
+                  Connect service account
+                </Link>
+                <span className="inline-flex items-center px-3 py-2 text-xs font-mono" style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}>
+                  Google OAuth linking planned
+                </span>
+              </div>
+            </div>
+            <div className="border p-4 space-y-3" style={{ borderColor: "rgba(249, 115, 22, 0.28)", background: "rgba(249, 115, 22, 0.06)" }}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-9 w-9 items-center justify-center bg-orange-500 text-sm font-bold text-white">A</div>
+                  <div>
+                    <p className="text-sm font-bold" style={{ color: "var(--amber)" }}>Amazon Web Services</p>
+                    <p className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>Use an IAM role with external ID, or access keys for local/dev.</p>
+                  </div>
+                </div>
+                {cloudConnections.aws ? <Check className="h-4 w-4 text-emerald-400" /> : <ShieldCheck className="h-4 w-4 text-orange-300" />}
+              </div>
+              <Link href="/dashboard/settings" className="inline-flex items-center gap-2 px-3 py-2 text-xs font-bold" style={{ background: "var(--green)", color: "var(--bg)" }}>
+                <ShieldCheck className="h-3.5 w-3.5" />
+                Connect role ARN
+              </Link>
+            </div>
+          </section>
+        )}
         {gcpCredsRequired && (
           <div
             className="px-3 py-2 text-xs font-mono"

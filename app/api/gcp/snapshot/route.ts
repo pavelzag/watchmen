@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { fetchGcpSnapshot, extractUsers, extractServiceAccountEmails } from "@/lib/gcp";
-import { initGoogleAuthFromKey, initUserAuth, useMockData } from "@/lib/gcp/client";
+import { initGoogleAuthFromKey, useMockData } from "@/lib/gcp/client";
 import { getGkeClusters } from "@/lib/gcp/gke";
 import { sql, ensureGcpSnapshotTable } from "@/lib/db";
 import { getUserCloudCredentials } from "@/lib/credentials";
@@ -9,7 +9,6 @@ import type { GcpSnapshot } from "@/lib/gcp/types";
 
 async function refreshLiveGkeClusters(
   email: string,
-  accessToken: unknown,
   snapshot: GcpSnapshot,
 ): Promise<GcpSnapshot> {
   const projectIds = [
@@ -23,8 +22,6 @@ async function refreshLiveGkeClusters(
   const gcpCreds = await getUserCloudCredentials(email, "gcp");
   if (gcpCreds?.serviceAccountKey) {
     initGoogleAuthFromKey(gcpCreds.serviceAccountKey as string);
-  } else if (typeof accessToken === "string" && accessToken) {
-    initUserAuth(accessToken);
   } else {
     return snapshot;
   }
@@ -78,7 +75,7 @@ export async function GET() {
     }
 
     const row = result.rows[0];
-    const snapshot = await refreshLiveGkeClusters(email, session.accessToken, row.snapshot as GcpSnapshot);
+    const snapshot = await refreshLiveGkeClusters(email, row.snapshot as GcpSnapshot);
 
     return NextResponse.json({
       ...snapshot,

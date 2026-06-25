@@ -191,7 +191,9 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
   const [cloudCreds, setCloudCreds] = useState<CloudCredRecord[]>([]);
   const [cloudLoading, setCloudLoading] = useState(true);
   const [gcpKeyInput, setGcpKeyInput] = useState("");
+  const [awsAuthMode, setAwsAuthMode] = useState<"role" | "keys">("role");
   const [awsInputs, setAwsInputs] = useState({ accessKeyId: "", secretAccessKey: "", region: "us-east-1" });
+  const [awsRoleInputs, setAwsRoleInputs] = useState({ roleArn: "", externalId: "", region: "us-east-1" });
   const [showAwsSecret, setShowAwsSecret] = useState(false);
   const [cloudSaving, setCloudSaving] = useState<Record<string, boolean>>({ gcp: false, aws: false, ghcr: false, dockerhub: false, github: false });
   const [cloudDeleting, setCloudDeleting] = useState<Record<string, boolean>>({ gcp: false, aws: false, ghcr: false, dockerhub: false, github: false });
@@ -669,11 +671,17 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
       if (provider === "gcp") {
         credentials = { serviceAccountKey: gcpKeyInput.trim() };
       } else if (provider === "aws") {
-        credentials = {
-          accessKeyId: awsInputs.accessKeyId.trim(),
-          secretAccessKey: awsInputs.secretAccessKey.trim(),
-          region: awsInputs.region.trim() || "us-east-1",
-        };
+        credentials = awsAuthMode === "role"
+          ? {
+              roleArn: awsRoleInputs.roleArn.trim(),
+              externalId: awsRoleInputs.externalId.trim(),
+              region: awsRoleInputs.region.trim() || "us-east-1",
+            }
+          : {
+              accessKeyId: awsInputs.accessKeyId.trim(),
+              secretAccessKey: awsInputs.secretAccessKey.trim(),
+              region: awsInputs.region.trim() || "us-east-1",
+            };
       } else if (provider === "ghcr") {
         credentials = { token: ghcrToken.trim() };
       } else if (provider === "dockerhub") {
@@ -690,7 +698,10 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
       if (!res.ok) { setCloudErrors((e) => ({ ...e, [provider]: data.error ?? "Unknown error" })); return; }
       setCloudCreds(data.credentials);
       if (provider === "gcp") setGcpKeyInput("");
-      else if (provider === "aws") setAwsInputs({ accessKeyId: "", secretAccessKey: "", region: "us-east-1" });
+      else if (provider === "aws") {
+        setAwsInputs({ accessKeyId: "", secretAccessKey: "", region: "us-east-1" });
+        setAwsRoleInputs({ roleArn: "", externalId: "", region: "us-east-1" });
+      }
       else if (provider === "ghcr") setGhcrToken("");
       else if (provider === "dockerhub") setDockerHubInputs({ username: "", token: "" });
       else if (provider === "github") setGithubToken("");
@@ -1160,7 +1171,7 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
                       <div className="w-9 h-9 flex items-center justify-center text-sm font-bold text-white shrink-0 bg-orange-500">A</div>
                       <div>
                         <span className="text-sm font-bold" style={{ color: "var(--amber)" }}>Amazon Web Services</span>
-                        <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>IAM access keys for AWS scanning</p>
+                        <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>AssumeRole with external ID is recommended. Access keys remain available for local/dev.</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
@@ -1179,39 +1190,84 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
                     </div>
                   </div>
                   <div className="space-y-2">
-                    <input type="text" value={awsInputs.accessKeyId} onChange={(e) => setAwsInputs((i) => ({ ...i, accessKeyId: e.target.value }))}
-                      placeholder={record ? "New Access Key ID (leave blank to keep existing)" : "Access Key ID (AKIA...)"}
-                      className="w-full px-3 py-2 bg-transparent border text-xs placeholder:opacity-30 outline-none font-mono"
-                      style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
-                    />
-                    <div className="relative">
-                      <input type={showAwsSecret ? "text" : "password"} value={awsInputs.secretAccessKey} onChange={(e) => setAwsInputs((i) => ({ ...i, secretAccessKey: e.target.value }))}
-                        placeholder="Secret Access Key"
-                        className="w-full pl-3 pr-9 py-2 bg-transparent border text-xs placeholder:opacity-30 outline-none font-mono"
-                        style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
-                      />
-                      <button type="button" onClick={() => setShowAwsSecret((s) => !s)} className="absolute right-2.5 top-1/2 -translate-y-1/2 hover:text-white transition-colors" style={{ color: "var(--text-muted)" }}>
-                        {showAwsSecret ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    <div className="inline-flex border text-xs font-mono" style={{ borderColor: "var(--border-dim)" }}>
+                      <button
+                        type="button"
+                        onClick={() => setAwsAuthMode("role")}
+                        className="px-3 py-2"
+                        style={awsAuthMode === "role" ? { background: "var(--green)", color: "var(--bg)" } : { color: "var(--text-muted)" }}
+                      >
+                        Role ARN
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAwsAuthMode("keys")}
+                        className="px-3 py-2"
+                        style={awsAuthMode === "keys" ? { background: "var(--green)", color: "var(--bg)" } : { color: "var(--text-muted)" }}
+                      >
+                        Access keys
                       </button>
                     </div>
-                    <input type="text" value={awsInputs.region} onChange={(e) => setAwsInputs((i) => ({ ...i, region: e.target.value }))}
-                      placeholder="Region (default: us-east-1)"
-                      className="w-full px-3 py-2 bg-transparent border text-xs placeholder:opacity-30 outline-none font-mono"
-                      style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
-                    />
+                    {awsAuthMode === "role" ? (
+                      <>
+                        <input type="text" value={awsRoleInputs.roleArn} onChange={(e) => setAwsRoleInputs((i) => ({ ...i, roleArn: e.target.value }))}
+                          placeholder={record ? "New Role ARN" : "Role ARN (arn:aws:iam::123456789012:role/WatchmenReadOnly)"}
+                          className="w-full px-3 py-2 bg-transparent border text-xs placeholder:opacity-30 outline-none font-mono"
+                          style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
+                        />
+                        <input type="text" value={awsRoleInputs.externalId} onChange={(e) => setAwsRoleInputs((i) => ({ ...i, externalId: e.target.value }))}
+                          placeholder="External ID (recommended)"
+                          className="w-full px-3 py-2 bg-transparent border text-xs placeholder:opacity-30 outline-none font-mono"
+                          style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
+                        />
+                        <input type="text" value={awsRoleInputs.region} onChange={(e) => setAwsRoleInputs((i) => ({ ...i, region: e.target.value }))}
+                          placeholder="STS Region (default: us-east-1)"
+                          className="w-full px-3 py-2 bg-transparent border text-xs placeholder:opacity-30 outline-none font-mono"
+                          style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
+                        />
+                      </>
+                    ) : (
+                      <>
+                        <input type="text" value={awsInputs.accessKeyId} onChange={(e) => setAwsInputs((i) => ({ ...i, accessKeyId: e.target.value }))}
+                          placeholder={record ? "New Access Key ID" : "Access Key ID (AKIA...)"}
+                          className="w-full px-3 py-2 bg-transparent border text-xs placeholder:opacity-30 outline-none font-mono"
+                          style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
+                        />
+                        <div className="relative">
+                          <input type={showAwsSecret ? "text" : "password"} value={awsInputs.secretAccessKey} onChange={(e) => setAwsInputs((i) => ({ ...i, secretAccessKey: e.target.value }))}
+                            placeholder="Secret Access Key"
+                            className="w-full pl-3 pr-9 py-2 bg-transparent border text-xs placeholder:opacity-30 outline-none font-mono"
+                            style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
+                          />
+                          <button type="button" onClick={() => setShowAwsSecret((s) => !s)} className="absolute right-2.5 top-1/2 -translate-y-1/2 hover:text-white transition-colors" style={{ color: "var(--text-muted)" }}>
+                            {showAwsSecret ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
+                        <input type="text" value={awsInputs.region} onChange={(e) => setAwsInputs((i) => ({ ...i, region: e.target.value }))}
+                          placeholder="Region (default: us-east-1)"
+                          className="w-full px-3 py-2 bg-transparent border text-xs placeholder:opacity-30 outline-none font-mono"
+                          style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
+                        />
+                      </>
+                    )}
+                    {awsAuthMode === "role" && (
+                      <p className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>
+                        The Watchmen server must have base AWS credentials that can call sts:AssumeRole for this role.
+                      </p>
+                    )}
                     {error && <p className="text-xs text-red-400 font-mono">{error}</p>}
                     <button
                       onClick={() => saveCloudCred("aws")}
-                      disabled={(!awsInputs.accessKeyId.trim() || !awsInputs.secretAccessKey.trim()) || isSaving}
+                      disabled={(awsAuthMode === "role" ? !awsRoleInputs.roleArn.trim() : (!awsInputs.accessKeyId.trim() || !awsInputs.secretAccessKey.trim())) || isSaving}
                       className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold transition-all duration-150"
                       style={
-                        (awsInputs.accessKeyId.trim() && awsInputs.secretAccessKey.trim()) && !isSaving
+                        (awsAuthMode === "role" ? awsRoleInputs.roleArn.trim() : (awsInputs.accessKeyId.trim() && awsInputs.secretAccessKey.trim())) && !isSaving
                           ? { background: "var(--green)", color: "var(--bg)" }
                           : { border: "1px solid var(--border-dim)", color: "var(--text-muted)", opacity: 0.5 }
                       }
                     >
                       {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
-                      {isSaving ? "Testing…" : record ? "Update & Test" : "Connect & Test"}
+                      {isSaving ? "Testing…" : record ? "Update & Test" : awsAuthMode === "role" ? "Connect Role & Test" : "Connect Keys & Test"}
                     </button>
                   </div>
                 </div>

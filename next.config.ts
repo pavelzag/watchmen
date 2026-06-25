@@ -1,5 +1,7 @@
 import type { NextConfig } from "next";
 
+const skipBuildValidation = process.env.NEXT_SKIP_BUILD_VALIDATION === "1";
+
 const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "X-Frame-Options", value: "DENY" },
@@ -27,6 +29,12 @@ const nextConfig: NextConfig = {
   // Standalone output bundles only what's needed — required for Docker/K8s/Cloud Run.
   // Vercel ignores this and uses its own build pipeline, so it's safe to always enable.
   output: "standalone",
+  eslint: {
+    ignoreDuringBuilds: skipBuildValidation,
+  },
+  typescript: {
+    ignoreBuildErrors: skipBuildValidation,
+  },
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];
   },

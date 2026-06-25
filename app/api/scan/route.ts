@@ -156,13 +156,12 @@ export async function POST(req: NextRequest) {
     }
 
     const gcpCreds = await getUserCloudCredentials(email, "gcp");
-    const accessToken = session.accessToken;
 
-    if (!gcpCreds && !accessToken) {
+    if (!gcpCreds) {
       console.info(`[api/scan:${scanId}] no GCP credentials configured`, { email });
       return {
         ok: false as const,
-        error: "No GCP credentials configured (Service Account or Session Login Required).",
+        error: "No GCP credentials configured. Connect a service account in Settings.",
         credentialsRequired: true,
         status: 422,
       };
@@ -173,17 +172,16 @@ export async function POST(req: NextRequest) {
       message: "Starting live GCP scan",
       percent: 0,
       metadata: {
-        credentialMode: gcpCreds ? "service_account" : accessToken ? "session_access_token" : "none",
+        credentialMode: "service_account",
       },
     });
 
     const snapshot = await withDebugTiming(scope, "fetchGcpSnapshot.live", {
       email,
-      credentialMode: gcpCreds ? "service_account" : accessToken ? "session_access_token" : "none",
+      credentialMode: "service_account",
     }, () =>
       fetchGcpSnapshot({
         serviceAccountKey: gcpCreds?.serviceAccountKey as string | undefined,
-        accessToken: !gcpCreds ? (accessToken as string | undefined) : undefined,
         onProgress: emit,
       })
     );
@@ -206,10 +204,9 @@ export async function POST(req: NextRequest) {
       `;
     });
 
-    const credentialMode = gcpCreds ? "service_account" : accessToken ? "session_access_token" : "none";
     const snapshotSummary = {
       ...summarizeGcpSnapshot(snapshot),
-      credentialMode,
+      credentialMode: "service_account",
     };
     console.info(`[api/scan:${scanId}] POST complete`, {
       mode: "live",

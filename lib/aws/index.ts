@@ -1,4 +1,4 @@
-import { useMockAwsData, type AwsCredentials } from "./client";
+import { resolveAwsCredentials, useMockAwsData, type AwsCredentials } from "./client";
 import { getIamUsers, getIamRoles } from "./iam";
 import { getS3Buckets } from "./s3";
 import { getEksClusters } from "./eks";
@@ -31,7 +31,7 @@ export async function fetchAwsSnapshot(
   options?: AwsCredentials & { forceMock?: boolean; onProgress?: (event: TaskProgressEvent) => void }
 ): Promise<AwsSnapshot> {
   const mock = useMockAwsData(options?.forceMock);
-  const creds = options;
+  const creds = await resolveAwsCredentials(options);
   let completedServices = 0;
   const totalServices = 12;
 

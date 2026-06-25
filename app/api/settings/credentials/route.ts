@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { STSClient, GetCallerIdentityCommand } from "@aws-sdk/client-sts";
+import { STSClient, GetCallerIdentityCommand, AssumeRoleCommand } from "@aws-sdk/client-sts";
 import { initGoogleAuthFromKey } from "@/lib/gcp/client";
 import {
   ensureCredentialsTable,
@@ -49,27 +49,55 @@ export async function POST(req: NextRequest) {
       );
     }
   } else if (provider === "aws") {
-    if (!credentials?.accessKeyId || !credentials?.secretAccessKey) {
+    if (credentials?.roleArn) {
+      try {
+        const sts = new STSClient({ region: credentials.region ?? "us-east-1" });
+        const assumed = await sts.send(new AssumeRoleCommand({
+          RoleArn: credentials.roleArn,
+          ExternalId: credentials.externalId || undefined,
+          RoleSessionName: `watchmen-validate-${Date.now()}`,
+        }));
+        if (!assumed.Credentials?.AccessKeyId || !assumed.Credentials.SecretAccessKey) {
+          throw new Error("AssumeRole did not return temporary credentials.");
+        }
+        const identity = new STSClient({
+          region: credentials.region ?? "us-east-1",
+          credentials: {
+            accessKeyId: assumed.Credentials.AccessKeyId,
+            secretAccessKey: assumed.Credentials.SecretAccessKey,
+            sessionToken: assumed.Credentials.SessionToken,
+          },
+        });
+        await identity.send(new GetCallerIdentityCommand({}));
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return NextResponse.json(
+          { error: `AWS role validation failed: ${msg}` },
+          { status: 422 }
+        );
+      }
+    } else if (!credentials?.accessKeyId || !credentials?.secretAccessKey) {
       return NextResponse.json(
-        { error: "accessKeyId and secretAccessKey are required." },
+        { error: "roleArn or accessKeyId and secretAccessKey are required." },
         { status: 400 }
       );
-    }
-    try {
-      const sts = new STSClient({
-        region: credentials.region ?? "us-east-1",
-        credentials: {
-          accessKeyId: credentials.accessKeyId,
-          secretAccessKey: credentials.secretAccessKey,
-        },
-      });
-      await sts.send(new GetCallerIdentityCommand({}));
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return NextResponse.json(
-        { error: `AWS credential test failed: ${msg}` },
-        { status: 422 }
-      );
+    } else {
+      try {
+        const sts = new STSClient({
+          region: credentials.region ?? "us-east-1",
+          credentials: {
+            accessKeyId: credentials.accessKeyId,
+            secretAccessKey: credentials.secretAccessKey,
+          },
+        });
+        await sts.send(new GetCallerIdentityCommand({}));
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return NextResponse.json(
+          { error: `AWS credential test failed: ${msg}` },
+          { status: 422 }
+        );
+      }
     }
   } else if (provider === "ghcr") {
     if (!credentials?.token) {

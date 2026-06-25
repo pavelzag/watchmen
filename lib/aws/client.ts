@@ -1,8 +1,36 @@
+import { AssumeRoleCommand, STSClient } from "@aws-sdk/client-sts";
+import type { AwsCredentialIdentity } from "@aws-sdk/types";
+
 export type AwsCredentials = {
   accessKeyId?: string;
   secretAccessKey?: string;
+  sessionToken?: string;
+  roleArn?: string;
+  externalId?: string;
   region?: string;
 };
+
+export async function resolveAwsCredentials(creds?: AwsCredentials): Promise<AwsCredentials | undefined> {
+  if (!creds?.roleArn) return creds;
+
+  const sts = new STSClient({ region: creds.region ?? "us-east-1" });
+  const assumed = await sts.send(new AssumeRoleCommand({
+    RoleArn: creds.roleArn,
+    ExternalId: creds.externalId || undefined,
+    RoleSessionName: `watchmen-${Date.now()}`,
+  }));
+
+  if (!assumed.Credentials?.AccessKeyId || !assumed.Credentials.SecretAccessKey) {
+    throw new Error("AssumeRole succeeded but did not return temporary credentials.");
+  }
+
+  return {
+    accessKeyId: assumed.Credentials.AccessKeyId,
+    secretAccessKey: assumed.Credentials.SecretAccessKey,
+    sessionToken: assumed.Credentials.SessionToken,
+    region: creds.region,
+  };
+}
 
 /**
  * Returns AWS SDK client options, merging explicit credentials when provided.
@@ -15,7 +43,8 @@ export function getAwsClientOptions(region: string, creds?: AwsCredentials) {
       credentials: {
         accessKeyId: creds.accessKeyId,
         secretAccessKey: creds.secretAccessKey,
-      },
+        sessionToken: creds.sessionToken,
+      } satisfies AwsCredentialIdentity,
     };
   }
   return { region };

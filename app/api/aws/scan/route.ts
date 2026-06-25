@@ -208,6 +208,8 @@ export async function POST(req: NextRequest) {
     const snapshot = await fetchAwsSnapshot({
       accessKeyId: awsCreds.accessKeyId,
       secretAccessKey: awsCreds.secretAccessKey,
+      roleArn: awsCreds.roleArn,
+      externalId: awsCreds.externalId,
       region: awsCreds.region,
       onProgress: emit,
     });
