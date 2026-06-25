@@ -10,6 +10,7 @@ import { saveSnapshot } from "@/lib/snapshot-history";
 import type { GcpSnapshot } from "@/lib/gcp/types";
 import { getDemoCredentials, getDemoGcpSnapshot, setDemoGcpSnapshot } from "@/lib/demo-credentials";
 import { useTaskCenter } from "@/components/TaskCenterProvider";
+import AwsDashboardClient from "./aws/AwsDashboardClient";
 
 const GCP_SUGGESTED_QUERIES = [
   "Which Cloud Storage buckets are publicly accessible?",
@@ -20,13 +21,108 @@ const GCP_SUGGESTED_QUERIES = [
   "Show all firewall rules open to the internet",
 ];
 
+type CloudConnections = { gcp: boolean; aws: boolean };
+type DashboardView = "gcp" | "aws";
+
+function CloudConnectionCards({ connections }: { connections: CloudConnections }) {
+  return (
+    <section className="grid gap-3 md:grid-cols-2">
+      <div className="border p-4 space-y-3" style={{ borderColor: "rgba(59, 130, 246, 0.28)", background: "rgba(59, 130, 246, 0.06)" }}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center bg-blue-500 text-sm font-bold text-white">G</div>
+            <div>
+              <p className="text-sm font-bold text-blue-400">Google Cloud</p>
+              <p className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>Connect a service account for live GCP scans.</p>
+            </div>
+          </div>
+          {connections.gcp ? <Check className="h-4 w-4 text-emerald-400" /> : <Cloud className="h-4 w-4 text-blue-300" />}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Link href="/dashboard/settings" className="inline-flex items-center gap-2 px-3 py-2 text-xs font-bold" style={{ background: "#3b82f6", color: "#fff" }}>
+            <KeyRound className="h-3.5 w-3.5" />
+            Connect service account
+          </Link>
+          <span className="inline-flex items-center px-3 py-2 text-xs font-mono" style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}>
+            Google OAuth linking planned
+          </span>
+        </div>
+      </div>
+      <div className="border p-4 space-y-3" style={{ borderColor: "rgba(249, 115, 22, 0.28)", background: "rgba(249, 115, 22, 0.06)" }}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center bg-orange-500 text-sm font-bold text-white">A</div>
+            <div>
+              <p className="text-sm font-bold" style={{ color: "var(--amber)" }}>Amazon Web Services</p>
+              <p className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>Use an IAM role with external ID, or access keys for local/dev.</p>
+            </div>
+          </div>
+          {connections.aws ? <Check className="h-4 w-4 text-emerald-400" /> : <ShieldCheck className="h-4 w-4 text-orange-300" />}
+        </div>
+        <Link href="/dashboard/settings" className="inline-flex items-center gap-2 px-3 py-2 text-xs font-bold" style={{ background: "var(--green)", color: "var(--bg)" }}>
+          <ShieldCheck className="h-3.5 w-3.5" />
+          Connect role ARN
+        </Link>
+      </div>
+    </section>
+  );
+}
+
+function DashboardViewSwitch({
+  activeView,
+  connections,
+  onChange,
+}: {
+  activeView: DashboardView;
+  connections: CloudConnections;
+  onChange: (view: DashboardView) => void;
+}) {
+  const items: { view: DashboardView; label: string; connected: boolean }[] = [
+    { view: "gcp", label: "GCP", connected: connections.gcp },
+    { view: "aws", label: "AWS", connected: connections.aws },
+  ];
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 border px-3 py-2" style={{ borderColor: "var(--border-dim)", background: "#050505" }}>
+      <div>
+        <p className="text-[10px] uppercase tracking-widest font-mono" style={{ color: "var(--border-dim)" }}>
+          // Dashboard view
+        </p>
+        <p className="mt-1 text-xs font-mono" style={{ color: "var(--text-muted)" }}>
+          Switch between the same GCP and AWS overviews available in the standalone cloud menus.
+        </p>
+      </div>
+      <div className="flex gap-2">
+        {items.map((item) => (
+          <button
+            key={item.view}
+            type="button"
+            disabled={!item.connected}
+            onClick={() => onChange(item.view)}
+            className="px-3 py-2 text-xs font-bold tracking-widest disabled:cursor-not-allowed disabled:opacity-40"
+            style={{
+              border: "1px solid var(--border-dim)",
+              background: activeView === item.view ? "var(--green)" : "transparent",
+              color: activeView === item.view ? "var(--bg)" : "var(--text-muted)",
+            }}
+            title={item.connected ? `Show ${item.label}` : `Connect ${item.label} in Settings first`}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function DashboardClient() {
   const [results, setResults] = useState<QueryResult[]>([]);
   const [scanVersion, setScanVersion] = useState(0);
   const [scanning, setScanning] = useState(false);
   const [hasAiKey, setHasAiKey] = useState<boolean | null>(null);
   const [gcpCredsRequired, setGcpCredsRequired] = useState(false);
-  const [cloudConnections, setCloudConnections] = useState<{ gcp: boolean; aws: boolean } | null>(null);
+  const [cloudConnections, setCloudConnections] = useState<CloudConnections | null>(null);
+  const [activeView, setActiveView] = useState<DashboardView>("gcp");
   const [demoSnapshot, setDemoSnapshot] = useState<object | null>(() => getDemoGcpSnapshot());
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [syncLog, setSyncLog] = useState<string[]>([]);
@@ -82,8 +178,17 @@ export default function DashboardClient() {
     if (hasLoadedInitialSnapshotRef.current) return;
     hasLoadedInitialSnapshotRef.current = true;
 
+    const demoCreds = getDemoCredentials();
+    if (demoCreds.gcp || demoCreds.aws) {
+      setCloudConnections({ gcp: Boolean(demoCreds.gcp), aws: Boolean(demoCreds.aws) });
+      if (!demoCreds.gcp && demoCreds.aws) {
+        setActiveView("aws");
+        return;
+      }
+    }
+
     // If demo credentials are already stored in sessionStorage, trigger a real scan immediately
-    if (getDemoCredentials().gcp) {
+    if (demoCreds.gcp) {
       setGcpCredsRequired(false);
       triggerScan("initial_demo_credentials");
       return;
@@ -193,9 +298,53 @@ export default function DashboardClient() {
     setResults((prev) => [result, ...prev]);
   }
 
+  const effectiveConnections = cloudConnections ?? { gcp: false, aws: false };
+  const hasAnyConnection = effectiveConnections.gcp || effectiveConnections.aws;
+
+  useEffect(() => {
+    if (!cloudConnections) return;
+    if (!cloudConnections.gcp && cloudConnections.aws) {
+      setActiveView("aws");
+    } else if (cloudConnections.gcp && !cloudConnections.aws) {
+      setActiveView("gcp");
+    }
+  }, [cloudConnections]);
+
+  if (!cloudConnections || !hasAnyConnection) {
+    return (
+      <div className="min-h-screen p-4 flex flex-col" style={{ background: "#090909" }}>
+        <div className="max-w-4xl mx-auto w-full space-y-4 flex-1">
+          <div className="border p-4" style={{ borderColor: "var(--border-dim)", background: "#050505" }}>
+            <p className="text-[10px] uppercase tracking-widest font-mono" style={{ color: "var(--border-dim)" }}>
+              {cloudConnections ? "// Connect a cloud provider" : "// Checking cloud connections"}
+            </p>
+            <p className="mt-2 text-sm font-mono" style={{ color: "var(--text-muted)" }}>
+              {cloudConnections
+                ? "Connect AWS or GCP before the dashboard shows cloud inventory, findings, compliance, and AI query tools."
+                : "The dashboard will show only provider connection actions until AWS or GCP credentials are configured."}
+            </p>
+          </div>
+          <CloudConnectionCards connections={effectiveConnections} />
+        </div>
+      </div>
+    );
+  }
+
+  if (activeView === "aws" && effectiveConnections.aws) {
+    return (
+      <div className="min-h-screen p-4 flex flex-col" style={{ background: "#090909" }}>
+        <div className="max-w-4xl mx-auto w-full space-y-4 flex-1">
+          <DashboardViewSwitch activeView={activeView} connections={effectiveConnections} onChange={setActiveView} />
+          <AwsDashboardClient embedded />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen p-4 flex flex-col" style={{ background: "#090909" }}>
       <div className="max-w-4xl mx-auto w-full space-y-4 flex-1">
+        <DashboardViewSwitch activeView={activeView} connections={effectiveConnections} onChange={setActiveView} />
         <SnapshotStats
           scanVersion={scanVersion}
           onSyncRequest={() => triggerScan("manual")}
@@ -204,47 +353,6 @@ export default function DashboardClient() {
           syncDisabled={gcpCredsRequired}
           syncDisabledReason="Add GCP credentials in Settings before syncing GCP."
         />
-        {cloudConnections && (!cloudConnections.gcp || !cloudConnections.aws) && (
-          <section className="grid gap-3 md:grid-cols-2">
-            <div className="border p-4 space-y-3" style={{ borderColor: "rgba(59, 130, 246, 0.28)", background: "rgba(59, 130, 246, 0.06)" }}>
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-9 w-9 items-center justify-center bg-blue-500 text-sm font-bold text-white">G</div>
-                  <div>
-                    <p className="text-sm font-bold text-blue-400">Google Cloud</p>
-                    <p className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>Connect a service account for live GCP scans.</p>
-                  </div>
-                </div>
-                {cloudConnections.gcp ? <Check className="h-4 w-4 text-emerald-400" /> : <Cloud className="h-4 w-4 text-blue-300" />}
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Link href="/dashboard/settings" className="inline-flex items-center gap-2 px-3 py-2 text-xs font-bold" style={{ background: "#3b82f6", color: "#fff" }}>
-                  <KeyRound className="h-3.5 w-3.5" />
-                  Connect service account
-                </Link>
-                <span className="inline-flex items-center px-3 py-2 text-xs font-mono" style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}>
-                  Google OAuth linking planned
-                </span>
-              </div>
-            </div>
-            <div className="border p-4 space-y-3" style={{ borderColor: "rgba(249, 115, 22, 0.28)", background: "rgba(249, 115, 22, 0.06)" }}>
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-9 w-9 items-center justify-center bg-orange-500 text-sm font-bold text-white">A</div>
-                  <div>
-                    <p className="text-sm font-bold" style={{ color: "var(--amber)" }}>Amazon Web Services</p>
-                    <p className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>Use an IAM role with external ID, or access keys for local/dev.</p>
-                  </div>
-                </div>
-                {cloudConnections.aws ? <Check className="h-4 w-4 text-emerald-400" /> : <ShieldCheck className="h-4 w-4 text-orange-300" />}
-              </div>
-              <Link href="/dashboard/settings" className="inline-flex items-center gap-2 px-3 py-2 text-xs font-bold" style={{ background: "var(--green)", color: "var(--bg)" }}>
-                <ShieldCheck className="h-3.5 w-3.5" />
-                Connect role ARN
-              </Link>
-            </div>
-          </section>
-        )}
         {gcpCredsRequired && (
           <div
             className="px-3 py-2 text-xs font-mono"

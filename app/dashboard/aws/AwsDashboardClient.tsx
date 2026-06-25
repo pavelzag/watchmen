@@ -19,7 +19,7 @@ const AWS_SUGGESTED_QUERIES = [
   "What can watchmen-scanner access?",
 ];
 
-export default function AwsDashboardClient() {
+export default function AwsDashboardClient({ embedded = false }: { embedded?: boolean } = {}) {
   const [results, setResults] = useState<QueryResult[]>([]);
   const [scanVersion, setScanVersion] = useState(0);
   const [scanning, setScanning] = useState(false);
@@ -162,8 +162,8 @@ export default function AwsDashboardClient() {
   }
 
   return (
-    <div className="min-h-screen p-4 flex flex-col" style={{ background: "#090909" }}>
-      <div className="max-w-4xl mx-auto w-full space-y-4 flex-1">
+    <div className={embedded ? "flex flex-col" : "min-h-screen p-4 flex flex-col"} style={{ background: "#090909" }}>
+      <div className={embedded ? "w-full space-y-4 flex-1" : "max-w-4xl mx-auto w-full space-y-4 flex-1"}>
 
         <AwsSnapshotStats
           scanVersion={scanVersion}
