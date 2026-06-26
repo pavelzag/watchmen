@@ -1,5 +1,63 @@
-import { sql } from "@vercel/postgres";
-export { sql };
+import {
+  sql as pooledSql,
+  type QueryResult,
+  type QueryResultRow,
+} from "@vercel/postgres";
+import { Pool } from "pg";
+
+type SqlPrimitive = string | number | boolean | undefined | null;
+
+let directPool: Pool | null = null;
+
+function getConnectionString(): string | undefined {
+  return process.env.POSTGRES_URL || process.env.DATABASE_URL;
+}
+
+function shouldUseDirectClient(connectionString: string | undefined): boolean {
+  if (!connectionString) return false;
+  try {
+    const url = new URL(connectionString);
+    const host = url.hostname;
+    return (
+      host === "localhost" ||
+      host === "127.0.0.1" ||
+      host === "host.docker.internal" ||
+      host.endsWith(".internal") ||
+      !host.includes("-pooler.")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function templateToQuery(strings: TemplateStringsArray, values: SqlPrimitive[]): { text: string; values: SqlPrimitive[] } {
+  let text = strings[0] ?? "";
+  for (let index = 0; index < values.length; index += 1) {
+    text += `$${index + 1}${strings[index + 1] ?? ""}`;
+  }
+  return { text, values };
+}
+
+function getDirectPool(): Pool {
+  if (!directPool) {
+    const connectionString = getConnectionString();
+    directPool = new Pool({ connectionString });
+  }
+  return directPool;
+}
+
+export async function sql<O extends QueryResultRow>(
+  strings: TemplateStringsArray,
+  ...values: SqlPrimitive[]
+): Promise<QueryResult<O>> {
+  const connectionString = getConnectionString();
+  if (shouldUseDirectClient(connectionString)) {
+    const pool = getDirectPool();
+    const query = templateToQuery(strings, values);
+    return pool.query<O>(query.text, query.values);
+  }
+  return pooledSql<O>(strings, ...values);
+}
 
 let backgroundTasksTableReady: Promise<void> | null = null;
 

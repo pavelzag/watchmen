@@ -232,7 +232,15 @@ export async function POST(req: NextRequest) {
     const encoder = new TextEncoder();
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
-        const send = (event: unknown) => sendStreamEvent(controller, encoder, event);
+        let closed = false;
+        const send = (event: unknown) => {
+          if (closed) return;
+          try {
+            sendStreamEvent(controller, encoder, event);
+          } catch {
+            closed = true;
+          }
+        };
         void (async () => {
           try {
             const result = await runScan((progress) => send({ type: "progress", progress }));
@@ -246,7 +254,10 @@ export async function POST(req: NextRequest) {
             send({ type: "error", error: "Scan failed. Check server logs." });
           } finally {
             console.info(`[api/scan:${scanId}] stream closed`, { durationMs: Date.now() - startedAt });
-            controller.close();
+            if (!closed) {
+              closed = true;
+              controller.close();
+            }
           }
         })();
       },

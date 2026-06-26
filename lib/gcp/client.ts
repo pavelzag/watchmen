@@ -46,6 +46,17 @@ export function initGoogleAuthFromKey(saKeyJson: string) {
   google.options({ auth } as Parameters<typeof google.options>[0]);
 }
 
+export function getProjectIdFromServiceAccountKey(saKeyJson: string): string | null {
+  try {
+    const credentials = JSON.parse(saKeyJson) as { project_id?: unknown };
+    return typeof credentials.project_id === "string" && credentials.project_id.trim()
+      ? credentials.project_id.trim()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Initializes googleapis with a user OAuth access token globally.
  * Call this before any google.* API call when using per-user OAuth.
@@ -279,10 +290,11 @@ export function useMockData(forced?: boolean): boolean {
 }
 
 export function getProjectIds(): string[] {
+  const exampleProjectIds = new Set(["my-project-id", "another-project-id"]);
   return (process.env.GCP_PROJECTS ?? "")
     .split(",")
     .map((p) => p.trim())
-    .filter(Boolean);
+    .filter((projectId) => projectId && !exampleProjectIds.has(projectId));
 }
 
 /**
