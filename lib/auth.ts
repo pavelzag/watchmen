@@ -170,6 +170,7 @@ const providers = DEMO_MODE
     ];
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
+  trustHost: true,
   providers,
   callbacks: {
     signIn({ account, profile }) {
