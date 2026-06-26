@@ -6,10 +6,16 @@ import DetailPageHeader from "@/components/DetailPageHeader";
 import DetailDrawer, { DrawerField, DrawerSection } from "@/components/DetailDrawer";
 import ExportButton from "@/components/ExportButton";
 import CopyTextButton from "@/components/CopyTextButton";
+import { GCP_SCAN_CAPABILITIES, enrichGcpScanWarning } from "@/lib/gcp/scan-coverage";
 import type { GcpScanWarning, GcpSnapshot } from "@/lib/gcp/types";
 
 type SortField = "service" | "projectId" | "code";
 type SortDir = "asc" | "desc";
+type CapabilityStatus = {
+  state: "readable" | "blocked" | "not_checked";
+  warning?: GcpScanWarning;
+  blockedBy?: string;
+};
 
 function sortWarnings(warnings: GcpScanWarning[], sortField: SortField, sortDir: SortDir): GcpScanWarning[] {
   return [...warnings].sort((a, b) => {
@@ -73,6 +79,27 @@ function codeStyle(code: GcpScanWarning["code"]) {
   return "bg-slate-500/10 border-slate-500/30 text-slate-300";
 }
 
+function allCommands(warning: GcpScanWarning): string[] {
+  const commands: string[] = [];
+  if (warning.code === "api_not_enabled" && warning.enableApiCommand) commands.push(warning.enableApiCommand);
+  commands.push(...(warning.grantCommands ?? []));
+  return commands;
+}
+
+function capabilityStatus(
+  service: string,
+  warningByService: Map<string, GcpScanWarning[]>
+): CapabilityStatus {
+  const warning = warningByService.get(service)?.[0];
+  if (warning) return { state: "blocked", warning };
+
+  const capability = GCP_SCAN_CAPABILITIES.find((item) => item.service === service);
+  const blockedDependency = capability?.dependsOn?.find((dependency) => warningByService.has(dependency));
+  if (blockedDependency) return { state: "not_checked", blockedBy: blockedDependency };
+
+  return { state: "readable" };
+}
+
 export default function ScanCoveragePage() {
   const [warnings, setWarnings] = useState<GcpScanWarning[]>([]);
   const [loading, setLoading] = useState(true);
@@ -90,7 +117,7 @@ export default function ScanCoveragePage() {
       const res = await fetch("/api/gcp/snapshot");
       if (!res.ok) throw new Error("Failed to load GCP data");
       const snap: GcpSnapshot = await res.json();
-      setWarnings(snap.scanWarnings ?? []);
+      setWarnings((snap.scanWarnings ?? []).map(enrichGcpScanWarning));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
     } finally {
@@ -118,7 +145,17 @@ export default function ScanCoveragePage() {
   }, [warnings, serviceFilter, search, sortField, sortDir]);
 
   const accessIssues = warnings.filter((warning) => warning.code === "permission_denied" || warning.code === "unauthenticated").length;
-  const transientIssues = warnings.filter((warning) => warning.retryable).length;
+  const warningByService = useMemo(() => {
+    const map = new Map<string, GcpScanWarning[]>();
+    for (const warning of warnings) {
+      map.set(warning.service, [...(map.get(warning.service) ?? []), warning]);
+    }
+    return map;
+  }, [warnings]);
+  const blockedServices = GCP_SCAN_CAPABILITIES.filter((capability) => warningByService.has(capability.service)).length;
+  const notCheckedServices = GCP_SCAN_CAPABILITIES.filter((capability) => capabilityStatus(capability.service, warningByService).state === "not_checked").length;
+  const readableServices = GCP_SCAN_CAPABILITIES.length - blockedServices - notCheckedServices;
+  const scannerPrincipal = warnings.find((warning) => warning.principal)?.principal;
 
   return (
     <>
@@ -150,6 +187,10 @@ export default function ScanCoveragePage() {
                 retryable: warning.retryable,
                 message: warning.message,
                 detail: warning.detail ?? "",
+                principal: warning.principal ?? "",
+                requiredRoles: warning.requiredRoles?.join(", ") ?? "",
+                requiredApi: warning.requiredApi ?? "",
+                commands: allCommands(warning).join("\n"),
               }))}
               filename="scan-coverage"
             />
@@ -158,9 +199,9 @@ export default function ScanCoveragePage() {
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {[
-            { label: "Total warnings", value: warnings.length, color: "#f5d76e" },
+            { label: "Readable services", value: readableServices, color: "#34d399" },
             { label: "Access-related", value: accessIssues, color: "#f87171" },
-            { label: "Temporary / retryable", value: transientIssues, color: "#fbbf24" },
+            { label: "Blocked / unchecked", value: blockedServices + notCheckedServices, color: "#fbbf24" },
           ].map((item) => (
             <div key={item.label} className="glass rounded-xl px-4 py-3 border border-slate-700/50">
               <p className="text-xs uppercase tracking-wider text-slate-500">{item.label}</p>
@@ -174,6 +215,69 @@ export default function ScanCoveragePage() {
             {error}
           </div>
         )}
+
+        <div className="glass rounded-2xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-700/40">
+            <h2 className="text-xs font-bold uppercase tracking-widest text-slate-400">GCP Account Coverage</h2>
+            <p className="text-xs text-slate-500 mt-1">Shows what the connected account can read in the latest scan and which grants unblock missing areas.</p>
+            {scannerPrincipal && <p className="text-xs text-slate-500 mt-1">Scanner principal: <span className="font-mono text-slate-300">{scannerPrincipal}</span></p>}
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-slate-800/60">
+                <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-slate-400">Area</th>
+                <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-slate-400">Status</th>
+                <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-slate-400">Watchmen Can Show</th>
+                <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-slate-400">Required Roles</th>
+                <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-slate-400">Command</th>
+              </tr>
+            </thead>
+            <tbody>
+              {GCP_SCAN_CAPABILITIES.map((capability) => {
+                const status = capabilityStatus(capability.service, warningByService);
+                const commands = status.warning ? allCommands(status.warning) : [];
+                return (
+                  <tr key={capability.service} className="border-t border-slate-700/30">
+                    <td className="px-4 py-3">
+                      <p className="text-xs font-mono text-slate-200">{capability.label}</p>
+                      {capability.api && <p className="text-[10px] text-slate-500 mt-0.5">{capability.api}</p>}
+                    </td>
+                    <td className="px-4 py-3">
+                      {status.state === "blocked" && status.warning ? (
+                        <span className={`px-2 py-0.5 rounded border text-xs ${codeStyle(status.warning.code)}`}>{codeLabel(status.warning.code)}</span>
+                      ) : status.state === "not_checked" ? (
+                        <span className="px-2 py-0.5 rounded border text-xs bg-slate-500/10 border-slate-500/30 text-slate-300">Not checked</span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded border text-xs bg-emerald-500/10 border-emerald-500/30 text-emerald-300">Readable</span>
+                      )}
+                      {status.blockedBy && <p className="text-[10px] text-slate-500 mt-1">Blocked by {status.blockedBy}</p>}
+                    </td>
+                    <td className="px-4 py-3 text-xs text-slate-300 max-w-sm">{capability.shows}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap gap-1">
+                        {capability.roles.map((role) => (
+                          <span key={role} className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-slate-800 text-slate-400 border border-slate-700/50">{role}</span>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      {commands.length > 0 ? (
+                        <CopyTextButton
+                          text={commands.join("\n")}
+                          label="Copy grants"
+                          className="flex items-center gap-1 text-[10px] font-mono"
+                          style={{ color: "#cbd5e1" }}
+                        />
+                      ) : (
+                        <span className="text-xs text-slate-500">No action needed</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
 
         <div className="glass rounded-2xl overflow-hidden">
           <table className="w-full text-sm">
@@ -284,6 +388,21 @@ export default function ScanCoveragePage() {
                     />
                   </div>
                   <p className="text-xs text-slate-400 font-mono whitespace-pre-wrap break-all">{selected.detail}</p>
+                </div>
+              </DrawerSection>
+            )}
+            {allCommands(selected).length > 0 && (
+              <DrawerSection label="Grant Commands">
+                <div className="space-y-3">
+                  <div className="flex justify-end">
+                    <CopyTextButton
+                      text={allCommands(selected).join("\n")}
+                      label="Copy commands"
+                      className="flex items-center gap-1 text-[10px] font-mono"
+                      style={{ color: "#cbd5e1" }}
+                    />
+                  </div>
+                  <pre className="text-xs text-slate-300 font-mono whitespace-pre-wrap break-all rounded-lg border border-slate-700/40 bg-slate-950/50 p-3">{allCommands(selected).join("\n")}</pre>
                 </div>
               </DrawerSection>
             )}

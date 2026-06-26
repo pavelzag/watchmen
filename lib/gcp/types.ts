@@ -206,6 +206,11 @@ export interface GcpScanWarning {
   message: string;
   retryable: boolean;
   detail?: string;
+  principal?: string;
+  requiredRoles?: string[];
+  requiredApi?: string;
+  grantCommands?: string[];
+  enableApiCommand?: string;
 }
 
 export interface GcpSnapshot {

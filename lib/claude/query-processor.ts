@@ -6,6 +6,8 @@ import { runSoc2 } from "@/lib/compliance/soc2";
 import { runIso27001 } from "@/lib/compliance/iso27001";
 import { runAwsSoc2 } from "@/lib/compliance/aws-soc2"; // Added AWS SOC2
 import { runAwsIso27001 } from "@/lib/compliance/aws-iso27001"; // Added AWS ISO
+import { collectGcpServiceAccountReferences, collectGcpUsers } from "@/lib/gcp/principals";
+import { enrichGcpScanWarning } from "@/lib/gcp/scan-coverage";
 
 export interface ResourceItem {
   name: string;
@@ -139,6 +141,7 @@ ${isAuthLogs ? "- Group failures by principal, show counts, highlight any suspic
 ${isRequestLogs ? "- Summarize request volume, methods, paths, response status classes, clusters/hosts, and the oldest/newest timestamps covered\n- Distinguish durable agent event logs from the request processor's in-memory recent history\n- If only sampled detail is present, say so explicitly and use aggregate totals for the full log set" : ""}
 ${isDataSources ? "- Explain where each data category is stored or fetched from, and call out any retention or coverage limits in the provided metadata" : ""}
 ${hasGkeEndpointAnalysis ? "- For GKE endpoint questions, list each public entry point with cluster name, type, IP/name, Kubernetes service, and whether it is public. Also state if live endpoint discovery failed or was skipped." : ""}
+- If scanWarnings include grantCommands or enableApiCommand relevant to the question, include those exact commands in a fenced bash block.
 
 Cloud Data:
 ${JSON.stringify(context, null, 2)}
@@ -257,7 +260,7 @@ function buildConnectedProjectsContext(snapshot: CombinedSnapshot): unknown {
         status: vm.status,
       })),
     },
-    scanWarnings: snapshot.gcp.scanWarnings ?? [],
+    scanWarnings: (snapshot.gcp.scanWarnings ?? []).map(enrichGcpScanWarning),
   } : null;
 
   const aws = snapshot.aws ? {
@@ -312,6 +315,8 @@ function buildConnectedProjectsContext(snapshot: CombinedSnapshot): unknown {
 
 function buildGcpContext(intent: QueryIntent, snapshot: GcpSnapshot): any {
   const { queryType, resourceType, resourceName } = intent;
+  const gcpUsers = collectGcpUsers(snapshot);
+  const gcpServiceAccounts = collectGcpServiceAccountReferences(snapshot);
 
   const publicBuckets = snapshot.storageBuckets.filter(b =>
     b.iamPolicy.bindings.some(bind => bind.members.some(m => m === "allUsers" || m === "allAuthenticatedUsers"))
@@ -327,7 +332,9 @@ function buildGcpContext(intent: QueryIntent, snapshot: GcpSnapshot): any {
   const ctx: any = {
     counts: {
       projects: snapshot.projects.length,
-      serviceAccounts: snapshot.serviceAccounts.length,
+      users: gcpUsers.length,
+      serviceAccounts: gcpServiceAccounts.length,
+      listedServiceAccounts: snapshot.serviceAccounts.length,
       buckets: snapshot.storageBuckets.length,
       vms: snapshot.vms.length,
       cloudRunServices: snapshot.cloudRunServices.length,
@@ -342,12 +349,29 @@ function buildGcpContext(intent: QueryIntent, snapshot: GcpSnapshot): any {
     }
   };
 
+  if ((snapshot.scanWarnings?.length ?? 0) > 0) {
+    ctx.scanWarnings = snapshot.scanWarnings.map(enrichGcpScanWarning);
+  }
+
   // 1. Service Accounts (Critical for identity queries)
   if (queryType === "list_resources" && (resourceType === "service_account" || !resourceType)) {
-    ctx.serviceAccounts = snapshot.serviceAccounts.map(sa => ({
+    const listedAccounts = new Map(snapshot.serviceAccounts.map(sa => [sa.email, sa]));
+    ctx.serviceAccounts = gcpServiceAccounts.map(sa => ({
       email: sa.email,
+      projects: sa.projects,
       roles: sa.roles,
-      disabled: sa.disabled
+      resourceTypes: sa.resourceTypes,
+      disabled: listedAccounts.get(sa.email)?.disabled ?? null,
+      listed: listedAccounts.has(sa.email),
+    }));
+  }
+
+  if ((queryType === "list_users" || queryType === "user_access" || queryType === "principal_overview") && (!resourceType || resourceType === "project")) {
+    ctx.users = gcpUsers.map(user => ({
+      email: user.email,
+      projects: user.projects,
+      roles: user.roles,
+      resourceTypes: user.resourceTypes,
     }));
   }
 
@@ -502,7 +526,7 @@ function buildGcpContext(intent: QueryIntent, snapshot: GcpSnapshot): any {
 
   // 3. Specific Resource match
   if (resourceName) {
-    const saMatch = snapshot.serviceAccounts.find(sa => sa.email.includes(resourceName) || sa.name.includes(resourceName));
+    const saMatch = gcpServiceAccounts.find(sa => sa.email.includes(resourceName));
     if (saMatch) ctx.matchedServiceAccount = saMatch;
   }
 
@@ -697,6 +721,7 @@ export function extractResources(intent: QueryIntent, snapshot: CombinedSnapshot
 function extractGcpResources(intent: QueryIntent, snapshot: GcpSnapshot): ResourceItem[] {
   const resources: ResourceItem[] = [];
   const { resourceType, resourceName } = intent;
+  const serviceAccountRefs = collectGcpServiceAccountReferences(snapshot);
 
   // If intent has a specific name, try to find that exactly
   if (resourceName) {
@@ -707,7 +732,7 @@ function extractGcpResources(intent: QueryIntent, snapshot: GcpSnapshot): Resour
 
     findByName(snapshot.storageBuckets, "bucket");
     findByName(snapshot.vms, "vm");
-    findByName(snapshot.serviceAccounts.map(sa => ({ name: sa.email, projectId: sa.projectId })), "service_account");
+    findByName(serviceAccountRefs.map(sa => ({ name: sa.email, projectId: sa.projects[0] ?? "unknown" })), "service_account");
     findByName(snapshot.gkeClusters, "gke_cluster");
     findByName(snapshot.cloudRunServices, "cloud_run");
     findByName(snapshot.cloudSqlInstances, "cloud_sql");
@@ -727,7 +752,7 @@ function extractGcpResources(intent: QueryIntent, snapshot: GcpSnapshot): Resour
       resources.push(...snapshot.vms.map(v => ({ name: v.name, projectId: v.projectId, type: "vm" as const, cloud: "gcp" as const })));
     }
     if (!resourceType || resourceType === "service_account") {
-      resources.push(...snapshot.serviceAccounts.map(sa => ({ name: sa.email, projectId: sa.projectId, type: "service_account" as const, cloud: "gcp" as const })));
+      resources.push(...serviceAccountRefs.map(sa => ({ name: sa.email, projectId: sa.projects[0] ?? "unknown", type: "service_account" as const, cloud: "gcp" as const })));
     }
     if (!resourceType || resourceType === "gke_cluster") {
       resources.push(...snapshot.gkeClusters.map(c => ({ name: c.name, projectId: c.projectId, type: "gke_cluster" as const, cloud: "gcp" as const })));

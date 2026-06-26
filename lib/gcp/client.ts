@@ -1,9 +1,11 @@
 import { google } from "googleapis";
 import type { GcpScanWarning, GcpScanWarningCode } from "./types";
+import { buildGcpEnableApiCommand, buildGcpGrantCommands, getGcpRequiredApi, getGcpRequiredRoles } from "./scan-coverage";
 
 let _initialized = false;
 let _userAuthInitialized = false;
 let _scanWarnings: GcpScanWarning[] = [];
+let _scannerPrincipal: string | undefined;
 
 /**
  * Initializes googleapis with the service account credentials globally.
@@ -18,7 +20,8 @@ export function initGoogleAuth() {
 
   const credentials = JSON.parse(
     Buffer.from(raw, "base64").toString("utf-8")
-  );
+  ) as { client_email?: string };
+  _scannerPrincipal = credentials.client_email ? `serviceAccount:${credentials.client_email}` : undefined;
 
   const auth = new google.auth.GoogleAuth({
     credentials,
@@ -37,10 +40,11 @@ export function initGoogleAuthFromKey(saKeyJson: string) {
   _initialized = true;
   _userAuthInitialized = false;
 
-  const credentials = JSON.parse(saKeyJson);
+  const credentials = JSON.parse(saKeyJson) as { client_email?: string };
+  _scannerPrincipal = credentials.client_email ? `serviceAccount:${credentials.client_email}` : undefined;
   const auth = new google.auth.GoogleAuth({
     credentials,
-    scopes: ["https://www.googleapis.com/auth/cloud-platform.read-only"],
+    scopes: ["https://www.googleapis.com/auth/cloud-platform"],
   });
 
   google.options({ auth } as Parameters<typeof google.options>[0]);
@@ -64,6 +68,7 @@ export function getProjectIdFromServiceAccountKey(saKeyJson: string): string | n
 export function initUserAuth(accessToken: string) {
   _userAuthInitialized = true;
   _initialized = false; // reset SA auth flag so SA isn't mixed in
+  _scannerPrincipal = undefined;
 
   const auth = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
@@ -236,6 +241,11 @@ export function logFetchWarning(fetcher: string, projectId: string, reason: unkn
     retryable,
     message: humanMessage(fetcher, projectId, code),
     detail,
+    principal: _scannerPrincipal,
+    requiredRoles: getGcpRequiredRoles(fetcher),
+    requiredApi: getGcpRequiredApi(fetcher),
+    grantCommands: buildGcpGrantCommands(projectId, _scannerPrincipal, fetcher),
+    enableApiCommand: buildGcpEnableApiCommand(projectId, fetcher) ?? undefined,
   };
   _scanWarnings.push(warning);
 
