@@ -5,6 +5,7 @@ import Image from "next/image";
 import Footer from "@/components/Footer";
 import SplashScreen from "@/components/SplashScreen";
 import { isDemoMode } from "@/lib/demo-mode";
+import DemoAutoSubmit from "./DemoAutoSubmit";
 
 const DEMO_MODE = isDemoMode();
 const LOCAL_AUTH_ENABLED = process.env.WATCHMEN_LOCAL_AUTH !== "false";
@@ -26,10 +27,13 @@ export default async function LoginPage({
   searchParams: Promise<{ error?: string; expired?: string; signout?: string }>;
 }) {
   const { error, expired, signout } = await searchParams;
+  async function enterDemo() {
+    "use server";
+    await signIn("demo", { redirectTo: "/dashboard" });
+  }
   if (expired !== "1" && !error) {
     const session = await auth();
     if (session && session.error !== "RefreshAccessTokenError") redirect("/dashboard");
-    if (DEMO_MODE) await signIn("demo", { redirectTo: "/dashboard" });
   }
 
   return (
@@ -105,6 +109,9 @@ export default async function LoginPage({
 
           {DEMO_MODE ? (
             <>
+              <form id="demo-enter-form" action={enterDemo}>
+                <DemoAutoSubmit />
+              </form>
               {/* Demo info */}
               <div
                 className="p-3 space-y-1 text-xs"
