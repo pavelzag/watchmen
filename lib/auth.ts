@@ -184,9 +184,14 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       return true;
     },
     async jwt({ token, account, user }) {
+      if (!DEMO_MODE && token.isDemoUser) {
+        const { isDemoUser, ...rest } = token;
+        return rest;
+      }
+
       // Demo credentials: mark as demo, skip OAuth token handling.
       const authKind = (user as WatchmenAuthUser | undefined)?.authKind;
-      if (authKind === "demo") {
+      if (DEMO_MODE && authKind === "demo") {
         return { ...token, isDemoUser: true };
       }
       if (authKind === "local") {
@@ -220,7 +225,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       }
       session.accessToken = token.accessToken;
       session.error = token.error;
-      session.isDemoUser = token.isDemoUser;
+      session.isDemoUser = DEMO_MODE ? token.isDemoUser : undefined;
       session.isLocalUser = token.isLocalUser;
       return session;
     },
