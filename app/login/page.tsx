@@ -4,8 +4,9 @@ import { Github, KeyRound, ShieldAlert, Zap } from "lucide-react";
 import Image from "next/image";
 import Footer from "@/components/Footer";
 import SplashScreen from "@/components/SplashScreen";
+import { isDemoMode } from "@/lib/demo-mode";
 
-const DEMO_MODE = process.env.DEMO_MODE === "true";
+const DEMO_MODE = isDemoMode();
 const LOCAL_AUTH_ENABLED = process.env.WATCHMEN_LOCAL_AUTH !== "false";
 const LOCAL_AUTH_EMAIL = process.env.WATCHMEN_LOCAL_EMAIL || "local@watchmen.dev";
 const LOCAL_AUTH_PASSWORD = process.env.WATCHMEN_LOCAL_PASSWORD || "";

@@ -3,12 +3,13 @@ import Google from "next-auth/providers/google";
 import GitHub from "next-auth/providers/github";
 import Credentials from "next-auth/providers/credentials";
 import type { JWT } from "next-auth/jwt";
+import { isDemoMode } from "@/lib/demo-mode";
 
 type WatchmenAuthUser = {
   authKind?: "demo" | "local";
 };
 
-const DEMO_MODE = process.env.DEMO_MODE === "true";
+const DEMO_MODE = isDemoMode();
 const LOCAL_AUTH_ENABLED = process.env.WATCHMEN_LOCAL_AUTH !== "false";
 const LOCAL_AUTH_EMAIL = process.env.WATCHMEN_LOCAL_EMAIL || "local@watchmen.dev";
 const LOCAL_AUTH_PASSWORD = process.env.WATCHMEN_LOCAL_PASSWORD || "";
