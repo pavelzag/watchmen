@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Loader2, X, Terminal } from "lucide-react";
-import { usePathname } from "next/navigation";
+import { Check, Copy, Loader2, X, Terminal } from "lucide-react";
 import { saveQuery, getHistory } from "@/lib/query-history";
 import type { ResourceItem } from "@/lib/claude/query-processor";
 import { linkifyText } from "@/lib/utils/linkify";
@@ -40,15 +39,17 @@ const RESOURCE_LINKS: Record<string, string> = {
     rds_instance: "/dashboard/aws/rds",
     eks_cluster: "/dashboard/aws/eks",
     lambda_function: "/dashboard/aws/lambda",
-    iam_user: "/dashboard/aws/iam",
-    iam_role: "/dashboard/aws/iam",
-    aws_account: "/dashboard/aws",
+    iam_user: "/dashboard/aws/iam-users",
+    iam_role: "/dashboard/aws/iam-roles",
+    aws_account: "/dashboard?cloud=aws",
+    load_balancer: "/dashboard/trace",
 };
 
 function resourceHref(item: ResourceItem): string {
     const base = RESOURCE_LINKS[item.type ?? ""];
     if (!base) return "#";
-    return `${base}?search=${encodeURIComponent(item.name)}`;
+    const separator = base.includes("?") ? "&" : "?";
+    return `${base}${separator}search=${encodeURIComponent(item.name)}`;
 }
 
 function escapeHtml(s: string): string {
@@ -69,9 +70,23 @@ function linkifyResources(text: string, resources: ResourceItem[]): string {
     return linkifyText(text, resources, resourceHref);
 }
 
+function isEditableTarget(target: EventTarget | null): boolean {
+    const el = target as HTMLElement | null;
+    if (!el) return false;
+    const tag = el.tagName;
+    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable;
+}
+
+async function readApiResponse(res: Response): Promise<any> {
+    try {
+        return await res.json();
+    } catch {
+        const text = await res.text().catch(() => "");
+        return { error: text || `Request failed with HTTP ${res.status}` };
+    }
+}
+
 export default function CommandPalette() {
-    const pathname = usePathname();
-    const isAws = pathname?.startsWith("/dashboard/aws") ?? false;
     const [open, setOpen] = useState(false);
     const [query, setQuery] = useState("");
     const [loading, setLoading] = useState(false);
@@ -79,6 +94,7 @@ export default function CommandPalette() {
     const [result, setResult] = useState<ResultPeek | null>(null);
     const [historyItems, setHistoryItems] = useState<string[]>([]);
     const [histIdx, setHistIdx] = useState(-1);
+    const [copied, setCopied] = useState(false);
     const inputRef = useRef<HTMLTextAreaElement>(null);
 
     // Load history on open
@@ -89,6 +105,7 @@ export default function CommandPalette() {
             setResult(null);
             setError(null);
             setQuery("");
+            setCopied(false);
             setTimeout(() => inputRef.current?.focus(), 50);
         }
     }, [open]);
@@ -128,13 +145,12 @@ export default function CommandPalette() {
         setError(null);
         setResult(null);
         try {
-            const endpoint = isAws ? "/api/aws/query" : "/api/query";
-            const res = await fetch(endpoint, {
+            const res = await fetch("/api/query", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ query: query.trim() }),
             });
-            const data = await res.json();
+            const data = await readApiResponse(res);
             if (!res.ok) throw new Error(data.error ?? "Request failed");
             saveQuery(data.query, data.answer);
             setResult({
@@ -143,12 +159,42 @@ export default function CommandPalette() {
                 resources: data.resources,
                 fetchedAt: data.fetchedAt || new Date().toISOString()
             });
+            setCopied(false);
         } catch (err) {
             setError(err instanceof Error ? err.message : "Unknown error");
         } finally {
             setLoading(false);
         }
-    }, [query, loading, isAws]); // Added isAws to dependency array
+    }, [query, loading]);
+
+    const copyResult = useCallback(async () => {
+        if (!result?.answer) return;
+        try {
+            await navigator.clipboard.writeText(result.answer);
+            setCopied(true);
+            window.setTimeout(() => setCopied(false), 1200);
+        } catch {
+            setError("Failed to copy response.");
+        }
+    }, [result]);
+
+    useEffect(() => {
+        if (!open || !result) return;
+
+        function handleCopyKey(e: KeyboardEvent) {
+            if (isEditableTarget(e.target)) return;
+            if (e.key.toLowerCase() !== "c" || e.metaKey || e.ctrlKey || e.altKey) return;
+            const selection = window.getSelection()?.toString();
+            if (selection) return;
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            void copyResult();
+        }
+
+        window.addEventListener("keydown", handleCopyKey, { capture: true });
+        return () => window.removeEventListener("keydown", handleCopyKey, { capture: true });
+    }, [open, result, copyResult]);
 
     function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
         if (e.key === "Enter" && !e.shiftKey) {
@@ -175,6 +221,7 @@ export default function CommandPalette() {
 
     return (
         <div
+            data-command-palette-open="true"
             className="fixed inset-0 z-[9999] flex items-start justify-center pt-24 px-4"
             style={{ background: "rgba(0,0,0,0.85)" }}
             onClick={(e) => { if (e.target === e.currentTarget) setOpen(false); }}
@@ -274,15 +321,27 @@ export default function CommandPalette() {
                             className="mx-4 mb-4 p-3 text-sm"
                             style={{ border: "1px solid #005c16", background: "#050d05" }}
                         >
-                            <p className="text-xs mb-2 uppercase tracking-widest" style={{ color: "#005c16" }}>
-              // OUTPUT
-                            </p>
+                            <div className="mb-2 flex items-center justify-between gap-3">
+                                <p className="text-xs uppercase tracking-widest" style={{ color: "#005c16" }}>
+                  // OUTPUT
+                                </p>
+                                <button
+                                    type="button"
+                                    onClick={copyResult}
+                                    className="inline-flex items-center gap-1.5 px-2 py-1 text-[10px] uppercase tracking-widest transition-colors"
+                                    style={{ border: "1px solid #003010", color: copied ? "#00ff41" : "#00aa2b" }}
+                                    title="Copy response (C)"
+                                >
+                                    {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                                    {copied ? "[COPIED]" : "[COPY] C"}
+                                </button>
+                            </div>
                             <div
                                 className="prose-answer text-[11px] md:text-xs leading-relaxed break-words"
                                 dangerouslySetInnerHTML={{ __html: linkifyText(renderMarkdown(result.answer), result.resources ?? [], resourceHref) }}
                             />
                             <div className="mt-3 pt-2 text-xs" style={{ borderTop: "1px solid #003010", color: "#005c16" }}>
-              // query saved to history · close overlay to return to dashboard
+              // query saved to history · raw request data retained 30 days max
                             </div>
                         </div>
                     )}

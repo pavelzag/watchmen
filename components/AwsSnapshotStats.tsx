@@ -176,7 +176,7 @@ export default function AwsSnapshotStats({
           {/* Findings alert */}
           {findings.length > 0 && (
             <Link
-              href="/dashboard/aws/findings"
+              href="/dashboard/findings?cloud=aws"
               className="flex items-center justify-between px-3 py-2 text-xs uppercase tracking-widest transition-all"
               style={{ border: "1px solid #440000", background: "#0a0000" }}
               onMouseEnter={(e) => {

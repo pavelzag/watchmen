@@ -21,6 +21,7 @@ async function getRealVMs(projectIds: string[]): Promise<VM[]> {
         const zone = zoneKey.replace("zones/", "");
         for (const instance of zoneData.instances ?? []) {
           vms.push({
+            id: instance.id ?? undefined,
             name: instance.name ?? "",
             projectId,
             zone,
@@ -32,6 +33,7 @@ async function getRealVMs(projectIds: string[]): Promise<VM[]> {
               null,
             serviceAccount: instance.serviceAccounts?.[0]?.email ?? null,
             tags: instance.tags?.items ?? [],
+            labels: instance.labels ?? {},
             createdAt: instance.creationTimestamp ?? undefined,
           });
         }

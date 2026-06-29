@@ -1,9 +1,22 @@
 import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
+import GitHub from "next-auth/providers/github";
 import Credentials from "next-auth/providers/credentials";
 import type { JWT } from "next-auth/jwt";
 
+type WatchmenAuthUser = {
+  authKind?: "demo" | "local";
+};
+
 const DEMO_MODE = process.env.DEMO_MODE === "true";
+const LOCAL_AUTH_ENABLED = process.env.WATCHMEN_LOCAL_AUTH !== "false";
+const LOCAL_AUTH_EMAIL = process.env.WATCHMEN_LOCAL_EMAIL || "local@watchmen.dev";
+const LOCAL_AUTH_PASSWORD = process.env.WATCHMEN_LOCAL_PASSWORD || "";
+const LOCAL_AUTH_ENFORCE_ALLOWLIST = process.env.WATCHMEN_LOCAL_AUTH_ENFORCE_ALLOWLIST === "true";
+
+function hasUsableEnv(value: string | undefined, placeholder: string): value is string {
+  return Boolean(value && value.trim() && !value.includes(placeholder) && !value.startsWith("your_"));
+}
 
 
 // Comma-separated list of allowed emails, e.g. "alice@gmail.com,bob@company.com"
@@ -18,6 +31,10 @@ const ALLOWED_EMAILS = (process.env.ALLOWED_EMAILS ?? "")
 const ALLOWED_DOMAIN = process.env.ALLOWED_DOMAIN ?? "";
 
 const REFRESH_ACCESS_TOKEN_ERROR = "RefreshAccessTokenError";
+const hasGoogleAuth = hasUsableEnv(process.env.GOOGLE_CLIENT_ID, "your_google_client_id") &&
+  hasUsableEnv(process.env.GOOGLE_CLIENT_SECRET, "your_google_client_secret");
+const hasGithubAuth = hasUsableEnv(process.env.GITHUB_CLIENT_ID, "your_github_client_id") &&
+  hasUsableEnv(process.env.GITHUB_CLIENT_SECRET, "your_github_client_secret");
 
 function isAllowed(email: string): boolean {
   if (ALLOWED_EMAILS.includes(email)) return true;
@@ -82,38 +99,83 @@ async function refreshAccessToken(token: JWT): Promise<JWT> {
   }
 }
 
+const providers = DEMO_MODE
+  ? [
+      Credentials({
+        id: "demo",
+        name: "Demo",
+        credentials: {},
+        authorize() {
+          return {
+            id: "demo-user",
+            name: "Demo User",
+            email: "demo@watchmen.dev",
+            image: null,
+            authKind: "demo",
+          };
+        },
+      }),
+    ]
+  : [
+      ...(LOCAL_AUTH_ENABLED
+        ? [
+            Credentials({
+              id: "local",
+              name: "Local",
+              credentials: {
+                email: { label: "Email", type: "email" },
+                password: { label: "Password", type: "password" },
+              },
+              authorize(credentials) {
+                const email = typeof credentials?.email === "string" && credentials.email.trim()
+                  ? credentials.email.trim()
+                  : LOCAL_AUTH_EMAIL;
+                const password = typeof credentials?.password === "string" ? credentials.password : "";
+                if (LOCAL_AUTH_PASSWORD && password !== LOCAL_AUTH_PASSWORD) return null;
+                if (LOCAL_AUTH_ENFORCE_ALLOWLIST && !isAllowed(email)) return null;
+                return {
+                  id: `local:${email}`,
+                  name: email.split("@")[0] || "Watchmen User",
+                  email,
+                  image: null,
+                  authKind: "local",
+                };
+              },
+            }),
+          ]
+        : []),
+      ...(hasGoogleAuth
+        ? [
+            Google({
+              clientId: process.env.GOOGLE_CLIENT_ID!,
+              clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+              authorization: {
+                params: {
+                  scope: "openid email profile",
+                  access_type: "offline",
+                  prompt: "consent",
+                },
+              },
+            }),
+          ]
+        : []),
+      ...(hasGithubAuth
+        ? [
+            GitHub({
+              clientId: process.env.GITHUB_CLIENT_ID!,
+              clientSecret: process.env.GITHUB_CLIENT_SECRET!,
+            }),
+          ]
+        : []),
+    ];
+
 export const { handlers, signIn, signOut, auth } = NextAuth({
-  providers: DEMO_MODE
-    ? [
-        Credentials({
-          credentials: {},
-          authorize() {
-            return {
-              id: "demo-user",
-              name: "Demo User",
-              email: "demo@watchmen.dev",
-              image: null,
-            };
-          },
-        }),
-      ]
-    : [
-        Google({
-          clientId: process.env.GOOGLE_CLIENT_ID!,
-          clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-          authorization: {
-            params: {
-              scope: "openid email profile https://www.googleapis.com/auth/cloud-platform",
-              access_type: "offline",
-              prompt: "consent",
-            },
-          },
-        }),
-      ],
+  trustHost: true,
+  providers,
   callbacks: {
     signIn({ account, profile }) {
-      // Always allow demo credentials
-      if (account?.provider === "credentials") return true;
+      // Credentials providers validate access in authorize().
+      if (account?.type === "credentials" || account?.provider === "demo" || account?.provider === "local") return true;
       const email = profile?.email ?? "";
       if (!isAllowed(email)) {
         console.warn(`[auth] blocked sign-in attempt from: ${email}`);
@@ -121,14 +183,22 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       }
       return true;
     },
-    async jwt({ token, account }) {
-      // Demo credentials: mark as demo, skip OAuth token handling
-      if (account?.provider === "credentials") {
-        return { ...token, isDemoUser: true };
+    async jwt({ token, account, user }) {
+      if (!DEMO_MODE && token.isDemoUser) {
+        return { ...token, isDemoUser: undefined, error: REFRESH_ACCESS_TOKEN_ERROR };
       }
 
-      // Initial Google sign-in: store tokens from account
-      if (account) {
+      // Demo credentials: mark as demo, skip OAuth token handling.
+      const authKind = (user as WatchmenAuthUser | undefined)?.authKind;
+      if (DEMO_MODE && authKind === "demo") {
+        return { ...token, isDemoUser: true };
+      }
+      if (authKind === "local") {
+        return { ...token, isLocalUser: true };
+      }
+
+      // Initial Google sign-in: store tokens from account.
+      if (account?.provider === "google") {
         return {
           ...token,
           accessToken: account.access_token,
@@ -137,8 +207,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         };
       }
 
-      // Demo user: no token refresh needed
-      if (token.isDemoUser) return token;
+      // Demo/local users: no token refresh needed.
+      if (token.isDemoUser || token.isLocalUser) return token;
 
       // Token still valid
       if (token.expiresAt && Date.now() / 1000 < token.expiresAt - 60) {
@@ -154,7 +224,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       }
       session.accessToken = token.accessToken;
       session.error = token.error;
-      session.isDemoUser = token.isDemoUser;
+      session.isDemoUser = DEMO_MODE ? token.isDemoUser : undefined;
+      session.isLocalUser = token.isLocalUser;
       return session;
     },
   },

@@ -1,17 +1,20 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type MouseEvent } from "react";
 import {
   Globe, Flame, Server, Database, Key, Shield, ChevronRight,
   AlertTriangle, RefreshCw, Lock, User, Cloud, HardDrive, GitPullRequest,
+  Sparkles, Loader2, ChevronDown, ChevronUp, AlertCircle,
 } from "lucide-react";
-import type { AttackPath, AttackNode } from "@/lib/gcp/attack-paths";
+import { computeAttackPaths, type AttackNode, type AttackPath } from "@/lib/gcp/attack-paths";
 import type { AwsSecurityFinding, AwsSnapshot } from "@/lib/aws/types";
 import { computeAwsFindings } from "@/lib/aws-findings";
 import RemediateModal from "./RemediateModal";
 import ScanCloudButton from "@/components/ScanCloudButton";
 import { remediationTargetFromAttackPath } from "@/lib/github/remediation-targets";
-import { useTaskCenter } from "@/components/TaskCenterProvider";
+import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
+import { linkifyText } from "@/lib/utils/linkify";
+import CopyAiResponseButton from "@/components/CopyAiResponseButton";
 
 // ─── Node icon / colour ───────────────────────────────────────────────────────
 
@@ -98,6 +101,39 @@ const SEV_STYLES = {
   high:     { border: "#f59e0b", label: "HIGH",     color: "#f59e0b", bg: "#1a1206" },
 };
 
+interface AiRecState {
+  loading: boolean;
+  text: string | null;
+  error: string | null;
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function decodeEscapedHtml(s: string): string {
+  return s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+}
+
+function renderAiMarkdown(text: string): string {
+  const html = escapeHtml(text)
+    .replace(/```[\w]*\n?([\s\S]*?)```/g, (_, code) => {
+      const commandText = decodeEscapedHtml(String(code)).trim();
+      const command = encodeURIComponent(commandText);
+      return `<div class="group/command my-1.5 flex items-start gap-2 rounded-md border border-slate-800 bg-slate-950/70 px-2 py-1.5"><pre class="min-w-0 flex-1 overflow-x-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed font-mono text-slate-300">${escapeHtml(commandText)}</pre><button type="button" data-copy-command="${command}" class="shrink-0 px-1.5 py-0.5 text-[8px] uppercase tracking-widest text-violet-300 border border-violet-900/60 bg-violet-950/20 hover:text-violet-200 hover:border-violet-700">Copy</button></div>`;
+    })
+    .replace(/`([^`]+)`/g, '<code class="px-1 py-0.5 rounded bg-slate-800 text-sky-300 text-xs font-mono">$1</code>')
+    .replace(/^### (.+)$/gm, '<p class="text-xs font-semibold text-slate-200 uppercase tracking-wider mt-3 mb-1">$1</p>')
+    .replace(/^## (.+)$/gm, '<p class="text-sm font-semibold text-slate-200 mt-3 mb-1">$1</p>')
+    .replace(/\*\*(.*?)\*\*/g, "<strong class=\"text-slate-200\">$1</strong>")
+    .replace(/^\d+\. (.+)$/gm, '<li class="ml-4 list-decimal">$1</li>')
+    .replace(/^[-*] (.+)$/gm, '<li class="ml-4 list-disc">$1</li>')
+    .replace(/(<li[\s\S]*?<\/li>\n?)+/g, (m) => `<ul class="space-y-1 my-1">${m}</ul>`)
+    .replace(/\n(?!<)/g, "<br />");
+
+  return linkifyText(html, []);
+}
+
 // ─── Node card ────────────────────────────────────────────────────────────────
 
 function NodeCard({ node }: { node: AttackNode }) {
@@ -147,15 +183,77 @@ function NodeCard({ node }: { node: AttackNode }) {
 
 function PathCard({ path, index }: { path: CloudAttackPath; index: number }) {
   const [open, setOpen] = useState(false);
+  const [rec, setRec] = useState<AiRecState>({ loading: false, text: null, error: null });
+  const [recOpen, setRecOpen] = useState(false);
   const s = SEV_STYLES[path.severity];
 
+  async function askAiForPath(forceRegenerate = false) {
+    setRecOpen(true);
+    setRec({ loading: true, text: forceRegenerate ? null : rec.text, error: null });
+    try {
+      const res = await fetch("/api/attack-paths/recommend", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scope: `${path.cloud.toUpperCase()} / ${path.severity.toUpperCase()} / ${path.title}`,
+          paths: [path],
+          demoCredentials: (() => {
+            const browserAI = getActiveBrowserAIKey();
+            return browserAI ? { aiKey: browserAI.key, aiProvider: browserAI.provider } : undefined;
+          })(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed");
+      setRec({ loading: false, text: data.recommendation, error: null });
+    } catch (error) {
+      setRec({
+        loading: false,
+        text: null,
+        error: error instanceof Error ? error.message : "Failed to ask AI",
+      });
+    }
+  }
+
+  async function copySuggestedCommand(event: MouseEvent<HTMLDivElement>) {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-copy-command]");
+    if (!button) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const command = decodeURIComponent(button.dataset.copyCommand ?? "");
+    if (!command) return;
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(command);
+    } else {
+      const textarea = document.createElement("textarea");
+      textarea.value = command;
+      textarea.setAttribute("readonly", "true");
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }
+    const previous = button.textContent;
+    button.textContent = "Copied";
+    window.setTimeout(() => {
+      button.textContent = previous ?? "Copy";
+    }, 1200);
+  }
+
   return (
-    <div style={{ border: `1px solid ${s.border}33`, background: "#09090b", marginBottom: 12 }}>
+    <div
+      data-nav
+      tabIndex={0}
+      role="button"
+      aria-expanded={open}
+      onClick={() => setOpen((v) => !v)}
+      className="rounded-xl border space-y-0 group transition-all outline-none"
+      style={{ borderColor: `${s.border}33`, background: "#09090b", marginBottom: 12 }}
+    >
       {/* Header */}
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="w-full text-left flex items-start gap-4 p-4 transition-colors hover:bg-white/[0.02]"
-      >
+      <div className="w-full text-left flex items-start gap-4 p-4 transition-colors group-hover:bg-white/[0.02]">
         <div
           style={{
             fontSize: 9, letterSpacing: 2, fontFamily: "monospace",
@@ -180,9 +278,11 @@ function PathCard({ path, index }: { path: CloudAttackPath; index: number }) {
           {path.cloud}
         </div>
         <div className="flex-1 min-w-0">
-          <p style={{ fontSize: 12, fontWeight: 700, color: "#e5e7eb", fontFamily: "monospace", marginBottom: 4 }}>
-            {String(index + 1).padStart(2, "0")}. {path.title}
-          </p>
+          <div className="flex items-center gap-2 flex-wrap mb-1">
+            <p style={{ fontSize: 12, fontWeight: 700, color: "#e5e7eb", fontFamily: "monospace" }}>
+              {String(index + 1).padStart(2, "0")}. {path.title}
+            </p>
+          </div>
           {/* Mini node chain */}
           <div className="flex items-center gap-1 flex-wrap">
             {path.nodes.map((n, i) => (
@@ -201,11 +301,11 @@ function PathCard({ path, index }: { path: CloudAttackPath; index: number }) {
           className="w-4 h-4 shrink-0 mt-1 transition-transform"
           style={{ color: "#4b5563", transform: open ? "rotate(90deg)" : "none" }}
         />
-      </button>
+      </div>
 
       {/* Expanded content */}
       {open && (
-        <div style={{ borderTop: `1px solid ${s.border}22`, padding: 20 }}>
+        <div onClick={(event) => event.stopPropagation()} style={{ borderTop: `1px solid ${s.border}22`, padding: 20 }}>
           {/* Description */}
           <p style={{ fontSize: 11, color: "#9ca3af", fontFamily: "monospace", lineHeight: 1.7, marginBottom: 20 }}>
             {path.description}
@@ -244,6 +344,58 @@ function PathCard({ path, index }: { path: CloudAttackPath; index: number }) {
           </div>
         </div>
       )}
+
+      <div onClick={(event) => event.stopPropagation()} className="border-t border-slate-700/50">
+        <div className="px-4 py-2 flex items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={() => rec.text ? setRecOpen((value) => !value) : void askAiForPath()}
+            disabled={rec.loading}
+            className="flex items-center gap-1.5 text-xs font-medium transition-all duration-150 rounded-lg px-2.5 py-1 text-slate-400 hover:text-violet-400 hover:bg-violet-500/10 disabled:text-slate-500 disabled:cursor-not-allowed"
+          >
+            {rec.loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+            {rec.loading ? "Asking AI..." : rec.text ? "AI Recommendation" : "Ask AI"}
+          </button>
+          {rec.text && (
+            <div className="flex items-center gap-2">
+              <CopyAiResponseButton text={rec.text} compact />
+              <button
+                type="button"
+                onClick={() => setRecOpen((value) => !value)}
+                className="text-slate-500 hover:text-slate-300 transition-colors"
+              >
+                {recOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </button>
+            </div>
+          )}
+        </div>
+
+        {rec.error && (
+          <div className="px-4 pb-3 flex items-center gap-2 text-xs font-mono" style={{ color: "#f87171" }}>
+            <AlertCircle className="w-3 h-3 shrink-0" />
+            {rec.error}
+          </div>
+        )}
+
+        {rec.text && recOpen && (
+          <div className="px-4 pb-4 border-t border-violet-900/20">
+            <div
+              onClick={copySuggestedCommand}
+              className="mt-3 text-xs text-slate-300 leading-relaxed prose-answer"
+              dangerouslySetInnerHTML={{ __html: renderAiMarkdown(rec.text) }}
+            />
+            <button
+              type="button"
+              onClick={() => void askAiForPath(true)}
+              disabled={rec.loading}
+              className="mt-3 flex items-center gap-1 text-xs text-slate-600 hover:text-violet-400 transition-colors disabled:opacity-50"
+            >
+              <RefreshCw className="w-2.5 h-2.5" />
+              Regenerate
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -259,10 +411,8 @@ export default function AttackPathsPage() {
   const [filter, setFilter] = useState<"all" | "critical" | "high">("all");
   const [cloudFilter, setCloudFilter] = useState<CloudFilter>("all");
   const [showRemediate, setShowRemediate] = useState(false);
-  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
-  const { tasks, startAttackPathAnalysis } = useTaskCenter();
 
-  async function hasAwsCredentialsConfigured() {
+  const hasAwsCredentialsConfigured = useCallback(async () => {
     try {
       const res = await fetch("/api/settings/credentials");
       if (!res.ok) return false;
@@ -271,62 +421,115 @@ export default function AttackPathsPage() {
     } catch {
       return false;
     }
-  }
+  }, []);
 
-  async function loadAwsPaths() {
-    try {
-      const hasAwsCredentials = await hasAwsCredentialsConfigured();
-      if (!hasAwsCredentials) {
-        setAwsPaths([]);
-        return;
-      }
-      const res = await fetch("/api/aws/snapshot");
-      if (!res.ok) {
-        if (res.status === 404) setAwsPaths([]);
-        return;
-      }
-      const snap: AwsSnapshot = await res.json();
-      const nextAwsPaths = computeAwsFindings(snap)
-        .filter((finding) => finding.severity === "critical" || finding.severity === "high")
-        .map(awsFindingToAttackPath);
-      setAwsPaths(nextAwsPaths);
-    } catch {
-      setAwsPaths([]);
-    }
-  }
-
-  function load() {
+  const load = useCallback(async () => {
+    const startedAt = performance.now();
     setLoading(true);
     setError(null);
-    void loadAwsPaths();
-    const taskId = startAttackPathAnalysis();
-    setActiveTaskId(taskId);
-  }
+    console.info("[attack-paths] load started");
 
-  useEffect(() => { load(); }, []);
+    const errors: string[] = [];
+    const fetchedAts: string[] = [];
+    let nextGcpPaths: CloudAttackPath[] = [];
+    let nextAwsPaths: CloudAttackPath[] = [];
+
+    const gcpStartedAt = performance.now();
+    const gcpSnapshotPromise = fetch("/api/gcp/snapshot")
+      .then(async (res) => {
+        if (res.status === 404) return null;
+        if (!res.ok) throw new Error(`GCP snapshot request failed: HTTP ${res.status}`);
+        return res.json() as Promise<import("@/lib/gcp/types").GcpSnapshot>;
+      })
+      .then((snapshot) => {
+        if (!snapshot) {
+          console.info("[attack-paths] GCP snapshot missing", {
+            durationMs: Math.round(performance.now() - gcpStartedAt),
+          });
+          return;
+        }
+        nextGcpPaths = computeAttackPaths(snapshot).map((path) => ({ ...path, cloud: "gcp" as const }));
+        if (snapshot.fetchedAt) fetchedAts.push(snapshot.fetchedAt);
+        console.info("[attack-paths] GCP paths computed", {
+          paths: nextGcpPaths.length,
+          snapshotId: snapshot.snapshotId,
+          durationMs: Math.round(performance.now() - gcpStartedAt),
+        });
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push(message);
+        console.warn("[attack-paths] GCP analysis failed", { error: message });
+      });
+
+    const awsStartedAt = performance.now();
+    const awsSnapshotPromise = hasAwsCredentialsConfigured()
+      .then(async (hasAwsCredentials) => {
+        if (!hasAwsCredentials) {
+          console.info("[attack-paths] AWS skipped: no credentials configured", {
+            durationMs: Math.round(performance.now() - awsStartedAt),
+          });
+          return null;
+        }
+        const res = await fetch("/api/aws/snapshot");
+        if (res.status === 404) return null;
+        if (!res.ok) throw new Error(`AWS snapshot request failed: HTTP ${res.status}`);
+        return res.json() as Promise<AwsSnapshot>;
+      })
+      .then((snapshot) => {
+        if (!snapshot) return;
+        nextAwsPaths = computeAwsFindings(snapshot)
+          .filter((finding) => finding.severity === "critical" || finding.severity === "high")
+          .map(awsFindingToAttackPath);
+        if (snapshot.fetchedAt) fetchedAts.push(snapshot.fetchedAt);
+        console.info("[attack-paths] AWS paths computed", {
+          paths: nextAwsPaths.length,
+          snapshotId: snapshot.snapshotId,
+          durationMs: Math.round(performance.now() - awsStartedAt),
+        });
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push(message);
+        console.warn("[attack-paths] AWS analysis failed", { error: message });
+      });
+
+    await Promise.all([gcpSnapshotPromise, awsSnapshotPromise]);
+
+    setGcpPaths(nextGcpPaths);
+    setAwsPaths(nextAwsPaths);
+    setFetchedAt(fetchedAts.sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] ?? null);
+    setError(errors.length > 0 ? errors.join("; ") : null);
+    setLoading(false);
+    console.info("[attack-paths] load completed", {
+      gcpPaths: nextGcpPaths.length,
+      awsPaths: nextAwsPaths.length,
+      errors,
+      durationMs: Math.round(performance.now() - startedAt),
+    });
+  }, [hasAwsCredentialsConfigured]);
 
   useEffect(() => {
-    if (!activeTaskId) return;
-    const task = tasks.find((item) => item.id === activeTaskId);
-    if (!task) return;
-    if (task.status === "running" || task.status === "queued") {
-      setLoading(true);
-      return;
-    }
+    void load();
+  }, [load]);
 
-    if (task.status === "failed") {
-      setLoading(false);
-      setError(task.error ?? "Unknown error");
-      return;
-    }
+  function handleLoad() {
+    void load();
+  }
 
-    if (task.status === "completed" && task.kind === "attack_paths" && task.result?.paths) {
-      setGcpPaths((task.result.paths as AttackPath[]).map((path) => ({ ...path, cloud: "gcp" as const })));
-      setFetchedAt(task.result.fetchedAt ?? null);
-      setLoading(false);
-      setError(null);
+  function handleRefreshClick() {
+    if (loading) return;
+    void load();
+  }
+
+  function emptyMessage() {
+    if (error) {
+      return "Attack path analysis could not load all cloud snapshots. Check the error above, then scan again.";
     }
-  }, [activeTaskId, tasks]);
+    if (cloudFilter === "aws") return "No AWS attack paths found in the current AWS snapshot.";
+    if (cloudFilter === "gcp") return "No GCP attack paths found in the current GCP snapshot.";
+    return "No attack paths found in the current cloud snapshots.";
+  }
 
   const paths = [...gcpPaths, ...awsPaths];
   const cloudCounts = {
@@ -364,9 +567,9 @@ export default function AttackPathsPage() {
               Fix GCP with GitHub PR
             </button>
           )}
-          <ScanCloudButton onScanComplete={load} variant="terminal" />
+          <ScanCloudButton onScanComplete={handleLoad} variant="terminal" />
           <button
-            onClick={load}
+            onClick={handleRefreshClick}
             disabled={loading}
             className="flex items-center gap-2 px-3 py-1.5 text-xs uppercase tracking-widest transition-all"
             style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}
@@ -468,7 +671,7 @@ export default function AttackPathsPage() {
         >
           <AlertTriangle className="w-8 h-8" style={{ color: "var(--green)" }} />
           <p style={{ color: "var(--text-muted)", fontFamily: "monospace", fontSize: 12 }}>
-            No attack paths found — your configuration looks clean.
+            {emptyMessage()}
           </p>
         </div>
       )}
@@ -477,7 +680,7 @@ export default function AttackPathsPage() {
         <div className="flex items-center justify-center py-20 gap-3" style={{ border: "1px solid var(--border-dim)" }}>
           <RefreshCw className="w-4 h-4 animate-spin" style={{ color: "var(--green)" }} />
           <p style={{ color: "var(--text-muted)", fontFamily: "monospace", fontSize: 12 }}>
-            Traversing IAM graph…
+            Loading cached snapshots and computing attack paths…
           </p>
         </div>
       )}

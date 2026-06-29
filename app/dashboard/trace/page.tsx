@@ -12,7 +12,7 @@ export default function TracePage() {
               REQUEST TRACER
             </h1>
             <p className="text-slate-400 text-sm mt-1">
-              Send a request and watch it flow through your real GCP infrastructure
+              Send a request and watch it flow through your real AWS and GCP infrastructure
             </p>
           </div>
           <div className="px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 text-[10px] uppercase tracking-widest text-emerald-400">

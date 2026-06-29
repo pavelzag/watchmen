@@ -1,4 +1,4 @@
-import { getProjectIds, getProjectIdsForOrg, initGoogleAuth, initGoogleAuthFromKey, initUserAuth, discoverUserProjectIds, useMockData, getGcpScanWarnings, resetGcpScanWarnings } from "./client";
+import { getProjectIdFromServiceAccountKey, getProjectIds, getProjectIdsForOrg, initGoogleAuth, initGoogleAuthFromKey, initUserAuth, discoverUserProjectIds, useMockData, getGcpScanWarnings, resetGcpScanWarnings } from "./client";
 import { getProjectPolicies, getServiceAccounts } from "./iam";
 import { getStorageBuckets } from "./storage";
 import { getGkeClusters } from "./gke";
@@ -10,10 +10,12 @@ import { getPubSubTopics } from "./pubsub";
 import { getSecrets } from "./secretmanager";
 import { getFirewallRules } from "./firewall";
 import { getLoadBalancers } from "./loadbalancing";
+import { extractGcpServiceAccountEmails, extractGcpUsers } from "./principals";
 import type { GcpSnapshot } from "./types";
 import type { TaskProgressEvent } from "@/lib/tasks/types";
 
 export * from "./types";
+export { collectGcpIamBindingScopes, collectGcpUsers } from "./principals";
 
 /**
  * Fetches the full GCP snapshot across all configured projects.
@@ -42,7 +44,13 @@ export async function fetchGcpSnapshot(options?: {
     projectIds = getProjectIds();
   } else if (options?.serviceAccountKey) {
     initGoogleAuthFromKey(options.serviceAccountKey);
-    projectIds = await getProjectIdsForOrg();
+    const configuredProjectIds = await getProjectIdsForOrg();
+    const serviceAccountProjectId = getProjectIdFromServiceAccountKey(options.serviceAccountKey);
+    projectIds = configuredProjectIds.length > 0
+      ? configuredProjectIds
+      : serviceAccountProjectId
+        ? [serviceAccountProjectId]
+        : [];
   } else if (options?.accessToken) {
     projectIds = await discoverUserProjectIds(options.accessToken);
   } else {
@@ -168,20 +176,12 @@ export async function fetchGcpSnapshot(options?: {
  * Returns all unique human users across all projects.
  */
 export function extractUsers(snapshot: GcpSnapshot): string[] {
-  const users = new Set<string>();
-  for (const project of snapshot.projects) {
-    for (const binding of project.bindings) {
-      for (const member of binding.members) {
-        if (member.startsWith("user:")) users.add(member.slice(5));
-      }
-    }
-  }
-  return Array.from(users).sort();
+  return extractGcpUsers(snapshot);
 }
 
 /**
  * Returns all unique service account emails across all projects.
  */
 export function extractServiceAccountEmails(snapshot: GcpSnapshot): string[] {
-  return snapshot.serviceAccounts.map((sa) => sa.email);
+  return extractGcpServiceAccountEmails(snapshot);
 }

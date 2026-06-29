@@ -5,6 +5,7 @@ import { useState } from "react";
 import Link from "next/link";
 import type { QueryResult } from "./QueryBox";
 import type { ResourceItem } from "@/lib/claude/query-processor";
+import CopyAiResponseButton from "@/components/CopyAiResponseButton";
 
 interface ResultCardProps {
   result: QueryResult;
@@ -100,6 +101,9 @@ export default function ResultCard({ result, index }: ResultCardProps) {
 
       {/* Answer */}
       <div className="px-3 md:px-4 py-3">
+        <div className="mb-2 flex justify-end">
+          <CopyAiResponseButton text={result.answer} compact />
+        </div>
         <div
           className="prose-answer text-xs md:text-sm leading-relaxed break-words"
           dangerouslySetInnerHTML={{ __html: linkifyResources(renderMarkdown(result.answer), resources) }}

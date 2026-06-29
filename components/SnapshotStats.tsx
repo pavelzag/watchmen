@@ -4,6 +4,7 @@ import { useEffect, useState, useRef, useCallback, forwardRef } from "react";
 import {
   Users, HardDrive, Server, KeySquare, MonitorDot, ChevronRight,
   Play, Database, BarChart3, Radio, Lock, Flame, ShieldAlert, RefreshCw,
+  Gauge,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -24,6 +25,7 @@ interface Stats {
   pubsubTopics: { name: string; projectId: string }[];
   secrets: { name: string; projectId: string }[];
   firewallRules: { name: string; projectId: string; disabled: boolean }[];
+  scanWarnings?: unknown[];
   fetchedAt: string;
   _snap?: GcpSnapshot;
 }
@@ -104,6 +106,7 @@ export default function SnapshotStats({
     { icon: Radio, label: "PUB/SUB", value: s.pubsubTopics.length, href: "/dashboard/pubsub" },
     { icon: Lock, label: "SECRETS", value: s.secrets.length, href: "/dashboard/secrets" },
     { icon: Flame, label: "FIREWALL", value: s.firewallRules.length, href: "/dashboard/firewall" },
+    { icon: Gauge, label: "COVERAGE", value: s.scanWarnings?.length ?? 0, href: "/dashboard/scan-coverage" },
   ], []);
 
   const allTiles = stats ? buildTiles(stats) : [];
@@ -192,7 +195,7 @@ export default function SnapshotStats({
           {/* Findings alert */}
           {findings.length > 0 && (
             <Link
-              href="/dashboard/findings"
+              href="/dashboard/findings?cloud=gcp"
               className="flex items-center justify-between px-3 py-2 text-xs uppercase tracking-widest transition-all"
               style={{ border: "1px solid #440000", background: "#0a0000" }}
               onMouseEnter={(e) => {

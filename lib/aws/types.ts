@@ -74,6 +74,7 @@ export interface AwsEksCluster {
   accountId: string;
   region: string;
   arn: string;
+  endpoint?: string;
   status: string;
   kubernetesVersion: string;
   roleArn: string;
@@ -119,6 +120,8 @@ export interface AwsLambdaFunction {
   timeout: number;
   memorySize: number;
   state?: string;
+  functionUrl?: string;
+  functionUrlError?: string;
   resourcePolicy: AwsIamStatement[];
   vpcConfig?: {
     vpcId?: string;

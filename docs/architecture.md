@@ -127,7 +127,7 @@ graph TD
 
 ## Kubernetes deployment topology
 
-> **Note — sample application:** The diagrams and manifests in this section describe the **sample stack bundled in this repository** (`services/request-processor`, `services/test-echo`, `k8s/`). They exist so you can spin up a working demo cluster and immediately see live request traces in the Request Tracer. You are not required to run this sample stack — you can point Watchmen at any existing GKE cluster that already has Istio and Cloud Logging enabled.
+> **Note — sample application:** The diagrams and manifests in this section describe the **sample stack split across this repository and the sibling infra repository** (`services/request-processor`, `services/test-echo`, `../watchmen-infra/k8s/`). They exist so you can spin up a working demo cluster and immediately see live request traces in the Request Tracer. You are not required to run this sample stack — you can point Watchmen at any existing GKE cluster that already has Istio and Cloud Logging enabled.
 
 When deployed on Kubernetes with Istio, every pod receives an Envoy sidecar that intercepts all in-pod network traffic. The topology graph in the Request Tracer page reflects this physical signal flow.
 

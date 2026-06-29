@@ -1,6 +1,6 @@
 # Watchmen
 
-Current version: **v0.4.0**
+Current version: **v0.6.0**
 
 Cloud security posture management, compliance, and live request tracing — for AWS and GCP — in a single dashboard.
 
@@ -276,7 +276,7 @@ watchmen/
 ├── services/
 │   ├── request-processor/ Go service — traces in-cluster HTTP requests
 │   └── test-echo/         Lightweight echo app for topology demos
-├── k8s/                  Kubernetes manifests
+├── ../watchmen-infra/k8s/ Kubernetes manifests
 │   └── istio/            Optional Istio mTLS and access-log telemetry
 ├── scripts/
 │   ├── migrate.sql       Database schema

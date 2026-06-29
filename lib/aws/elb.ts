@@ -27,6 +27,7 @@ async function getMockLoadBalancers(): Promise<AwsLoadBalancer[]> {
 
 async function getRealLoadBalancers(creds?: AwsCredentials): Promise<AwsLoadBalancer[]> {
     const regions = getAwsRegions();
+    console.info("[aws/elb] scanning regions", { regions });
     const results = await Promise.allSettled(
         regions.map(async (region) => {
             const client = new ElasticLoadBalancingV2Client(getAwsClientOptions(region, creds));
@@ -51,16 +52,36 @@ async function getRealLoadBalancers(creds?: AwsCredentials): Promise<AwsLoadBala
                 marker = res.NextMarker;
             } while (marker);
 
+            console.info("[aws/elb] region complete", {
+                region,
+                loadBalancers: lbs.length,
+                internetFacing: lbs.filter((lb) => lb.scheme === "internet-facing").length,
+                withDnsName: lbs.filter((lb) => Boolean(lb.dnsName)).length,
+                traceable: lbs.filter((lb) => lb.dnsName && lb.scheme === "internet-facing" && lb.state !== "failed").length,
+                samples: lbs.slice(0, 3).map((lb) => ({
+                    name: lb.name,
+                    type: lb.type,
+                    scheme: lb.scheme,
+                    state: lb.state,
+                    hasDnsName: Boolean(lb.dnsName),
+                })),
+            });
             return lbs;
         })
     );
 
-    return results
+    const loaded = results
         .filter((r, i): r is PromiseFulfilledResult<AwsLoadBalancer[]> => {
             if (r.status === "rejected") logAwsWarning("elb", regions[i], r.reason);
             return r.status === "fulfilled";
         })
         .flatMap((r) => r.value);
+    console.info("[aws/elb] scan complete", {
+        regions: regions.length,
+        loadBalancers: loaded.length,
+        traceable: loaded.filter((lb) => lb.dnsName && lb.scheme === "internet-facing" && lb.state !== "failed").length,
+    });
+    return loaded;
 }
 
 export async function getLoadBalancers(creds?: AwsCredentials, forceMock?: boolean): Promise<AwsLoadBalancer[]> {

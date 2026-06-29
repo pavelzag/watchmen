@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, type MouseEvent } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -14,10 +14,15 @@ import {
   Download,
   Shield,
   Printer,
+  X,
+  ExternalLink,
+  PanelRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ComplianceReport, ComplianceCategory, ControlResult, ControlStatus, ControlImpact } from "@/lib/compliance/types";
 import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
+import CopyAiResponseButton from "@/components/CopyAiResponseButton";
+import ScanCloudButton from "@/components/ScanCloudButton";
 
 // ── Config ────────────────────────────────────────────────────────────────
 
@@ -156,11 +161,17 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+function decodeEscapedHtml(s: string): string {
+  return s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+}
+
 function renderMd(text: string): string {
   return escapeHtml(text)
-    .replace(/```[\w]*\n?([\s\S]*?)```/g, (_, code) =>
-      `<pre class="bg-slate-900 border border-slate-700/50 rounded-lg px-3 py-2 text-xs font-mono text-slate-300 overflow-x-auto my-2 whitespace-pre-wrap">${code}</pre>`
-    )
+    .replace(/```[\w]*\n?([\s\S]*?)```/g, (_, code) => {
+      const commandText = decodeEscapedHtml(String(code)).trim();
+      const command = encodeURIComponent(commandText);
+      return `<div class="group/command my-1.5 flex items-start gap-2 rounded-md border border-slate-800 bg-slate-950/70 px-2 py-1.5"><pre class="min-w-0 flex-1 overflow-x-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed font-mono text-slate-300">${escapeHtml(commandText)}</pre><button type="button" data-copy-command="${command}" class="shrink-0 px-1.5 py-0.5 text-[8px] uppercase tracking-widest text-violet-300 border border-violet-900/60 bg-violet-950/20 hover:text-violet-200 hover:border-violet-700">Copy</button></div>`;
+    })
     .replace(/`([^`]+)`/g, '<code class="px-1 py-0.5 rounded bg-slate-800 text-sky-300 text-xs font-mono">$1</code>')
     .replace(/^### (.+)$/gm, '<p class="text-xs font-semibold text-slate-200 uppercase tracking-wider mt-3 mb-1">$1</p>')
     .replace(/^## (.+)$/gm, '<p class="text-sm font-semibold text-slate-200 mt-3 mb-1">$1</p>')
@@ -242,17 +253,18 @@ function ScoreTrendChart({ history }: { history: HistoryPoint[] }) {
   if (history.length < 2) return null;
 
   const W = 400;
-  const H = 80;
-  const PAD = { t: 8, r: 8, b: 20, l: 28 };
+  const H = 96;
+  const PAD = { t: 12, r: 12, b: 24, l: 34 };
   const chartW = W - PAD.l - PAD.r;
   const chartH = H - PAD.t - PAD.b;
 
   const scores = history.map((h) => h.score);
   const minScore = Math.max(0, Math.min(...scores) - 10);
   const maxScore = Math.min(100, Math.max(...scores) + 10);
+  const scoreRange = Math.max(1, maxScore - minScore);
 
   const toX = (i: number) => PAD.l + (i / (history.length - 1)) * chartW;
-  const toY = (s: number) => PAD.t + chartH - ((s - minScore) / (maxScore - minScore)) * chartH;
+  const toY = (s: number) => PAD.t + chartH - ((s - minScore) / scoreRange) * chartH;
 
   const points = history.map((h, i) => `${toX(i)},${toY(h.score)}`).join(" ");
   const lastScore = scores[scores.length - 1];
@@ -268,7 +280,13 @@ function ScoreTrendChart({ history }: { history: HistoryPoint[] }) {
   return (
     <div className="mt-4 pt-4 border-t border-slate-700/50">
       <p className="text-xs text-slate-500 mb-2">Score trend (last {history.length} snapshots)</p>
-      <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="max-h-20">
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="xMidYMid meet"
+        className="block h-24 w-full overflow-visible"
+        role="img"
+        aria-label={`Compliance score trend from ${firstDate} to ${lastDate}`}
+      >
         <defs>
           <linearGradient id={fillId} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor={fillColor} stopOpacity="0.25" />
@@ -282,8 +300,8 @@ function ScoreTrendChart({ history }: { history: HistoryPoint[] }) {
           </text>
         ))}
         {/* X-axis labels */}
-        <text x={PAD.l} y={H - 4} fontSize="7" fill="#64748b">{firstDate}</text>
-        <text x={W - PAD.r} y={H - 4} fontSize="7" fill="#64748b" textAnchor="end">{lastDate}</text>
+        <text x={PAD.l} y={H - 6} fontSize="7" fill="#64748b">{firstDate}</text>
+        <text x={W - PAD.r} y={H - 6} fontSize="7" fill="#64748b" textAnchor="end">{lastDate}</text>
         {/* Fill area */}
         <polygon points={areaPoints} fill={`url(#${fillId})`} />
         {/* Line */}
@@ -334,6 +352,281 @@ function ProjectBreakdown({ report }: { report: ComplianceReport }) {
   );
 }
 
+// ── Print report ──────────────────────────────────────────────────────────
+
+function PrintableComplianceReport({
+  report,
+  categories,
+  standard,
+  cloudFilter,
+  statusFilter,
+  score,
+  passing,
+  failing,
+  warnings,
+  suppressed,
+}: {
+  report: ComplianceReport;
+  categories: ComplianceCategory[];
+  standard: Standard;
+  cloudFilter: CloudFilter;
+  statusFilter: StatusFilter;
+  score: number;
+  passing: number;
+  failing: number;
+  warnings: number;
+  suppressed: number;
+}) {
+  const controls = categories.flatMap((category) => category.controls);
+  const standardLabel = standard === "soc2" ? "SOC 2 Type II" : "ISO 27001:2022";
+  const cloudLabel = cloudFilter === "all" ? "AWS and GCP" : cloudFilter.toUpperCase();
+  const statusLabel = statusFilter === "all" ? "All statuses" : statusFilter.toUpperCase();
+  const generatedAt = new Date(report.generatedAt).toLocaleString();
+
+  return (
+    <section className="hidden print:block print:bg-white print:text-slate-950">
+      <div className="mx-auto max-w-[760px] space-y-6 text-slate-950">
+        <header className="border-b border-slate-300 pb-4">
+          <p className="text-[10px] uppercase tracking-[0.28em] text-slate-500">Watchmen Compliance Report</p>
+          <h1 className="mt-2 text-2xl font-bold text-slate-950">{standardLabel}</h1>
+          <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-slate-600">
+            <p><span className="font-semibold text-slate-800">Cloud:</span> {cloudLabel}</p>
+            <p><span className="font-semibold text-slate-800">Status filter:</span> {statusLabel}</p>
+            <p><span className="font-semibold text-slate-800">Generated:</span> {generatedAt}</p>
+            <p><span className="font-semibold text-slate-800">Controls in report:</span> {controls.length}</p>
+          </div>
+        </header>
+
+        <section className="grid grid-cols-5 gap-2">
+          {[
+            ["Score", `${score}%`],
+            ["Passing", passing],
+            ["Failing", failing],
+            ["Warnings", warnings],
+            ["Suppressed", suppressed],
+          ].map(([label, value]) => (
+            <div key={label} className="border border-slate-300 p-3">
+              <p className="text-[9px] uppercase tracking-widest text-slate-500">{label}</p>
+              <p className="mt-1 text-xl font-bold text-slate-950">{value}</p>
+            </div>
+          ))}
+        </section>
+
+        <section className="space-y-4">
+          {categories.map((category) => {
+            const categoryCloud = cloudPrefix(category.id);
+            const rawCategoryId = category.id.replace(/^(gcp|aws):/, "");
+            return (
+              <article key={category.id} className="break-inside-avoid border border-slate-300">
+                <div className="border-b border-slate-300 bg-slate-100 px-3 py-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <h2 className="text-sm font-bold text-slate-950">{rawCategoryId} · {category.name}</h2>
+                    {categoryCloud && <span className="text-[10px] font-bold text-slate-600">{categoryCloud}</span>}
+                  </div>
+                  <p className="mt-1 text-[10px] leading-relaxed text-slate-600">{category.description}</p>
+                </div>
+                <div className="divide-y divide-slate-200">
+                  {category.controls.map((control) => {
+                    const rawControlId = baseControlId(control.id);
+                    return (
+                      <div key={control.id} className="break-inside-avoid px-3 py-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-xs font-bold text-slate-950">{rawControlId} · {control.title}</p>
+                            <p className="mt-1 text-[10px] leading-relaxed text-slate-600">{control.description}</p>
+                          </div>
+                          <div className="shrink-0 text-right">
+                            <p className="text-[10px] font-bold uppercase text-slate-900">{control.status}</p>
+                            <p className="text-[9px] uppercase text-slate-500">{control.impact} impact</p>
+                          </div>
+                        </div>
+                        {control.evidence.length > 0 && (
+                          <div className="mt-2">
+                            <p className="text-[9px] font-bold uppercase tracking-widest text-slate-500">Evidence</p>
+                            <ul className="mt-1 space-y-0.5 text-[10px] text-slate-700">
+                              {control.evidence.map((e, i) => (
+                                <li key={`${e.projectId}-${e.name}-${i}`}>
+                                  {e.name}{e.projectId ? ` (${e.projectId})` : ""}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {control.status !== "pass" && (
+                          <p className="mt-2 text-[10px] leading-relaxed text-slate-700">
+                            <span className="font-bold text-slate-900">Remediation:</span> {control.remediationHint}
+                          </p>
+                        )}
+                        {control.status === "suppressed" && control.justification && (
+                          <p className="mt-2 text-[10px] italic text-slate-600">
+                            Suppression justification: {control.justification}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </article>
+            );
+          })}
+        </section>
+      </div>
+    </section>
+  );
+}
+
+// ── ControlDrawer ─────────────────────────────────────────────────────────
+
+function ControlDrawer({
+  control,
+  standard,
+  onClose,
+}: {
+  control: ControlResult;
+  standard: Standard;
+  onClose: () => void;
+}) {
+  const statusCfg = STATUS_CONFIG[control.status];
+  const impactCfg = IMPACT_CONFIG[control.impact];
+  const rawControlId = baseControlId(control.id);
+  const controlCloud = cloudPrefix(control.id);
+  const resourcePage = CONTROL_RESOURCE_PAGE[rawControlId];
+  const refUrl = controlRefUrl(control.id, standard);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div
+        className="fixed inset-0 z-40 bg-black/50"
+        onClick={onClose}
+      />
+      {/* Drawer */}
+      <div
+        className="fixed top-0 right-0 h-full z-50 w-full max-w-lg flex flex-col overflow-hidden"
+        style={{ background: "var(--bg-card)", borderLeft: "1px solid var(--border-dim)", boxShadow: "-8px 0 32px rgba(0,0,0,0.6)" }}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700/60 shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className={cn("px-1.5 py-0.5 rounded text-xs font-mono bg-slate-700/60 text-slate-300 shrink-0")}>
+              {rawControlId}
+            </span>
+            {controlCloud && (
+              <span className={cn(
+                "px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border shrink-0",
+                controlCloud === "AWS"
+                  ? "bg-orange-500/10 text-orange-300 border-orange-500/30"
+                  : "bg-sky-500/10 text-sky-300 border-sky-500/30"
+              )}>
+                {controlCloud}
+              </span>
+            )}
+            <StatusBadge status={control.status} />
+          </div>
+          <button
+            onClick={onClose}
+            className="shrink-0 p-1.5 text-slate-500 hover:text-slate-200 hover:bg-slate-700/60 rounded transition-colors ml-2"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Scrollable body */}
+        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+          {/* Title & impact */}
+          <div className="space-y-1">
+            <p className="text-base font-semibold text-white leading-snug">{control.title}</p>
+            <p className={cn("text-xs font-medium", impactCfg.color)}>{impactCfg.label} impact</p>
+          </div>
+
+          {/* Description */}
+          <div className="space-y-1">
+            <p className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Description</p>
+            <p className="text-sm text-slate-300 leading-relaxed">{control.description}</p>
+          </div>
+
+          {/* Remediation */}
+          {control.remediationHint && control.status !== "pass" && control.status !== "suppressed" && (
+            <div className="space-y-1.5 p-3 rounded-lg bg-amber-500/5 border border-amber-500/20">
+              <p className="text-[10px] uppercase tracking-widest text-amber-400/80 font-semibold">Remediation</p>
+              <p className="text-sm text-slate-300 leading-relaxed">{control.remediationHint}</p>
+            </div>
+          )}
+
+          {/* Suppression justification */}
+          {control.status === "suppressed" && control.justification && (
+            <div className="p-3 rounded-lg bg-slate-700/30 border border-slate-600/40">
+              <p className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold mb-1">Suppression justification</p>
+              <p className="text-sm text-slate-400 italic">{control.justification}</p>
+            </div>
+          )}
+
+          {/* Evidence — all items, no truncation */}
+          {control.evidence.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">
+                Evidence — {control.evidence.length} resource{control.evidence.length !== 1 ? "s" : ""}
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {control.evidence.map((e, i) =>
+                  resourcePage ? (
+                    <Link
+                      key={i}
+                      href={`/dashboard/${resourcePage}?search=${encodeURIComponent(e.name)}`}
+                      onClick={onClose}
+                      className="px-2 py-1 rounded-md text-xs bg-slate-800 border border-slate-700/60 text-slate-300 hover:text-white hover:border-slate-500 transition-colors font-mono"
+                    >
+                      {e.name}
+                      {e.projectId && <span className="text-slate-600 ml-1">({e.projectId})</span>}
+                    </Link>
+                  ) : (
+                    <span key={i} className="px-2 py-1 rounded-md text-xs bg-slate-800 border border-slate-700/60 text-slate-300 font-mono">
+                      {e.name}
+                      {e.projectId && <span className="text-slate-600 ml-1">({e.projectId})</span>}
+                    </span>
+                  )
+                )}
+              </div>
+              {resourcePage && (
+                <Link
+                  href={`/dashboard/${resourcePage}`}
+                  onClick={onClose}
+                  className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-300 transition-colors"
+                >
+                  View all {resourcePage.replace("-", " ")} →
+                </Link>
+              )}
+            </div>
+          )}
+
+          {/* Reference link */}
+          {refUrl && (
+            <div className="pt-2 border-t border-slate-700/50">
+              <a
+                href={refUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-xs text-sky-400 hover:text-sky-300 transition-colors"
+              >
+                <ExternalLink className="w-3 h-3" />
+                View {standard === "iso27001" ? "ISO 27001:2022 Annex A" : "AICPA Trust Services Criteria"} reference
+              </a>
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
 // ── ControlCard ───────────────────────────────────────────────────────────
 
 interface RecState { loading: boolean; text: string | null; error: string | null }
@@ -344,11 +637,13 @@ function ControlCard({
   standard,
   onSuppressed,
   onRevoked,
+  onOpenDrawer,
 }: {
   control: ControlResult;
   standard: Standard;
   onSuppressed: (id: string, justification: string) => void;
   onRevoked: (id: string) => void;
+  onOpenDrawer: (control: ControlResult) => void;
 }) {
   const [rec, setRec] = useState<RecState>({ loading: false, text: null, error: null });
   const [open, setOpen] = useState(false);
@@ -388,6 +683,33 @@ function ControlCard({
     }
   }
 
+  async function copySuggestedCommand(event: MouseEvent<HTMLDivElement>) {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-copy-command]");
+    if (!button) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const command = decodeURIComponent(button.dataset.copyCommand ?? "");
+    if (!command) return;
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(command);
+    } else {
+      const textarea = document.createElement("textarea");
+      textarea.value = command;
+      textarea.setAttribute("readonly", "true");
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }
+    const previous = button.textContent;
+    button.textContent = "Copied";
+    window.setTimeout(() => {
+      button.textContent = previous ?? "Copy";
+    }, 1200);
+  }
+
   async function confirmSuppress() {
     setSuppress((s) => ({ ...s, saving: true }));
     try {
@@ -419,7 +741,7 @@ function ControlCard({
   }
 
   return (
-    <div className={cn("rounded-xl border glass", statusCfg.border)}>
+    <div data-nav tabIndex={0} className={cn("rounded-xl border glass", statusCfg.border)}>
       <div className="p-4 space-y-2">
         {/* Header row */}
         <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -454,6 +776,14 @@ function ControlCard({
               {impactCfg.label} impact
             </span>
           </div>
+          <button
+            onClick={() => onOpenDrawer(control)}
+            title="View full details"
+            className="shrink-0 flex items-center gap-1 text-[10px] text-slate-500 hover:text-slate-200 hover:bg-slate-700/60 px-2 py-1 rounded transition-colors uppercase tracking-widest"
+          >
+            <PanelRight className="w-3 h-3" />
+            Details
+          </button>
         </div>
 
         {/* Title + description */}
@@ -587,7 +917,11 @@ function ControlCard({
 
         {rec.text && open && (
           <div className="px-4 pb-4 border-t border-slate-700/30">
+            <div className="mt-3 flex justify-end">
+              <CopyAiResponseButton text={rec.text} compact />
+            </div>
             <div
+              onClick={copySuggestedCommand}
               className="mt-3 text-xs text-slate-300 leading-relaxed"
               dangerouslySetInnerHTML={{ __html: renderMd(rec.text) }}
             />
@@ -618,6 +952,7 @@ function CategorySection({
   forceExpand,
   onSuppressed,
   onRevoked,
+  onOpenDrawer,
 }: {
   category: ComplianceCategory;
   standard: Standard;
@@ -625,6 +960,7 @@ function CategorySection({
   forceExpand: boolean;
   onSuppressed: (id: string, justification: string) => void;
   onRevoked: (id: string) => void;
+  onOpenDrawer: (control: ControlResult) => void;
 }) {
   const visibleControls = (forceExpand || filter === "all")
     ? category.controls
@@ -694,6 +1030,7 @@ function CategorySection({
               standard={standard}
               onSuppressed={onSuppressed}
               onRevoked={onRevoked}
+              onOpenDrawer={onOpenDrawer}
             />
           ))}
         </div>
@@ -720,6 +1057,7 @@ export default function CompliancePage() {
   const [cloudFilter, setCloudFilter] = useState<CloudFilter>("all");
   const [history, setHistory] = useState<HistoryPoint[]>([]);
   const [isPrinting, setIsPrinting] = useState(false);
+  const [drawerControl, setDrawerControl] = useState<ControlResult | null>(null);
 
   async function load(std: Standard = standard) {
     setLoading(true);
@@ -779,14 +1117,17 @@ export default function CompliancePage() {
 
   const handlePrint = useCallback(() => {
     setIsPrinting(true);
+    const previousTitle = document.title;
+    document.title = `watchmen-${standard}-compliance-${new Date().toISOString().slice(0, 10)}`;
     const onAfterPrint = () => {
       setIsPrinting(false);
+      document.title = previousTitle;
       window.removeEventListener("afterprint", onAfterPrint);
     };
     window.addEventListener("afterprint", onAfterPrint);
-    // Small delay to let React flush the expanded/filter state before the browser captures
-    setTimeout(() => window.print(), 50);
-  }, []);
+    // Let React mount the dedicated print report before the browser captures the page.
+    setTimeout(() => window.print(), 150);
+  }, [standard]);
 
   const cloudFilteredCategories = report?.categories.filter((category) => {
     if (cloudFilter === "all") return true;
@@ -827,13 +1168,34 @@ export default function CompliancePage() {
     if (filter === "all") return category.controls.length > 0;
     return category.controls.some((control) => control.status === filter);
   });
+  const printCategories = cloudFilteredCategories
+    .map((category) => ({
+      ...category,
+      controls: filter === "all" ? category.controls : category.controls.filter((control) => control.status === filter),
+    }))
+    .filter((category) => category.controls.length > 0);
 
   const scoreColor = report
     ? visibleScore >= 80 ? "text-emerald-400" : visibleScore >= 60 ? "text-amber-400" : "text-red-400"
     : "text-slate-400";
 
   return (
-    <div className="space-y-6 print:space-y-4">
+    <>
+    {visibleReport && (
+      <PrintableComplianceReport
+        report={visibleReport}
+        categories={printCategories}
+        standard={standard}
+        cloudFilter={cloudFilter}
+        statusFilter={filter}
+        score={visibleScore}
+        passing={visiblePassing}
+        failing={visibleFailing}
+        warnings={visibleWarnings}
+        suppressed={visibleSuppressed}
+      />
+    )}
+    <div className="space-y-6 print:hidden">
       {/* Header */}
       <div className="flex items-center gap-4 flex-wrap print:hidden">
         <Link href="/dashboard" className="flex items-center gap-1.5 text-sm text-slate-400 hover:text-slate-200 transition-colors shrink-0">
@@ -868,14 +1230,7 @@ export default function CompliancePage() {
               </button>
             </>
           )}
-          <button
-            onClick={() => load(standard)}
-            disabled={loading}
-            className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors"
-          >
-            <RefreshCw className={cn("w-3.5 h-3.5", loading && "animate-spin")} />
-            Refresh
-          </button>
+          <ScanCloudButton onScanComplete={() => load(standard)} variant="modern" />
         </div>
       </div>
 
@@ -1045,6 +1400,7 @@ export default function CompliancePage() {
               forceExpand={isPrinting}
               onSuppressed={handleSuppressed}
               onRevoked={handleRevoked}
+              onOpenDrawer={setDrawerControl}
             />
           ))}
           {!hasVisibleCategories && (
@@ -1075,5 +1431,14 @@ export default function CompliancePage() {
         </div>
       )}
     </div>
+
+    {drawerControl && (
+      <ControlDrawer
+        control={drawerControl}
+        standard={standard}
+        onClose={() => setDrawerControl(null)}
+      />
+    )}
+    </>
   );
 }

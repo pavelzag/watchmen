@@ -25,6 +25,7 @@ async function getRealEksClusters(creds?: AwsCredentials): Promise<AwsEksCluster
             accountId,
             region,
             arn: c.arn!,
+            endpoint: c.endpoint,
             status: c.status ?? "UNKNOWN",
             kubernetesVersion: c.version ?? "unknown",
             roleArn: c.roleArn!,

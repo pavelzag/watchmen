@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { sql, ensureGcpSnapshotTable, ensureAwsSnapshotTable } from "@/lib/db";
+import { sql, ensureAgentInstallTables, ensureGcpSnapshotTable, ensureAwsSnapshotTable } from "@/lib/db";
 import type { GcpSnapshot } from "@/lib/gcp/types";
 import type { AwsSnapshot } from "@/lib/aws/types";
+
+const AGENT_HEALTH_WINDOW = "5 minutes";
 
 export interface DiscoveredEndpoint {
     id: string;
@@ -51,6 +53,29 @@ export async function GET(req: NextRequest) {
             });
         }
         // 1. Fetch GCP Endpoints
+        await ensureAgentInstallTables();
+        const gkeClusters = await sql`
+            SELECT DISTINCT metadata->>'clusterName' AS cluster_name
+            FROM agent_hosts
+            WHERE provider = 'k8s'
+              AND (user_email = ${email} OR user_email = 'system')
+              AND metadata->>'clusterName' IS NOT NULL
+              AND status = 'healthy'
+              AND last_seen_at > NOW() - ${AGENT_HEALTH_WINDOW}::interval
+            ORDER BY metadata->>'clusterName'
+        `;
+
+        gkeClusters.rows.forEach((row: any) => {
+            endpoints.push({
+                id: `gke-cluster-${row.cluster_name}`,
+                label: `[Observed] GKE: ${row.cluster_name}`,
+                url: "",
+                provider: "gcp",
+                type: "GKE",
+                description: `HTTP trace events observed from GKE cluster ${row.cluster_name}`,
+            });
+        });
+
         await ensureGcpSnapshotTable();
         const gcpResult = await sql`
             SELECT snapshot FROM user_snapshots WHERE user_email = ${email}
@@ -117,13 +142,15 @@ export async function GET(req: NextRequest) {
         if (awsResult.rows.length > 0) {
             const snapshot = awsResult.rows[0].snapshot as AwsSnapshot;
 
-            // Extract Lambda Functions
+            // Extract Lambda Function URLs. These URLs contain AWS-generated URL IDs;
+            // do not synthesize them from function names.
             if (snapshot.lambdaFunctions) {
                 snapshot.lambdaFunctions.forEach(fn => {
+                    if (!fn.functionUrl) return;
                     endpoints.push({
                         id: `aws-lambda-${fn.functionName}`,
                         label: `λ: ${fn.functionName}`,
-                        url: `https://${fn.functionName}.lambda-url.${fn.region}.on.aws`,
+                        url: fn.functionUrl,
                         provider: "aws",
                         type: "Lambda",
                         description: `AWS Lambda function in ${fn.region}`
@@ -138,7 +165,7 @@ export async function GET(req: NextRequest) {
                         endpoints.push({
                             id: `aws-lb-${lb.name}`,
                             label: `ELB: ${lb.name}`,
-                            url: `http://${lb.dnsName}`,
+                            url: `https://${lb.dnsName}`,
                             provider: "aws",
                             type: "Elastic Load Balancer",
                             description: `AWS ${lb.type} LB (often EKS Ingress)`

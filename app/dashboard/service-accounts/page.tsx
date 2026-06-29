@@ -5,10 +5,16 @@ import DetailPageHeader from "@/components/DetailPageHeader";
 import DetailDrawer, { DrawerSection, DrawerField, StatusBadge } from "@/components/DetailDrawer";
 import { cn } from "@/lib/utils";
 import { ChevronUp, ChevronDown, AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
+import { collectGcpServiceAccountReferences } from "@/lib/gcp/principals";
 import type { ServiceAccount, GcpSnapshot } from "@/lib/gcp/types";
 
 type SortField = "name" | "createdAt";
 type SortDir = "asc" | "desc";
+type ServiceAccountRow = ServiceAccount & {
+  referencedOnly: boolean;
+  resourceTypes: string[];
+  projects: string[];
+};
 
 function fmt(iso?: string) {
   if (!iso) return "—";
@@ -50,19 +56,51 @@ function SortHeader({
 }
 
 export default function ServiceAccountsPage() {
-  const [accounts, setAccounts] = useState<ServiceAccount[]>([]);
+  const [accounts, setAccounts] = useState<ServiceAccountRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [sortField, setSortField] = useState<SortField>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
-  const [selected, setSelected] = useState<ServiceAccount | null>(null);
+  const [selected, setSelected] = useState<ServiceAccountRow | null>(null);
   const [projectFilter, setProjectFilter] = useState("");
 
   useEffect(() => {
     fetch("/api/gcp/snapshot")
       .then((r) => r.json())
-      .then((snap: GcpSnapshot) => setAccounts(snap.serviceAccounts ?? []))
+      .then((snap: GcpSnapshot) => {
+        const listed = new Map((snap.serviceAccounts ?? []).map((sa) => [sa.email, sa]));
+        setAccounts(
+          collectGcpServiceAccountReferences(snap).map((ref): ServiceAccountRow => {
+            const existing = listed.get(ref.email);
+            if (existing) {
+              return {
+                ...existing,
+                roles: Array.from(new Set([...existing.roles, ...ref.roles])).sort(),
+                referencedOnly: false,
+                resourceTypes: ref.resourceTypes,
+                projects: ref.projects,
+              };
+            }
+            const projectId = ref.email.match(/@([^.]+)\.iam\.gserviceaccount\.com$/)?.[1] ?? ref.projects[0] ?? "unknown";
+            return {
+              name: "",
+              projectId,
+              uniqueId: "",
+              email: ref.email,
+              displayName: ref.email,
+              description: "Referenced by IAM or runtime configuration, but not returned by the Service Account list API.",
+              disabled: false,
+              roles: ref.roles,
+              keys: [],
+              createdAt: undefined,
+              referencedOnly: true,
+              resourceTypes: ref.resourceTypes,
+              projects: ref.projects,
+            };
+          })
+        );
+      })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
@@ -77,11 +115,11 @@ export default function ServiceAccountsPage() {
     setSortField(field);
   }, [sortField]);
 
-  const projectOptions = [...new Set(accounts.map((sa) => sa.projectId))].sort();
+  const projectOptions = [...new Set(accounts.flatMap((sa) => sa.projects.length > 0 ? sa.projects : [sa.projectId]))].sort();
 
   const filtered = accounts
     .filter((sa) =>
-      (!projectFilter || sa.projectId === projectFilter) &&
+      (!projectFilter || sa.projectId === projectFilter || sa.projects.includes(projectFilter)) &&
       (sa.email.toLowerCase().includes(search.toLowerCase()) ||
       sa.displayName.toLowerCase().includes(search.toLowerCase()) ||
       sa.projectId.toLowerCase().includes(search.toLowerCase()))
@@ -144,7 +182,9 @@ export default function ServiceAccountsPage() {
                   >
                     <td className="px-4 py-3">
                       <p className="font-mono text-slate-200 text-xs">{sa.email}</p>
-                      <p className="text-slate-500 text-xs mt-0.5">{sa.displayName}</p>
+                      <p className="text-slate-500 text-xs mt-0.5">
+                        {sa.referencedOnly ? "Referenced account" : sa.displayName}
+                      </p>
                     </td>
                     <td className="px-4 py-3">
                       <span className="px-1.5 py-0.5 rounded text-xs bg-slate-700/60 text-slate-300">{sa.projectId}</span>
@@ -165,7 +205,11 @@ export default function ServiceAccountsPage() {
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      <StatusBadge active={!sa.disabled} label={sa.disabled ? "Disabled" : "Active"} />
+                      {sa.referencedOnly ? (
+                        <span className="text-xs text-amber-400">Referenced only</span>
+                      ) : (
+                        <StatusBadge active={!sa.disabled} label={sa.disabled ? "Disabled" : "Active"} />
+                      )}
                     </td>
                     <td className="px-4 py-3 text-slate-400 text-xs">{fmt(sa.createdAt)}</td>
                   </tr>
@@ -192,14 +236,16 @@ export default function ServiceAccountsPage() {
   );
 }
 
-function SADrawerContent({ sa }: { sa: ServiceAccount }) {
+function SADrawerContent({ sa }: { sa: ServiceAccountRow }) {
   return (
     <>
       <DrawerSection label="Identity">
         <DrawerField label="Email" value={sa.email} mono />
         <DrawerField label="Project" value={sa.projectId} mono />
-        <DrawerField label="Unique ID" value={sa.uniqueId} mono />
-        <DrawerField label="Status" value={<StatusBadge active={!sa.disabled} label={sa.disabled ? "Disabled" : "Active"} />} />
+        <DrawerField label="Seen In Projects" value={sa.projects.join(", ")} mono />
+        <DrawerField label="Resource Types" value={sa.resourceTypes.join(", ")} mono />
+        <DrawerField label="Unique ID" value={sa.uniqueId || "Unavailable"} mono />
+        <DrawerField label="Status" value={sa.referencedOnly ? "Referenced only" : <StatusBadge active={!sa.disabled} label={sa.disabled ? "Disabled" : "Active"} />} />
         <DrawerField label="Created" value={fmt(sa.createdAt)} />
         {sa.description && <DrawerField label="Description" value={sa.description} />}
       </DrawerSection>

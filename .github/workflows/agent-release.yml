@@ -1,0 +1,115 @@
+name: Release Watchmen Agent
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Agent version, for example 0.1.0"
+        required: true
+        type: string
+  push:
+    tags:
+      - "agent-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release-agent:
+    name: Build and publish Linux agent
+    runs-on: ubuntu-24.04
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            version="${{ inputs.version }}"
+            tag="agent-v${version#v}"
+          else
+            tag="${GITHUB_REF_NAME}"
+            version="${tag#agent-v}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: services/ebpf-agent/go.mod
+          cache-dependency-path: services/ebpf-agent/go.mod
+
+      - name: Install eBPF build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang \
+            llvm \
+            make \
+            pkg-config \
+            libelf-dev \
+            zlib1g-dev \
+            libbpf-dev
+          # Build bpftool from source to avoid kernel-version mismatch with apt
+          git clone --depth 1 --recursive --branch v7.7.0 https://github.com/libbpf/bpftool.git /tmp/bpftool
+          make -C /tmp/bpftool/src -j$(nproc)
+          sudo cp /tmp/bpftool/src/bpftool /usr/local/bin/
+
+      - name: Generate BTF header
+        working-directory: services/ebpf-agent
+        run: |
+          set -euo pipefail
+          test -r /sys/kernel/btf/vmlinux
+          bpftool btf dump file /sys/kernel/btf/vmlinux format c > bpf/vmlinux.h
+
+      - name: Generate eBPF bindings
+        working-directory: services/ebpf-agent
+        run: |
+          set -euo pipefail
+          go mod tidy
+          go generate ./...
+
+      - name: Build agent
+        working-directory: services/ebpf-agent
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          set -euo pipefail
+          mkdir -p ../../dist
+          go build \
+            -trimpath \
+            -ldflags "-s -w -X main.version=${{ steps.version.outputs.version }}" \
+            -o ../../dist/watchmen-ebpf-agent-linux-amd64 .
+
+      - name: Package checksums
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          sha256sum watchmen-ebpf-agent-linux-amd64 > watchmen-ebpf-agent-linux-amd64.sha256
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/watchmen-ebpf-agent-linux-amd64 dist/watchmen-ebpf-agent-linux-amd64.sha256 --clobber
+          else
+            gh release create "$TAG" dist/watchmen-ebpf-agent-linux-amd64 dist/watchmen-ebpf-agent-linux-amd64.sha256 \
+              --title "Watchmen Agent ${VERSION}" \
+              --notes "Linux amd64 Watchmen eBPF agent release ${VERSION}." \
+              --draft=false
+          fi

@@ -416,7 +416,7 @@ The full Kubernetes deployment runs three workloads:
 | `watchmen-processor` | Go service that traces in-cluster HTTP requests and reports back to the topology graph |
 | `wm-echo` (optional) | Lightweight test echo app for live-trace demos |
 
-All manifests live in `k8s/`. Istio is optional but recommended for the live request-tracing feature.
+All Kubernetes manifests live in the sibling infra repo at `../watchmen-infra/k8s/`. Istio is optional but recommended for the live request-tracing feature.
 
 ---
 
@@ -476,7 +476,7 @@ psql $POSTGRES_URL < scripts/migrate.sql
 ### Step 2 — Create the namespace
 
 ```bash
-kubectl apply -f k8s/namespace.yaml
+kubectl apply -f ../watchmen-infra/k8s/namespace.yaml
 ```
 
 ---
@@ -528,11 +528,11 @@ docker push YOUR_REGISTRY/wm-echo:latest
 Update the image references in the manifests:
 
 ```bash
-# In k8s/deployment.yaml
-sed -i 's|gcr.io/watchmen-test-488807/watchmen:latest|YOUR_REGISTRY/watchmen:latest|' k8s/deployment.yaml
+# In ../watchmen-infra/k8s/deployment.yaml
+sed -i 's|gcr.io/watchmen-test-488807/watchmen:latest|YOUR_REGISTRY/watchmen:latest|' ../watchmen-infra/k8s/deployment.yaml
 
-# In k8s/processor-deployment.yaml
-sed -i 's|gcr.io/watchmen-test-488807/watchmen-processor:latest|YOUR_REGISTRY/watchmen-processor:latest|' k8s/processor-deployment.yaml
+# In ../watchmen-infra/k8s/processor-deployment.yaml
+sed -i 's|gcr.io/watchmen-test-488807/watchmen-processor:latest|YOUR_REGISTRY/watchmen-processor:latest|' ../watchmen-infra/k8s/processor-deployment.yaml
 ```
 
 ---
@@ -540,8 +540,8 @@ sed -i 's|gcr.io/watchmen-test-488807/watchmen-processor:latest|YOUR_REGISTRY/wa
 ### Step 5 — Deploy the main application
 
 ```bash
-kubectl apply -f k8s/deployment.yaml
-kubectl apply -f k8s/service.yaml
+kubectl apply -f ../watchmen-infra/k8s/deployment.yaml
+kubectl apply -f ../watchmen-infra/k8s/service.yaml
 ```
 
 Verify the pod is running:
@@ -560,10 +560,10 @@ kubectl logs -n watchmen -l app=watchmen --tail=50
 The processor service traces in-cluster HTTP requests. It is optional but required for the live topology graph to show real traffic.
 
 ```bash
-kubectl apply -f k8s/processor-deployment.yaml
+kubectl apply -f ../watchmen-infra/k8s/processor-deployment.yaml
 ```
 
-The processor is reached by the main app via `PROCESSOR_URL=http://watchmen-processor.watchmen.svc.cluster.local` (already set in `k8s/deployment.yaml`).
+The processor is reached by the main app via `PROCESSOR_URL=http://watchmen-processor.watchmen.svc.cluster.local` (already set in `../watchmen-infra/k8s/deployment.yaml`).
 
 Verify:
 
@@ -579,20 +579,20 @@ kubectl logs -n watchmen -l app=watchmen-processor --tail=20
 The echo app is a lightweight HTTP server useful for observing live traffic in the topology graph.
 
 ```bash
-kubectl apply -f k8s/test-app/nginx-config.yaml
-kubectl apply -f k8s/test-app/deployment.yaml
-kubectl apply -f k8s/test-app/service.yaml
+kubectl apply -f ../watchmen-infra/k8s/test-app/nginx-config.yaml
+kubectl apply -f ../watchmen-infra/k8s/test-app/deployment.yaml
+kubectl apply -f ../watchmen-infra/k8s/test-app/service.yaml
 ```
 
 ---
 
 ### Step 8 — Configure the ingress
 
-Edit `k8s/ingress.yaml` and replace both occurrences of `watchmen.example.com` with your actual domain:
+Edit `../watchmen-infra/k8s/ingress.yaml` and replace both occurrences of `watchmen.example.com` with your actual domain:
 
 ```bash
-sed -i 's/watchmen.example.com/watchmen.yourdomain.com/g' k8s/ingress.yaml
-kubectl apply -f k8s/ingress.yaml
+sed -i 's/watchmen.example.com/watchmen.yourdomain.com/g' ../watchmen-infra/k8s/ingress.yaml
+kubectl apply -f ../watchmen-infra/k8s/ingress.yaml
 ```
 
 Point your domain's DNS A record to the ingress controller's external IP:
@@ -632,7 +632,7 @@ kubectl get pods -n istio-system
 **Enable sidecar injection for the watchmen namespace:**
 
 ```bash
-kubectl apply -f k8s/istio/namespace-label.yaml
+kubectl apply -f ../watchmen-infra/k8s/istio/namespace-label.yaml
 ```
 
 This labels the namespace with `istio-injection=enabled`. All pods created after this point will automatically receive an Envoy sidecar.
@@ -648,10 +648,10 @@ kubectl rollout restart deployment/watchmen-processor -n watchmen
 
 ```bash
 # Enable Envoy JSON access logs (collected by Cloud Logging)
-kubectl apply -f k8s/istio/telemetry.yaml
+kubectl apply -f ../watchmen-infra/k8s/istio/telemetry.yaml
 
 # Enable mTLS (PERMISSIVE mode — allows traffic from non-injected pods during rollout)
-kubectl apply -f k8s/istio/peer-authentication.yaml
+kubectl apply -f ../watchmen-infra/k8s/istio/peer-authentication.yaml
 ```
 
 After all pods have sidecars, tighten to STRICT mode:
@@ -705,7 +705,7 @@ kubectl create secret docker-registry ghcr-pull-secret \
   -n watchmen
 ```
 
-Uncomment the `imagePullSecrets` block in `k8s/deployment.yaml` and `k8s/processor-deployment.yaml`.
+Uncomment the `imagePullSecrets` block in `../watchmen-infra/k8s/deployment.yaml` and `../watchmen-infra/k8s/processor-deployment.yaml`.
 
 ---
 

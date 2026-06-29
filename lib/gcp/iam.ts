@@ -1,6 +1,6 @@
 import { google } from "googleapis";
 import { initGoogleAuth, useMockData, logFetchWarning, withProjectRetry } from "./client";
-import type { ProjectIamPolicy, ServiceAccount } from "./types";
+import type { ProjectIamPolicy, ServiceAccount, ServiceAccountKey } from "./types";
 
 async function getMockProjectPolicies(): Promise<ProjectIamPolicy[]> {
   const data = await import("@/fixtures/iam-policies.json");
@@ -49,27 +49,59 @@ async function getRealServiceAccounts(
   initGoogleAuth();
   const iam = google.iam("v1");
 
+  async function getServiceAccountKeys(projectId: string, serviceAccountName: string): Promise<ServiceAccountKey[]> {
+    try {
+      const res = await withProjectRetry("iam/service-account-keys", projectId, () =>
+        iam.projects.serviceAccounts.keys.list({
+          name: serviceAccountName,
+        })
+      );
+      return (res.data.keys ?? []).map((key) => ({
+        name: key.name ?? "",
+        keyType: key.keyType ?? "",
+        validAfterTime: key.validAfterTime ?? "",
+        validBeforeTime: key.validBeforeTime ?? "",
+      }));
+    } catch (error) {
+      logFetchWarning("iam/service-account-keys", projectId, error);
+      return [];
+    }
+  }
+
   const results = await Promise.allSettled(
     projectIds.map(async (projectId) => {
-      const res = await withProjectRetry("iam/service-accounts", projectId, () =>
-        iam.projects.serviceAccounts.list({
-          name: `projects/${projectId}`,
-        })
-      );
-      return (res.data.accounts ?? []).map(
-        (sa): ServiceAccount => ({
-          name: sa.name ?? "",
-          projectId,
-          uniqueId: sa.uniqueId ?? "",
-          email: sa.email ?? "",
-          displayName: sa.displayName ?? sa.email ?? "",
-          description: sa.description ?? undefined,
-          disabled: sa.disabled ?? false,
-          roles: [],
-          keys: [],
-          createdAt: undefined, // IAM list API does not return createTime for service accounts
-        })
-      );
+      const accounts: ServiceAccount[] = [];
+      let pageToken: string | undefined;
+
+      do {
+        const res = await withProjectRetry("iam/service-accounts", projectId, () =>
+          iam.projects.serviceAccounts.list({
+            name: `projects/${projectId}`,
+            pageSize: 100,
+            pageToken,
+          })
+        );
+
+        for (const sa of res.data.accounts ?? []) {
+          const name = sa.name ?? "";
+          accounts.push({
+            name: sa.name ?? "",
+            projectId,
+            uniqueId: sa.uniqueId ?? "",
+            email: sa.email ?? "",
+            displayName: sa.displayName ?? sa.email ?? "",
+            description: sa.description ?? undefined,
+            disabled: sa.disabled ?? false,
+            roles: [],
+            keys: name ? await getServiceAccountKeys(projectId, name) : [],
+            createdAt: undefined, // IAM list API does not return createTime for service accounts
+          });
+        }
+
+        pageToken = res.data.nextPageToken ?? undefined;
+      } while (pageToken);
+
+      return accounts;
     })
   );
 

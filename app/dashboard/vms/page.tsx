@@ -11,7 +11,7 @@ type SortField = "name" | "createdAt";
 type SortDir = "asc" | "desc";
 
 function fmt(iso?: string) {
-  if (!iso) return "—";
+  if (!iso) return "\u2014";
   return new Date(iso).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
 }
 
@@ -51,7 +51,8 @@ export default function VMsPage() {
   const [selected, setSelected] = useState<VM | null>(null);
   const [projectFilter, setProjectFilter] = useState("");
 
-  useEffect(() => {
+  const loadSnapshot = useCallback(() => {
+    setLoading(true);
     fetch("/api/gcp/snapshot")
       .then((r) => r.json())
       .then((snap: GcpSnapshot) => {
@@ -61,6 +62,10 @@ export default function VMsPage() {
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    loadSnapshot();
+  }, [loadSnapshot]);
 
   useEffect(() => {
     const s = new URLSearchParams(window.location.search).get("search");
@@ -166,7 +171,6 @@ export default function VMsPage() {
         </div>
       </div>
 
-      {/* Detail drawer */}
       <DetailDrawer
         isOpen={!!selected}
         onClose={() => setSelected(null)}
@@ -189,6 +193,7 @@ function VMDrawerContent({ vm, projects }: { vm: VM; projects: ProjectIamPolicy[
     <>
       <DrawerSection label="Instance Details">
         <DrawerField label="Name" value={vm.name} mono />
+        <DrawerField label="Instance ID" value={vm.id || "\u2014"} mono />
         <DrawerField label="Project" value={vm.projectId} mono />
         <DrawerField label="Zone" value={vm.zone} mono />
         <DrawerField label="Machine Type" value={vm.machineType} mono />
@@ -200,7 +205,7 @@ function VMDrawerContent({ vm, projects }: { vm: VM; projects: ProjectIamPolicy[
       </DrawerSection>
 
       <DrawerSection label="Network">
-        <DrawerField label="Internal IP" value={vm.internalIp || "—"} mono />
+        <DrawerField label="Internal IP" value={vm.internalIp || "\u2014"} mono />
         <DrawerField
           label="External IP"
           value={
@@ -232,7 +237,7 @@ function VMDrawerContent({ vm, projects }: { vm: VM; projects: ProjectIamPolicy[
         </DrawerSection>
       )}
 
-      <DrawerSection label={`Compute IAM — ${vm.projectId}`}>
+      <DrawerSection label={`Compute IAM \u2014 ${vm.projectId}`}>
         {computeBindings.length === 0 ? (
           <p className="text-xs text-slate-500">No compute roles found at project level.</p>
         ) : (

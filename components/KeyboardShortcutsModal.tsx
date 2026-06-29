@@ -3,12 +3,13 @@
 import { X } from "lucide-react";
 
 export const ROUTE_SHORTCUTS = [
-    { key: "G", href: "/dashboard", label: "GCP menu" },
-    { key: "A", href: "/dashboard/aws", label: "AWS menu" },
+    { key: "G", href: "/dashboard?cloud=gcp", label: "Dashboard: GCP" },
+    { key: "A", href: "/dashboard?cloud=aws", label: "Dashboard: AWS" },
     { key: "T", href: "/dashboard/tasks", label: "Tasks menu" },
     { key: "R", href: "/dashboard/trace", label: "Trace menu" },
     { key: "F", href: "/dashboard/findings", label: "Findings" },
     { key: "P", href: "/dashboard/attack-paths", label: "Attack Paths" },
+    { key: "I", href: "/dashboard/iac-drift", label: "IaC Drift" },
     { key: "D", href: "/dashboard/container-scan", label: "Containers" },
     { key: "C", href: "/dashboard/compliance", label: "Compliance" },
     { key: "H", href: "/dashboard/history", label: "History" },
@@ -19,6 +20,7 @@ export const HELP_SHORTCUTS = [
     ...ROUTE_SHORTCUTS,
     { key: "?", href: "", label: "Show keyboard shortcuts" },
     { key: "/", href: "", label: "Open cloud brain query" },
+    { key: "⌘K", href: "", label: "Global resource search" },
     { key: "↑ / ↓", href: "", label: "Move selected item" },
     { key: "← / →", href: "", label: "Move between top navigation tabs" },
     { key: "Enter", href: "", label: "Open selected item" },

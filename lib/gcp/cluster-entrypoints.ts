@@ -31,6 +31,78 @@ function lastName(url?: string | null): string {
   return url?.split("/").pop() ?? "";
 }
 
+function hasHealthyStatus(healthStatus?: Array<{ healthState?: string | null }>): boolean {
+  return (healthStatus ?? []).some((status) => status.healthState === "HEALTHY");
+}
+
+async function backendServiceHasHealthyBackend(
+  compute: ReturnType<typeof google.compute>,
+  projectId: string,
+  backendService: any,
+): Promise<boolean> {
+  const groups = (backendService.backends ?? [])
+    .map((backend: any) => backend.group)
+    .filter((group: unknown): group is string => typeof group === "string" && group.length > 0);
+
+  if (groups.length === 0) return false;
+
+  let checked = 0;
+  for (const group of groups) {
+    try {
+      const region = lastName(backendService.region);
+      const res = region
+        ? await compute.regionBackendServices.getHealth({
+            project: projectId,
+            region,
+            backendService: backendService.name,
+            requestBody: { group },
+          })
+        : await compute.backendServices.getHealth({
+            project: projectId,
+            backendService: backendService.name,
+            requestBody: { group },
+          });
+      checked += 1;
+      if (hasHealthyStatus(res.data.healthStatus)) return true;
+    } catch {
+      // Some LB variants or IAM scopes do not expose health. In that case,
+      // keep the endpoint rather than hiding a potentially valid target.
+    }
+  }
+
+  return checked === 0;
+}
+
+async function targetPoolHasHealthyInstance(
+  compute: ReturnType<typeof google.compute>,
+  projectId: string,
+  region: string,
+  targetPool: any,
+): Promise<boolean> {
+  const instances = (targetPool?.instances ?? [])
+    .filter((instance: unknown): instance is string => typeof instance === "string" && instance.length > 0);
+
+  if (instances.length === 0) return false;
+
+  let checked = 0;
+  for (const instance of instances) {
+    try {
+      const res = await compute.targetPools.getHealth({
+        project: projectId,
+        region,
+        targetPool: targetPool.name,
+        requestBody: { instance },
+      });
+      checked += 1;
+      if (hasHealthyStatus(res.data.healthStatus)) return true;
+    } catch {
+      // Preserve existing behavior when health checks cannot be read.
+    }
+  }
+
+  return checked === 0;
+}
+
 export async function getClusterEntryPoints(
   clusters: GkeCluster[],
 ): Promise<GkeEntryPoint[]> {
@@ -155,6 +227,9 @@ export async function getClusterEntryPoints(
           if (seen.has(key)) continue;
           seen.add(key);
 
+          const hasHealthyBackend = await targetPoolHasHealthyInstance(compute, projectId, region, tp);
+          if (!hasHealthyBackend) continue;
+
           results.push({
             clusterName: cluster.name,
             projectId,
@@ -214,6 +289,9 @@ export async function getClusterEntryPoints(
         const key = `${cluster.name}|${ip ?? ""}|${k8sService ?? bs.name}`;
         if (seen.has(key)) continue;
         seen.add(key);
+
+        const hasHealthyBackend = await backendServiceHasHealthyBackend(compute, projectId, bs);
+        if (!hasHealthyBackend) continue;
 
         results.push({
           clusterName: cluster.name,

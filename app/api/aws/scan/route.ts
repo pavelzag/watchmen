@@ -41,6 +41,69 @@ function summarizeAwsSnapshot(snapshot: AwsSnapshot): Record<string, number | st
   };
 }
 
+function summarizeTraceableAwsEndpoints(snapshot: AwsSnapshot): Record<string, number> {
+  const internetFacingLoadBalancers = snapshot.loadBalancers.filter(
+    (lb) => lb.dnsName && lb.scheme === "internet-facing" && lb.state !== "failed"
+  );
+  const publicEc2Instances = snapshot.ec2Instances.filter(
+    (instance) => instance.state === "running" && Boolean(instance.publicIpAddress)
+  );
+  const lambdaFunctionUrls = snapshot.lambdaFunctions.filter((fn) => Boolean(fn.functionUrl));
+  const publicEksClusters = snapshot.eksClusters.filter((cluster) => cluster.endpointPublicAccess);
+  const publicEksApiEndpoints = snapshot.eksClusters.filter((cluster) => cluster.endpointPublicAccess && Boolean(cluster.endpoint));
+
+  return {
+    traceableAwsTargets: internetFacingLoadBalancers.length + publicEc2Instances.length + lambdaFunctionUrls.length + publicEksApiEndpoints.length,
+    internetFacingLoadBalancers: internetFacingLoadBalancers.length,
+    publicEc2Instances: publicEc2Instances.length,
+    lambdaFunctionUrls: lambdaFunctionUrls.length,
+    publicEksClusters: publicEksClusters.length,
+    publicEksApiEndpoints: publicEksApiEndpoints.length,
+    totalLoadBalancers: snapshot.loadBalancers.length,
+    totalEc2Instances: snapshot.ec2Instances.length,
+    totalLambdaFunctions: snapshot.lambdaFunctions.length,
+    totalEksClusters: snapshot.eksClusters.length,
+  };
+}
+
+function logAwsTraceDiscovery(scanId: string, mode: string, snapshot: AwsSnapshot): Record<string, number> {
+  const summary = summarizeTraceableAwsEndpoints(snapshot);
+  console.info(`[api/aws/scan:${scanId}] trace endpoint discovery`, {
+    mode,
+    ...summary,
+    loadBalancerSamples: snapshot.loadBalancers.slice(0, 5).map((lb) => ({
+      name: lb.name,
+      region: lb.region,
+      scheme: lb.scheme,
+      state: lb.state,
+      hasDnsName: Boolean(lb.dnsName),
+      traceable: Boolean(lb.dnsName) && lb.scheme === "internet-facing" && lb.state !== "failed",
+    })),
+    ec2Samples: snapshot.ec2Instances.slice(0, 5).map((instance) => ({
+      instanceId: instance.instanceId,
+      region: instance.region,
+      state: instance.state,
+      hasPublicIp: Boolean(instance.publicIpAddress),
+      traceable: instance.state === "running" && Boolean(instance.publicIpAddress),
+    })),
+    lambdaSamples: snapshot.lambdaFunctions.slice(0, 5).map((fn) => ({
+      functionName: fn.functionName,
+      region: fn.region,
+      state: fn.state,
+      hasFunctionUrl: Boolean(fn.functionUrl),
+      functionUrlError: fn.functionUrlError,
+      traceable: Boolean(fn.functionUrl),
+    })),
+    eksSamples: snapshot.eksClusters.slice(0, 5).map((cluster) => ({
+      clusterName: cluster.clusterName,
+      region: cluster.region,
+      endpointPublicAccess: cluster.endpointPublicAccess,
+      hasEndpoint: Boolean(cluster.endpoint),
+    })),
+  });
+  return summary;
+}
+
 export async function POST(req: NextRequest) {
   const scanId = crypto.randomUUID().slice(0, 8);
   const startedAt = Date.now();
@@ -94,11 +157,13 @@ export async function POST(req: NextRequest) {
         onProgress: emit,
       });
       const snapshotSummary = summarizeAwsSnapshot(snapshot);
+      const traceSummary = logAwsTraceDiscovery(scanId, "demo_credentials", snapshot);
       console.info(`[api/aws/scan:${scanId}] POST complete`, {
         mode: "demo_credentials",
         durationMs: Date.now() - startedAt,
         fetchedAt: snapshot.fetchedAt,
         ...snapshotSummary,
+        ...traceSummary,
       });
       return { ok: true as const, snapshot, fetchedAt: snapshot.fetchedAt, snapshotSummary };
     }
@@ -111,13 +176,15 @@ export async function POST(req: NextRequest) {
       });
       const snapshot = await fetchAwsSnapshot({ forceMock: true, onProgress: emit });
       const snapshotSummary = summarizeAwsSnapshot(snapshot);
+      const traceSummary = logAwsTraceDiscovery(scanId, "mock", snapshot);
       console.info(`[api/aws/scan:${scanId}] POST complete`, {
         mode: "mock",
         durationMs: Date.now() - startedAt,
         fetchedAt: snapshot.fetchedAt,
         ...snapshotSummary,
+        ...traceSummary,
       });
-      return { ok: true as const, fetchedAt: snapshot.fetchedAt, snapshotSummary };
+      return { ok: true as const, snapshot, fetchedAt: snapshot.fetchedAt, snapshotSummary };
     }
 
     const awsCreds = await getUserCloudCredentials(email, "aws");
@@ -141,6 +208,8 @@ export async function POST(req: NextRequest) {
     const snapshot = await fetchAwsSnapshot({
       accessKeyId: awsCreds.accessKeyId,
       secretAccessKey: awsCreds.secretAccessKey,
+      roleArn: awsCreds.roleArn,
+      externalId: awsCreds.externalId,
       region: awsCreds.region,
       onProgress: emit,
     });
@@ -162,14 +231,16 @@ export async function POST(req: NextRequest) {
     `;
 
     const snapshotSummary = summarizeAwsSnapshot(snapshot);
+    const traceSummary = logAwsTraceDiscovery(scanId, "live", snapshot);
     console.info(`[api/aws/scan:${scanId}] POST complete`, {
       mode: "live",
       durationMs: Date.now() - startedAt,
       fetchedAt: snapshot.fetchedAt,
       ...snapshotSummary,
+      ...traceSummary,
     });
 
-    return { ok: true as const, fetchedAt: snapshot.fetchedAt, snapshotSummary };
+    return { ok: true as const, snapshot, fetchedAt: snapshot.fetchedAt, snapshotSummary };
   };
 
   if (body.stream) {
@@ -184,7 +255,8 @@ export async function POST(req: NextRequest) {
             else send({ type: "result", ...result });
           } catch (err) {
             console.error("[api/aws/scan] streamed POST error:", err);
-            send({ type: "error", error: "AWS scan failed. Check server logs." });
+            const message = err instanceof Error ? err.message : "AWS scan failed. Check server logs.";
+            send({ type: "error", error: message });
           } finally {
             console.info(`[api/aws/scan:${scanId}] stream closed`, { durationMs: Date.now() - startedAt });
             controller.close();
@@ -212,7 +284,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(result);
   } catch (err) {
     console.error("[api/aws/scan] POST error:", err);
-    return NextResponse.json({ error: "AWS scan failed. Check server logs." }, { status: 500 });
+    const message = err instanceof Error ? err.message : "AWS scan failed. Check server logs.";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 

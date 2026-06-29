@@ -1,4 +1,4 @@
-import { LambdaClient, ListFunctionsCommand, GetPolicyCommand } from "@aws-sdk/client-lambda";
+import { LambdaClient, ListFunctionsCommand, GetPolicyCommand, ListFunctionUrlConfigsCommand } from "@aws-sdk/client-lambda";
 import { useMockAwsData, getAwsRegions, logAwsWarning, getAwsClientOptions, type AwsCredentials } from "./client";
 import type { AwsLambdaFunction, AwsIamStatement } from "./types";
 
@@ -9,6 +9,7 @@ async function getMockLambdaFunctions(): Promise<AwsLambdaFunction[]> {
 
 async function getRealLambdaFunctions(creds?: AwsCredentials): Promise<AwsLambdaFunction[]> {
   const regions = getAwsRegions();
+  console.info("[aws/lambda] scanning regions", { regions });
   const results = await Promise.allSettled(
     regions.map(async (region) => {
       const client = new LambdaClient(getAwsClientOptions(region, creds));
@@ -25,6 +26,8 @@ async function getRealLambdaFunctions(creds?: AwsCredentials): Promise<AwsLambda
             const accountId = fn.FunctionArn!.split(":")[4];
 
             let resourcePolicy: AwsIamStatement[] = [];
+            let functionUrl: string | undefined;
+            let functionUrlError: string | undefined;
             try {
               const policyRes = await client.send(new GetPolicyCommand({ FunctionName: functionName }));
               if (policyRes.Policy) {
@@ -42,6 +45,14 @@ async function getRealLambdaFunctions(creds?: AwsCredentials): Promise<AwsLambda
               }
             } catch { }
 
+            try {
+              const urlsRes = await client.send(new ListFunctionUrlConfigsCommand({ FunctionName: functionName }));
+              functionUrl = urlsRes.FunctionUrlConfigs?.[0]?.FunctionUrl;
+            } catch (err) {
+              functionUrlError = err instanceof Error ? err.message : String(err);
+              logAwsWarning("lambda", `${region}/${functionName}/function-url`, err);
+            }
+
             return {
               functionName,
               functionArn: fn.FunctionArn!,
@@ -54,6 +65,8 @@ async function getRealLambdaFunctions(creds?: AwsCredentials): Promise<AwsLambda
               timeout: fn.Timeout ?? 3,
               memorySize: fn.MemorySize ?? 128,
               state: fn.State,
+              functionUrl,
+              functionUrlError,
               resourcePolicy,
               vpcConfig: fn.VpcConfig?.VpcId
                 ? {
@@ -76,16 +89,34 @@ async function getRealLambdaFunctions(creds?: AwsCredentials): Promise<AwsLambda
         marker = res.NextMarker;
       } while (marker);
 
+      console.info("[aws/lambda] region complete", {
+        region,
+        functions: functions.length,
+        withFunctionUrl: functions.filter((fn) => Boolean(fn.functionUrl)).length,
+        samples: functions.slice(0, 3).map((fn) => ({
+          functionName: fn.functionName,
+          state: fn.state,
+          hasFunctionUrl: Boolean(fn.functionUrl),
+          functionUrlError: fn.functionUrlError,
+        })),
+      });
       return functions;
     })
   );
 
-  return results
+  const loaded = results
     .filter((r, i): r is PromiseFulfilledResult<AwsLambdaFunction[]> => {
       if (r.status === "rejected") logAwsWarning("lambda", regions[i], r.reason);
       return r.status === "fulfilled";
     })
     .flatMap((r) => r.value);
+  console.info("[aws/lambda] scan complete", {
+    regions: regions.length,
+    functions: loaded.length,
+    withFunctionUrl: loaded.filter((fn) => Boolean(fn.functionUrl)).length,
+    functionUrlLookupErrors: loaded.filter((fn) => Boolean(fn.functionUrlError)).length,
+  });
+  return loaded;
 }
 
 export async function getLambdaFunctions(creds?: AwsCredentials, forceMock?: boolean): Promise<AwsLambdaFunction[]> {

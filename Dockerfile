@@ -16,6 +16,8 @@ COPY . .
 
 # Disable Next.js telemetry during build
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV NEXT_SKIP_BUILD_VALIDATION=1
+ENV NODE_OPTIONS=--max-old-space-size=1536
 
 # next.config.ts sets output: "standalone" — this produces .next/standalone/server.js
 RUN npm run build

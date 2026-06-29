@@ -6,12 +6,16 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Globe, Server, Box, Database, Play, Loader2,
   Cloud, CheckCircle2, XCircle, ChevronDown, RefreshCw,
-  ZoomIn, ZoomOut, Maximize2, Minimize2, X, Info, Cpu, Copy, Search, Shield, Activity, Zap, Sparkles,
+  ZoomIn, ZoomOut, Maximize2, Minimize2, X, Info, Cpu, Copy, Search, Shield, Activity, Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
+import { getDemoAwsSnapshot, getDemoCredentials, getDemoGcpSnapshot, setDemoAwsSnapshot, setDemoGcpSnapshot } from "@/lib/demo-credentials";
+import { useTaskCenter } from "@/components/TaskCenterProvider";
 import type { GcpSnapshot, GkeEntryPoint } from "@/lib/gcp/types";
+import type { AwsSnapshot } from "@/lib/aws/types";
 import type { LiveTraceIngressEvent } from "@/lib/live-trace-bus";
+import CopyAiResponseButton from "@/components/CopyAiResponseButton";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -24,38 +28,51 @@ const ANIM_COL_DELAY = 320; // ms between columns
 const ANIM_PULSE_MS = 260;  // ms node stays "active" before "done"
 const LIVE_POLL_ACTIVE_MS = 1500;
 const LIVE_POLL_ALL_MS = 4000;
-const LIVE_ALL_BATCH_SIZE = 4;
+const LIVE_ALL_CLOUD_LOGGING_BATCH_SIZE = 3;
+const LIVE_LOG_FETCH_LIMIT = 100;
+const LIVE_RPS_WINDOW_MS = 10_000;
 const LIVE_STREAM_PULSE_MS = 520;
 // Cloud Logging can lag well beyond a few seconds, so keep a wider freshness
 // window for "live" traffic while still aging events out of the UI separately.
 const LIVE_EVENT_FRESHNESS_MS = 120_000;
-const LIVE_EVENT_RETENTION_MS = 30_000;
+const LIVE_EVENT_RETENTION_MS = 120_000;
+const LIVE_EVENT_LIMIT = 100;
+const LOG_AUTO_REFRESH_MS = 5_000;
+const LOG_DRAWER_LIMIT = 200;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type NodeType = "internet" | "lb" | "gke" | "cloudrun" | "cloudsql" | "vm" | "sidecar";
 type NodeStatus = "idle" | "active" | "done" | "error";
 type LiveScope = "active" | "all";
-type EndpointFilter = "all" | "compute" | "k8s" | "cloudrun";
+type EndpointCloud = "gcp" | "aws";
+type GcpEndpointFilter = "all" | "cloudrun" | "vm" | "gke";
+type AwsEndpointFilter = "all" | "lambda" | "vm" | "eks";
 type LiveMonitorTarget =
   | {
+      cloud?: EndpointCloud;
       kind: "gke";
       projectId: string;
       container: string;
+      resourceName?: string;
       pathIds: Set<string>;
     }
   | {
+      cloud?: EndpointCloud;
       kind: "cloudrun";
       projectId: string;
       service: string;
       region?: string;
+      resourceName?: string;
       pathIds: Set<string>;
     }
   | {
+      cloud?: EndpointCloud;
       kind: "vm";
       projectId: string;
       instance: string;
       region?: string;
+      resourceName?: string;
       pathIds: Set<string>;
     };
 
@@ -73,6 +90,24 @@ interface LiveEvent {
   count: number;
 }
 
+interface AgentEventRow {
+  id: number | string;
+  agent_id: string;
+  provider?: string;
+  project_id?: string;
+  cluster_name?: string;
+  received_at: string;
+  event: {
+    type?: string;
+    method?: string;
+    path?: string;
+    status?: number;
+    hostname?: string;
+    comm?: string;
+    data?: string;
+  };
+}
+
 interface LivePulseBurst {
   id: string;
   pathIds: Set<string>;
@@ -86,6 +121,7 @@ interface GraphNode {
   sublabel: string;
   projectId?: string;
   region?: string;   // Cloud Run region or GCE zone — used for log filtering
+  cloud?: EndpointCloud;
   matchUrl?: string; // Cloud Run URL or LB IP
   resourceName?: string; // Exact service/instance name for log lookups
   container?: string; // sidecar: k8s container name
@@ -116,12 +152,78 @@ interface ProxyResponse {
 }
 
 type TraceSourceMode = "polling" | "streaming";
+type GcpComputeTraceSource = "cloud_logging" | "pubsub";
+type GcpGkeTraceSource = GcpComputeTraceSource | "ebpf_agent";
 type TraceSetupState = "not_configured" | "terraform_generated" | "resources_applied" | "receiving_events";
 
 interface GcpTraceSourceConfigSummary {
   mode: TraceSourceMode;
+  computeSource: GcpComputeTraceSource;
+  gkeSource: GcpGkeTraceSource;
   setupState: TraceSetupState;
   lastCheckMessage: string;
+}
+
+function isPubSubReady(
+  demoMode: boolean,
+  traceSourceConfig: GcpTraceSourceConfigSummary | null,
+): boolean {
+  return !demoMode
+    && traceSourceConfig?.mode === "streaming"
+    && traceSourceConfig.setupState === "receiving_events";
+}
+
+function sourceForKind(
+  kind: LiveMonitorTarget["kind"],
+  traceSourceConfig: GcpTraceSourceConfigSummary | null,
+): GcpComputeTraceSource | GcpGkeTraceSource {
+  if (kind === "gke") return traceSourceConfig?.gkeSource ?? "cloud_logging";
+  return traceSourceConfig?.computeSource ?? "cloud_logging";
+}
+
+function shouldUseStreamingLive(
+  demoMode: boolean,
+  traceSourceConfig: GcpTraceSourceConfigSummary | null,
+): boolean {
+  return isPubSubReady(demoMode, traceSourceConfig)
+    && (traceSourceConfig?.computeSource === "pubsub" || traceSourceConfig?.gkeSource === "pubsub");
+}
+
+function shouldPollLiveTarget(
+  target: LiveMonitorTarget,
+  traceSourceConfig: GcpTraceSourceConfigSummary | null,
+): boolean {
+  if (target.cloud === "aws") return target.kind === "cloudrun";
+  return sourceForKind(target.kind, traceSourceConfig) === "cloud_logging";
+}
+
+function shouldUseAgentEvents(traceSourceConfig: GcpTraceSourceConfigSummary | null): boolean {
+  return traceSourceConfig?.gkeSource === "ebpf_agent";
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function requestIntensityFromRate(rate: number | null): number {
+  if (rate === null || !Number.isFinite(rate) || rate <= 0) {
+    return 0;
+  }
+
+  const normalized = Math.log1p(rate * 1.6) / Math.log1p(36);
+  return clamp01(normalized);
+}
+
+function estimateRateFromTimestamps(timestamps: number[], nowMs: number, windowMs: number): number | null {
+  const recent = timestamps
+    .filter(ts => nowMs - ts < windowMs)
+    .sort((a, b) => a - b);
+
+  if (recent.length === 0) return null;
+  if (recent.length === 1) return 1000 / windowMs;
+
+  const spanMs = Math.max(recent[recent.length - 1] - recent[0], windowMs / 5);
+  return recent.length * (1000 / spanMs);
 }
 
 function getProxyUrlValidationError(rawUrl: string): string | null {
@@ -180,10 +282,91 @@ function HoverTooltip({
   );
 }
 
+function TraceActivityRail({
+  intensity,
+  label,
+  rateLabel,
+}: {
+  intensity: number;
+  label: string;
+  rateLabel: string;
+}) {
+  const [phase, setPhase] = useState(0);
+
+  useEffect(() => {
+    let frame = 0;
+    const tick = (now: number) => {
+      setPhase(now / 1000);
+      frame = window.requestAnimationFrame(tick);
+    };
+
+    frame = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  const bars = useMemo(() => {
+    return Array.from({ length: 24 }, (_, index) => {
+      const ripple = (Math.sin(phase * 1.9 + index * 0.45) + 1) / 2;
+      const drift = (Math.cos(phase * 0.8 - index * 0.28) + 1) / 2;
+      const height = clamp01(0.12 + intensity * (0.32 + ripple * 0.4 + drift * 0.14));
+      const opacity = 0.16 + intensity * 0.72;
+      return { height, opacity };
+    });
+  }, [intensity, phase]);
+
+  const headOffset = `${((phase * (0.16 + intensity * 0.42)) % 1) * 100}%`;
+
+  return (
+    <div className="shrink-0 border-b border-slate-800/50 bg-[#050805]/90 px-3 py-2">
+      <div className="flex items-center gap-3">
+        <div className="flex items-center gap-1.5 shrink-0 text-[8px] uppercase tracking-widest text-slate-500">
+          <Sparkles size={8} className={intensity > 0.2 ? "text-emerald-400" : "text-slate-600"} />
+          {label}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="relative flex h-5 items-end gap-[2px] overflow-hidden rounded-sm border border-slate-800/80 bg-[#070b07] px-[2px] py-[2px]">
+            <div
+              className="absolute inset-y-0 w-6 bg-emerald-500/10"
+              style={{ left: headOffset }}
+            />
+            {bars.map((bar, index) => (
+              <motion.span
+                key={index}
+                className="flex-1 origin-bottom rounded-[1px] border border-emerald-950/80 bg-emerald-500/70"
+                style={{
+                  height: `${Math.max(12, Math.round(bar.height * 100))}%`,
+                  opacity: bar.opacity,
+                }}
+                animate={{
+                  scaleY: 0.9 + intensity * 0.45,
+                }}
+                transition={{
+                  duration: 0.18,
+                  ease: "easeOut",
+                }}
+              />
+            ))}
+          </div>
+        </div>
+        <div className="shrink-0 text-right">
+          <div className={cn(
+            "text-[10px] font-mono font-bold leading-none",
+            intensity > 0.72 ? "text-red-400" : intensity > 0.42 ? "text-amber-400" : "text-emerald-400"
+          )}>
+            {rateLabel}
+          </div>
+          <div className="text-[8px] uppercase tracking-widest text-slate-600">req intensity</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Topology builder ─────────────────────────────────────────────────────────
 
 function buildTopology(
   snapshot: GcpSnapshot | null,
+  awsSnapshot: AwsSnapshot | null,
   entryPoints: GkeEntryPoint[] = [],
 ): { nodes: GraphNode[]; edges: GraphEdge[] } {
   const nodes: GraphNode[] = [];
@@ -191,7 +374,7 @@ function buildTopology(
 
   nodes.push({ id: "internet", type: "internet", col: 0, label: "INTERNET", sublabel: "Entry point" });
 
-  if (!snapshot) {
+  if (!snapshot && !awsSnapshot) {
     nodes.push({ id: "lb-ph", type: "lb", col: 1, label: "LOAD BALANCER", sublabel: "Scan to populate" });
     nodes.push({ id: "compute-ph", type: "gke", col: 2, label: "GKE / CLOUD RUN", sublabel: "Scan to populate" });
     nodes.push({ id: "data-ph", type: "cloudsql", col: 3, label: "CLOUD SQL", sublabel: "Scan to populate" });
@@ -199,14 +382,20 @@ function buildTopology(
     return { nodes, edges };
   }
 
-  const lbs  = snapshot.loadBalancers ?? [];
-  const gkes = snapshot.gkeClusters ?? [];
-  const runs = snapshot.cloudRunServices ?? [];
-  const sqls = snapshot.cloudSqlInstances ?? [];
+  const lbs  = snapshot?.loadBalancers ?? [];
+  const gkes = snapshot?.gkeClusters ?? [];
+  const runs = snapshot?.cloudRunServices ?? [];
+  const sqls = snapshot?.cloudSqlInstances ?? [];
   // VMs: exclude GKE node VMs and stopped instances
-  const vms  = (snapshot.vms ?? []).filter(
+  const vms  = (snapshot?.vms ?? []).filter(
     v => !v.name.startsWith("gke-") && v.status === "RUNNING"
   );
+  const awsLbs = (awsSnapshot?.loadBalancers ?? []).filter(
+    lb => lb.dnsName && lb.scheme === "internet-facing" && lb.state !== "failed"
+  );
+  const awsEc2s = (awsSnapshot?.ec2Instances ?? []).filter(instance => instance.state !== "terminated");
+  const awsEksClusters = awsSnapshot?.eksClusters ?? [];
+  const awsLambdas = awsSnapshot?.lambdaFunctions ?? [];
 
   // Snapshot load balancers (managed/global LBs from GCP)
   lbs.forEach((lb, i) => {
@@ -337,6 +526,86 @@ function buildTopology(
     }
   });
 
+  // AWS load balancers
+  awsLbs.forEach((lb, i) => {
+    const id = `aws-lb-${i}`;
+    nodes.push({
+      id,
+      type: "lb",
+      col: 1,
+      label: lb.name.slice(0, 22).toUpperCase(),
+      sublabel: `AWS ELB · ${lb.region}`,
+      cloud: "aws",
+      projectId: lb.accountId,
+      region: lb.region,
+      matchUrl: lb.dnsName,
+      resourceName: lb.name,
+    });
+    edges.push({ from: "internet", to: id });
+  });
+
+  // Public EKS clusters, attached to same account/region ELBs when possible.
+  awsEksClusters.forEach((cluster, i) => {
+    const id = `aws-eks-${i}`;
+    nodes.push({
+      id,
+      type: "gke",
+      col: 2,
+      label: cluster.clusterName.slice(0, 22).toUpperCase(),
+      sublabel: `EKS · ${cluster.region}`,
+      cloud: "aws",
+      projectId: cluster.accountId,
+      region: cluster.region,
+      matchUrl: cluster.endpointPublicAccess ? cluster.endpoint : undefined,
+      resourceName: cluster.clusterName,
+    });
+    const parentLbs = awsLbs
+      .map((lb, li) => ({ lb, id: `aws-lb-${li}` }))
+      .filter(({ lb }) => lb.accountId === cluster.accountId && lb.region === cluster.region);
+    if (parentLbs.length > 0) {
+      parentLbs.forEach(({ id: lbId }) => edges.push({ from: lbId, to: id }));
+    } else {
+      edges.push({ from: "internet", to: id });
+    }
+  });
+
+  // Public EC2 instances
+  awsEc2s.forEach((instance, i) => {
+    const id = `aws-ec2-${i}`;
+    const name = instance.tags.Name || instance.instanceId;
+    nodes.push({
+      id,
+      type: "vm",
+      col: 2,
+      label: name.slice(0, 22).toUpperCase(),
+      sublabel: `EC2 · ${instance.region}`,
+      cloud: "aws",
+      projectId: instance.accountId,
+      region: instance.region,
+      matchUrl: instance.publicIpAddress ?? undefined,
+      resourceName: instance.instanceId,
+    });
+    edges.push({ from: "internet", to: id });
+  });
+
+  // Lambda functions are assets; only functions with Function URLs are directly requestable.
+  awsLambdas.forEach((fn, i) => {
+    const id = `aws-lambda-${i}`;
+    nodes.push({
+      id,
+      type: "cloudrun",
+      col: 2,
+      label: fn.functionName.slice(0, 22).toUpperCase(),
+      sublabel: fn.functionUrl ? `Lambda URL · ${fn.region}` : `Lambda · ${fn.region}`,
+      cloud: "aws",
+      projectId: fn.accountId,
+      region: fn.region,
+      matchUrl: fn.functionUrl,
+      resourceName: fn.functionName,
+    });
+    edges.push({ from: "internet", to: id });
+  });
+
   return { nodes, edges };
 }
 
@@ -391,18 +660,30 @@ function buildPathForNode(nodeId: string, edges: GraphEdge[]): Set<string> {
 }
 
 function liveTargetKey(target: LiveMonitorTarget): string {
-  if (target.kind === "gke") return `gke:${target.projectId}:${target.container}`;
-  if (target.kind === "cloudrun") return `cloudrun:${target.projectId}:${target.region ?? ""}:${target.service}`;
-  return `vm:${target.projectId}:${target.region ?? ""}:${target.instance}`;
+  const cloud = target.cloud ?? "gcp";
+  if (target.kind === "gke") return `${cloud}:gke:${target.projectId}:${target.container}`;
+  if (target.kind === "cloudrun") return `${cloud}:cloudrun:${target.projectId}:${target.region ?? ""}:${target.service}`;
+  return `${cloud}:vm:${target.projectId}:${target.region ?? ""}:${target.instance}`;
 }
 
 function buildLiveLogParams(target: LiveMonitorTarget, after: string): URLSearchParams {
   const params = new URLSearchParams({
     projectId: target.projectId,
     after,
-    limit: "20",
+    limit: String(LIVE_LOG_FETCH_LIMIT),
   });
-  if (target.kind === "gke") {
+  if (target.cloud === "aws") {
+    params.set("accountId", target.projectId);
+    if (target.kind === "cloudrun") {
+      params.set("functionName", target.service);
+      if (target.region) params.set("region", target.region);
+    } else if (target.kind === "vm") {
+      params.set("instanceId", target.instance);
+      if (target.region) params.set("region", target.region);
+    } else if (target.kind === "gke") {
+      params.set("clusterName", target.resourceName ?? target.container);
+    }
+  } else if (target.kind === "gke") {
     params.set("container", target.container);
   } else if (target.kind === "cloudrun") {
     params.set("resourceType", "cloud_run_revision");
@@ -417,9 +698,30 @@ function buildLiveLogParams(target: LiveMonitorTarget, after: string): URLSearch
 }
 
 function liveTargetLabel(target: LiveMonitorTarget): string {
-  if (target.kind === "gke") return `GKE · ${target.container}`;
+  if (target.cloud === "aws") {
+    if (target.kind === "gke") return `EKS · ${target.resourceName ?? target.container}`;
+    if (target.kind === "cloudrun") return `Lambda · ${target.service}`;
+    return `EC2 · ${target.instance}`;
+  }
+  if (target.kind === "gke") return target.container === "ebpf-agent" ? "GKE · eBPF agent" : `GKE · ${target.container}`;
   if (target.kind === "cloudrun") return `RUN · ${target.service}`;
   return `VM · ${target.instance}`;
+}
+
+function serializeLiveTraceTarget(target: LiveMonitorTarget | null) {
+  if (!target) return undefined;
+  return {
+    cloud: target.cloud ?? "gcp",
+    kind: target.kind,
+    projectId: target.projectId,
+    region: target.kind === "gke" ? undefined : target.region,
+    resourceName: target.kind === "cloudrun"
+      ? target.service
+      : target.kind === "vm"
+        ? target.instance
+        : target.resourceName ?? target.container,
+    container: target.kind === "gke" ? target.container : undefined,
+  };
 }
 
 function resolveTargetFromIngressEvent(event: LiveTraceIngressEvent): {
@@ -456,26 +758,33 @@ function resolveTargetFromIngressEvent(event: LiveTraceIngressEvent): {
 
 function liveTargetKeyFromIngressEvent(event: LiveTraceIngressEvent): string {
   const target = resolveTargetFromIngressEvent(event);
-  if (target.kind === "cloudrun") return `cloudrun:${target.projectId}:${target.region ?? ""}:${target.service}`;
-  if (target.kind === "vm") return `vm:${target.projectId}:${target.region ?? ""}:${target.instance}`;
-  return `gke:${target.projectId}:${target.container}`;
+  if (target.kind === "cloudrun") return `${event.cloud}:cloudrun:${target.projectId}:${target.region ?? ""}:${target.service}`;
+  if (target.kind === "vm") return `${event.cloud}:vm:${target.projectId}:${target.region ?? ""}:${target.instance}`;
+  return `${event.cloud}:gke:${target.projectId}:${target.container}`;
+}
+
+function ingressEventMatchesLiveTarget(event: LiveTraceIngressEvent, target: LiveMonitorTarget): boolean {
+  if (event.cloud !== (target.cloud ?? "gcp")) return false;
+  if (event.kind !== target.kind || event.projectId !== target.projectId) return false;
+  if (target.kind === "gke") return true;
+  return liveTargetKeyFromIngressEvent(event) === liveTargetKey(target);
 }
 
 function resolveLiveTargetNodeId(target: LiveMonitorTarget, nodes: GraphNode[]): string | undefined {
   if (target.kind === "gke") {
     return nodes.find(
-      n => target.pathIds.has(n.id) && n.type === "sidecar" && n.projectId === target.projectId && n.container === target.container
+      n => target.pathIds.has(n.id) && (n.cloud ?? "gcp") === (target.cloud ?? "gcp") && n.type === "sidecar" && n.projectId === target.projectId && n.container === target.container
     )?.id ?? nodes.find(
-      n => target.pathIds.has(n.id) && n.type === "gke" && n.projectId === target.projectId
+      n => target.pathIds.has(n.id) && (n.cloud ?? "gcp") === (target.cloud ?? "gcp") && n.type === "gke" && n.projectId === target.projectId
     )?.id;
   }
   if (target.kind === "cloudrun") {
     return nodes.find(
-      n => target.pathIds.has(n.id) && n.type === "cloudrun" && n.projectId === target.projectId && n.resourceName === target.service
+      n => target.pathIds.has(n.id) && (n.cloud ?? "gcp") === (target.cloud ?? "gcp") && n.type === "cloudrun" && n.projectId === target.projectId && n.resourceName === target.service
     )?.id;
   }
   return nodes.find(
-    n => target.pathIds.has(n.id) && n.type === "vm" && n.projectId === target.projectId && n.resourceName === target.instance
+    n => target.pathIds.has(n.id) && (n.cloud ?? "gcp") === (target.cloud ?? "gcp") && n.type === "vm" && n.projectId === target.projectId && n.resourceName === target.instance
   )?.id;
 }
 
@@ -483,19 +792,40 @@ function resolveLiveEventNodeIdFromIngress(event: LiveTraceIngressEvent, nodes: 
   const target = resolveTargetFromIngressEvent(event);
   if (target.kind === "cloudrun") {
     return nodes.find(
-      n => n.type === "cloudrun" && n.projectId === target.projectId && n.resourceName === target.service
+      n => (n.cloud ?? "gcp") === event.cloud && n.type === "cloudrun" && n.projectId === target.projectId && n.resourceName === target.service
     )?.id;
   }
   if (target.kind === "vm") {
     return nodes.find(
-      n => n.type === "vm" && n.projectId === target.projectId && n.resourceName === target.instance
+      n => (n.cloud ?? "gcp") === event.cloud && n.type === "vm" && n.projectId === target.projectId && n.resourceName === target.instance
     )?.id;
   }
   return nodes.find(
-    n => n.type === "sidecar" && n.projectId === target.projectId && n.container === target.container
+    n => (n.cloud ?? "gcp") === event.cloud && n.type === "sidecar" && n.projectId === target.projectId && n.container === target.container
   )?.id ?? nodes.find(
-    n => n.type === "gke" && n.projectId === target.projectId
+    n => (n.cloud ?? "gcp") === event.cloud && n.type === "gke" && n.projectId === target.projectId
   )?.id;
+}
+
+function buildPathForIngressEvent(
+  event: LiveTraceIngressEvent,
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+  activeTarget: LiveMonitorTarget | null,
+): Set<string> | null {
+  const focusNodeId = resolveLiveEventNodeIdFromIngress(event, nodes);
+  if (focusNodeId) return buildPathForNode(focusNodeId, edges);
+  if (activeTarget && ingressEventMatchesLiveTarget(event, activeTarget)) {
+    return new Set(activeTarget.pathIds);
+  }
+  const fallbackNode = nodes.find(node => {
+    if ((node.cloud ?? "gcp") !== event.cloud) return false;
+    if (node.projectId !== event.projectId) return false;
+    if (event.kind === "gke") return node.type === "gke";
+    if (event.kind === "cloudrun") return node.type === "cloudrun" && node.resourceName === event.resourceName;
+    return node.type === "vm" && node.resourceName === event.resourceName;
+  });
+  return fallbackNode ? buildPathForNode(fallbackNode.id, edges) : null;
 }
 
 function toLiveEventFromIngress(event: LiveTraceIngressEvent, nodes: GraphNode[]): LiveEvent {
@@ -503,11 +833,17 @@ function toLiveEventFromIngress(event: LiveTraceIngressEvent, nodes: GraphNode[]
   return {
     id: event.id,
     ts: event.timestamp,
-    label: target.kind === "cloudrun"
-      ? `RUN · ${target.service}`
-      : target.kind === "vm"
-        ? `VM · ${target.instance}`
-        : `GKE · ${target.container}`,
+    label: event.cloud === "aws"
+      ? target.kind === "cloudrun"
+        ? `Lambda · ${target.service}`
+        : target.kind === "vm"
+          ? `EC2 · ${target.instance}`
+          : `EKS · ${event.resourceName}`
+      : target.kind === "cloudrun"
+        ? `RUN · ${target.service}`
+        : target.kind === "vm"
+          ? `VM · ${target.instance}`
+          : `GKE · ${target.container}`,
     kind: target.kind,
     projectId: target.projectId,
     focusNodeId: resolveLiveEventNodeIdFromIngress(event, nodes),
@@ -519,34 +855,178 @@ function toLiveEventFromIngress(event: LiveTraceIngressEvent, nodes: GraphNode[]
   };
 }
 
-function toLiveEvent(target: LiveMonitorTarget, entries: LogEntry[], nodes: GraphNode[]): LiveEvent | null {
-  if (entries.length === 0) return null;
-  const latest = entries.reduce((a, b) => a.timestamp > b.timestamp ? a : b);
-  const parsed = !latest.httpRequest
-    ? (parseReqLog(latest.message) ?? parseNginxLog(latest.message) ?? parseEnvoyLog(latest.message))
-    : null;
-  const method = latest.httpRequest?.method ?? parsed?.method ?? undefined;
-  const path = latest.httpRequest
-    ? (() => {
-        try { return new URL(latest.httpRequest!.url).pathname; }
-        catch { return latest.httpRequest!.url; }
-      })()
-    : ("path" in (parsed ?? {}) ? parsed?.path : undefined);
-  const status = latest.httpRequest?.status ?? ("status" in (parsed ?? {}) ? parsed?.status : undefined);
-  const latency = latest.httpRequest?.latency ?? ("latencyMs" in (parsed ?? {}) && parsed ? `${parsed.latencyMs}ms` : undefined);
+function resolveAgentEventNodeId(event: AgentEventRow, nodes: GraphNode[]): string | undefined {
+  return nodes.find(
+    n => n.type === "gke" && (!event.project_id || n.projectId === event.project_id)
+  )?.id ?? nodes.find(n => n.type === "gke")?.id;
+}
+
+function buildPathForAgentEvent(
+  event: AgentEventRow,
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+  activeTarget: LiveMonitorTarget | null,
+): Set<string> | null {
+  if (
+    activeTarget?.kind === "gke"
+    && (!event.project_id || activeTarget.projectId === event.project_id)
+  ) {
+    return new Set(activeTarget.pathIds);
+  }
+  const focusNodeId = resolveAgentEventNodeId(event, nodes);
+  return focusNodeId ? buildPathForNode(focusNodeId, edges) : null;
+}
+
+function toLiveEventFromAgentEvent(event: AgentEventRow, nodes: GraphNode[]): LiveEvent {
+  const focusNodeId = resolveAgentEventNodeId(event, nodes);
+  const ev = event.event ?? {};
   return {
-    id: `${liveTargetKey(target)}:${latest.timestamp}:${entries.length}`,
-    ts: latest.timestamp,
-    label: liveTargetLabel(target),
+    id: `agent:${event.id}`,
+    ts: event.received_at,
+    label: event.cluster_name
+      ? `GKE · ${event.cluster_name}`
+      : `GKE · ${ev.hostname ?? event.agent_id}`,
+    kind: "gke",
+    projectId: event.project_id ?? "",
+    focusNodeId,
+    method: ev.method,
+    path: ev.path,
+    status: ev.status,
+    count: 1,
+  };
+}
+
+interface ParsedLiveRequestLog {
+  entry: LogEntry;
+  method?: string;
+  path?: string;
+  status?: number;
+  latency?: string;
+  userAgent?: string;
+}
+
+const EXPECTED_REQUEST_PATHS = new Set([
+  "/health",
+  "/api/health",
+  "/healthz",
+  "/ready",
+  "/readyz",
+  "/live",
+  "/livez",
+  "/startup",
+  "/startupz",
+  "/ping",
+  "/metrics",
+]);
+
+const DEFAULT_HIDDEN_GKE_HEALTH_PATHS = new Set([
+  "/health",
+  "/api/health",
+  "/healthz",
+]);
+
+const EXPECTED_REQUEST_USER_AGENT_RE = /\b(GoogleHC|kube-probe|ELB-HealthChecker|HealthChecker|watchmen-trace-poller)\b/i;
+
+function isExpectedLiveRequest({
+  path,
+  userAgent,
+}: {
+  path?: string;
+  userAgent?: string;
+}): boolean {
+  const cleanPath = (path ?? "").split("?")[0].replace(/\/+$/, "") || "/";
+  if (EXPECTED_REQUEST_PATHS.has(cleanPath.toLowerCase())) return true;
+  if (EXPECTED_REQUEST_USER_AGENT_RE.test(userAgent ?? "")) return true;
+  if ((path ?? "").includes("watchmen_trace_probe=")) return true;
+  return false;
+}
+
+function extractHeaderValue(raw: unknown, headerName: string): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const headerRe = new RegExp(`^${headerName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:\\s*(.+)$`, "im");
+  return raw.match(headerRe)?.[1]?.trim();
+}
+
+function isExpectedAgentLiveEvent(event: AgentEventRow): boolean {
+  const ev = event.event ?? {};
+  if (ev.type !== "http_request") return true;
+  return isExpectedLiveRequest({
+    path: ev.path,
+    userAgent: extractHeaderValue(ev.data, "User-Agent"),
+  });
+}
+
+function parseLiveRequestLog(entry: LogEntry): ParsedLiveRequestLog | null {
+  if (entry.httpRequest) {
+    const hr = entry.httpRequest;
+    const method = hr.method || undefined;
+    const path = hr.url
+      ? (() => {
+          try { return new URL(hr.url).pathname; }
+          catch { return hr.url; }
+        })()
+      : undefined;
+    if (!method && !path && hr.status === undefined) return null;
+    return {
+      entry,
+      method,
+      path,
+      status: hr.status,
+      latency: hr.latency || undefined,
+      userAgent: hr.userAgent || undefined,
+    };
+  }
+
+  const parsed =
+    parseReqLog(entry.message) ??
+    parseNginxLog(entry.message) ??
+    parseEnvoyLog(entry.message) ??
+    parseTraceAppLog(entry.message) ??
+    parseStructuredRequestLog(entry.message);
+
+  if (!parsed?.method && !parsed?.path) return null;
+
+  return {
+    entry,
+    method: parsed.method || undefined,
+    path: parsed.path || undefined,
+    status: parsed.status || undefined,
+    latency: `${parsed.latencyMs}ms`,
+    userAgent: ("userAgent" in parsed ? parsed.userAgent : undefined) || undefined,
+  };
+}
+
+function getLiveRequestLogs(entries: LogEntry[], includeExpectedRequests: boolean): ParsedLiveRequestLog[] {
+  return entries
+    .map(parseLiveRequestLog)
+    .filter((entry): entry is ParsedLiveRequestLog => !!entry && (includeExpectedRequests || !isExpectedLiveRequest(entry)));
+}
+
+function toLiveEvents(
+  target: LiveMonitorTarget,
+  entries: LogEntry[],
+  nodes: GraphNode[],
+  includeExpectedRequests: boolean,
+): LiveEvent[] {
+  const requestLogs = getLiveRequestLogs(entries, includeExpectedRequests)
+    .sort((a, b) => eventTimestampMs(b.entry.timestamp) - eventTimestampMs(a.entry.timestamp));
+  const label = liveTargetLabel(target);
+  const focusNodeId = resolveLiveTargetNodeId(target, nodes);
+  const targetKey = liveTargetKey(target);
+
+  return requestLogs.slice(0, 20).map((request, index) => ({
+    id: `${targetKey}:${request.entry.timestamp}:${request.method ?? "HTTP"}:${request.path ?? "request"}:${index}`,
+    ts: request.entry.timestamp,
+    label,
     kind: target.kind,
     projectId: target.projectId,
-    focusNodeId: resolveLiveTargetNodeId(target, nodes),
-    method,
-    path,
-    status,
-    latency,
-    count: entries.length,
-  };
+    focusNodeId,
+    method: request.method,
+    path: request.path,
+    status: request.status,
+    latency: request.latency,
+    count: 1,
+  }));
 }
 
 function toDemoLiveEvent(target: LiveMonitorTarget, ts: string, count: number, nodes: GraphNode[]): LiveEvent {
@@ -875,16 +1355,38 @@ function statusColor(code: number | undefined) {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
+const LOG_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE"] as const;
+type LogMethodFilter = "all" | typeof LOG_METHODS[number];
 const METHOD_COLOR: Record<string, string> = {
   GET: "text-sky-400", POST: "text-emerald-400", PUT: "text-amber-400",
   PATCH: "text-orange-400", DELETE: "text-red-400",
+  HEAD: "text-cyan-400", OPTIONS: "text-violet-400", TRACE: "text-fuchsia-400",
 };
 
-const ENDPOINT_FILTERS: { id: EndpointFilter; label: string }[] = [
+function requestPriority(method?: string, path?: string): number {
+  const normalized = (method ?? "").toUpperCase();
+  if (normalized && normalized !== "GET") return 0;
+  if ((path ?? "").includes("watchmen_trace_probe=")) return 1;
+  return 2;
+}
+
+const ENDPOINT_CLOUDS: { id: EndpointCloud; label: string }[] = [
+  { id: "gcp", label: "GCP" },
+  { id: "aws", label: "AWS" },
+];
+
+const GCP_ENDPOINT_FILTERS: { id: GcpEndpointFilter; label: string }[] = [
   { id: "all", label: "All" },
-  { id: "compute", label: "Compute" },
-  { id: "k8s", label: "K8s" },
   { id: "cloudrun", label: "CloudRun" },
+  { id: "vm", label: "VM" },
+  { id: "gke", label: "GKE" },
+];
+
+const AWS_ENDPOINT_FILTERS: { id: AwsEndpointFilter; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "lambda", label: "Lambda" },
+  { id: "vm", label: "VM" },
+  { id: "eks", label: "EKS" },
 ];
 
 // ─── Node type labels ─────────────────────────────────────────────────────────
@@ -901,13 +1403,33 @@ const NODE_TYPE_LABEL: Record<NodeType, string> = {
 
 const NODE_ROLE_DESC: Record<NodeType, string> = {
   internet:  "Origin of the outgoing HTTP request.",
-  lb:        "GCP external load balancer that forwards traffic to backend services.",
-  gke:       "Google Kubernetes Engine cluster running containerised workloads.",
-  cloudrun:  "Serverless Cloud Run service — the request is delivered directly here.",
+  lb:        "Cloud load balancer that forwards traffic to backend services.",
+  gke:       "Kubernetes cluster running containerised workloads.",
+  cloudrun:  "Serverless HTTP service — the request is delivered directly here.",
   cloudsql:  "Managed relational database — not reachable via HTTP, accessed internally.",
   vm:        "Compute Engine VM instance — direct or LB-fronted HTTP workload.",
   sidecar:   "Sidecar container injected alongside the main app in the same pod.",
 };
+
+function nodeTypeLabel(node: GraphNode): string {
+  if (node.cloud === "aws") {
+    if (node.type === "gke") return "EKS Cluster";
+    if (node.type === "cloudrun") return "Lambda Function";
+    if (node.type === "vm") return "EC2 Instance";
+    if (node.type === "lb") return "AWS Load Balancer";
+  }
+  return NODE_TYPE_LABEL[node.type];
+}
+
+function nodeRoleDescription(node: GraphNode): string {
+  if (node.cloud === "aws") {
+    if (node.type === "gke") return "AWS EKS cluster API or workloads relevant to trace routing.";
+    if (node.type === "cloudrun") return "AWS Lambda function; directly traceable only when a Function URL exists.";
+    if (node.type === "vm") return "AWS EC2 instance; directly traceable only when it has a public HTTP endpoint.";
+    if (node.type === "lb") return "AWS load balancer that can receive public HTTP traffic.";
+  }
+  return NODE_ROLE_DESC[node.type];
+}
 
 // ─── TraceModal sub-component ─────────────────────────────────────────────────
 
@@ -1025,7 +1547,7 @@ function TraceModal({
                 ? new Date(e.timestamp).toLocaleTimeString([], { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })
                 : "";
               const parsed = !e.httpRequest
-                ? (parseReqLog(e.message) ?? parseNginxLog(e.message) ?? parseEnvoyLog(e.message))
+                ? (parseReqLog(e.message) ?? parseNginxLog(e.message) ?? parseEnvoyLog(e.message) ?? parseTraceAppLog(e.message))
                 : null;
               const method = e.httpRequest?.method ?? parsed?.method ?? "";
               const path = e.httpRequest
@@ -1214,6 +1736,34 @@ function parseEnvoyLog(msg: string): { method: string; path: string; status: num
   return { method: m[2], path: m[3], status: Number(m[4]), latencyMs: Number(m[5]), remoteIp: m[6], userAgent: m[7] };
 }
 
+const TRACE_APP_LOG_RE = /\bservice=(\S+)\s+method=(\S+)\s+path=(\S+)\s+remote=(\S+)\s+duration=(\S+)/;
+function durationToMs(value: string): number {
+  const m = value.match(/^([\d.]+)(ns|µs|us|ms|s)$/);
+  if (!m) return 0;
+  const amount = Number(m[1]);
+  if (!Number.isFinite(amount)) return 0;
+  switch (m[2]) {
+    case "ns": return amount / 1_000_000;
+    case "µs":
+    case "us": return amount / 1_000;
+    case "s": return amount * 1_000;
+    default: return amount;
+  }
+}
+function parseTraceAppLog(msg: string): { method: string; path: string; status: number; latencyMs: number; remoteIp: string; userAgent: string; service: string } | null {
+  const m = msg.match(TRACE_APP_LOG_RE);
+  if (!m) return null;
+  return {
+    service: m[1],
+    method: m[2],
+    path: m[3],
+    remoteIp: m[4],
+    latencyMs: durationToMs(m[5]),
+    status: 200,
+    userAgent: "",
+  };
+}
+
 // Parse nginx JSON access logs: {"time":...,"remote_addr":...,"method":...,"uri":...,"status":200,...}
 function parseNginxLog(msg: string): { method: string; path: string; status: number; latencyMs: number; remoteIp: string; userAgent: string } | null {
 	try {
@@ -1298,7 +1848,22 @@ interface LogEntryDetails {
   message?: string;
   body?: string;
   headers?: Record<string, unknown>;
+  queryParams?: Record<string, string>;
+  traceId?: string;
+  traceSource?: string;
+  traceMethod?: string;
+  contentType?: string;
+  payloadBytes?: string;
   payload?: unknown;
+}
+
+interface CapturedHttpDetails {
+  method?: string;
+  path?: string;
+  protocol?: string;
+  status?: number;
+  headers?: Record<string, string>;
+  body?: string;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -1341,6 +1906,84 @@ function findStructuredRequestPayload(payload: unknown): {
   return {};
 }
 
+function headerValue(headers: Record<string, unknown> | undefined, name: string): string | undefined {
+  if (!headers) return undefined;
+  const foundKey = Object.keys(headers).find(key => key.toLowerCase() === name.toLowerCase());
+  const value = foundKey ? headers[foundKey] : undefined;
+  return typeof value === "string" ? value : value === undefined ? undefined : String(value);
+}
+
+function parseQueryParams(pathOrUrl: string | undefined): Record<string, string> | undefined {
+  if (!pathOrUrl) return undefined;
+  try {
+    const url = new URL(pathOrUrl, "http://watchmen.local");
+    const entries = [...url.searchParams.entries()];
+    if (entries.length === 0) return undefined;
+    return Object.fromEntries(entries);
+  } catch {
+    return undefined;
+  }
+}
+
+function parseCapturedHttpDetails(raw: string | undefined): CapturedHttpDetails | null {
+  if (!raw) return null;
+  const normalized = raw.replace(/\r\n/g, "\n");
+  const [head, ...bodyParts] = normalized.split(/\n\n/);
+  const lines = head.split("\n").filter(Boolean);
+  const firstLine = lines[0] ?? "";
+  const headers: Record<string, string> = {};
+
+  lines.slice(1).forEach(line => {
+    const idx = line.indexOf(":");
+    if (idx <= 0) return;
+    headers[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+  });
+
+  const request = firstLine.match(/^([A-Z]+)\s+(\S+)\s+(HTTP\/\d(?:\.\d)?)$/);
+  const response = firstLine.match(/^HTTP\/\d(?:\.\d)?\s+(\d{3})\b/);
+  if (!request && !response && Object.keys(headers).length === 0) return null;
+
+  return {
+    method: request?.[1],
+    path: request?.[2],
+    protocol: request?.[3],
+    status: response ? Number(response[1]) : undefined,
+    headers: Object.keys(headers).length > 0 ? headers : undefined,
+    body: bodyParts.join("\n\n") || undefined,
+  };
+}
+
+function withCapturedHttpDetails(details: LogEntryDetails, raw: string | undefined): LogEntryDetails {
+  const captured = parseCapturedHttpDetails(raw);
+  const headers = {
+    ...(captured?.headers ?? {}),
+    ...(details.headers ?? {}),
+  };
+  const mergedHeaders = Object.keys(headers).length > 0 ? headers : undefined;
+  const queryParams = details.queryParams ?? parseQueryParams(details.path) ?? parseQueryParams(captured?.path);
+  const traceId =
+    details.traceId ??
+    headerValue(mergedHeaders, "X-Watchmen-Trace-Id") ??
+    queryParams?.watchmen_trace_probe;
+
+  return {
+    ...details,
+    method: details.method ?? captured?.method,
+    path: details.path ?? captured?.path,
+    protocol: details.protocol ?? captured?.protocol,
+    status: details.status ?? captured?.status,
+    userAgent: details.userAgent ?? headerValue(mergedHeaders, "User-Agent"),
+    body: details.body ?? captured?.body,
+    headers: mergedHeaders,
+    queryParams,
+    traceId,
+    traceSource: details.traceSource ?? headerValue(mergedHeaders, "X-Watchmen-Trace-Source"),
+    traceMethod: details.traceMethod ?? headerValue(mergedHeaders, "X-Watchmen-Trace-Method"),
+    contentType: details.contentType ?? headerValue(mergedHeaders, "Content-Type"),
+    payloadBytes: details.payloadBytes ?? headerValue(mergedHeaders, "X-Watchmen-Payload-Bytes"),
+  };
+}
+
 function getLogEntryDetails(entry: LogEntry): LogEntryDetails {
   const ts = entry.timestamp ? new Date(entry.timestamp).toLocaleString() : "Unknown";
   const structured = findStructuredRequestPayload(entry.payload);
@@ -1353,7 +1996,7 @@ function getLogEntryDetails(entry: LogEntry): LogEntryDetails {
   if (entry.httpRequest) {
     const hr = entry.httpRequest;
     const path = (() => { try { return new URL(hr.url).pathname; } catch { return hr.url; } })();
-    return {
+    return withCapturedHttpDetails({
       title: `${hr.method} ${path}`,
       timestamp: ts,
       method: hr.method,
@@ -1370,18 +2013,19 @@ function getLogEntryDetails(entry: LogEntry): LogEntryDetails {
       message: entry.message || undefined,
       source: entry.revision || entry.pod || entry.instanceId || undefined,
       headers: structured.headers,
+      queryParams: parseQueryParams(hr.url),
       body: structuredBody,
       payload: entry.payload,
-    };
+    }, entry.message);
   }
 
-  const parsed = parseReqLog(entry.message) ?? parseNginxLog(entry.message) ?? parseEnvoyLog(entry.message);
+  const parsed = parseReqLog(entry.message) ?? parseNginxLog(entry.message) ?? parseEnvoyLog(entry.message) ?? parseTraceAppLog(entry.message);
   if (parsed) {
     const source = entry.container || entry.pod || entry.instanceId || entry.revision || "";
     const remoteIp = (parsed as any).ip ?? (parsed as any).remoteIp ?? "";
     const body = (parsed as any).body ?? "";
     const userAgent = (parsed as any).userAgent ?? "";
-    return {
+    return withCapturedHttpDetails({
       title: `${parsed.method} ${parsed.path}`,
       timestamp: ts,
       method: parsed.method,
@@ -1395,13 +2039,13 @@ function getLogEntryDetails(entry: LogEntry): LogEntryDetails {
       headers: structured.headers,
       message: entry.message,
       payload: entry.payload,
-    };
+    }, entry.message);
   }
 
   const structuredLog = parseStructuredRequestLog(entry.message);
   if (structuredLog) {
     const source = entry.container || entry.pod || entry.instanceId || entry.revision || "";
-    return {
+    return withCapturedHttpDetails({
       title: `${structuredLog.method} ${structuredLog.path}`,
       timestamp: ts,
       method: structuredLog.method,
@@ -1415,10 +2059,10 @@ function getLogEntryDetails(entry: LogEntry): LogEntryDetails {
       headers: structuredLog.headers ?? structured.headers,
       message: entry.message,
       payload: entry.payload,
-    };
+    }, entry.message);
   }
 
-  return {
+  return withCapturedHttpDetails({
     title: entry.severity || "Log entry",
     timestamp: ts,
     severity: entry.severity,
@@ -1427,7 +2071,27 @@ function getLogEntryDetails(entry: LogEntry): LogEntryDetails {
     body: structuredBody,
     headers: structured.headers,
     payload: entry.payload,
-  };
+  }, entry.message);
+}
+
+function getLogEntryRequestPath(entry: LogEntry): string | undefined {
+  if (entry.httpRequest?.url) {
+    try { return new URL(entry.httpRequest.url).pathname; }
+    catch { return entry.httpRequest.url; }
+  }
+
+  const parsed =
+    parseReqLog(entry.message) ??
+    parseStructuredRequestLog(entry.message) ??
+    parseNginxLog(entry.message) ??
+    parseEnvoyLog(entry.message) ??
+    parseTraceAppLog(entry.message);
+  return parsed?.path;
+}
+
+function isDefaultHiddenGkeHealthLog(entry: LogEntry): boolean {
+  const cleanPath = (getLogEntryRequestPath(entry) ?? "").split("?")[0].replace(/\/+$/, "") || "/";
+  return DEFAULT_HIDDEN_GKE_HEALTH_PATHS.has(cleanPath.toLowerCase());
 }
 
 function LogEntryModal({
@@ -1497,6 +2161,28 @@ function LogEntryModal({
               <div className="text-[8px] uppercase tracking-widest text-slate-600">Headers</div>
               <pre className="mt-2 whitespace-pre-wrap break-all text-slate-300">
                 {JSON.stringify(details.headers, null, 2)}
+              </pre>
+            </div>
+          )}
+
+          {(details.traceId || details.traceSource || details.traceMethod || details.contentType || details.payloadBytes) && (
+            <div className="border border-slate-800/60 bg-[#0a0d0a] px-3 py-2.5">
+              <div className="text-[8px] uppercase tracking-widest text-slate-600">Trace Probe</div>
+              <div className="mt-2 grid gap-1 text-slate-300 sm:grid-cols-2">
+                {details.traceId ? <div className="break-all"><span className="text-slate-500">Trace ID:</span> {details.traceId}</div> : null}
+                {details.traceSource ? <div className="break-all"><span className="text-slate-500">Source:</span> {details.traceSource}</div> : null}
+                {details.traceMethod ? <div><span className="text-slate-500">Declared method:</span> {details.traceMethod}</div> : null}
+                {details.contentType ? <div className="break-all"><span className="text-slate-500">Content type:</span> {details.contentType}</div> : null}
+                {details.payloadBytes ? <div><span className="text-slate-500">Payload bytes:</span> {details.payloadBytes}</div> : null}
+              </div>
+            </div>
+          )}
+
+          {details.queryParams && Object.keys(details.queryParams).length > 0 && (
+            <div className="border border-slate-800/60 bg-[#0a0d0a] px-3 py-2.5">
+              <div className="text-[8px] uppercase tracking-widest text-slate-600">Query Parameters</div>
+              <pre className="mt-2 whitespace-pre-wrap break-all text-slate-300">
+                {JSON.stringify(details.queryParams, null, 2)}
               </pre>
             </div>
           )}
@@ -1572,7 +2258,8 @@ function NodeDetail({
 
   // Tabs — only nodes that have their own logs/routes get the tab bar.
   // LBs are infrastructure (no container logs); they only get routes if matchUrl is set.
-  const hasLogs   = node.type === "gke" || node.type === "cloudrun" || node.type === "vm" || node.type === "sidecar";
+  const hasAwsLambdaLogs = node.cloud === "aws" && node.type === "cloudrun";
+  const hasLogs = hasAwsLambdaLogs || (node.cloud !== "aws" && (node.type === "gke" || node.type === "cloudrun" || node.type === "vm" || node.type === "sidecar"));
   const hasRoutes = node.type === "gke" || node.type === "cloudrun" || node.type === "lb" || node.type === "vm";
   const showTabs  = hasLogs || hasRoutes;
   const [tab, setTab] = useState<NodeDetailTab>("info");
@@ -1583,6 +2270,8 @@ function NodeDetail({
   const [logsError, setLogsError] = useState<string | null>(null);
   const [logSearch, setLogSearch] = useState("");
   const [logStatusFilter, setLogStatusFilter] = useState<"all" | "2xx" | "3xx" | "4xx" | "5xx">("all");
+  const [logMethodFilter, setLogMethodFilter] = useState<LogMethodFilter>("all");
+  const [hideGkeHealthLogs, setHideGkeHealthLogs] = useState(true);
   const [logsExpanded, setLogsExpanded] = useState(false);
   const [selectedLogEntry, setSelectedLogEntry] = useState<LogEntry | null>(null);
   const [copyFlash, setCopyFlash] = useState(false);
@@ -1598,6 +2287,7 @@ function NodeDetail({
 
   // Fetch available containers for GKE and sidecar nodes (for the container selector)
   useEffect(() => {
+    if (node.cloud === "aws") return;
     if (tab !== "logs" || !node.projectId) return;
     if (node.type !== "gke" && node.type !== "sidecar") return;
     const params = new URLSearchParams({ projectId: node.projectId, mode: "containers" });
@@ -1609,16 +2299,20 @@ function NodeDetail({
         if (containers.includes("istio-proxy")) onIstioDetected?.(node.id);
       })
       .catch(() => {});
-  }, [tab, node.id, node.projectId, node.type, onIstioDetected]);
+  }, [tab, node.cloud, node.id, node.projectId, node.type, onIstioDetected]);
 
-  // Fetch logs when tab or container selection changes
-  useEffect(() => {
-    if (tab !== "logs" || !node.projectId) return;
-    setLoadingLogs(true);
+  const refreshLogs = useCallback(async ({ showLoading = false }: { showLoading?: boolean } = {}) => {
+    if (!node.projectId) return;
+    if (showLoading) setLoadingLogs(true);
     setLogsError(null);
-
-    const params = new URLSearchParams({ projectId: node.projectId, limit: "80" });
-    if (node.type === "cloudrun") {
+    const params = new URLSearchParams({ projectId: node.projectId, limit: String(LOG_DRAWER_LIMIT) });
+    const endpoint = node.cloud === "aws" ? "/api/aws/logs" : "/api/gcp/logs";
+    if (node.cloud === "aws") {
+      if (node.type !== "cloudrun") return;
+      params.set("accountId", node.projectId);
+      params.set("functionName", node.resourceName ?? node.label.toLowerCase());
+      if (node.region) params.set("region", node.region);
+    } else if (node.type === "cloudrun") {
       params.set("resourceType", "cloud_run_revision");
       params.set("service", node.resourceName ?? node.label.toLowerCase());
       if (node.region) params.set("region", node.region);
@@ -1639,15 +2333,27 @@ function NodeDetail({
       }
     }
 
-    fetch(`/api/gcp/logs?${params}`)
-      .then(r => r.json())
-      .then(d => {
-        if (d.error) { setLogsError(d.error); return; }
-        setLogs(d.entries ?? []);
-      })
-      .catch(e => setLogsError(e.message))
-      .finally(() => setLoadingLogs(false));
-  }, [tab, node.id, node.projectId, node.type, node.label, node.region, selectedContainer]);
+    try {
+      const res = await fetch(`${endpoint}?${params}`);
+      const d = await res.json();
+      if (d.error) { setLogsError(d.error); return; }
+      setLogs(d.entries ?? []);
+    } catch (e) {
+      setLogsError(e instanceof Error ? e.message : "Failed to fetch logs.");
+    } finally {
+      if (showLoading) setLoadingLogs(false);
+    }
+  }, [node.cloud, node.projectId, node.type, node.resourceName, node.label, node.region, node.container, selectedContainer]);
+
+  // Fetch logs when tab or container selection changes, then keep them fresh while visible.
+  useEffect(() => {
+    if (tab !== "logs" || !node.projectId) return;
+    refreshLogs({ showLoading: true });
+    const intervalId = window.setInterval(() => {
+      refreshLogs();
+    }, LOG_AUTO_REFRESH_MS);
+    return () => window.clearInterval(intervalId);
+  }, [tab, node.projectId, refreshLogs]);
 
   // Fetch routes when tab becomes active
   useEffect(() => {
@@ -1662,10 +2368,17 @@ function NodeDetail({
   }, [tab, node.matchUrl]);
 
   // Filtered logs
+  const canHideGkeHealthLogs = node.type === "gke" || node.type === "sidecar";
+  const hiddenGkeHealthLogCount = useMemo(
+    () => canHideGkeHealthLogs ? logs.filter(isDefaultHiddenGkeHealthLog).length : 0,
+    [canHideGkeHealthLogs, logs]
+  );
   const filteredLogs = useMemo(() => {
     return logs.filter(l => {
-      const parsed = !l.httpRequest ? (parseReqLog(l.message) ?? parseStructuredRequestLog(l.message) ?? parseNginxLog(l.message) ?? parseEnvoyLog(l.message)) : null;
+      if (canHideGkeHealthLogs && hideGkeHealthLogs && isDefaultHiddenGkeHealthLog(l)) return false;
+      const parsed = !l.httpRequest ? (parseReqLog(l.message) ?? parseStructuredRequestLog(l.message) ?? parseNginxLog(l.message) ?? parseEnvoyLog(l.message) ?? parseTraceAppLog(l.message)) : null;
       const status = l.httpRequest?.status ?? parsed?.status;
+      const method = (l.httpRequest?.method ?? parsed?.method ?? "").toUpperCase();
       const searchable = l.httpRequest
         ? `${l.httpRequest.method} ${l.httpRequest.url} ${l.httpRequest.remoteIp} ${l.httpRequest.userAgent}`
         : parsed
@@ -1678,12 +2391,27 @@ function NodeDetail({
         const r = ranges[logStatusFilter];
         if (r && (status < r[0] || status > r[1])) return false;
       }
+      if (logMethodFilter !== "all" && method !== logMethodFilter) return false;
       if (logSearch.trim()) {
         if (!searchable.toLowerCase().includes(logSearch.toLowerCase())) return false;
       }
       return true;
+    }).sort((a, b) => {
+      const aParsed = !a.httpRequest ? (parseReqLog(a.message) ?? parseStructuredRequestLog(a.message) ?? parseNginxLog(a.message) ?? parseEnvoyLog(a.message) ?? parseTraceAppLog(a.message)) : null;
+      const bParsed = !b.httpRequest ? (parseReqLog(b.message) ?? parseStructuredRequestLog(b.message) ?? parseNginxLog(b.message) ?? parseEnvoyLog(b.message) ?? parseTraceAppLog(b.message)) : null;
+      const aMethod = a.httpRequest?.method ?? aParsed?.method;
+      const bMethod = b.httpRequest?.method ?? bParsed?.method;
+      const aPath = a.httpRequest
+        ? (() => { try { return new URL(a.httpRequest!.url).pathname; } catch { return a.httpRequest!.url; } })()
+        : aParsed?.path;
+      const bPath = b.httpRequest
+        ? (() => { try { return new URL(b.httpRequest!.url).pathname; } catch { return b.httpRequest!.url; } })()
+        : bParsed?.path;
+      const prio = requestPriority(aMethod, aPath) - requestPriority(bMethod, bPath);
+      if (prio !== 0) return prio;
+      return (b.timestamp ?? "").localeCompare(a.timestamp ?? "");
     });
-  }, [logs, logSearch, logStatusFilter]);
+  }, [canHideGkeHealthLogs, hideGkeHealthLogs, logs, logMethodFilter, logSearch, logStatusFilter]);
 
   // Copy logs to clipboard
   const handleCopyLogs = useCallback(() => {
@@ -1693,7 +2421,7 @@ function NodeDetail({
         const hr = l.httpRequest;
         return `${ts}  ${hr.method}  ${hr.status ?? "?"}  ${hr.url}  ${hr.remoteIp}  ${hr.latency}`;
       }
-      const parsed = parseReqLog(l.message);
+      const parsed = parseReqLog(l.message) ?? parseTraceAppLog(l.message);
       if (parsed) {
         return `${ts}  ${parsed.method}  ${parsed.status}  ${parsed.path}  ${(parsed as any).ip ?? (parsed as any).remoteIp ?? ""}  ${parsed.latencyMs}ms${(parsed as any).body ? `  body=${(parsed as any).body}` : ""}`;
       }
@@ -1777,6 +2505,7 @@ function NodeDetail({
   const METHOD_COLOR: Record<string, string> = {
     GET: "text-sky-400", POST: "text-emerald-400", PUT: "text-amber-400",
     PATCH: "text-orange-400", DELETE: "text-red-400",
+    HEAD: "text-cyan-400", OPTIONS: "text-violet-400", TRACE: "text-fuchsia-400",
   };
 
   return (
@@ -1814,10 +2543,10 @@ function NodeDetail({
         {tab === "info" && (
           <>
             <div className="flex items-center justify-between">
-              <span className="text-[9px] uppercase tracking-widest text-slate-600">{NODE_TYPE_LABEL[node.type]}</span>
+              <span className="text-[9px] uppercase tracking-widest text-slate-600">{nodeTypeLabel(node)}</span>
               <span className={cn("text-[8px] font-bold border px-1.5 py-0.5", statusLabelColor)}>{statusLabel}</span>
             </div>
-            <p className="text-[10px] text-slate-500 leading-relaxed">{NODE_ROLE_DESC[node.type]}</p>
+            <p className="text-[10px] text-slate-500 leading-relaxed">{nodeRoleDescription(node)}</p>
             <div className="border border-slate-800 bg-[#0d0d0d] divide-y divide-slate-800">
               <MetaRow label="Name" value={node.label} mono />
               {node.sublabel && <MetaRow label="Info" value={node.sublabel} />}
@@ -1887,7 +2616,9 @@ function NodeDetail({
           <>
             {/* Header row */}
             <div className="flex items-center gap-1.5">
-              <span className="text-[9px] uppercase tracking-widest text-slate-600 flex-1 truncate">Cloud Logging · {node.projectId}</span>
+              <span className="text-[9px] uppercase tracking-widest text-slate-600 flex-1 truncate">
+                {node.cloud === "aws" ? "CloudWatch Logs" : "Cloud Logging"} · {node.projectId}
+              </span>
               <button
                 onClick={handleCopyLogs}
                 title="Copy logs (C)"
@@ -1899,10 +2630,10 @@ function NodeDetail({
                 className="text-slate-600 hover:text-slate-300 transition-colors"
               ><Maximize2 size={9} /></button>
               <button
-                onClick={() => { setLogs([]); setTab("info"); setTimeout(() => setTab("logs"), 0); }}
+                onClick={() => refreshLogs({ showLoading: true })}
                 title="Refresh"
                 className="text-slate-600 hover:text-slate-300 transition-colors"
-              ><RefreshCw size={9} /></button>
+              ><RefreshCw size={9} className={loadingLogs ? "animate-spin" : ""} /></button>
             </div>
 
             {/* Container selector (GKE + sidecar nodes) */}
@@ -1960,9 +2691,41 @@ function NodeDetail({
                   )}
                 >{f.toUpperCase()}</button>
               ))}
-              {(logSearch || logStatusFilter !== "all") && (
+              {canHideGkeHealthLogs && hiddenGkeHealthLogCount > 0 && (
+                <button
+                  onClick={() => setHideGkeHealthLogs(v => !v)}
+                  className={cn(
+                    "text-[8px] px-1.5 py-0.5 border transition-colors",
+                    hideGkeHealthLogs
+                      ? "border-slate-500 text-slate-300 bg-slate-800"
+                      : "border-slate-800 text-slate-600 hover:text-slate-400 hover:border-slate-700"
+                  )}
+              >
+                {hideGkeHealthLogs ? "HEALTH HIDDEN" : "HEALTH SHOWN"}
+              </button>
+              )}
+              {(logSearch || logStatusFilter !== "all" || logMethodFilter !== "all" || (canHideGkeHealthLogs && hideGkeHealthLogs && hiddenGkeHealthLogCount > 0)) && (
                 <span className="text-[8px] text-slate-600 self-center ml-1">{filteredLogs.length}/{logs.length}</span>
               )}
+            </div>
+
+            <div className="flex gap-1 flex-wrap">
+              {(["all", ...LOG_METHODS] as const).map(m => (
+                <button
+                  key={m}
+                  onClick={() => setLogMethodFilter(m)}
+                  className={cn(
+                    "text-[8px] px-1.5 py-0.5 border transition-colors font-mono",
+                    logMethodFilter === m
+                      ? m === "all"
+                        ? "border-slate-500 text-slate-300 bg-slate-800"
+                        : `border-current bg-current/10 ${METHOD_COLOR[m]}`
+                      : "border-slate-800 text-slate-600 hover:text-slate-400 hover:border-slate-700"
+                  )}
+                >
+                  {m}
+                </button>
+              ))}
             </div>
 
             {loadingLogs && (
@@ -2017,7 +2780,7 @@ function NodeDetail({
               }
 
               // ── Try to parse structured text log ([req], nginx JSON, Envoy) ──
-              const parsed = parseReqLog(l.message) ?? parseStructuredRequestLog(l.message) ?? parseNginxLog(l.message) ?? parseEnvoyLog(l.message);
+              const parsed = parseReqLog(l.message) ?? parseStructuredRequestLog(l.message) ?? parseNginxLog(l.message) ?? parseEnvoyLog(l.message) ?? parseTraceAppLog(l.message);
               if (parsed) {
                 const statusC =
                   parsed.status < 300 ? "text-emerald-400" :
@@ -2112,10 +2875,15 @@ function NodeDetail({
                   )}
                   {aiState.error && <p className="text-red-400 text-[9px]">{aiState.error}</p>}
                   {aiState.text && (
-                    <div
-                      className="text-[10px] leading-relaxed"
-                      dangerouslySetInnerHTML={{ __html: renderAiMd(aiState.text) }}
-                    />
+                    <>
+                      <div className="mb-2 flex justify-end">
+                        <CopyAiResponseButton text={aiState.text} compact />
+                      </div>
+                      <div
+                        className="text-[10px] leading-relaxed"
+                        dangerouslySetInnerHTML={{ __html: renderAiMd(aiState.text) }}
+                      />
+                    </>
                   )}
                 </div>
               </div>
@@ -2141,7 +2909,9 @@ function NodeDetail({
                   >
                     {/* Modal header */}
                     <div className="flex items-center gap-3 px-4 py-2.5 border-b border-slate-800 shrink-0">
-                      <span className="text-[9px] uppercase tracking-widest text-slate-500 flex-1">{node.label} · Cloud Logging</span>
+                      <span className="text-[9px] uppercase tracking-widest text-slate-500 flex-1">
+                        {node.label} · {node.cloud === "aws" ? "CloudWatch Logs" : "Cloud Logging"}
+                      </span>
                       <span className="text-[8px] text-slate-600">{filteredLogs.length} entries</span>
                       <button onClick={handleCopyLogs} title="Copy (C)" className={cn("transition-colors", copyFlash ? "text-emerald-400" : "text-slate-600 hover:text-slate-300")}><Copy size={11} /></button>
                       <button onClick={() => setLogsExpanded(false)} className="text-slate-600 hover:text-slate-300 transition-colors"><X size={11} /></button>
@@ -2175,11 +2945,29 @@ function NodeDetail({
                         ))}
                       </div>
                     </div>
+                    <div className="flex flex-wrap gap-1 px-4 pb-2">
+                      {(["all", ...LOG_METHODS] as const).map(m => (
+                        <button
+                          key={m}
+                          onClick={() => setLogMethodFilter(m)}
+                          className={cn(
+                            "text-[8px] px-1.5 py-0.5 border transition-colors font-mono",
+                            logMethodFilter === m
+                              ? m === "all"
+                                ? "border-slate-500 text-slate-300 bg-slate-800"
+                                : `border-current bg-current/10 ${METHOD_COLOR[m]}`
+                              : "border-slate-800 text-slate-600 hover:text-slate-400 hover:border-slate-700"
+                          )}
+                        >
+                          {m}
+                        </button>
+                      ))}
+                    </div>
                     {/* Modal log list */}
                     <div className="flex-1 overflow-y-auto px-4 py-2 flex flex-col gap-1.5 font-mono text-[10px]">
                       {filteredLogs.map((l, i) => {
                         const ts = l.timestamp ? new Date(l.timestamp).toLocaleTimeString() : "";
-                        const parsed = !l.httpRequest ? (parseReqLog(l.message) ?? parseStructuredRequestLog(l.message)) : null;
+                        const parsed = !l.httpRequest ? (parseReqLog(l.message) ?? parseStructuredRequestLog(l.message) ?? parseTraceAppLog(l.message)) : null;
                         const status = l.httpRequest?.status ?? parsed?.status;
                         const method = l.httpRequest?.method ?? parsed?.method ?? "";
                         const path = l.httpRequest
@@ -2187,7 +2975,7 @@ function NodeDetail({
                           : parsed?.path ?? "";
                         const ip = l.httpRequest?.remoteIp ?? (parsed as any)?.ip ?? (parsed as any)?.remoteIp ?? "";
                         const latency = l.httpRequest?.latency ?? (parsed ? `${parsed.latencyMs}ms` : "");
-                        const body = parsed?.body ?? "";
+                        const body = parsed && "body" in parsed ? parsed.body ?? "" : "";
                         const pod = l.pod || l.instanceId || "";
                         const statusC = !status ? "text-slate-400"
                           : status < 300 ? "text-emerald-400"
@@ -2292,17 +3080,25 @@ function MetaRow({ label, value, mono }: { label: string; value: string | number
 }
 
 export default function RequestTracer({ demoMode = false }: { demoMode?: boolean }) {
+  const { tasks, startAwsScan, startGcpScan } = useTaskCenter();
   // Snapshot + topology
   const [snapshot, setSnapshot] = useState<GcpSnapshot | null>(null);
+  const [awsSnapshot, setAwsSnapshot] = useState<AwsSnapshot | null>(null);
   const [loadingSnapshot, setLoadingSnapshot] = useState(true);
   const [entryPoints, setEntryPoints] = useState<GkeEntryPoint[]>([]);
   const [loadingEntryPoints, setLoadingEntryPoints] = useState(true);
   const [traceSourceConfig, setTraceSourceConfig] = useState<GcpTraceSourceConfigSummary | null>(null);
+  const [endpointCloud, setEndpointCloud] = useState<EndpointCloud>("gcp");
+  const [traceScanTaskId, setTraceScanTaskId] = useState<string | null>(null);
 
-  // Topology derived from snapshot + entry points — auto-updates when either changes
+  // Topology derived from the selected cloud snapshot — auto-updates when either changes.
   const { nodes: baseNodes, edges: baseEdges } = useMemo(
-    () => buildTopology(snapshot, entryPoints),
-    [snapshot, entryPoints],
+    () => buildTopology(
+      endpointCloud === "gcp" ? snapshot : null,
+      endpointCloud === "aws" ? awsSnapshot : null,
+      endpointCloud === "gcp" ? entryPoints : [],
+    ),
+    [awsSnapshot, endpointCloud, entryPoints, snapshot],
   );
 
   // Containers discovered per GKE node (used to build sidecar nodes)
@@ -2316,6 +3112,8 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
         if (d.config) {
           setTraceSourceConfig({
             mode: d.config.mode,
+            computeSource: d.config.computeSource ?? "cloud_logging",
+            gkeSource: d.config.gkeSource ?? "cloud_logging",
             setupState: d.config.setupState,
             lastCheckMessage: d.config.lastCheckMessage,
           });
@@ -2326,7 +3124,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
   // Eagerly fetch container lists for all GKE nodes so sidecar nodes appear
   useEffect(() => {
-    const gkeNodes = baseNodes.filter(n => n.type === "gke" && n.projectId);
+    const gkeNodes = baseNodes.filter(n => n.type === "gke" && (n.cloud ?? "gcp") === "gcp" && n.projectId);
     for (const node of gkeNodes) {
       if (nodeContainers[node.id] !== undefined) continue; // already fetched/fetching
       setNodeContainers(prev => ({ ...prev, [node.id]: [] })); // mark as in-progress
@@ -2345,7 +3143,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   // Build display topology: add sidecar nodes alongside existing col-3 nodes (SQL stays at col 3)
   const { nodes, edges } = useMemo(() => {
     const hasSidecars = baseNodes.some(
-      n => n.type === "gke" && (nodeContainers[n.id] ?? []).length > 0
+      n => n.type === "gke" && (n.cloud ?? "gcp") === "gcp" && (nodeContainers[n.id] ?? []).length > 0
     );
     if (!hasSidecars) return { nodes: baseNodes, edges: baseEdges };
 
@@ -2353,7 +3151,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     const newNodes: GraphNode[] = [...baseNodes];
     const newEdges: GraphEdge[] = [...baseEdges];
 
-    baseNodes.filter(n => n.type === "gke").forEach(gkeNode => {
+    baseNodes.filter(n => n.type === "gke" && (n.cloud ?? "gcp") === "gcp").forEach(gkeNode => {
       // Sort containers by canonical request-processing order (istio-proxy, nginx, app...)
       const containers = [...(nodeContainers[gkeNode.id] ?? [])]
         .sort((a, b) => sidecarSortKey(a).localeCompare(sidecarSortKey(b)));
@@ -2386,10 +3184,18 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const [url, setUrl] = useState("");
   const [bodyText, setBodyText] = useState('{\n  "key": "value"\n}');
   const [methodOpen, setMethodOpen] = useState(false);
-  const [endpointFilter, setEndpointFilter] = useState<EndpointFilter>("all");
+  const [gcpEndpointFilter, setGcpEndpointFilter] = useState<GcpEndpointFilter>("all");
+  const [awsEndpointFilter, setAwsEndpointFilter] = useState<AwsEndpointFilter>("all");
+  const [selectedEndpointUrl, setSelectedEndpointUrl] = useState<string | null>(null);
 
-  const traceSourceLabel = traceSourceConfig?.mode === "streaming" ? "Pub/Sub Streaming" : "Cloud Logging Polling";
-  const showTraceSetupHint = traceSourceConfig?.mode === "streaming" && traceSourceConfig.setupState !== "receiving_events";
+  const usesPubSubSource = traceSourceConfig?.computeSource === "pubsub" || traceSourceConfig?.gkeSource === "pubsub";
+  const usesAgentSource = traceSourceConfig?.gkeSource === "ebpf_agent";
+  const traceSourceLabel = [
+    usesPubSubSource ? "Pub/Sub" : null,
+    usesAgentSource ? "eBPF" : null,
+    (!usesPubSubSource || traceSourceConfig?.computeSource === "cloud_logging" || traceSourceConfig?.gkeSource === "cloud_logging") ? "Cloud Logging" : null,
+  ].filter(Boolean).join(" + ") || "Cloud Logging";
+  const showTraceSetupHint = usesPubSubSource && traceSourceConfig?.setupState !== "receiving_events";
 
   // Send state
   const [sending, setSending] = useState(false);
@@ -2410,12 +3216,14 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const [showTrace, setShowTrace] = useState(false);
 
   // Live monitoring
-  const [liveMode, setLiveMode] = useState(false);
+  const [liveMode, setLiveMode] = useState(true);
   const [liveScope, setLiveScope] = useState<LiveScope>("active");
-  const [liveAnimEnabled, setLiveAnimEnabled] = useState(true);
+  const [liveIntensityEnabled, setLiveIntensityEnabled] = useState(false);
   const liveAnimEnabledRef = useRef(true);
-  const liveModeRef = useRef(false);
+  const liveIntensityEnabledRef = useRef(true);
+  const liveModeRef = useRef(true);
   const liveLastTsByTarget = useRef<Record<string, string>>({});
+  const liveLastAgentEventAtRef = useRef("");
   const livePollCursorRef = useRef(0);
   const liveCooldownUntilRef = useRef(0);
   const liveTimestamps = useRef<number[]>([]);   // sliding window of request timestamps
@@ -2424,12 +3232,59 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const [livePulseBursts, setLivePulseBursts] = useState<LivePulseBurst[]>([]);
   const [selectedLiveEvent, setSelectedLiveEvent] = useState<LiveEvent | null>(null);
   const livePulseTimeoutsRef = useRef<Map<string, number>>(new Map());
+  const liveStreamingLastEventAtRef = useRef(0);
+  const lastAppliedScanTaskIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    liveModeRef.current = liveMode;
+  }, [liveMode]);
+
+  useEffect(() => {
+    liveIntensityEnabledRef.current = liveIntensityEnabled;
+  }, [liveIntensityEnabled]);
 
   // Demo simulation
   const [demoRps, setDemoRps] = useState<number | null>(null);
   const [demoRequestCount, setDemoRequestCount] = useState(0);
   const demoRunningRef = useRef(false);
   const demoReqCountRef = useRef(0);
+  const requestActivityRate = liveMode ? liveRps : demoMode ? demoRps : null;
+  const requestActivityTarget = useMemo(
+    () => requestIntensityFromRate(requestActivityRate),
+    [requestActivityRate]
+  );
+  const [requestActivityIntensity, setRequestActivityIntensity] = useState(0);
+  const traceScanTask = traceScanTaskId ? tasks.find(task => task.id === traceScanTaskId) : null;
+  const traceScanRunning = traceScanTask?.status === "queued" || traceScanTask?.status === "running";
+  const selectedCloudHasSnapshot = endpointCloud === "aws" ? Boolean(awsSnapshot) : Boolean(snapshot);
+
+  useEffect(() => {
+    setSelectedNode(null);
+    setHoveredNode(null);
+    setSelectedEndpointUrl(null);
+    setUrl("");
+    setLiveMode(true);
+    liveModeRef.current = true;
+    setLiveEvents([]);
+    setSelectedLiveEvent(null);
+    setNodeStatus({});
+  }, [endpointCloud]);
+
+  useEffect(() => {
+    let frame = 0;
+    const tick = () => {
+      setRequestActivityIntensity(prev => {
+        const next = prev + (requestActivityTarget - prev) * 0.16;
+        if (Math.abs(next - requestActivityTarget) > 0.01) {
+          frame = window.requestAnimationFrame(tick);
+        }
+        return next;
+      });
+    };
+
+    frame = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(frame);
+  }, [requestActivityTarget]);
 
   // Fullscreen graph
   const [graphFullscreen, setGraphFullscreen] = useState(false);
@@ -2496,6 +3351,11 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     setLoadingSnapshot(true);
     setLoadingEntryPoints(true);
     try {
+      const cachedDemoGcp = getDemoGcpSnapshot() as GcpSnapshot | null;
+      if (cachedDemoGcp) setSnapshot(cachedDemoGcp);
+      const cachedDemoAws = getDemoAwsSnapshot() as AwsSnapshot | null;
+      if (cachedDemoAws) setAwsSnapshot(cachedDemoAws);
+
       // Snapshot resolves quickly (DB read); entry points require GCP API calls — run in parallel
       const snapPromise = fetch("/api/gcp/snapshot").then(async r => {
         if (!r.ok) return;
@@ -2509,7 +3369,13 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
         setEntryPoints((data.entryPoints ?? []).filter((ep: GkeEntryPoint) => ep.ip));
       }).catch(() => {}).finally(() => setLoadingEntryPoints(false));
 
-      await Promise.all([snapPromise, epPromise]);
+      const awsPromise = fetch("/api/aws/snapshot").then(async r => {
+        if (!r.ok) return;
+        const data = await r.json();
+        setAwsSnapshot(data as AwsSnapshot);
+      }).catch(() => {});
+
+      await Promise.all([snapPromise, epPromise, awsPromise]);
     } catch { /* ignore */ }
     finally {
       setLoadingSnapshot(false);
@@ -2517,7 +3383,56 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     }
   }, []);
 
+  const triggerTraceScan = useCallback(() => {
+    const demoCreds = getDemoCredentials();
+    const taskId = endpointCloud === "aws"
+      ? startAwsScan(demoCreds.aws ? { demoCredentials: { aws: demoCreds.aws } } : {})
+      : startGcpScan(demoCreds.gcp ? { demoCredentials: { gcp: demoCreds.gcp } } : {});
+    setTraceScanTaskId(taskId);
+    if (endpointCloud === "gcp") {
+      setLoadingSnapshot(true);
+      setLoadingEntryPoints(true);
+    } else {
+      setLoadingSnapshot(true);
+    }
+  }, [endpointCloud, startAwsScan, startGcpScan]);
+
   useEffect(() => { fetchSnapshot(); }, [fetchSnapshot]);
+
+  useEffect(() => {
+    const lastCompletedScan = [...tasks]
+      .reverse()
+      .find(task =>
+        (task.kind === "gcp_scan" || task.kind === "aws_scan") &&
+        task.status === "completed"
+      );
+    if (!lastCompletedScan) return;
+    if (lastAppliedScanTaskIdRef.current === lastCompletedScan.id) return;
+    lastAppliedScanTaskIdRef.current = lastCompletedScan.id;
+
+    if (lastCompletedScan.kind === "gcp_scan" && lastCompletedScan.result?.snapshot) {
+      const nextSnapshot = lastCompletedScan.result.snapshot as GcpSnapshot;
+      setDemoGcpSnapshot(nextSnapshot);
+      setSnapshot(nextSnapshot);
+    }
+    if (lastCompletedScan.kind === "aws_scan" && lastCompletedScan.result?.snapshot) {
+      const nextSnapshot = lastCompletedScan.result.snapshot as AwsSnapshot;
+      setDemoAwsSnapshot(nextSnapshot);
+      setAwsSnapshot(nextSnapshot);
+    }
+
+    fetchSnapshot();
+  }, [tasks, fetchSnapshot]);
+
+  useEffect(() => {
+    if (!traceScanTaskId) return;
+    const task = tasks.find(item => item.id === traceScanTaskId);
+    if (!task) return;
+    if (task.status === "queued" || task.status === "running") return;
+    setTraceScanTaskId(null);
+    setLoadingSnapshot(false);
+    setLoadingEntryPoints(false);
+  }, [tasks, traceScanTaskId]);
 
   // Pre-fill URL in demo mode once snapshot is loaded
   useEffect(() => {
@@ -2581,13 +3496,35 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     const buildGkeTarget = (pathNodeIds: Set<string>) => {
       const gkeNode = nodes.find(n => pathNodeIds.has(n.id) && n.type === "gke" && n.projectId);
       if (!gkeNode) return null;
+      if (gkeNode.cloud === "aws") {
+        return {
+          cloud: "aws" as const,
+          kind: "gke" as const,
+          projectId: gkeNode.projectId!,
+          container: gkeNode.resourceName ?? gkeNode.label,
+          resourceName: gkeNode.resourceName,
+          pathIds: pathNodeIds,
+        };
+      }
+      if (traceSourceConfig?.gkeSource === "ebpf_agent") {
+        return {
+          cloud: (gkeNode.cloud ?? "gcp") as EndpointCloud,
+          kind: "gke" as const,
+          projectId: gkeNode.projectId!,
+          container: "ebpf-agent",
+          resourceName: gkeNode.resourceName,
+          pathIds: pathNodeIds,
+        };
+      }
       const containers = nodeContainers[gkeNode.id] ?? [];
       const container = SIDECAR_ORDER.find(c => containers.includes(c)) ?? containers[0];
       if (!container) return null;
       return {
+        cloud: (gkeNode.cloud ?? "gcp") as EndpointCloud,
         kind: "gke" as const,
         projectId: gkeNode.projectId!,
         container,
+        resourceName: gkeNode.resourceName,
         pathIds: pathNodeIds,
       };
     };
@@ -2598,10 +3535,12 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       );
       if (!runNode) return null;
       return {
+        cloud: (runNode.cloud ?? "gcp") as EndpointCloud,
         kind: "cloudrun" as const,
         projectId: runNode.projectId!,
         service: runNode.resourceName!,
         region: runNode.region,
+        resourceName: runNode.resourceName,
         pathIds: pathNodeIds,
       };
     };
@@ -2612,10 +3551,12 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       );
       if (!vmNode) return null;
       return {
+        cloud: (vmNode.cloud ?? "gcp") as EndpointCloud,
         kind: "vm" as const,
         projectId: vmNode.projectId!,
         instance: vmNode.resourceName!,
         region: vmNode.region,
+        resourceName: vmNode.resourceName,
         pathIds: pathNodeIds,
       };
     };
@@ -2642,7 +3583,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     }
 
     return null;
-  }, [activePath, edges, nodeContainers, nodes]);
+  }, [activePath, edges, nodeContainers, nodes, traceSourceConfig?.gkeSource]);
   const hasFocusedLiveTarget = Boolean(url.trim() && activePath.size > 1 && liveMonitorTarget);
 
   const responseRouteNodes = useMemo(() => {
@@ -2659,6 +3600,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   }, []);
 
   const isEndpointSelected = useCallback((value: string) => {
+    if (selectedEndpointUrl) return selectedEndpointUrl === value;
     if (!url.trim()) return false;
     if (url === value || url.startsWith(value)) return true;
     try {
@@ -2668,7 +3610,20 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     } catch {
       return false;
     }
-  }, [url]);
+  }, [selectedEndpointUrl, url]);
+
+  const toggleEndpointSelection = useCallback((value: string) => {
+    setSelectedEndpointUrl(current => {
+      const next = current === value ? null : value;
+      setUrl(next ?? "");
+      return next;
+    });
+  }, []);
+
+  const clearEndpointSelection = useCallback(() => {
+    setSelectedEndpointUrl(null);
+    setUrl("");
+  }, []);
 
   const filteredK8sEntryPoints = useMemo(
     () => entryPoints.filter(ep => ep.type !== "master-api" && ep.ip),
@@ -2686,6 +3641,35 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     () => (snapshot?.vms ?? []).filter(vm => !vm.name.startsWith("gke-") && vm.status === "RUNNING" && vm.externalIp),
     [snapshot]
   );
+  const filteredAwsLoadBalancers = useMemo(
+    () => (awsSnapshot?.loadBalancers ?? []).filter(lb => lb.dnsName && lb.scheme === "internet-facing" && lb.state !== "failed"),
+    [awsSnapshot]
+  );
+  const filteredAwsEc2Targets = useMemo(
+    () => (awsSnapshot?.ec2Instances ?? []).filter(instance => instance.state !== "terminated"),
+    [awsSnapshot]
+  );
+  const filteredAwsLambdaFunctions = useMemo(
+    () => awsSnapshot?.lambdaFunctions ?? [],
+    [awsSnapshot]
+  );
+  const filteredAwsEksClusters = useMemo(
+    () => awsSnapshot?.eksClusters ?? [],
+    [awsSnapshot]
+  );
+  const hasAwsEndpointForFilter = useMemo(() => {
+    if (awsEndpointFilter === "lambda") return filteredAwsLambdaFunctions.length > 0;
+    if (awsEndpointFilter === "vm") return filteredAwsEc2Targets.length > 0;
+    if (awsEndpointFilter === "eks") return filteredAwsLoadBalancers.length > 0 || filteredAwsEksClusters.length > 0;
+    return filteredAwsLambdaFunctions.length > 0 || filteredAwsEc2Targets.length > 0 || filteredAwsLoadBalancers.length > 0 || filteredAwsEksClusters.length > 0;
+  }, [awsEndpointFilter, filteredAwsEc2Targets.length, filteredAwsEksClusters.length, filteredAwsLambdaFunctions.length, filteredAwsLoadBalancers.length]);
+  const awsEndpointFilterLabel = AWS_ENDPOINT_FILTERS.find(filter => filter.id === awsEndpointFilter)?.label ?? "AWS";
+  const awsEmptyMessage = {
+    all: "No AWS assets discovered. Run an AWS scan, then check Lambda, VM, and EKS filters.",
+    lambda: "No Lambda functions discovered in the AWS snapshot.",
+    vm: "No EC2 instances discovered in the AWS snapshot.",
+    eks: "No EKS clusters or AWS load balancers discovered in the AWS snapshot.",
+  }[awsEndpointFilter];
 
   const allLiveMonitorTargets = useMemo<LiveMonitorTarget[]>(() => {
     const targets: LiveMonitorTarget[] = [];
@@ -2709,29 +3693,55 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
         const target =
           node.type === "gke"
             ? (() => {
+                if (node.cloud === "aws") {
+                  return {
+                    cloud: "aws" as const,
+                    kind: "gke" as const,
+                    projectId: node.projectId!,
+                    container: node.resourceName ?? node.label,
+                    resourceName: node.resourceName,
+                    pathIds: pathNodeIds,
+                  };
+                }
+                if (traceSourceConfig?.gkeSource === "ebpf_agent") {
+                  return {
+                    cloud: (node.cloud ?? "gcp") as EndpointCloud,
+                    kind: "gke" as const,
+                    projectId: node.projectId!,
+                    container: "ebpf-agent",
+                    resourceName: node.resourceName,
+                    pathIds: pathNodeIds,
+                  };
+                }
                 const containers = nodeContainers[node.id] ?? [];
                 const container = SIDECAR_ORDER.find(c => containers.includes(c)) ?? containers[0];
                 if (!container) return null;
                 return {
+                  cloud: (node.cloud ?? "gcp") as EndpointCloud,
                   kind: "gke" as const,
                   projectId: node.projectId!,
                   container,
+                  resourceName: node.resourceName,
                   pathIds: pathNodeIds,
                 };
               })()
             : node.type === "cloudrun"
               ? {
+                  cloud: (node.cloud ?? "gcp") as EndpointCloud,
                   kind: "cloudrun" as const,
                   projectId: node.projectId!,
                   service: node.resourceName!,
                   region: node.region,
+                  resourceName: node.resourceName,
                   pathIds: pathNodeIds,
                 }
               : {
+                  cloud: (node.cloud ?? "gcp") as EndpointCloud,
                   kind: "vm" as const,
                   projectId: node.projectId!,
                   instance: node.resourceName!,
                   region: node.region,
+                  resourceName: node.resourceName,
                   pathIds: pathNodeIds,
                 };
         addTarget(target);
@@ -2739,7 +3749,20 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     });
 
     return targets;
-  }, [edges, nodeContainers, nodes]);
+  }, [edges, nodeContainers, nodes, traceSourceConfig?.gkeSource]);
+
+  useEffect(() => {
+    console.info("[trace/live] target inventory", {
+      endpointCloud,
+      nodeCount: nodes.length,
+      edgeCount: edges.length,
+      url,
+      selectedEndpointUrl,
+      activePath: [...activePath],
+      liveMonitorTarget: liveMonitorTarget ? serializeLiveTraceTarget(liveMonitorTarget) : null,
+      allLiveTargets: allLiveMonitorTargets.map(serializeLiveTraceTarget),
+    });
+  }, [activePath, allLiveMonitorTargets, edges.length, endpointCloud, liveMonitorTarget, nodes.length, selectedEndpointUrl, url]);
 
   const demoLiveTargets = useMemo<LiveMonitorTarget[]>(() => {
     if (!demoMode) return [];
@@ -2789,9 +3812,15 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     () => [...liveEvents].sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime()),
     [liveEvents]
   );
-  const liveEventsRecent = useMemo(
-    () => liveEventsOrdered.slice(-6),
-    [liveEventsOrdered]
+  const liveEventsFeatured = useMemo(
+    () => [...liveEvents]
+      .sort((a, b) => {
+        const prio = requestPriority(a.method, a.path) - requestPriority(b.method, b.path);
+        if (prio !== 0) return prio;
+        return new Date(b.ts).getTime() - new Date(a.ts).getTime();
+      })
+      .slice(0, 6),
+    [liveEvents]
   );
 
   useEffect(() => {
@@ -2874,22 +3903,110 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   }, []);
 
   useEffect(() => {
-    const useStreamingLive = !demoMode && traceSourceConfig?.mode === "streaming";
+    const useStreamingLive = endpointCloud === "aws" || shouldUseStreamingLive(demoMode, traceSourceConfig);
+    console.info("[trace/live] streaming effect evaluated", {
+      endpointCloud,
+      liveMode,
+      useStreamingLive,
+      liveScope,
+      hasFocusedLiveTarget,
+      liveMonitorTarget: liveMonitorTarget ? serializeLiveTraceTarget(liveMonitorTarget) : null,
+      allLiveTargets: allLiveMonitorTargets.map(serializeLiveTraceTarget),
+    });
     if (!useStreamingLive || !liveMode) return;
 
+    console.info("[trace/live] opening event source", {
+      endpointCloud,
+      liveScope,
+      target: liveMonitorTarget ? serializeLiveTraceTarget(liveMonitorTarget) : null,
+    });
     const eventSource = new EventSource("/api/trace/live");
+    eventSource.addEventListener("open", () => {
+      console.info("[trace/live] event source open", { endpointCloud, liveScope });
+    });
+    eventSource.addEventListener("ready", (rawEvent) => {
+      console.info("[trace/live] event source ready", {
+        endpointCloud,
+        data: (rawEvent as MessageEvent).data,
+      });
+    });
+    eventSource.addEventListener("reconnect", (rawEvent) => {
+      console.info("[trace/live] event source reconnect requested", {
+        endpointCloud,
+        data: (rawEvent as MessageEvent).data,
+      });
+    });
+    eventSource.addEventListener("error", (event) => {
+      if (eventSource.readyState === EventSource.CONNECTING) {
+        console.info("[trace/live] event source reconnecting", {
+          endpointCloud,
+          readyState: eventSource.readyState,
+        });
+        return;
+      }
+      console.error("[trace/live] event source error", {
+        endpointCloud,
+        readyState: eventSource.readyState,
+        event,
+      });
+    });
     eventSource.addEventListener("trace", (rawEvent) => {
       const parsed = JSON.parse((rawEvent as MessageEvent).data) as LiveTraceIngressEvent;
-
-      if (liveScope === "active" && hasFocusedLiveTarget && liveMonitorTarget) {
-        const activeKey = liveTargetKey(liveMonitorTarget);
-        if (liveTargetKeyFromIngressEvent(parsed) !== activeKey) {
-          return;
-        }
+      console.info("[trace/live] trace event received", {
+        eventId: parsed.id,
+        cloud: parsed.cloud,
+        kind: parsed.kind,
+        projectId: parsed.projectId,
+        resourceName: parsed.resourceName,
+        status: parsed.status,
+        path: parsed.path,
+        endpointCloud,
+        liveScope,
+      });
+      liveStreamingLastEventAtRef.current = Date.now();
+      if (parsed.cloud === "aws" && endpointCloud !== "aws") {
+        console.info("[trace/live] trace event filtered", {
+          reason: "aws_event_while_not_in_aws_view",
+          eventCloud: parsed.cloud,
+          endpointCloud,
+        });
+        return;
+      }
+      if (parsed.cloud === "gcp" && sourceForKind(parsed.kind, traceSourceConfig) !== "pubsub") {
+        console.info("[trace/live] trace event filtered", {
+          reason: "gcp_event_not_pubsub_source",
+          eventCloud: parsed.cloud,
+          source: sourceForKind(parsed.kind, traceSourceConfig),
+        });
+        return;
       }
 
       const uiEvent = toLiveEventFromIngress(parsed, nodes);
       const nowMs = eventTimestampMs(uiEvent.ts) || Date.now();
+      liveTimestamps.current.push(nowMs);
+      liveTimestamps.current = liveTimestamps.current.filter(t => nowMs - t < 60_000);
+      setLiveRps(estimateRateFromTimestamps(liveTimestamps.current, nowMs, LIVE_RPS_WINDOW_MS));
+
+      if (liveScope !== "all" && isExpectedLiveRequest({ path: parsed.path, userAgent: parsed.userAgent })) {
+        console.info("[trace/live] trace event filtered", {
+          reason: "expected_request_hidden_in_active_scope",
+          path: parsed.path,
+          userAgent: parsed.userAgent,
+          liveScope,
+        });
+        return;
+      }
+
+      if (liveScope === "active" && hasFocusedLiveTarget && liveMonitorTarget) {
+        if (!ingressEventMatchesLiveTarget(parsed, liveMonitorTarget)) {
+          console.info("[trace/live] trace event filtered", {
+            reason: "does_not_match_active_target",
+            eventKey: liveTargetKeyFromIngressEvent(parsed),
+            activeTargetKey: liveTargetKey(liveMonitorTarget),
+          });
+          return;
+        }
+      }
 
       setLiveEvents(prev => {
         const retainedPrev = prev.filter(event => nowMs - eventTimestampMs(event.ts) < LIVE_EVENT_RETENTION_MS);
@@ -2897,21 +4014,31 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
         return merged.slice(-24);
       });
 
-      liveTimestamps.current.push(nowMs);
-      liveTimestamps.current = liveTimestamps.current.filter(t => nowMs - t < 60_000);
-      const inWindow = liveTimestamps.current.filter(t => nowMs - t < 10_000).length;
-      setLiveRps(inWindow > 0 ? inWindow / 10 : null);
-
-      if (liveAnimEnabledRef.current && uiEvent.focusNodeId) {
-        const pathIds = buildPathForNode(uiEvent.focusNodeId, edges);
-        if (liveModeRef.current) emitLivePulseBurst(pathIds);
+      if (liveAnimEnabledRef.current) {
+        const pathIds = buildPathForIngressEvent(parsed, nodes, edges, liveMonitorTarget);
+        if (!pathIds) {
+          console.info("[trace/live] trace event has no graph path", {
+            eventId: parsed.id,
+            cloud: parsed.cloud,
+            kind: parsed.kind,
+            projectId: parsed.projectId,
+            resourceName: parsed.resourceName,
+          });
+          return;
+        }
+        console.info("[trace/live] emitting pulse", {
+          eventId: parsed.id,
+          pathIds: [...pathIds],
+        });
+        emitLivePulseBurst(pathIds);
       }
     });
 
     return () => {
+      console.info("[trace/live] closing event source", { endpointCloud, liveScope });
       eventSource.close();
     };
-  }, [demoMode, edges, emitLivePulseBurst, hasFocusedLiveTarget, liveMode, liveMonitorTarget, liveScope, nodes, traceSourceConfig]);
+  }, [allLiveMonitorTargets, demoMode, edges, emitLivePulseBurst, endpointCloud, hasFocusedLiveTarget, liveMode, liveMonitorTarget, liveScope, nodes, traceSourceConfig]);
 
   // ── Demo simulation: auto-animate traffic through topology ──────────────────
   useEffect(() => {
@@ -3019,11 +4146,10 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
   // ── Live monitoring: poll Cloud Logging, fire pulse on new traffic ───────────
   useEffect(() => {
-    const useStreamingLive = !demoMode && traceSourceConfig?.mode === "streaming";
-    if (useStreamingLive) return;
     liveModeRef.current = liveMode;
     if (!liveMode) {
       liveLastTsByTarget.current = {};
+      liveLastAgentEventAtRef.current = "";
       livePollCursorRef.current = 0;
       liveCooldownUntilRef.current = 0;
       liveTimestamps.current = [];
@@ -3031,11 +4157,11 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       setLiveEvents([]);
       return;
     }
-
     const allTargets = liveScope === "all"
       ? allLiveMonitorTargets
       : (liveMonitorTarget ? [liveMonitorTarget] : []);
-    if (allTargets.length === 0) return;
+    const hasGkeNodes = nodes.some(node => node.type === "gke");
+    if (allTargets.length === 0 && !hasGkeNodes) return;
 
     const startTs = new Date().toISOString();
     allTargets.forEach(target => {
@@ -3044,6 +4170,9 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
         liveLastTsByTarget.current[key] = startTs;
       }
     });
+    if (!liveLastAgentEventAtRef.current) {
+      liveLastAgentEventAtRef.current = startTs;
+    }
     let busy = false;
 
     const poll = async () => {
@@ -3052,81 +4181,157 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       const pollNowMs = Date.now();
       setLiveEvents(prev => prev.filter(event => pollNowMs - eventTimestampMs(event.ts) < LIVE_EVENT_RETENTION_MS));
       liveTimestamps.current = liveTimestamps.current.filter(t => pollNowMs - t < 60_000);
-      const currentWindowCount = liveTimestamps.current.filter(t => pollNowMs - t < 10_000).length;
-      setLiveRps(currentWindowCount > 0 ? currentWindowCount / 10 : null);
-      const targets = liveScope === "all"
+      setLiveRps(estimateRateFromTimestamps(liveTimestamps.current, pollNowMs, LIVE_RPS_WINDOW_MS));
+      const includeExpectedRequests = liveScope === "all";
+      const agentEventsPromise = shouldUseAgentEvents(traceSourceConfig)
+        ? fetch(
+            `/api/agents/events/query?${new URLSearchParams({
+              after: liveLastAgentEventAtRef.current,
+              limit: "20",
+            })}`
+          )
+            .then(async (res) => {
+              if (!res.ok) return [] as AgentEventRow[];
+              const data = await res.json().catch(() => ({}));
+              return (data.events ?? []) as AgentEventRow[];
+            })
+            .catch(() => [] as AgentEventRow[])
+        : Promise.resolve([] as AgentEventRow[]);
+      const cloudLoggingTargets = allTargets.filter(target => shouldPollLiveTarget(target, traceSourceConfig));
+      const targets = liveScope === "all" && cloudLoggingTargets.length > LIVE_ALL_CLOUD_LOGGING_BATCH_SIZE
         ? (() => {
-            const batchSize = LIVE_ALL_BATCH_SIZE;
-            const start = livePollCursorRef.current % allTargets.length;
-            const batch = Array.from({ length: Math.min(batchSize, allTargets.length) }, (_, i) => allTargets[(start + i) % allTargets.length]);
-            livePollCursorRef.current = (start + batch.length) % allTargets.length;
+            const start = livePollCursorRef.current % cloudLoggingTargets.length;
+            const batch = Array.from(
+              { length: LIVE_ALL_CLOUD_LOGGING_BATCH_SIZE },
+              (_, i) => cloudLoggingTargets[(start + i) % cloudLoggingTargets.length],
+            );
+            livePollCursorRef.current = (start + batch.length) % cloudLoggingTargets.length;
             return batch;
           })()
-        : allTargets;
+        : cloudLoggingTargets;
       try {
-        const results = await Promise.all(
-          targets.map(async (target) => {
-            const key = liveTargetKey(target);
-            const after = liveLastTsByTarget.current[key] ?? startTs;
-            const params = buildLiveLogParams(target, after);
-            const res = await fetch(`/api/gcp/logs?${params}`);
-            const data = await res.json().catch(() => ({}));
-            if (res.status === 429 || data?.code === "rate_limited") {
-              const retryAfterSec = Number(data?.retryAfterSec ?? 30);
-              liveCooldownUntilRef.current = Date.now() + retryAfterSec * 1000;
-              return { target, entries: [] as LogEntry[], rateLimited: true };
-            }
-            if (!res.ok) {
-              return { target, entries: [] as LogEntry[], rateLimited: false };
-            }
-            const entries: LogEntry[] = data.entries ?? [];
-            if (entries.length > 0) {
-              const latest = entries.reduce((a, b) => a.timestamp > b.timestamp ? a : b);
-              liveLastTsByTarget.current[key] = latest.timestamp;
-            }
-            const freshEntries = entries.filter(entry => {
-              const tsMs = eventTimestampMs(entry.timestamp);
-              return tsMs > 0 && pollNowMs - tsMs <= LIVE_EVENT_FRESHNESS_MS;
-            });
-            return { target, entries: freshEntries, rateLimited: false };
-          })
-        );
+        const [agentEvents, results] = await Promise.all([
+          agentEventsPromise,
+          Promise.all(
+            targets.map(async (target) => {
+              const key = liveTargetKey(target);
+              const after = liveLastTsByTarget.current[key] ?? startTs;
+              const params = buildLiveLogParams(target, after);
+              const logsEndpoint = target.cloud === "aws" ? "/api/aws/logs" : "/api/gcp/logs";
+              console.info("[trace/live] polling target logs", {
+                endpointCloud,
+                logsEndpoint,
+                target: serializeLiveTraceTarget(target),
+                after,
+              });
+              const res = await fetch(`${logsEndpoint}?${params}`);
+              const data = await res.json().catch(() => ({}));
+              if (res.status === 429 || data?.code === "rate_limited") {
+                const retryAfterSec = Number(data?.retryAfterSec ?? 30);
+                liveCooldownUntilRef.current = Date.now() + retryAfterSec * 1000;
+                return { target, entries: [] as LogEntry[], rateLimited: true };
+              }
+              if (!res.ok) {
+                console.warn("[trace/live] target log poll failed", {
+                  endpointCloud,
+                  logsEndpoint,
+                  target: serializeLiveTraceTarget(target),
+                  status: res.status,
+                  error: data?.error,
+                });
+                return { target, entries: [] as LogEntry[], rateLimited: false };
+              }
+              const entries: LogEntry[] = data.entries ?? [];
+              console.info("[trace/live] target log poll complete", {
+                endpointCloud,
+                logsEndpoint,
+                target: serializeLiveTraceTarget(target),
+                count: entries.length,
+              });
+              if (entries.length > 0) {
+                const latest = entries.reduce((a, b) => a.timestamp > b.timestamp ? a : b);
+                liveLastTsByTarget.current[key] = latest.timestamp;
+              }
+              const freshEntries = entries.filter(entry => {
+                const tsMs = eventTimestampMs(entry.timestamp);
+                return tsMs > 0 && pollNowMs - tsMs <= LIVE_EVENT_FRESHNESS_MS;
+              });
+              return { target, entries: freshEntries, rateLimited: false };
+            })
+          ),
+        ]);
 
         if (results.some(result => result.rateLimited)) {
           return;
         }
 
-        const allEntries = results.flatMap(result => result.entries);
-        if (allEntries.length > 0) {
-          const newEvents = results
-            .map(result => toLiveEvent(result.target, result.entries, nodes))
-            .filter((event): event is LiveEvent => !!event)
+        const rawEntries = results.flatMap(result => result.entries);
+        const rawAgentEvents = agentEvents.filter(event => {
+          const tsMs = eventTimestampMs(event.received_at);
+          return tsMs > 0 && pollNowMs - tsMs <= LIVE_EVENT_FRESHNESS_MS;
+        });
+
+        const filteredResults = results.map(result => ({
+          ...result,
+          entries: result.entries.filter(entry => {
+            const parsed = parseLiveRequestLog(entry);
+            return parsed && (includeExpectedRequests || !isExpectedLiveRequest(parsed));
+          }),
+        }));
+        const allEntries = filteredResults.flatMap(result => result.entries);
+        const freshAgentEvents = agentEvents.filter(event => {
+          const tsMs = eventTimestampMs(event.received_at);
+          return tsMs > 0
+            && pollNowMs - tsMs <= LIVE_EVENT_FRESHNESS_MS
+            && (includeExpectedRequests || !isExpectedAgentLiveEvent(event));
+        });
+        if (agentEvents.length > 0) {
+          const latestAgentEvent = agentEvents.reduce((a, b) =>
+            eventTimestampMs(a.received_at) > eventTimestampMs(b.received_at) ? a : b
+          );
+          liveLastAgentEventAtRef.current = latestAgentEvent.received_at;
+        }
+
+        const rawTrafficTimestamps = [
+          ...rawEntries
+            .map(entry => eventTimestampMs(entry.timestamp))
+            .filter(ts => ts > 0),
+          ...rawAgentEvents
+            .map(event => eventTimestampMs(event.received_at))
+            .filter(ts => ts > 0),
+        ];
+        if (rawTrafficTimestamps.length > 0) {
+          liveTimestamps.current.push(...rawTrafficTimestamps);
+          liveTimestamps.current = liveTimestamps.current.filter(t => pollNowMs - t < 60_000);
+          setLiveRps(estimateRateFromTimestamps(liveTimestamps.current, pollNowMs, LIVE_RPS_WINDOW_MS));
+        }
+
+        if (allEntries.length > 0 || freshAgentEvents.length > 0) {
+          const newEvents = filteredResults
+            .flatMap(result => toLiveEvents(result.target, result.entries, nodes, includeExpectedRequests));
+          const agentLiveEvents = freshAgentEvents
+            .map(event => toLiveEventFromAgentEvent(event, nodes))
+            .filter(event => event.focusNodeId);
+          const mergedNewEvents = [...newEvents, ...agentLiveEvents]
             .sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
-          if (newEvents.length > 0) {
+          if (mergedNewEvents.length > 0) {
             setLiveEvents(prev => {
               const retainedPrev = prev.filter(event => pollNowMs - eventTimestampMs(event.ts) < LIVE_EVENT_RETENTION_MS);
-              const merged = [...newEvents, ...retainedPrev];
+              const merged = [...mergedNewEvents, ...retainedPrev];
               const deduped: LiveEvent[] = [];
               const seen = new Set<string>();
               for (const event of merged) {
                 if (seen.has(event.id)) continue;
                 seen.add(event.id);
                 deduped.push(event);
-                if (deduped.length >= 24) break;
+                if (deduped.length >= LIVE_EVENT_LIMIT) break;
               }
               return deduped;
             });
           }
-          allEntries.forEach(e => {
-            if (e.timestamp) liveTimestamps.current.push(new Date(e.timestamp).getTime());
-          });
-          liveTimestamps.current = liveTimestamps.current.filter(t => pollNowMs - t < 60_000);
-          const inWindow = liveTimestamps.current.filter(t => pollNowMs - t < 10_000).length;
-          setLiveRps(inWindow > 0 ? inWindow / 10 : null);
-
           if (liveAnimEnabledRef.current) {
             busy = true;
-            const targetsWithHits = results.filter(result => result.entries.length > 0);
+            const targetsWithHits = filteredResults.filter(result => result.entries.length > 0);
             if (targets.length === 1) {
               const [{ target, entries }] = targetsWithHits;
               if (target) {
@@ -3147,6 +4352,14 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                 await runBfsAnimation(animatedTargets[i].target.pathIds, { colDelay: 110, resetAfterMs: 420 });
               }
             }
+            const animatedAgentEvents = freshAgentEvents.slice(0, 8);
+            for (let i = 0; i < animatedAgentEvents.length; i++) {
+              if (!liveModeRef.current) break;
+              const pathIds = buildPathForAgentEvent(animatedAgentEvents[i], nodes, edges, liveMonitorTarget);
+              if (!pathIds) continue;
+              if (i > 0) await sleep(140);
+              await runBfsAnimation(pathIds, { colDelay: 110, resetAfterMs: 420 });
+            }
             busy = false;
           }
         }
@@ -3157,7 +4370,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     const id = setInterval(poll, pollIntervalMs);
     poll(); // immediate first check
     return () => { clearInterval(id); };
-  }, [allLiveMonitorTargets, demoMode, liveMode, liveMonitorTarget, liveScope, nodes, runBfsAnimation, traceSourceConfig]);
+  }, [allLiveMonitorTargets, demoMode, endpointCloud, liveMode, liveMonitorTarget, liveScope, nodes, runBfsAnimation, traceSourceConfig]);
 
   useEffect(() => {
     if (!demoMode || !liveMode || demoLiveTargets.length === 0) return;
@@ -3184,8 +4397,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
         const nowMs = Date.now();
         events.forEach(() => liveTimestamps.current.push(nowMs));
         liveTimestamps.current = liveTimestamps.current.filter(t => nowMs - t < 60_000);
-        const inWindow = liveTimestamps.current.filter(t => nowMs - t < 10_000).length;
-        setLiveRps(inWindow / 10);
+        setLiveRps(estimateRateFromTimestamps(liveTimestamps.current, nowMs, LIVE_RPS_WINDOW_MS));
 
         if (liveAnimEnabledRef.current) {
           for (let i = 0; i < targets.length; i++) {
@@ -3217,11 +4429,26 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
   // ── Send request ────────────────────────────────────────────────────────────
   const handleSend = useCallback(async () => {
-    const trimmedUrl = url.trim();
-    if (sending || !trimmedUrl) return;
+    const targetUrls = [selectedEndpointUrl ?? url.trim()].filter(Boolean);
+    if (sending || targetUrls.length === 0) {
+      console.info("[trace/send] skipped", {
+        sending,
+        targetUrlCount: targetUrls.length,
+        endpointCloud,
+        selectedEndpointUrl,
+        url,
+      });
+      return;
+    }
 
-    const validationError = getProxyUrlValidationError(trimmedUrl);
+    const invalidUrl = targetUrls.find(targetUrl => getProxyUrlValidationError(targetUrl));
+    const validationError = invalidUrl ? getProxyUrlValidationError(invalidUrl) : null;
     if (validationError) {
+      console.warn("[trace/send] validation failed", {
+        endpointCloud,
+        invalidUrl,
+        validationError,
+      });
       setResponse({ ok: false, error: validationError, timing: 0 });
       setRequestTime(new Date());
       setShowTrace(false);
@@ -3243,12 +4470,46 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       const p = tryParseJson(bodyText);
       parsedBody = p.ok ? p.val : bodyText;
     }
+    const traceTarget = serializeLiveTraceTarget(liveMonitorTarget);
+    console.info("[trace/send] proxy request prepared", {
+      endpointCloud,
+      method,
+      targetUrls,
+      selectedEndpointUrl,
+      traceTarget,
+      liveMode,
+      liveScope,
+      liveMonitorTargetKey: liveMonitorTarget ? liveTargetKey(liveMonitorTarget) : null,
+      activePath: [...activePath],
+    });
 
-    const httpPromise = fetch("/api/proxy", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: trimmedUrl, method, body: parsedBody }),
-    }).then(r => r.json() as Promise<ProxyResponse>);
+    const httpPromise = targetUrls.length === 1
+      ? fetch("/api/proxy", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: targetUrls[0], method, body: parsedBody, traceTarget }),
+        }).then(r => r.json() as Promise<ProxyResponse>)
+      : Promise.all(
+          targetUrls.map(async targetUrl => {
+            const res = await fetch("/api/proxy", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ url: targetUrl, method, body: parsedBody, traceTarget }),
+            });
+            return res.json() as Promise<ProxyResponse>;
+          })
+        ).then(results => {
+          const failed = results.find(result => !result.ok);
+          if (failed) return failed;
+          return {
+            ok: true,
+            status: 200,
+            statusText: "OK",
+            timing: Math.max(...results.map(result => result.timing)),
+            body: JSON.stringify({ broadcast: results.length, results }, null, 2),
+            headers: {},
+          } as ProxyResponse;
+        });
 
     // BFS pulse through the active path (handles sidecar chains in correct order)
     await runBfsAnimation(activePath);
@@ -3256,6 +4517,13 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     // Wait for HTTP response
     try {
       const result = await httpPromise;
+      console.info("[trace/send] proxy response", {
+        endpointCloud,
+        ok: result.ok,
+        status: result.status,
+        timing: result.timing,
+        error: result.error,
+      });
       setResponse(result);
       if (!result.ok && result.error) {
         // Mark the last compute/sidecar node in the active path as error
@@ -3268,11 +4536,15 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
         }
       }
     } catch (err: any) {
+      console.error("[trace/send] proxy request failed", {
+        endpointCloud,
+        error: err?.message ?? String(err),
+      });
       setResponse({ ok: false, error: err.message, timing: 0 });
     }
 
     setSending(false);
-  }, [sending, url, method, bodyText, nodes, activePath, runBfsAnimation]);
+  }, [sending, url, method, bodyText, nodes, activePath, runBfsAnimation, selectedEndpointUrl, liveMonitorTarget, endpointCloud, liveMode, liveScope]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
@@ -3325,45 +4597,75 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
             <input
               type="text"
               value={url}
-              onChange={e => setUrl(e.target.value)}
+              onChange={e => {
+                clearEndpointSelection();
+                setUrl(e.target.value);
+              }}
               placeholder="https://..."
               className="flex-1 min-w-0 px-2 py-2 bg-[#0d0d0d] border border-slate-800 text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-emerald-800"
             />
           </div>
+
         </div>
 
         {/* Scrollable middle: targets + body */}
-        <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-2">
+        <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar flex flex-col gap-2">
 
           {/* URL suggestions */}
-          {(loadingEntryPoints || snapshot || entryPoints.length > 0) && (
+          {(loadingEntryPoints || snapshot || awsSnapshot || entryPoints.length > 0) && (
             <div className="flex flex-col gap-1">
-              <div className="flex flex-wrap gap-1 px-1 pb-1">
-                {ENDPOINT_FILTERS.map(filter => (
+              <div className="flex flex-col gap-1 px-1 pb-1">
+                <div className="grid grid-cols-2 gap-1">
+                  {ENDPOINT_CLOUDS.map(cloud => (
+                    <button
+                      key={cloud.id}
+                      onClick={() => {
+                        setEndpointCloud(cloud.id);
+                      }}
+                      className={cn(
+                        "px-2 py-1.5 text-[9px] uppercase tracking-widest border transition-colors font-bold",
+                        endpointCloud === cloud.id
+                          ? "border-emerald-800/80 bg-emerald-950/30 text-emerald-300"
+                          : "border-slate-800/70 bg-[#090909] text-slate-500 hover:text-slate-300 hover:border-slate-700"
+                      )}
+                    >
+                      {cloud.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {(endpointCloud === "gcp" ? GCP_ENDPOINT_FILTERS : AWS_ENDPOINT_FILTERS).map(filter => (
                   <button
                     key={filter.id}
-                    onClick={() => setEndpointFilter(filter.id)}
+                    onClick={() => {
+                      if (endpointCloud === "gcp") {
+                        setGcpEndpointFilter(filter.id as GcpEndpointFilter);
+                      } else {
+                        setAwsEndpointFilter(filter.id as AwsEndpointFilter);
+                      }
+                    }}
                     className={cn(
                       "px-2 py-1 text-[9px] uppercase tracking-widest border transition-colors",
-                      endpointFilter === filter.id
+                      (endpointCloud === "gcp" ? gcpEndpointFilter : awsEndpointFilter) === filter.id
                         ? "border-emerald-800/80 bg-emerald-950/30 text-emerald-300"
                         : "border-slate-800/70 bg-[#090909] text-slate-500 hover:text-slate-300 hover:border-slate-700"
                     )}
                   >
                     {filter.label}
                   </button>
-                ))}
+                  ))}
+                </div>
               </div>
 
-              {loadingEntryPoints ? (
+              {endpointCloud === "gcp" && loadingEntryPoints ? (
                 <div className="flex items-center gap-2 px-2 py-1.5 text-[10px] text-slate-600">
                   <Loader2 size={9} className="animate-spin shrink-0" />
                   <span>Scanning GKE entry points…</span>
                 </div>
-              ) : (endpointFilter === "all" || endpointFilter === "k8s") && filteredK8sEntryPoints.length > 0 && (
+              ) : endpointCloud === "gcp" && (gcpEndpointFilter === "all" || gcpEndpointFilter === "gke") && filteredK8sEntryPoints.length > 0 && (
                 <div className="text-[9px] uppercase tracking-widest text-slate-600 px-1">GKE Entry Points</div>
               )}
-              {!loadingEntryPoints && (endpointFilter === "all" || endpointFilter === "k8s") && filteredK8sEntryPoints.map(ep => {
+              {endpointCloud === "gcp" && !loadingEntryPoints && (gcpEndpointFilter === "all" || gcpEndpointFilter === "gke") && filteredK8sEntryPoints.map(ep => {
                 const proto = "http";
                 const value = `${proto}://${ep.ip}`;
                 const svcLabel = ep.k8sService ? ` · ${ep.k8sService}` : "";
@@ -3381,11 +4683,11 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                       </>
                     }
                   >
-                    <button onClick={() => setUrl(value)}
+                    <button onClick={() => toggleEndpointSelection(value)}
                       className={cn(
-                        "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm",
+                        "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm relative overflow-hidden",
                         isSelected
-                          ? "bg-emerald-950/35 ring-1 ring-emerald-700/70 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.15)]"
+                          ? "bg-emerald-950/60 ring-2 ring-emerald-500/80 border border-emerald-500/35 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.22)]"
                           : "bg-[#0a0a0a]/60 hover:bg-[#0d120e]"
                       )}
                     >
@@ -3403,13 +4705,13 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                   </HoverTooltip>
                 );
               })}
-              {snapshot && (
+              {endpointCloud === "gcp" && snapshot && (
                 <>
-                  {(endpointFilter === "all" || endpointFilter === "compute") &&
+                  {gcpEndpointFilter === "all" &&
                     (filteredLoadBalancers.length > 0 || filteredVmTargets.length > 0) && (
                       <div className="text-[9px] uppercase tracking-widest text-slate-600 px-1 pt-1">Compute Endpoints</div>
                   )}
-                  {(endpointFilter === "all" || endpointFilter === "compute") && filteredLoadBalancers.map(lb => {
+                  {gcpEndpointFilter === "all" && filteredLoadBalancers.map(lb => {
                     const value = `http://${lb.ipAddress}`;
                     const isSelected = isEndpointSelected(value);
                     return (
@@ -3422,11 +4724,11 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                           </>
                         }
                       >
-                        <button onClick={() => setUrl(value)}
+                        <button onClick={() => toggleEndpointSelection(value)}
                           className={cn(
-                            "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm",
+                            "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm relative overflow-hidden",
                             isSelected
-                              ? "bg-violet-950/30 ring-1 ring-violet-700/70 shadow-[inset_0_0_0_1px_rgba(139,92,246,0.15)]"
+                              ? "bg-violet-950/55 ring-2 ring-violet-500/80 border border-violet-500/35 shadow-[inset_0_0_0_1px_rgba(139,92,246,0.22)]"
                               : "bg-[#0a0a0a]/60 hover:bg-[#0d1013]"
                           )}
                         >
@@ -3439,7 +4741,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                       </HoverTooltip>
                     );
                   })}
-                  {(endpointFilter === "all" || endpointFilter === "compute") && filteredVmTargets.map(vm => {
+                  {(gcpEndpointFilter === "all" || gcpEndpointFilter === "vm") && filteredVmTargets.map(vm => {
                     const value = `http://${vm.externalIp}`;
                     const isSelected = isEndpointSelected(value);
                     return (
@@ -3453,11 +4755,11 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                           </>
                         }
                       >
-                        <button onClick={() => setUrl(value)}
+                        <button onClick={() => toggleEndpointSelection(value)}
                           className={cn(
-                            "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm",
+                            "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm relative overflow-hidden",
                             isSelected
-                              ? "bg-cyan-950/30 ring-1 ring-cyan-700/70 shadow-[inset_0_0_0_1px_rgba(34,211,238,0.12)]"
+                              ? "bg-cyan-950/55 ring-2 ring-cyan-500/80 border border-cyan-500/35 shadow-[inset_0_0_0_1px_rgba(34,211,238,0.2)]"
                               : "bg-[#0a0a0a]/60 hover:bg-[#0c1113]"
                           )}
                         >
@@ -3470,10 +4772,10 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                       </HoverTooltip>
                     );
                   })}
-                  {(endpointFilter === "all" || endpointFilter === "cloudrun") && filteredCloudRunServices.length > 0 && (
+                  {(gcpEndpointFilter === "all" || gcpEndpointFilter === "cloudrun") && filteredCloudRunServices.length > 0 && (
                     <div className="text-[9px] uppercase tracking-widest text-slate-600 px-1 pt-1">Cloud Run</div>
                   )}
-                  {(endpointFilter === "all" || endpointFilter === "cloudrun") && filteredCloudRunServices.map(s => {
+                  {(gcpEndpointFilter === "all" || gcpEndpointFilter === "cloudrun") && filteredCloudRunServices.map(s => {
                     const value = s.url!;
                     const isSelected = isEndpointSelected(value);
                     return (
@@ -3486,11 +4788,11 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                           </>
                         }
                       >
-                        <button onClick={() => setUrl(value)}
+                        <button onClick={() => toggleEndpointSelection(value)}
                           className={cn(
-                            "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm",
+                            "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm relative overflow-hidden",
                             isSelected
-                              ? "bg-emerald-950/35 ring-1 ring-emerald-700/70 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.15)]"
+                              ? "bg-emerald-950/60 ring-2 ring-emerald-500/80 border border-emerald-500/35 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.22)]"
                               : "bg-[#0a0a0a]/60 hover:bg-[#0c120d]"
                           )}
                         >
@@ -3499,6 +4801,164 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                             {isSelected && <span className="ml-2 text-[8px] text-emerald-300 uppercase tracking-widest">Selected</span>}
                           </div>
                           <div className={cn("mt-0.5 font-mono whitespace-pre-wrap break-all", isSelected ? "text-emerald-300" : "text-emerald-400")}>{s.url}</div>
+                        </button>
+                      </HoverTooltip>
+                    );
+                  })}
+                </>
+              )}
+              {endpointCloud === "aws" && !awsSnapshot && (
+                <div className="px-2 py-2 text-[10px] text-slate-500 border border-slate-800/60 bg-[#0a0a0a]/60">
+                  No AWS snapshot loaded. Run an AWS scan from the AWS dashboard or configure AWS credentials in Settings.
+                </div>
+              )}
+              {endpointCloud === "aws" && awsSnapshot && (
+                <>
+                  {hasAwsEndpointForFilter && (
+                    <div className="text-[9px] uppercase tracking-widest text-slate-600 px-1 pt-1">
+                      AWS Discovery · {awsEndpointFilterLabel}
+                    </div>
+                  )}
+                  {!hasAwsEndpointForFilter && (
+                    <div className="px-2 py-2 text-[10px] text-slate-500 border border-slate-800/60 bg-[#0a0a0a]/60">
+                      {awsEmptyMessage}
+                    </div>
+                  )}
+                  {(awsEndpointFilter === "all" || awsEndpointFilter === "eks") && filteredAwsLoadBalancers.map(lb => {
+                    const value = `https://${lb.dnsName}`;
+                    const isSelected = isEndpointSelected(value);
+                    return (
+                      <HoverTooltip
+                        key={`aws-lb-${lb.region}-${lb.name}-${lb.dnsName}`}
+                        content={
+                          <>
+                            <div className="text-amber-300 font-bold uppercase tracking-widest text-[8px] mb-1">{lb.name}</div>
+                            <div className="text-sky-300 font-mono break-all">{value}</div>
+                            <div className="text-slate-500 mt-1">{lb.type} · {lb.region}</div>
+                          </>
+                        }
+                      >
+                        <button onClick={() => toggleEndpointSelection(value)}
+                          className={cn(
+                            "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm relative overflow-hidden",
+                            isSelected
+                              ? "bg-amber-950/45 ring-2 ring-amber-500/80 border border-amber-500/35 shadow-[inset_0_0_0_1px_rgba(245,158,11,0.18)]"
+                              : "bg-[#0a0a0a]/60 hover:bg-[#12100b]"
+                          )}
+                        >
+                          <div className={cn("break-words", isSelected ? "text-slate-200" : "text-slate-400")}>
+                            ELB · {lb.name}
+                            {isSelected && <span className="ml-2 text-[8px] text-amber-300 uppercase tracking-widest">Selected</span>}
+                          </div>
+                          <div className={cn("mt-0.5 font-mono whitespace-pre-wrap break-all", isSelected ? "text-amber-300" : "text-amber-400")}>{value}</div>
+                        </button>
+                      </HoverTooltip>
+                    );
+                  })}
+                  {(awsEndpointFilter === "all" || awsEndpointFilter === "eks") && filteredAwsEksClusters.map(cluster => {
+                    const value = cluster.endpointPublicAccess ? cluster.endpoint : undefined;
+                    const isRequestable = Boolean(value);
+                    const isSelected = value ? isEndpointSelected(value) : false;
+                    return (
+                      <HoverTooltip
+                        key={`aws-eks-api-${cluster.region}-${cluster.clusterName}`}
+                        content={
+                          <>
+                            <div className="text-amber-300 font-bold uppercase tracking-widest text-[8px] mb-1">{cluster.clusterName}</div>
+                            {value ? <div className="text-sky-300 font-mono break-all">{value}</div> : <div className="text-slate-500">No public API endpoint</div>}
+                            <div className="text-slate-500 mt-1">EKS · {cluster.status} · {cluster.region}</div>
+                          </>
+                        }
+                      >
+                        <button
+                          onClick={() => value && toggleEndpointSelection(value)}
+                          disabled={!isRequestable}
+                          className={cn(
+                            "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm relative overflow-hidden",
+                            isSelected
+                              ? "bg-amber-950/45 ring-2 ring-amber-500/80 border border-amber-500/35 shadow-[inset_0_0_0_1px_rgba(245,158,11,0.18)]"
+                              : isRequestable ? "bg-[#0a0a0a]/60 hover:bg-[#12100b]" : "bg-[#0a0a0a]/40 opacity-70 cursor-not-allowed"
+                          )}
+                        >
+                          <div className={cn("break-words", isSelected ? "text-slate-200" : "text-slate-400")}>
+                            EKS · {cluster.clusterName}
+                            {isSelected && <span className="ml-2 text-[8px] text-amber-300 uppercase tracking-widest">Selected</span>}
+                            {!isRequestable && <span className="ml-2 text-[8px] text-slate-500 uppercase tracking-widest">No public API</span>}
+                          </div>
+                          <div className={cn("mt-0.5 font-mono whitespace-pre-wrap break-all", isSelected ? "text-amber-300" : isRequestable ? "text-amber-400" : "text-slate-600")}>{value ?? cluster.arn}</div>
+                        </button>
+                      </HoverTooltip>
+                    );
+                  })}
+                  {(awsEndpointFilter === "all" || awsEndpointFilter === "vm") && filteredAwsEc2Targets.map(instance => {
+                    const value = instance.publicIpAddress ? `https://${instance.publicIpAddress}` : undefined;
+                    const isRequestable = Boolean(value);
+                    const label = instance.tags.Name || instance.instanceId;
+                    const isSelected = value ? isEndpointSelected(value) : false;
+                    return (
+                      <HoverTooltip
+                        key={`aws-ec2-${instance.region}-${instance.instanceId}`}
+                        content={
+                          <>
+                            <div className="text-orange-300 font-bold uppercase tracking-widest text-[8px] mb-1">{label}</div>
+                            {value ? <div className="text-sky-300 font-mono">{value}</div> : <div className="text-slate-500">No public IP</div>}
+                            <div className="text-slate-500 mt-1">{instance.instanceType} · {instance.state} · {instance.region}</div>
+                          </>
+                        }
+                      >
+                        <button
+                          onClick={() => value && toggleEndpointSelection(value)}
+                          disabled={!isRequestable}
+                          className={cn(
+                            "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm relative overflow-hidden",
+                            isSelected
+                              ? "bg-orange-950/45 ring-2 ring-orange-500/80 border border-orange-500/35 shadow-[inset_0_0_0_1px_rgba(249,115,22,0.18)]"
+                              : isRequestable ? "bg-[#0a0a0a]/60 hover:bg-[#120f0b]" : "bg-[#0a0a0a]/40 opacity-70 cursor-not-allowed"
+                          )}
+                        >
+                          <div className={cn("break-words", isSelected ? "text-slate-200" : "text-slate-400")}>
+                            EC2 · {label}
+                            {isSelected && <span className="ml-2 text-[8px] text-orange-300 uppercase tracking-widest">Selected</span>}
+                            {!isRequestable && <span className="ml-2 text-[8px] text-slate-500 uppercase tracking-widest">No public IP</span>}
+                          </div>
+                          <div className={cn("mt-0.5 font-mono whitespace-pre-wrap break-all", isSelected ? "text-orange-300" : isRequestable ? "text-orange-400" : "text-slate-600")}>{value ?? instance.privateIpAddress}</div>
+                        </button>
+                      </HoverTooltip>
+                    );
+                  })}
+                  {(awsEndpointFilter === "all" || awsEndpointFilter === "lambda") && filteredAwsLambdaFunctions.map(fn => {
+                    const value = fn.functionUrl;
+                    const isRequestable = Boolean(value);
+                    const unavailableLabel = fn.functionUrlError ? "URL lookup failed" : "No Function URL";
+                    const isSelected = value ? isEndpointSelected(value) : false;
+                    return (
+                      <HoverTooltip
+                        key={`aws-lambda-${fn.region}-${fn.functionName}`}
+                        content={
+                          <>
+                            <div className="text-fuchsia-300 font-bold uppercase tracking-widest text-[8px] mb-1">{fn.functionName}</div>
+                            {value ? <div className="text-sky-300 font-mono break-all">{value}</div> : <div className="text-slate-500">{unavailableLabel}</div>}
+                            {fn.functionUrlError && <div className="text-red-400 mt-1 break-words">{fn.functionUrlError}</div>}
+                            <div className="text-slate-500 mt-1">{fn.runtime} · {fn.region}</div>
+                          </>
+                        }
+                      >
+                        <button
+                          onClick={() => value && toggleEndpointSelection(value)}
+                          disabled={!isRequestable}
+                          className={cn(
+                            "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm relative overflow-hidden",
+                            isSelected
+                              ? "bg-fuchsia-950/45 ring-2 ring-fuchsia-500/80 border border-fuchsia-500/35 shadow-[inset_0_0_0_1px_rgba(217,70,239,0.18)]"
+                              : isRequestable ? "bg-[#0a0a0a]/60 hover:bg-[#120b12]" : "bg-[#0a0a0a]/40 opacity-70 cursor-not-allowed"
+                          )}
+                        >
+                          <div className={cn("break-words", isSelected ? "text-slate-200" : "text-slate-400")}>
+                            Lambda · {fn.functionName}
+                            {isSelected && <span className="ml-2 text-[8px] text-fuchsia-300 uppercase tracking-widest">Selected</span>}
+                            {!isRequestable && <span className={cn("ml-2 text-[8px] uppercase tracking-widest", fn.functionUrlError ? "text-red-400" : "text-slate-500")}>{unavailableLabel}</span>}
+                          </div>
+                          <div className={cn("mt-0.5 font-mono whitespace-pre-wrap break-all", isSelected ? "text-fuchsia-300" : isRequestable ? "text-fuchsia-400" : "text-slate-600")}>{value ?? fn.functionArn}</div>
                         </button>
                       </HoverTooltip>
                     );
@@ -3516,7 +4976,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                 value={bodyText}
                 onChange={e => setBodyText(e.target.value)}
                 rows={6}
-                className="w-full px-2 py-2 bg-[#0d0d0d] border border-slate-800 text-xs text-slate-300 font-mono focus:outline-none focus:border-emerald-800 resize-y"
+                className="w-full px-2 py-2 bg-[#0d0d0d] border border-slate-800 text-xs text-slate-300 font-mono focus:outline-none focus:border-emerald-800 resize-y no-scrollbar"
                 spellCheck={false}
               />
             </div>
@@ -3541,13 +5001,23 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
           <div className="flex items-center justify-between text-[9px] text-slate-600">
             <span>
-              {loadingSnapshot ? "Loading topology…" :
-               snapshot ? `${nodes.length - 1} resources` : "No snapshot"}
-              {!loadingSnapshot && loadingEntryPoints && " · scanning…"}
-              {!loadingSnapshot && !loadingEntryPoints && entryPoints.length > 0 && ` · ${entryPoints.length} entry pts`}
+              {traceScanRunning ? `Scanning ${endpointCloud.toUpperCase()}…` :
+               loadingSnapshot ? "Loading topology…" :
+               selectedCloudHasSnapshot ? `${nodes.length - 1} ${endpointCloud.toUpperCase()} resources` : `No ${endpointCloud.toUpperCase()} snapshot`}
+              {endpointCloud === "gcp" && !loadingSnapshot && loadingEntryPoints && " · scanning…"}
+              {endpointCloud === "gcp" && !loadingSnapshot && !loadingEntryPoints && entryPoints.length > 0 && ` · ${entryPoints.length} entry pts`}
             </span>
-            <button onClick={fetchSnapshot} className="hover:text-slate-400 transition-colors">
-              <RefreshCw size={10} className={loadingSnapshot ? "animate-spin" : ""} />
+            <button
+              onClick={triggerTraceScan}
+              disabled={traceScanRunning}
+              className={cn(
+                "flex items-center gap-1 hover:text-slate-400 transition-colors uppercase tracking-widest",
+                traceScanRunning && "cursor-not-allowed opacity-60"
+              )}
+              title={`Run full ${endpointCloud.toUpperCase()} scan`}
+            >
+              <RefreshCw size={10} className={traceScanRunning ? "animate-spin" : ""} />
+              <span>{traceScanRunning ? "Scanning" : `Scan ${endpointCloud.toUpperCase()}`}</span>
             </button>
           </div>
         </div>
@@ -3616,31 +5086,12 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                         ? "border-emerald-800 text-emerald-500 bg-emerald-950/30"
                         : "border-slate-700 text-slate-600 hover:border-slate-500 hover:text-slate-400"
                     )}
-                  >
+                    >
                     <Globe size={8} />
                     ALL
                   </button>
                 )}
-                {liveMode && (
-                  <button
-                    onClick={() => {
-                      const next = !liveAnimEnabled;
-                      liveAnimEnabledRef.current = next;
-                      setLiveAnimEnabled(next);
-                      if (!next) setNodeStatus({});
-                    }}
-                    title={liveAnimEnabled ? "Disable pulse animation" : "Enable pulse animation"}
-                    className={cn(
-                      "flex items-center gap-1 text-[8px] px-1.5 py-0.5 border transition-colors tracking-widest",
-                      liveAnimEnabled
-                        ? "border-emerald-800 text-emerald-600 hover:border-emerald-700"
-                        : "border-slate-700 text-slate-600 hover:border-slate-500 hover:text-slate-400"
-                    )}
-                  >
-                    <Zap size={8} />
-                    ANIM
-                  </button>
-                )}
+                {/* Adaptive intensity styling is currently hidden from the UI. */}
                 <div className="w-px h-3 bg-slate-800 mx-0.5" />
               </>
             )}
@@ -3719,7 +5170,16 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
               // When a URL is focused, only show edges whose endpoints are both
               // part of the inferred path; otherwise "internet" keeps every
               // outbound edge faintly visible because it is always active.
-              const lineVisible = !url.trim() || isPath;
+              const useIntensityStyling = liveIntensityEnabled;
+              const lineActivity = useIntensityStyling
+                ? requestActivityIntensity * (isPath || concurrentBursts.length > 0 ? 1 : 0.55)
+                : 0;
+              const pulseGlowOpacity = useIntensityStyling ? 0.18 + lineActivity * 0.28 : 0.25;
+              const pulseCoreOpacity = useIntensityStyling ? 0.88 + lineActivity * 0.08 : 0.95;
+              const pulseGlowWidth = useIntensityStyling ? 5 + lineActivity * 2.5 : 6;
+              const pulseCoreWidth = useIntensityStyling ? 1.8 + lineActivity * 0.85 : 2;
+              const pulseDuration = useIntensityStyling ? Math.max(0.22, 0.38 - lineActivity * 0.12) : 0.38;
+              const lineVisible = !url.trim() || isPath || concurrentBursts.length > 0;
 
               return (
                 <g key={line.id} opacity={lineVisible ? 1 : 0}>
@@ -3740,13 +5200,13 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                         d={bezierPath(line)}
                         fill="none"
                         stroke="#00ff41"
-                        strokeWidth={6}
+                        strokeWidth={pulseGlowWidth}
                         strokeLinecap="round"
-                        opacity={0.25}
+                        opacity={pulseGlowOpacity}
                         filter="url(#pulse-glow)"
                         initial={{ pathLength: 0 }}
                         animate={{ pathLength: 1 }}
-                        transition={{ duration: 0.38, ease: "easeOut" }}
+                        transition={{ duration: pulseDuration, ease: "easeOut" }}
                       />
                       {/* Sharp core */}
                       <motion.path
@@ -3754,11 +5214,11 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                         d={bezierPath(line)}
                         fill="none"
                         stroke="#00ff41"
-                        strokeWidth={2}
+                        strokeWidth={pulseCoreWidth}
                         strokeLinecap="round"
-                        initial={{ pathLength: 0, opacity: 0.95 }}
+                        initial={{ pathLength: 0, opacity: pulseCoreOpacity }}
                         animate={{ pathLength: 1, opacity: 1 }}
-                        transition={{ duration: 0.35, ease: "easeOut" }}
+                        transition={{ duration: Math.max(0.2, pulseDuration - 0.03), ease: "easeOut" }}
                       />
                     </>
                   )}
@@ -3768,23 +5228,23 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                         d={bezierPath(line)}
                         fill="none"
                         stroke="#00ff41"
-                        strokeWidth={6}
+                        strokeWidth={pulseGlowWidth + 0.5}
                         strokeLinecap="round"
-                        opacity={0.25}
+                        opacity={pulseGlowOpacity}
                         filter="url(#pulse-glow)"
                         initial={{ pathLength: 0 }}
                         animate={{ pathLength: 1 }}
-                        transition={{ duration: 0.42, ease: "easeOut" }}
+                        transition={{ duration: Math.max(0.22, pulseDuration + 0.02), ease: "easeOut" }}
                       />
                       <motion.path
                         d={bezierPath(line)}
                         fill="none"
                         stroke="#00ff41"
-                        strokeWidth={2}
+                        strokeWidth={pulseCoreWidth}
                         strokeLinecap="round"
-                        initial={{ pathLength: 0, opacity: 0.95 }}
+                        initial={{ pathLength: 0, opacity: pulseCoreOpacity }}
                         animate={{ pathLength: 1, opacity: 1 }}
-                        transition={{ duration: 0.38, ease: "easeOut" }}
+                        transition={{ duration: Math.max(0.2, pulseDuration - 0.01), ease: "easeOut" }}
                       />
                     </g>
                   ))}
@@ -3801,8 +5261,9 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
               ? { ...NODE_META.sidecar, ...getContainerMeta(node.container) }
               : NODE_META[node.type];
             const status = nodeStatus[node.id] ?? "idle";
-            const inPath = activePath.has(node.id);
             const isSelected = selectedNode?.id === node.id;
+            const inPath = activePath.has(node.id);
+            const graphFocusActive = false;
 
             const isBeingDragged = draggingNodeId === node.id;
 
@@ -3852,17 +5313,17 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                 }}
                 animate={{
                   opacity: inPath ? 1 : (url.trim() ? 0 : 0.3),
-                  scale: status === "active" ? 1.04 : isBeingDragged ? 1.06 : 1,
+                  scale: status === "active" ? 1.04 : isBeingDragged ? 1.06 : isSelected ? 1.01 : 1,
                 }}
-                transition={{ duration: 0.15 }}
+                transition={{ duration: isSelected ? 0.3 : 0.15, ease: "easeOut" }}
                 className={cn(
-                  "border flex items-center gap-2.5 px-3 select-none transition-colors duration-200",
+                  "border flex items-center gap-2.5 px-3 select-none transition-[opacity,transform,box-shadow,border-color,background-color] duration-300 ease-out",
                   isBeingDragged ? "cursor-grabbing shadow-xl shadow-black/40" : "cursor-grab",
                   STATUS_OVERLAY[status],
                   status === "active" && "shadow-lg shadow-emerald-500/20",
                   status === "done" && meta.border,
                   status === "error" && "border-red-700",
-                  isSelected && "ring-1 ring-white/20",
+                  isSelected && "border-emerald-300/70 bg-emerald-950/32 shadow-[0_0_42px_rgba(16,185,129,0.30),0_0_100px_rgba(16,185,129,0.18)]",
                 )}
               >
                 {/* Icon */}
@@ -3969,7 +5430,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                         <m.Icon size={10} className={m.text} />
                         <span className="text-[9px] font-bold text-slate-200 uppercase tracking-wide truncate">{hoveredNode.label}</span>
                       </div>
-                      <div className="text-[9px] text-slate-500 mb-0.5">{NODE_TYPE_LABEL[hoveredNode.type]}</div>
+                      <div className="text-[9px] text-slate-500 mb-0.5">{nodeTypeLabel(hoveredNode)}</div>
                       {hoveredNode.sublabel && <div className="text-[9px] text-slate-600 font-mono truncate">{hoveredNode.sublabel}</div>}
                       {st !== "idle" && (
                         <div className={cn("text-[8px] font-bold mt-1.5 uppercase",
@@ -4015,198 +5476,9 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
         </AnimatePresence>
       </div>
 
-      {/* ── Right: Detail / Response panel ───────────────────────────── */}
-      {!graphFullscreen && <div className="w-[340px] shrink-0 flex flex-col border border-slate-800/50 bg-[#070b07] min-h-0">
-
-        {selectedNode ? (
-          // ── Node detail view ──────────────────────────────────────────
-          <NodeDetail
-            node={selectedNode}
-            status={nodeStatus[selectedNode.id] ?? "idle"}
-            inPath={activePath.has(selectedNode.id)}
-            response={response}
-            url={url}
-            method={method}
-            onClose={() => { setSelectedNode(null); setShowResponse(true); }}
-            onIstioDetected={handleIstioDetected}
-          />
-        ) : showResponse ? (
-          // ── Response view (default) ───────────────────────────────────
-          <>
-            <div className="shrink-0 px-3 py-2 border-b border-slate-800/50 flex items-center justify-between">
-              <span className="text-[10px] uppercase tracking-widest text-slate-500">Response</span>
-              <div className="flex items-center gap-2">
-                {requestTime && nodes.some(n => n.type === "sidecar") && (
-                  <button
-                    onClick={() => setShowTrace(true)}
-                    title="View request trace across all containers"
-                    className="flex items-center gap-1 text-[8px] text-emerald-500 border border-emerald-900/60 px-1.5 py-0.5 hover:border-emerald-700 transition-colors"
-                  >
-                    <Activity size={8} />TRACE
-                  </button>
-                )}
-                {response?.status && (
-                  <HoverTooltip
-                    align="right"
-                    content={
-                      <>
-                        <div className="text-emerald-400 font-bold uppercase tracking-widest text-[8px] mb-1">Response</div>
-                        <div>HTTP {response.status}{response.statusText ? ` ${response.statusText}` : ""}</div>
-                        <div className="text-slate-400 mt-1">{response.timing}ms</div>
-                        {response.error ? <div className="text-red-300 mt-1">{response.error}</div> : null}
-                      </>
-                    }
-                  >
-                    <span className={cn("text-xs font-bold font-mono", statusColor(response.status))}>
-                      {response.status}
-                    </span>
-                  </HoverTooltip>
-                )}
-              </div>
-            </div>
-
-            {liveMode && liveEvents.length > 0 && (
-              <div className="shrink-0 border-b border-slate-800/50 bg-[#060906] flex flex-col">
-                <div className="px-3 py-1.5 flex items-center justify-between">
-                  <span className="text-[9px] uppercase tracking-widest text-slate-500">Live Events</span>
-                  <span className="text-[8px] text-slate-600">{liveScope === "all" ? "All endpoints" : "Active path"}</span>
-                </div>
-                <div ref={liveSummaryRef} className="max-h-28 overflow-auto px-3 pb-2 font-mono text-[10px]">
-                  {liveEventsRecent.map(event => {
-                    const statusClass = !event.status
-                      ? "text-slate-500"
-                      : event.status < 300
-                        ? "text-emerald-400"
-                        : event.status < 400
-                          ? "text-sky-400"
-                          : event.status < 500
-                            ? "text-amber-400"
-                            : "text-red-400";
-                    const methodClass = event.method ? (METHOD_COLOR[event.method] ?? "text-slate-400") : "text-slate-500";
-                    const ts = event.ts
-                      ? new Date(event.ts).toLocaleTimeString([], {
-                          hour12: false,
-                          hour: "2-digit",
-                          minute: "2-digit",
-                          second: "2-digit",
-                        })
-                      : "";
-                    const countText = event.count > 1 ? ` (+${event.count - 1})` : "";
-                    const pathText = event.path ?? "Request observed";
-                  return (
-                      <button
-                        key={event.id}
-                        onClick={() => setSelectedLiveEvent(event)}
-                        className={cn(
-                          "w-full border-b border-slate-800/30 py-1 last:border-b-0 text-left transition-colors hover:bg-white/[0.03]",
-                          selectedLiveEvent?.id === event.id && "bg-emerald-950/20"
-                        )}
-                      >
-                        <div className="whitespace-pre-wrap break-all text-slate-300">
-                          <span className="text-slate-700">{ts}</span>{" "}
-                          <span className="text-emerald-500">{event.label}</span>{" "}
-                          <span className="text-slate-600">[{event.projectId}]</span>{" "}
-                          {event.method ? <span className={cn("font-bold", methodClass)}>{event.method}</span> : <span className="text-slate-500">LOG</span>}{" "}
-                          {event.status !== undefined && <span className={statusClass}>{event.status}</span>}{" "}
-                          <span>{pathText}</span>
-                          {event.latency ? <> <span className="text-slate-600">{event.latency}</span></> : null}
-                          {countText ? <> <span className="text-slate-500">{countText}</span></> : null}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            <div className="flex-1 overflow-y-auto p-3 text-[11px] font-mono">
-              {liveMode && liveEvents.length > 0 && !response && !sending && (
-                <div className="h-full min-h-0 flex flex-col">
-                  <div className="shrink-0 flex items-center justify-between pb-2 border-b border-slate-800/40">
-                    <span className="text-[10px] uppercase tracking-widest text-slate-500">Live Console</span>
-                    <span className="text-[8px] text-slate-600">tail -f</span>
-                  </div>
-                  <div ref={liveConsoleRef} className="flex-1 min-h-0 overflow-auto pt-2 text-[10px] leading-5">
-                    {liveEventsOrdered.map(event => {
-                      const statusClass = !event.status
-                        ? "text-slate-500"
-                        : event.status < 300
-                          ? "text-emerald-400"
-                          : event.status < 400
-                            ? "text-sky-400"
-                            : event.status < 500
-                              ? "text-amber-400"
-                              : "text-red-400";
-                      const methodClass = event.method ? (METHOD_COLOR[event.method] ?? "text-slate-400") : "text-slate-500";
-                      const ts = event.ts
-                        ? new Date(event.ts).toLocaleTimeString([], {
-                            hour12: false,
-                            hour: "2-digit",
-                            minute: "2-digit",
-                            second: "2-digit",
-                          })
-                        : "";
-                      const countText = event.count > 1 ? ` (+${event.count - 1})` : "";
-                      const pathText = event.path ?? "Request observed";
-                      return (
-                        <button
-                          key={`console-${event.id}`}
-                          onClick={() => setSelectedLiveEvent(event)}
-                          className={cn(
-                            "w-full border-b border-slate-800/20 py-1.5 last:border-b-0 text-left transition-colors hover:bg-white/[0.03]",
-                            selectedLiveEvent?.id === event.id && "bg-emerald-950/20"
-                          )}
-                        >
-                          <div className="whitespace-pre-wrap break-all text-slate-300">
-                            <span className="text-slate-700">{ts}</span>{" "}
-                            <span className="text-emerald-500">{event.label}</span>{" "}
-                            <span className="text-slate-600">[{event.projectId}]</span>{" "}
-                            {event.method ? <span className={cn("font-bold", methodClass)}>{event.method}</span> : <span className="text-slate-500">LOG</span>}{" "}
-                            {event.status !== undefined && <span className={statusClass}>{event.status}</span>}{" "}
-                            <span>{pathText}</span>
-                            {event.latency ? <> <span className="text-slate-600">{event.latency}</span></> : null}
-                            {countText ? <> <span className="text-slate-500">{countText}</span></> : null}
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {!response && !sending && (
-                !(liveMode && liveEvents.length > 0) &&
-                <p className="text-slate-600 text-[10px]">
-                  Click a node for details, or send a request to see the response.
-                </p>
-              )}
-
-              {sending && (
-                <div className="flex items-center gap-2 text-emerald-500">
-                  <Loader2 size={12} className="animate-spin" />
-                  <span className="text-[10px]">Routing request…</span>
-                </div>
-              )}
-
-              {response && (
-                <ResponseDetail
-                  response={response}
-                  open={responseOpen}
-                  onToggleHeaders={() => setResponseOpen(o => !o)}
-                  method={method}
-                  url={url}
-                  routeNodes={responseRouteNodes}
-                  onSelectNode={openNodeDetail}
-                />
-              )}
-            </div>
-          </>
-        ) : null}
-      </div>}
-
-      {/* ── Fullscreen NodeDetail slide-in panel ──────────────────────── */}
+      {/* ── NodeDetail slide-in panel ───────────────────────────────── */}
       <AnimatePresence>
-        {graphFullscreen && selectedNode && (
+        {selectedNode && (
           <motion.div
             key={selectedNode.id}
             initial={{ x: 300, opacity: 0 }}
@@ -4236,7 +5508,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
           <TraceModal
             requestTime={requestTime}
             nodeContainers={nodeContainers}
-            gkeNodes={baseNodes.filter(n => n.type === "gke" && n.projectId)}
+            gkeNodes={baseNodes.filter(n => n.type === "gke" && (n.cloud ?? "gcp") === "gcp" && n.projectId)}
             onClose={() => setShowTrace(false)}
           />
         )}

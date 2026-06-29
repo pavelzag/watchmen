@@ -1,4 +1,4 @@
-import { useMockAwsData, type AwsCredentials } from "./client";
+import { getAwsClientOptions, resolveAwsCredentials, useMockAwsData, type AwsCredentials } from "./client";
 import { getIamUsers, getIamRoles } from "./iam";
 import { getS3Buckets } from "./s3";
 import { getEksClusters } from "./eks";
@@ -10,6 +10,7 @@ import { getSnsTopics } from "./sns";
 import { getSecrets } from "./secretsmanager";
 import { getSecurityGroups } from "./securitygroups";
 import { getLoadBalancers } from "./elb";
+import { GetCallerIdentityCommand, STSClient } from "@aws-sdk/client-sts";
 import type { AwsSnapshot } from "./types";
 import type { TaskProgressEvent } from "@/lib/tasks/types";
 
@@ -31,7 +32,7 @@ export async function fetchAwsSnapshot(
   options?: AwsCredentials & { forceMock?: boolean; onProgress?: (event: TaskProgressEvent) => void }
 ): Promise<AwsSnapshot> {
   const mock = useMockAwsData(options?.forceMock);
-  const creds = options;
+  const creds = await resolveAwsCredentials(options);
   let completedServices = 0;
   const totalServices = 12;
 
@@ -43,6 +44,24 @@ export async function fetchAwsSnapshot(
     percent: 10,
     metadata: { mock },
   });
+
+  let callerAccountId: string | undefined;
+  if (!mock) {
+    const sts = new STSClient(getAwsClientOptions(creds?.region ?? "us-east-1", creds));
+    const identity = await sts.send(new GetCallerIdentityCommand({}));
+    callerAccountId = identity.Account;
+    emitProgress(options?.onProgress, {
+      stage: "validate_credentials",
+      message: "AWS credentials authenticated",
+      completed: 0,
+      total: totalServices,
+      percent: 8,
+      metadata: {
+        accountId: callerAccountId,
+        arn: identity.Arn,
+      },
+    });
+  }
 
   async function runLoader<T>(resource: string, message: string, fn: () => Promise<T>): Promise<T> {
     const result = await fn();
@@ -87,6 +106,7 @@ export async function fetchAwsSnapshot(
   ]);
 
   const accounts = [...new Set([
+    callerAccountId,
     ...iamUsers.map((u) => u.accountId),
     ...iamRoles.map((r) => r.accountId),
     ...s3Buckets.map((b) => b.accountId),
@@ -98,7 +118,7 @@ export async function fetchAwsSnapshot(
     ...snsTopics.map((t) => t.accountId),
     ...secrets.map((s) => s.accountId),
     ...securityGroups.map((sg) => sg.accountId),
-  ])].filter(Boolean);
+  ])].filter((account): account is string => Boolean(account));
 
   const regions = [...new Set([
     ...eksClusters.map((c) => c.region),
@@ -107,7 +127,7 @@ export async function fetchAwsSnapshot(
     ...rdsInstances.map((d) => d.region),
     ...s3Buckets.map((b) => b.region),
     ...securityGroups.map((sg) => sg.region),
-  ])].filter(Boolean);
+  ])].filter((region): region is string => Boolean(region));
 
   emitProgress(options?.onProgress, {
     stage: "finalize_snapshot",
@@ -115,6 +135,28 @@ export async function fetchAwsSnapshot(
     percent: 95,
     metadata: { accountCount: accounts.length, regionCount: regions.length },
   });
+
+  const readableResourceCount =
+    iamUsers.length +
+    iamRoles.length +
+    s3Buckets.length +
+    eksClusters.length +
+    ec2Instances.length +
+    lambdaFunctions.length +
+    rdsInstances.length +
+    redshiftClusters.length +
+    snsTopics.length +
+    secrets.length +
+    securityGroups.length +
+    loadBalancers.length;
+
+  if (!mock && readableResourceCount === 0) {
+    throw new Error(
+      `AWS credentials authenticated for account ${callerAccountId ?? "unknown"}, but Watchmen could not read any inventory. ` +
+      "Use direct scanner access keys with ReadOnlyAccess, SecurityAudit, and IAMReadOnlyAccess, or use Role ARN with credentials that can call sts:AssumeRole. " +
+      "Do not paste the assumer-only runtime keys into the Access keys form."
+    );
+  }
 
   return {
     snapshotId: crypto.randomUUID(),

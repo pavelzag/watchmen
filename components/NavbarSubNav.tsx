@@ -5,13 +5,12 @@ import { useRouter, usePathname } from "next/navigation";
 import NavbarCloudTabs from "./NavbarCloudTabs";
 
 const NAV_ITEMS = [
-    { href: "/dashboard", label: "GCP" },
-    { href: "/dashboard/aws", label: "AWS" },
+    { href: "/dashboard", label: "DASHBOARD" },
     { href: "/dashboard/trace", label: "TRACE" },
     { href: "/dashboard/findings", label: "FINDINGS" },
     { href: "/dashboard/attack-paths", label: "ATTACK PATHS" },
-    { href: "/dashboard/iac-drift", label: "IAC DRIFT" },
     { href: "/dashboard/container-scan", label: "CONTAINERS" },
+    { href: "/dashboard/tasks", label: "TASKS" },
     { href: "/dashboard/history", label: "HISTORY" },
     { href: "/dashboard/compliance", label: "COMPLIANCE" },
     { href: "/dashboard/settings", label: "SETTINGS" },
@@ -33,9 +32,10 @@ export default function NavbarSubNav({ children }: { children: React.ReactNode }
             }
 
             if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+                e.preventDefault();
                 const currentIndex = NAV_ITEMS.findIndex(item =>
-                    item.href === "/dashboard" || item.href === "/dashboard/aws"
-                        ? pathname === item.href
+                    item.href === "/dashboard"
+                        ? pathname === item.href || pathname === "/dashboard/aws"
                         : pathname.startsWith(item.href)
                 );
 

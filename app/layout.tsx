@@ -3,6 +3,8 @@ import { Toaster } from "sonner";
 import "./globals.css";
 import CommandPalette from "@/components/CommandPalette";
 import GlobalKeyNav from "@/components/GlobalKeyNav";
+import GlobalSearch from "@/components/GlobalSearch";
+import PageTransition from "@/components/PageTransition";
 
 export const metadata: Metadata = {
   title: "WATCHMEN // CLOUD SECURITY EXPLORER",
@@ -18,9 +20,11 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="min-h-screen" style={{ backgroundColor: "#090909" }}>
-        {children}
+        <PageTransition>{children}</PageTransition>
         {/* Global command palette — available on every page via '/' key */}
         <CommandPalette />
+        {/* Global resource search — Cmd+K / Ctrl+K */}
+        <GlobalSearch />
         {/* Global Up/Down/Enter keyboard navigation */}
         <GlobalKeyNav />
         <Toaster

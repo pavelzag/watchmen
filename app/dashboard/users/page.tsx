@@ -5,6 +5,7 @@ import DetailPageHeader from "@/components/DetailPageHeader";
 import DetailDrawer, { DrawerSection, DrawerField } from "@/components/DetailDrawer";
 import { cn } from "@/lib/utils";
 import { ChevronUp, ChevronDown } from "lucide-react";
+import { collectGcpUsers } from "@/lib/gcp/principals";
 import type { GcpSnapshot, StorageBucket, GkeCluster } from "@/lib/gcp/types";
 
 type SortDir = "asc" | "desc";
@@ -13,6 +14,7 @@ interface UserRow {
   email: string;
   projects: string[];
   roles: string[];
+  resourceTypes: string[];
   highestRole: string;
 }
 
@@ -78,24 +80,10 @@ export default function UsersPage() {
       .then((r) => r.json())
       .then((snap: GcpSnapshot) => {
         setSnapshot(snap);
-        const map = new Map<string, { projects: Set<string>; roles: Set<string> }>();
-        for (const project of snap.projects) {
-          for (const binding of project.bindings) {
-            for (const member of binding.members) {
-              if (!member.startsWith("user:")) continue;
-              const email = member.slice(5);
-              if (!map.has(email)) map.set(email, { projects: new Set(), roles: new Set() });
-              map.get(email)!.projects.add(project.projectId);
-              map.get(email)!.roles.add(binding.role);
-            }
-          }
-        }
         setRows(
-          Array.from(map.entries()).map(([email, { projects, roles }]) => ({
-            email,
-            projects: Array.from(projects),
-            roles: Array.from(roles),
-            highestRole: highestRole(Array.from(roles)),
+          collectGcpUsers(snap).map((user) => ({
+            ...user,
+            highestRole: highestRole(user.roles),
           }))
         );
       })
@@ -207,23 +195,27 @@ export default function UsersPage() {
 function UserDrawerContent({ user, snapshot }: { user: UserRow; snapshot: GcpSnapshot }) {
   const { short, color } = roleBadge(user.highestRole);
   const member = `user:${user.email}`;
+  const deletedMember = `deleted:user:${user.email}`;
+
+  const includesUser = (binding: { members: string[] }) =>
+    binding.members.some((candidate) => candidate === member || candidate.startsWith(`${deletedMember}?`));
 
   // Project-level bindings for this user
   const projectAccess = snapshot.projects
     .map((p) => ({
       projectId: p.projectId,
-      roles: p.bindings.filter((b) => b.members.includes(member)).map((b) => b.role),
+      roles: p.bindings.filter(includesUser).map((b) => b.role),
     }))
     .filter((p) => p.roles.length > 0);
 
   // Buckets this user has explicit access to
   const bucketAccess: StorageBucket[] = snapshot.storageBuckets.filter((b) =>
-    b.iamPolicy.bindings.some((binding) => binding.members.includes(member))
+    b.iamPolicy.bindings.some(includesUser)
   );
 
   // GKE clusters this user has explicit access to
   const clusterAccess: GkeCluster[] = snapshot.gkeClusters.filter((c) =>
-    c.iamPolicy.bindings.some((binding) => binding.members.includes(member))
+    c.iamPolicy.bindings.some(includesUser)
   );
 
   return (
@@ -231,6 +223,7 @@ function UserDrawerContent({ user, snapshot }: { user: UserRow; snapshot: GcpSna
       <DrawerSection label="Identity">
         <DrawerField label="Email" value={user.email} mono />
         <DrawerField label="Projects" value={user.projects.join(", ")} mono />
+        <DrawerField label="Resource Types" value={user.resourceTypes.join(", ")} mono />
         <DrawerField label="Highest Role" value={
           <span className={cn("px-2 py-0.5 rounded-md text-xs font-medium border", color)}>{short}</span>
         } />
@@ -267,7 +260,7 @@ function UserDrawerContent({ user, snapshot }: { user: UserRow; snapshot: GcpSna
           <div className="space-y-3">
             {bucketAccess.map((bucket) => {
               const roles = bucket.iamPolicy.bindings
-                .filter((b) => b.members.includes(member))
+                .filter(includesUser)
                 .map((b) => b.role);
               return (
                 <div key={bucket.name} className="rounded-lg bg-slate-800/40 border border-slate-700/40 px-3 py-2 space-y-1">
@@ -294,7 +287,7 @@ function UserDrawerContent({ user, snapshot }: { user: UserRow; snapshot: GcpSna
           <div className="space-y-3">
             {clusterAccess.map((cluster) => {
               const roles = cluster.iamPolicy.bindings
-                .filter((b) => b.members.includes(member))
+                .filter(includesUser)
                 .map((b) => b.role);
               return (
                 <div key={cluster.name} className="rounded-lg bg-slate-800/40 border border-slate-700/40 px-3 py-2 space-y-1">

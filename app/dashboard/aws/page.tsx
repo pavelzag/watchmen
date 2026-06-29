@@ -1,7 +1,5 @@
-import { auth } from "@/lib/auth";
-import AwsDashboardClient from "./AwsDashboardClient";
+import { redirect } from "next/navigation";
 
-export default async function AwsDashboardPage() {
-  const session = await auth();
-  return <AwsDashboardClient demoMode={Boolean(session?.isDemoUser)} />;
+export default function AwsDashboardPage() {
+  redirect("/dashboard?cloud=aws");
 }

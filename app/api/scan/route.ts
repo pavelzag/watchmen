@@ -142,17 +142,26 @@ export async function POST(req: NextRequest) {
         fetchedAt: snapshot.fetchedAt,
         ...snapshotSummary,
       });
-      return { ok: true as const, fetchedAt: snapshot.fetchedAt, snapshotSummary };
+      return {
+        ok: true as const,
+        fetchedAt: snapshot.fetchedAt,
+        snapshotSummary,
+        snapshot: {
+          ...snapshot,
+          users: extractUsers(snapshot),
+          serviceAccountEmails: extractServiceAccountEmails(snapshot),
+          fetchedAt: snapshot.fetchedAt,
+        },
+      };
     }
 
     const gcpCreds = await getUserCloudCredentials(email, "gcp");
-    const accessToken = session.accessToken;
 
-    if (!gcpCreds && !accessToken) {
+    if (!gcpCreds) {
       console.info(`[api/scan:${scanId}] no GCP credentials configured`, { email });
       return {
         ok: false as const,
-        error: "No GCP credentials configured (Service Account or Session Login Required).",
+        error: "No GCP credentials configured. Connect a service account in Settings.",
         credentialsRequired: true,
         status: 422,
       };
@@ -163,17 +172,16 @@ export async function POST(req: NextRequest) {
       message: "Starting live GCP scan",
       percent: 0,
       metadata: {
-        credentialMode: gcpCreds ? "service_account" : accessToken ? "session_access_token" : "none",
+        credentialMode: "service_account",
       },
     });
 
     const snapshot = await withDebugTiming(scope, "fetchGcpSnapshot.live", {
       email,
-      credentialMode: gcpCreds ? "service_account" : accessToken ? "session_access_token" : "none",
+      credentialMode: "service_account",
     }, () =>
       fetchGcpSnapshot({
         serviceAccountKey: gcpCreds?.serviceAccountKey as string | undefined,
-        accessToken: !gcpCreds ? (accessToken as string | undefined) : undefined,
         onProgress: emit,
       })
     );
@@ -196,10 +204,9 @@ export async function POST(req: NextRequest) {
       `;
     });
 
-    const credentialMode = gcpCreds ? "service_account" : accessToken ? "session_access_token" : "none";
     const snapshotSummary = {
       ...summarizeGcpSnapshot(snapshot),
-      credentialMode,
+      credentialMode: "service_account",
     };
     console.info(`[api/scan:${scanId}] POST complete`, {
       mode: "live",
@@ -208,14 +215,32 @@ export async function POST(req: NextRequest) {
       ...snapshotSummary,
     });
 
-    return { ok: true as const, fetchedAt: snapshot.fetchedAt, snapshotSummary };
+    return {
+      ok: true as const,
+      fetchedAt: snapshot.fetchedAt,
+      snapshotSummary,
+      snapshot: {
+        ...snapshot,
+        users: extractUsers(snapshot),
+        serviceAccountEmails: extractServiceAccountEmails(snapshot),
+        fetchedAt: snapshot.fetchedAt,
+      },
+    };
   };
 
   if (body.stream) {
     const encoder = new TextEncoder();
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
-        const send = (event: unknown) => sendStreamEvent(controller, encoder, event);
+        let closed = false;
+        const send = (event: unknown) => {
+          if (closed) return;
+          try {
+            sendStreamEvent(controller, encoder, event);
+          } catch {
+            closed = true;
+          }
+        };
         void (async () => {
           try {
             const result = await runScan((progress) => send({ type: "progress", progress }));
@@ -229,7 +254,10 @@ export async function POST(req: NextRequest) {
             send({ type: "error", error: "Scan failed. Check server logs." });
           } finally {
             console.info(`[api/scan:${scanId}] stream closed`, { durationMs: Date.now() - startedAt });
-            controller.close();
+            if (!closed) {
+              closed = true;
+              controller.close();
+            }
           }
         })();
       },
