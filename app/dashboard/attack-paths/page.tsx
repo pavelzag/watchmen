@@ -16,6 +16,7 @@ import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
 import { linkifyText } from "@/lib/utils/linkify";
 import CopyAiResponseButton from "@/components/CopyAiResponseButton";
 import { useDemoMode } from "@/components/DemoModeProvider";
+import type { ResourceItem } from "@/lib/claude/query-processor";
 
 const DEMO_AI_DISABLED_MESSAGE =
   "AI queries are disabled in the demo environment. For a preview with AI functionality or real, non-fake data, email zagalsky@gmail.com.";
@@ -100,6 +101,68 @@ function awsFindingToAttackPath(finding: AwsSecurityFinding): CloudAttackPath {
   };
 }
 
+function nodeHref(node: AttackNode): string | undefined {
+  switch (node.resourceType) {
+    case "storage_bucket":
+    case "bucket":
+      return "/dashboard/buckets";
+    case "s3_bucket":
+      return "/dashboard/buckets";
+    case "gke_cluster":
+      return "/dashboard/clusters";
+    case "eks_cluster":
+      return "/dashboard/aws/eks";
+    case "vm":
+      return "/dashboard/vms";
+    case "ec2_instance":
+      return "/dashboard/aws/ec2";
+    case "service_account":
+      return "/dashboard/service-accounts";
+    case "cloud_run":
+      return "/dashboard/cloud-run";
+    case "cloud_sql":
+      return "/dashboard/cloud-sql";
+    case "bigquery":
+      return "/dashboard/bigquery";
+    case "pubsub":
+      return "/dashboard/pubsub";
+    case "secret":
+    case "secrets":
+      return "/dashboard/secrets";
+    case "firewall":
+      return "/dashboard/firewall";
+    case "iam_user":
+      return "/dashboard/aws/iam-users";
+    case "iam_role":
+      return "/dashboard/aws/iam-roles";
+    case "lambda_function":
+      return "/dashboard/aws/lambda";
+    case "rds_instance":
+      return "/dashboard/aws/rds";
+    case "load_balancer":
+      return "/dashboard/trace";
+    case "container_image":
+      return "/dashboard/container-scan";
+    default:
+      return undefined;
+  }
+}
+
+function buildPathResources(path: CloudAttackPath): ResourceItem[] {
+  return path.nodes
+    .map((node) => {
+      const href = nodeHref(node);
+      if (!href) return null;
+      return {
+        name: node.label,
+        projectId: node.projectId,
+        type: "bucket" as const,
+        href: `${href}${href.includes("?") ? "&" : "?"}search=${encodeURIComponent(node.label)}`,
+      };
+    })
+    .filter(Boolean) as ResourceItem[];
+}
+
 const SEV_STYLES = {
   critical: { border: "#ef4444", label: "CRITICAL", color: "#ef4444", bg: "#1a0606" },
   high:     { border: "#f59e0b", label: "HIGH",     color: "#f59e0b", bg: "#1a1206" },
@@ -119,7 +182,7 @@ function decodeEscapedHtml(s: string): string {
   return s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 }
 
-function renderAiMarkdown(text: string): string {
+function renderAiMarkdown(text: string, resources: ResourceItem[] = []): string {
   const html = escapeHtml(text)
     .replace(/```[\w]*\n?([\s\S]*?)```/g, (_, code) => {
       const commandText = decodeEscapedHtml(String(code)).trim();
@@ -135,7 +198,7 @@ function renderAiMarkdown(text: string): string {
     .replace(/(<li[\s\S]*?<\/li>\n?)+/g, (m) => `<ul class="space-y-1 my-1">${m}</ul>`)
     .replace(/\n(?!<)/g, "<br />");
 
-  return linkifyText(html, []);
+  return linkifyText(html, resources);
 }
 
 // ─── Node card ────────────────────────────────────────────────────────────────
@@ -191,6 +254,7 @@ function PathCard({ path, index }: { path: CloudAttackPath; index: number }) {
   const [recOpen, setRecOpen] = useState(false);
   const s = SEV_STYLES[path.severity];
   const demoMode = useDemoMode();
+  const resources = buildPathResources(path);
 
   async function askAiForPath(forceRegenerate = false) {
     if (demoMode) {
@@ -398,7 +462,7 @@ function PathCard({ path, index }: { path: CloudAttackPath; index: number }) {
             <div
               onClick={copySuggestedCommand}
               className="mt-3 text-xs text-slate-300 leading-relaxed prose-answer"
-              dangerouslySetInnerHTML={{ __html: renderAiMarkdown(rec.text) }}
+              dangerouslySetInnerHTML={{ __html: renderAiMarkdown(rec.text, resources) }}
             />
             <button
               type="button"

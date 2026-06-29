@@ -25,6 +25,7 @@ export const RESOURCE_LINKS: Record<string, { path: string; label: string; Icon:
 };
 
 export function getResourceHref(item: ResourceItem): string {
+    if (item.href) return item.href;
     const base = RESOURCE_LINKS[item.type ?? ""]?.path;
     if (!base) return "#";
     const separator = base.includes("?") ? "&" : "?";

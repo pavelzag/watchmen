@@ -21,9 +21,11 @@ import {
 import { cn } from "@/lib/utils";
 import type { ComplianceReport, ComplianceCategory, ControlResult, ControlStatus, ControlImpact } from "@/lib/compliance/types";
 import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
+import { linkifyText } from "@/lib/utils/linkify";
 import CopyAiResponseButton from "@/components/CopyAiResponseButton";
 import ScanCloudButton from "@/components/ScanCloudButton";
 import { useDemoMode } from "@/components/DemoModeProvider";
+import type { ResourceItem } from "@/lib/claude/query-processor";
 
 // ── Config ────────────────────────────────────────────────────────────────
 
@@ -166,8 +168,8 @@ function decodeEscapedHtml(s: string): string {
   return s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 }
 
-function renderMd(text: string): string {
-  return escapeHtml(text)
+function renderMd(text: string, resources: ResourceItem[] = []): string {
+  const html = escapeHtml(text)
     .replace(/```[\w]*\n?([\s\S]*?)```/g, (_, code) => {
       const commandText = decodeEscapedHtml(String(code)).trim();
       const command = encodeURIComponent(commandText);
@@ -181,6 +183,18 @@ function renderMd(text: string): string {
     .replace(/^[-*] (.+)$/gm, '<li class="ml-4 list-disc">$1</li>')
     .replace(/(<li[\s\S]*?<\/li>\n?)+/g, (m) => `<ul class="space-y-1 my-1">${m}</ul>`)
     .replace(/\n(?!<)/g, "<br />");
+
+  return linkifyText(html, resources);
+}
+
+function buildEvidenceResources(control: ControlResult, resourcePage?: string): ResourceItem[] {
+  if (!resourcePage) return [];
+  return control.evidence.map((e) => ({
+    name: e.name,
+    projectId: e.projectId,
+    type: "bucket" as const,
+    href: `/dashboard/${resourcePage}?search=${encodeURIComponent(e.name)}`,
+  }));
 }
 
 function exportCsv(report: ComplianceReport) {
@@ -492,6 +506,7 @@ function ControlDrawer({
   const rawControlId = baseControlId(control.id);
   const controlCloud = cloudPrefix(control.id);
   const resourcePage = CONTROL_RESOURCE_PAGE[rawControlId];
+  const evidenceResources = buildEvidenceResources(control, resourcePage);
   const refUrl = controlRefUrl(control.id, standard);
 
   useEffect(() => {
@@ -656,6 +671,7 @@ function ControlCard({
   const rawControlId = baseControlId(control.id);
   const controlCloud = cloudPrefix(control.id);
   const resourcePage = CONTROL_RESOURCE_PAGE[rawControlId];
+  const evidenceResources = buildEvidenceResources(control, resourcePage);
   const refUrl = controlRefUrl(control.id, standard);
 
   async function askAI() {
@@ -935,7 +951,7 @@ function ControlCard({
             <div
               onClick={copySuggestedCommand}
               className="mt-3 text-xs text-slate-300 leading-relaxed"
-              dangerouslySetInnerHTML={{ __html: renderMd(rec.text) }}
+              dangerouslySetInnerHTML={{ __html: renderMd(rec.text, evidenceResources) }}
             />
             <button
               onClick={askAI}

@@ -15,6 +15,7 @@ export interface ResourceItem {
   type: QueryIntent["resourceType"];
   extra?: string; // e.g. direction for firewall, zone for VM, region for Cloud Run
   cloud?: "gcp" | "aws";
+  href?: string;
 }
 
 export interface QueryIntent {
