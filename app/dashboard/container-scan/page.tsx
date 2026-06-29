@@ -7,6 +7,10 @@ import { cn } from "@/lib/utils";
 import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
 import { linkifyText } from "@/lib/utils/linkify";
 import CopyAiResponseButton from "@/components/CopyAiResponseButton";
+import { useDemoMode } from "@/components/DemoModeProvider";
+
+const DEMO_AI_DISABLED_MESSAGE =
+  "AI queries are disabled in the demo environment. For a preview with AI functionality or real, non-fake data, email zagalsky@gmail.com.";
 
 const SEV_STYLES: Record<CveSeverity, { label: string; color: string; border: string; bg: string }> = {
   critical: { label: "CRITICAL", color: "#f87171", border: "#ef4444", bg: "#1a0606" },
@@ -47,8 +51,14 @@ function CveRow({ cve, imageRef, cloud }: { cve: ContainerVulnerability; imageRe
   const s = SEV_STYLES[cve.severity];
   const [rec, setRec] = useState<RecState>({ loading: false, text: null, error: null });
   const [open, setOpen] = useState(false);
+  const demoMode = useDemoMode();
 
   async function askAI(forceRegenerate = false) {
+    if (demoMode) {
+      setRec({ loading: false, text: null, error: DEMO_AI_DISABLED_MESSAGE });
+      setOpen(true);
+      return;
+    }
     setRec({ loading: true, text: null, error: null });
     setOpen(true);
     try {
@@ -128,10 +138,10 @@ function CveRow({ cve, imageRef, cloud }: { cve: ContainerVulnerability; imageRe
         <div className="flex items-center justify-between gap-2 max-w-fit">
           <button
             onClick={rec.text ? () => setOpen((o) => !o) : () => askAI()}
-            disabled={rec.loading}
+            disabled={rec.loading || demoMode}
             className={cn(
               "flex items-center gap-1.5 text-[10px] font-medium transition-all duration-150 rounded px-2 py-0.5 font-mono",
-              rec.loading
+              rec.loading || demoMode
                 ? "text-slate-500 cursor-not-allowed border border-slate-700/50"
                 : rec.text
                   ? "text-violet-400 hover:text-violet-300 border border-violet-500/30 bg-violet-500/10"
@@ -143,7 +153,7 @@ function CveRow({ cve, imageRef, cloud }: { cve: ContainerVulnerability; imageRe
             ) : (
               <Sparkles className="w-2.5 h-2.5" />
             )}
-            {rec.loading ? "ASKING AI..." : rec.text ? "AI RECOMMENDATION" : "ASK AI"}
+            {rec.loading ? "ASKING AI..." : demoMode ? "DISABLED IN DEMO" : rec.text ? "AI RECOMMENDATION" : "ASK AI"}
           </button>
 
           {rec.text && (
@@ -163,6 +173,12 @@ function CveRow({ cve, imageRef, cloud }: { cve: ContainerVulnerability; imageRe
           </div>
         )}
 
+        {demoMode && !rec.text && !rec.error && (
+          <div className="mt-2 text-[10px] font-mono text-slate-500">
+            {DEMO_AI_DISABLED_MESSAGE}
+          </div>
+        )}
+
         {rec.text && open && (
           <div className="mt-2 bg-[#09090b] border border-slate-800 rounded p-3">
             <div className="mb-2 flex justify-end">
@@ -174,11 +190,11 @@ function CveRow({ cve, imageRef, cloud }: { cve: ContainerVulnerability; imageRe
             />
             <button
               onClick={() => askAI(true)}
-              disabled={rec.loading}
+              disabled={rec.loading || demoMode}
               className="mt-3 flex items-center gap-1 text-[10px] text-slate-500 hover:text-violet-400 transition-colors font-mono"
             >
               <RefreshCw className="w-2.5 h-2.5" />
-              REGENERATE
+              {demoMode ? "DISABLED IN DEMO" : "REGENERATE"}
             </button>
           </div>
         )}

@@ -23,6 +23,7 @@ import type { ComplianceReport, ComplianceCategory, ControlResult, ControlStatus
 import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
 import CopyAiResponseButton from "@/components/CopyAiResponseButton";
 import ScanCloudButton from "@/components/ScanCloudButton";
+import { useDemoMode } from "@/components/DemoModeProvider";
 
 // ── Config ────────────────────────────────────────────────────────────────
 
@@ -645,6 +646,7 @@ function ControlCard({
   onRevoked: (id: string) => void;
   onOpenDrawer: (control: ControlResult) => void;
 }) {
+  const demoMode = useDemoMode();
   const [rec, setRec] = useState<RecState>({ loading: false, text: null, error: null });
   const [open, setOpen] = useState(false);
   const [suppress, setSuppress] = useState<SuppressState>({ open: false, justification: "", saving: false });
@@ -657,6 +659,14 @@ function ControlCard({
   const refUrl = controlRefUrl(control.id, standard);
 
   async function askAI() {
+    if (demoMode) {
+      setRec({
+        loading: false,
+        text: null,
+        error: "AI is disabled in demo mode. For a preview with AI functionality or real, non-fake data, email zagalsky@gmail.com.",
+      });
+      return;
+    }
     setRec({ loading: true, text: null, error: null });
     setOpen(true);
     try {
@@ -888,18 +898,20 @@ function ControlCard({
         <div className="px-4 py-2 flex items-center justify-between gap-2">
           <button
             onClick={rec.text ? () => setOpen((o) => !o) : askAI}
-            disabled={rec.loading}
+            disabled={rec.loading || demoMode}
             className={cn(
               "flex items-center gap-1.5 text-xs font-medium transition-all duration-150 rounded-lg px-2.5 py-1",
               rec.loading
                 ? "text-slate-500 cursor-not-allowed"
+                : demoMode
+                  ? "text-slate-500 cursor-not-allowed bg-slate-500/5"
                 : rec.text
                   ? "text-violet-400 hover:text-violet-300 bg-violet-500/10 hover:bg-violet-500/15"
                   : "text-slate-400 hover:text-violet-400 hover:bg-violet-500/10"
             )}
           >
             {rec.loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-            {rec.loading ? "Asking AI…" : rec.text ? "AI Recommendation" : "Ask AI"}
+            {rec.loading ? "Asking AI…" : demoMode ? "Disabled in demo" : rec.text ? "AI Recommendation" : "Ask AI"}
           </button>
           {rec.text && (
             <button onClick={() => setOpen((o) => !o)} className="text-slate-500 hover:text-slate-300 transition-colors">

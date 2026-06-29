@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import CloudShellProvider from "@/components/CloudShellProvider";
+import { DemoModeProvider } from "@/components/DemoModeProvider";
 import PostLoginSplash from "@/components/PostLoginSplash";
 import { TaskCenterProvider } from "@/components/TaskCenterProvider";
 import { getDeploymentInfo } from "@/lib/deployment-info";
@@ -18,10 +19,11 @@ export default async function DashboardLayout({
   if (session.error === "RefreshAccessTokenError") redirect("/login?expired=1");
 
   return (
-    <CloudShellProvider>
-      <TaskCenterProvider>
-        <PostLoginSplash showShortcutModal={!!session.isDemoUser} />
-        <div className="min-h-screen" style={{ background: "#090909" }}>
+    <DemoModeProvider demoMode={!!session.isDemoUser}>
+      <CloudShellProvider>
+        <TaskCenterProvider>
+          <PostLoginSplash showShortcutModal={!!session.isDemoUser} />
+          <div className="min-h-screen" style={{ background: "#090909" }}>
           {session.isDemoUser && (
             <div style={{ background: "#050d05", borderBottom: "1px solid #005c16" }}>
               <div className="px-4 py-2 text-center text-xs">
@@ -42,11 +44,12 @@ export default async function DashboardLayout({
               </details>
             </div>
           )}
-          <Navbar />
-          <main className="max-w-7xl mx-auto px-6 py-6">{children}</main>
-          <Footer />
-        </div>
-      </TaskCenterProvider>
-    </CloudShellProvider>
+            <Navbar />
+            <main className="max-w-7xl mx-auto px-6 py-6">{children}</main>
+            <Footer />
+          </div>
+        </TaskCenterProvider>
+      </CloudShellProvider>
+    </DemoModeProvider>
   );
 }

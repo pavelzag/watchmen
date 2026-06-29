@@ -12,6 +12,7 @@ import type { GcpSnapshot } from "@/lib/gcp/types";
 import { getDemoCredentials, getDemoGcpSnapshot, setDemoGcpSnapshot } from "@/lib/demo-credentials";
 import { useTaskCenter } from "@/components/TaskCenterProvider";
 import AwsDashboardClient from "./aws/AwsDashboardClient";
+import DemoAiNotice from "@/components/DemoAiNotice";
 
 const GCP_SUGGESTED_QUERIES = [
   "Which Cloud Storage buckets are publicly accessible?",
@@ -452,38 +453,44 @@ export default function DashboardClient({
         )}
 
         <section className="space-y-3">
-          <button
-            type="button"
-            onClick={() => setAskAiOpen((open) => !open)}
-            className="flex w-full items-start justify-between gap-3 text-left"
-          >
-            <div>
-              <p className="text-[10px] uppercase tracking-widest font-mono" style={{ color: "var(--border-dim)" }}>
-                // GCP Ask AI
-              </p>
-              <p className="mt-1 text-xs font-mono" style={{ color: "var(--text-muted)" }}>
-                Query the latest GCP snapshot: IAM, Cloud Storage, GKE, Compute Engine, Cloud Run, Cloud SQL, BigQuery, Pub/Sub, Secret Manager, firewall rules, findings, and compliance.
-              </p>
-            </div>
-            <span className="mt-1 flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono" style={{ color: "var(--text-muted)" }}>
-              {askAiOpen ? "minimize" : "expand"}
-              {askAiOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-            </span>
-          </button>
-          {askAiOpen && (
+          {demoMode ? (
+            <DemoAiNotice />
+          ) : (
             <>
-              <QueryBox
-                apiEndpoint="/api/query"
-                onResult={handleResult}
-                suggestedQueries={GCP_SUGGESTED_QUERIES}
-                placeholder="Ask anything about your GCP infrastructure..."
-              />
-              {results.length > 0 && (
-                <div className="space-y-3">
-                  {results.map((result, index) => (
-                    <ResultCard key={`${result.query}-${result.fetchedAt}-${index}`} result={result} index={index} />
-                  ))}
+              <button
+                type="button"
+                onClick={() => setAskAiOpen((open) => !open)}
+                className="flex w-full items-start justify-between gap-3 text-left"
+              >
+                <div>
+                  <p className="text-[10px] uppercase tracking-widest font-mono" style={{ color: "var(--border-dim)" }}>
+                    // GCP Ask AI
+                  </p>
+                  <p className="mt-1 text-xs font-mono" style={{ color: "var(--text-muted)" }}>
+                    Query the latest GCP snapshot: IAM, Cloud Storage, GKE, Compute Engine, Cloud Run, Cloud SQL, BigQuery, Pub/Sub, Secret Manager, firewall rules, findings, and compliance.
+                  </p>
                 </div>
+                <span className="mt-1 flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono" style={{ color: "var(--text-muted)" }}>
+                  {askAiOpen ? "minimize" : "expand"}
+                  {askAiOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                </span>
+              </button>
+              {askAiOpen && (
+                <>
+                  <QueryBox
+                    apiEndpoint="/api/query"
+                    onResult={handleResult}
+                    suggestedQueries={GCP_SUGGESTED_QUERIES}
+                    placeholder="Ask anything about your GCP infrastructure..."
+                  />
+                  {results.length > 0 && (
+                    <div className="space-y-3">
+                      {results.map((result, index) => (
+                        <ResultCard key={`${result.query}-${result.fetchedAt}-${index}`} result={result} index={index} />
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
             </>
           )}

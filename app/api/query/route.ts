@@ -6,6 +6,7 @@ import { initGoogleAuthFromKey, initUserAuth, useMockData } from "@/lib/gcp/clie
 import { useMockAwsData } from "@/lib/aws/client"; // Integrated AWS
 import { extractIntent, generateAnswer, extractResources, type QueryIntent } from "@/lib/claude/query-processor";
 import { callAI, resolveAI, type AIProvider } from "@/lib/ai/client";
+import { rejectDemoAi } from "@/lib/ai/demo";
 import { sql, ensureGcpSnapshotTable, ensureAwsSnapshotTable, ensureAgentInstallTables } from "@/lib/db"; // Added AWS table ensure
 import { getUserCloudCredentials } from "@/lib/credentials";
 import { getClusterEntryPoints } from "@/lib/gcp/cluster-entrypoints";
@@ -867,6 +868,8 @@ export async function POST(req: NextRequest) {
   if (!session?.user?.email) {
     return done(NextResponse.json({ error: "Unauthorized" }, { status: 401 }));
   }
+  const demoBlocked = rejectDemoAi(session);
+  if (demoBlocked) return done(demoBlocked);
   const email = session.user.email;
 
   logQueryStep(logger, "request body parse start");

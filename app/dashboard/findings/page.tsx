@@ -15,6 +15,7 @@ import RemediateModal from "@/app/dashboard/attack-paths/RemediateModal";
 import ScanCloudButton from "@/components/ScanCloudButton";
 import { remediationTargetFromFinding } from "@/lib/github/remediation-targets";
 import CopyAiResponseButton from "@/components/CopyAiResponseButton";
+import { useDemoMode } from "@/components/DemoModeProvider";
 
 const SEVERITY_CONFIG: Record<SecurityFindingSeverity, { label: string; color: string; bg: string; border: string; dot: string }> = {
   critical: {
@@ -187,10 +188,19 @@ function FindingCard({
   pinned: boolean;
   onTogglePin: (id: string) => void;
 }) {
+  const demoMode = useDemoMode();
   const [rec, setRec] = useState<RecState>({ loading: false, text: null, error: null });
   const [open, setOpen] = useState(false);
 
   async function askAI() {
+    if (demoMode) {
+      setRec({
+        loading: false,
+        text: null,
+        error: "AI is disabled in demo mode. For a preview with AI functionality or real, non-fake data, email zagalsky@gmail.com.",
+      });
+      return;
+    }
     setRec({ loading: true, text: null, error: null });
     setOpen(true);
     try {
@@ -279,7 +289,7 @@ function FindingCard({
         </div>
         <p className="text-sm font-semibold text-white uppercase tracking-tight flex items-center gap-2">
           {finding.title}
-          <button onClick={askAI} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-violet-400" title="Explain with AI">
+          <button onClick={askAI} disabled={demoMode} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-violet-400 disabled:opacity-40 disabled:cursor-not-allowed" title="Explain with AI">
             <Sparkles className="w-3 h-3" />
           </button>
         </p>
@@ -301,11 +311,13 @@ function FindingCard({
         <div className="px-4 py-2 flex items-center justify-between gap-2">
           <button
             onClick={rec.text ? () => setOpen((o) => !o) : askAI}
-            disabled={rec.loading}
+            disabled={rec.loading || demoMode}
             className={cn(
               "flex items-center gap-1.5 text-xs font-medium transition-all duration-150 rounded-lg px-2.5 py-1",
               rec.loading
                 ? "text-slate-500 cursor-not-allowed"
+                : demoMode
+                  ? "text-slate-500 cursor-not-allowed bg-slate-500/5"
                 : rec.text
                   ? "text-violet-400 hover:text-violet-300 bg-violet-500/10 hover:bg-violet-500/15"
                   : "text-slate-400 hover:text-violet-400 hover:bg-violet-500/10"
@@ -316,7 +328,7 @@ function FindingCard({
             ) : (
               <Sparkles className="w-3 h-3" />
             )}
-            {rec.loading ? "Asking AI…" : rec.text ? "AI Recommendation" : "Ask AI"}
+            {rec.loading ? "Asking AI…" : demoMode ? "Disabled in demo" : rec.text ? "AI Recommendation" : "Ask AI"}
           </button>
 
           {rec.text && (
@@ -350,11 +362,11 @@ function FindingCard({
             />
             <button
               onClick={askAI}
-              disabled={rec.loading}
+              disabled={rec.loading || demoMode}
               className="mt-3 flex items-center gap-1 text-xs text-slate-600 hover:text-violet-400 transition-colors"
             >
               <RefreshCw className="w-2.5 h-2.5" />
-              Regenerate
+              {demoMode ? "Disabled in demo" : "Regenerate"}
             </button>
           </div>
         )}

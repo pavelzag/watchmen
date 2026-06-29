@@ -6,6 +6,7 @@ import { computeAwsFindings } from "@/lib/aws-findings";
 import { runAwsSoc2 } from "@/lib/compliance/aws-soc2";
 import { runAwsIso27001 } from "@/lib/compliance/aws-iso27001";
 import { callAI, resolveAI } from "@/lib/ai/client";
+import { rejectDemoAi } from "@/lib/ai/demo";
 import { sql, ensureAwsSnapshotTable } from "@/lib/db";
 import type { AwsSnapshot } from "@/lib/aws/types";
 
@@ -188,6 +189,8 @@ export async function POST(req: NextRequest) {
   if (!session?.user?.email) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const demoBlocked = rejectDemoAi(session);
+  if (demoBlocked) return demoBlocked;
 
   const body = await req.json();
   const query: string = body?.query?.trim();

@@ -15,6 +15,10 @@ import { remediationTargetFromAttackPath } from "@/lib/github/remediation-target
 import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
 import { linkifyText } from "@/lib/utils/linkify";
 import CopyAiResponseButton from "@/components/CopyAiResponseButton";
+import { useDemoMode } from "@/components/DemoModeProvider";
+
+const DEMO_AI_DISABLED_MESSAGE =
+  "AI queries are disabled in the demo environment. For a preview with AI functionality or real, non-fake data, email zagalsky@gmail.com.";
 
 // ─── Node icon / colour ───────────────────────────────────────────────────────
 
@@ -186,8 +190,14 @@ function PathCard({ path, index }: { path: CloudAttackPath; index: number }) {
   const [rec, setRec] = useState<AiRecState>({ loading: false, text: null, error: null });
   const [recOpen, setRecOpen] = useState(false);
   const s = SEV_STYLES[path.severity];
+  const demoMode = useDemoMode();
 
   async function askAiForPath(forceRegenerate = false) {
+    if (demoMode) {
+      setRecOpen(true);
+      setRec({ loading: false, text: null, error: DEMO_AI_DISABLED_MESSAGE });
+      return;
+    }
     setRecOpen(true);
     setRec({ loading: true, text: forceRegenerate ? null : rec.text, error: null });
     try {
@@ -350,11 +360,11 @@ function PathCard({ path, index }: { path: CloudAttackPath; index: number }) {
           <button
             type="button"
             onClick={() => rec.text ? setRecOpen((value) => !value) : void askAiForPath()}
-            disabled={rec.loading}
+            disabled={rec.loading || demoMode}
             className="flex items-center gap-1.5 text-xs font-medium transition-all duration-150 rounded-lg px-2.5 py-1 text-slate-400 hover:text-violet-400 hover:bg-violet-500/10 disabled:text-slate-500 disabled:cursor-not-allowed"
           >
             {rec.loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-            {rec.loading ? "Asking AI..." : rec.text ? "AI Recommendation" : "Ask AI"}
+            {rec.loading ? "Asking AI..." : demoMode ? "Disabled in demo" : rec.text ? "AI Recommendation" : "Ask AI"}
           </button>
           {rec.text && (
             <div className="flex items-center gap-2">
@@ -377,6 +387,12 @@ function PathCard({ path, index }: { path: CloudAttackPath; index: number }) {
           </div>
         )}
 
+        {demoMode && !rec.text && !rec.error && (
+          <div className="px-4 pb-3 text-xs font-mono" style={{ color: "#6b7280" }}>
+            {DEMO_AI_DISABLED_MESSAGE}
+          </div>
+        )}
+
         {rec.text && recOpen && (
           <div className="px-4 pb-4 border-t border-violet-900/20">
             <div
@@ -387,11 +403,11 @@ function PathCard({ path, index }: { path: CloudAttackPath; index: number }) {
             <button
               type="button"
               onClick={() => void askAiForPath(true)}
-              disabled={rec.loading}
+              disabled={rec.loading || demoMode}
               className="mt-3 flex items-center gap-1 text-xs text-slate-600 hover:text-violet-400 transition-colors disabled:opacity-50"
             >
               <RefreshCw className="w-2.5 h-2.5" />
-              Regenerate
+              {demoMode ? "Disabled in demo" : "Regenerate"}
             </button>
           </div>
         )}

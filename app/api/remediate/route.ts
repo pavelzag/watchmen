@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { resolveAI } from "@/lib/ai/client";
+import { rejectDemoAi } from "@/lib/ai/demo";
 import { generateRemediation } from "@/lib/claude/remediation-processor";
 
 export async function POST(req: NextRequest) {
@@ -8,6 +9,8 @@ export async function POST(req: NextRequest) {
     if (!session?.user?.email) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    const demoBlocked = rejectDemoAi(session);
+    if (demoBlocked) return demoBlocked;
 
     const { vulnerability, demoCredentials } = await req.json();
 
