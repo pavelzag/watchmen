@@ -7,7 +7,7 @@ import { getDemoCredentials, getDemoAwsSnapshot, setDemoAwsSnapshot } from "@/li
 import type { AwsSnapshot } from "@/lib/aws/types";
 import { useTaskCenter } from "@/components/TaskCenterProvider";
 
-export default function AwsDashboardClient() {
+export default function AwsDashboardClient({ demoMode = false }: { demoMode?: boolean }) {
   const [scanVersion, setScanVersion] = useState(0);
   const [scanning, setScanning] = useState(false);
   const [awsCredsRequired, setAwsCredsRequired] = useState(false);
@@ -29,7 +29,7 @@ export default function AwsDashboardClient() {
     const requestNumber = scanRequestCountRef.current;
     const demoCreds = getDemoCredentials();
     if (reason === "manual") setSyncLog([]);
-    if (!demoCreds.aws && awsCredsRequired) {
+    if (!demoMode && !demoCreds.aws && awsCredsRequired) {
       appendSyncLog("[aws-dashboard] scan blocked: no AWS credentials configured", { reason });
       console.info("[aws-dashboard] scan blocked: no AWS credentials configured", { reason });
       setScanning(false);
@@ -48,11 +48,36 @@ export default function AwsDashboardClient() {
     });
     setActiveTaskId(taskId);
     setScanning(true);
-  }, [appendSyncLog, awsCredsRequired, startAwsScan]);
+  }, [appendSyncLog, awsCredsRequired, demoMode, startAwsScan]);
 
   useEffect(() => {
     if (hasLoadedInitialSnapshotRef.current) return;
     hasLoadedInitialSnapshotRef.current = true;
+
+    if (demoMode) {
+      setAwsCredsRequired(false);
+      console.info("[aws-dashboard] loading demo AWS snapshot");
+      appendSyncLog("[aws-dashboard] loading demo AWS data");
+      fetch("/api/aws/scan")
+        .then((r) => r.json())
+        .then((data) => {
+          appendSyncLog("[aws-dashboard] demo AWS snapshot loaded", {
+            hasSnapshot: Boolean(data.snapshot),
+            fetchedAt: data.fetchedAt ?? data.snapshot?.fetchedAt ?? null,
+          });
+          if (data.snapshot) {
+            setDemoAwsSnapshot(data.snapshot as AwsSnapshot);
+            setDemoSnapshot(data.snapshot as AwsSnapshot);
+          }
+        })
+        .catch((error) => {
+          appendSyncLog("[aws-dashboard] failed to load demo AWS data", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          console.warn("[aws-dashboard] failed to load demo AWS snapshot", error);
+        });
+      return;
+    }
 
     if (getDemoCredentials().aws) {
       setAwsCredsRequired(false);
@@ -91,7 +116,7 @@ export default function AwsDashboardClient() {
         });
         console.warn("[aws-dashboard] failed to load cached AWS snapshot", error);
       });
-  }, [appendSyncLog, triggerScan]);
+  }, [appendSyncLog, demoMode, triggerScan]);
 
   useEffect(() => {
     const id = setInterval(() => triggerScan("interval_10m"), 10 * 60 * 1000);
@@ -135,12 +160,12 @@ export default function AwsDashboardClient() {
       });
     } else if (task.status === "failed" && task.kind === "aws_scan") {
       const noCredentials = task.error?.toLowerCase().includes("no aws credentials");
-      if (noCredentials) {
+      if (!demoMode && noCredentials) {
         setAwsCredsRequired(true);
         appendSyncLog(task.error ?? "[api/aws/scan] no AWS credentials configured", { taskId: task.id });
       }
     }
-  }, [activeTaskId, appendSyncLog, tasks]);
+  }, [activeTaskId, appendSyncLog, demoMode, tasks]);
 
   return (
     <div className="min-h-screen p-4 flex flex-col" style={{ background: "#090909" }}>

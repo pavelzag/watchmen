@@ -11,7 +11,7 @@ import type { GcpSnapshot } from "@/lib/gcp/types";
 import { getDemoCredentials, getDemoGcpSnapshot, setDemoGcpSnapshot } from "@/lib/demo-credentials";
 import { useTaskCenter } from "@/components/TaskCenterProvider";
 
-export default function DashboardClient() {
+export default function DashboardClient({ demoMode = false }: { demoMode?: boolean }) {
   const [results, setResults] = useState<QueryResult[]>([]);
   const [scanVersion, setScanVersion] = useState(0);
   const [scanning, setScanning] = useState(false);
@@ -37,7 +37,7 @@ export default function DashboardClient() {
     const requestNumber = scanRequestCountRef.current;
     const demoCreds = getDemoCredentials();
     if (reason === "manual") setSyncLog([]);
-    if (!demoCreds.gcp && gcpCredsRequired) {
+    if (!demoMode && !demoCreds.gcp && gcpCredsRequired) {
       appendSyncLog("[gcp-dashboard] scan blocked: no GCP credentials configured", { reason });
       console.info("[gcp-dashboard] scan blocked: no GCP credentials configured", { reason });
       setScanning(false);
@@ -56,7 +56,7 @@ export default function DashboardClient() {
     });
     setActiveTaskId(taskId);
     setScanning(true);
-  }, [appendSyncLog, gcpCredsRequired, startGcpScan]);
+  }, [appendSyncLog, demoMode, gcpCredsRequired, startGcpScan]);
 
   useEffect(() => {
     fetch("/api/settings/keys")
@@ -70,6 +70,30 @@ export default function DashboardClient() {
     hasLoadedInitialSnapshotRef.current = true;
 
     // If demo credentials are already stored in sessionStorage, trigger a real scan immediately
+    if (demoMode) {
+      setGcpCredsRequired(false);
+      console.info("[gcp-dashboard] loading demo GCP snapshot");
+      appendSyncLog("[gcp-dashboard] loading demo GCP data");
+      fetch("/api/scan")
+        .then((r) => r.json())
+        .then((data) => {
+          appendSyncLog("[gcp-dashboard] demo GCP snapshot loaded", {
+            hasSnapshot: Boolean(data.snapshot),
+            fetchedAt: data.fetchedAt ?? data.snapshot?.fetchedAt ?? null,
+          });
+          if (data.snapshot) {
+            setDemoGcpSnapshot(data.snapshot);
+            setDemoSnapshot(data.snapshot);
+          }
+        })
+        .catch((error) => {
+          appendSyncLog("[gcp-dashboard] failed to load demo GCP data", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      return;
+    }
+
     if (getDemoCredentials().gcp) {
       setGcpCredsRequired(false);
       triggerScan("initial_demo_credentials");
@@ -109,7 +133,7 @@ export default function DashboardClient() {
           error: error instanceof Error ? error.message : String(error),
         });
       });
-  }, [appendSyncLog, triggerScan]);
+  }, [appendSyncLog, demoMode, triggerScan]);
 
   useEffect(() => {
     const id = setInterval(() => triggerScan("interval_10m"), 10 * 60 * 1000);
@@ -145,7 +169,7 @@ export default function DashboardClient() {
         setDemoGcpSnapshot(task.result.snapshot);
         setDemoSnapshot(task.result.snapshot);
       }
-      if (task.result?.credentialsRequired) {
+      if (!demoMode && task.result?.credentialsRequired) {
         setGcpCredsRequired(true);
       } else {
         setGcpCredsRequired(false);
@@ -159,14 +183,14 @@ export default function DashboardClient() {
       const noCredentials = task.error?.toLowerCase().includes("no gcp credentials") ||
         task.error?.toLowerCase().includes("session login required") ||
         task.error?.toLowerCase().includes("session expired");
-      if (noCredentials) {
+      if (!demoMode && noCredentials) {
         setGcpCredsRequired(true);
         appendSyncLog(task.error ?? "[api/scan] no GCP credentials configured", { taskId: task.id });
       } else {
         setGcpCredsRequired(false);
       }
     }
-  }, [activeTaskId, appendSyncLog, tasks]);
+  }, [activeTaskId, appendSyncLog, demoMode, tasks]);
 
   function handleResult(result: QueryResult) {
     setResults((prev) => [result, ...prev]);
