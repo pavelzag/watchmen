@@ -8,6 +8,7 @@ import NavbarTasksButton from "./NavbarTasksButton";
 
 export default async function Navbar() {
   const session = await auth();
+  const user = session?.isDemoUser ? null : session?.user;
   return (
     <header
       style={{
@@ -46,11 +47,11 @@ export default async function Navbar() {
         <div className="flex items-center gap-3 shrink-0">
           <NavbarTasksButton />
           <NavbarAskButton />
-          {session?.user && (
+          {user && (
             <>
               <span className="text-xs hidden md:block" style={{ color: "var(--border-dim)" }}>
                 <span style={{ color: "var(--text-muted)" }}>// logged-in:</span>{" "}
-                <span style={{ color: "var(--text-primary)" }}>{session.user.email}</span>
+                <span style={{ color: "var(--text-primary)" }}>{user.email}</span>
               </span>
               <form
                 action={async () => {

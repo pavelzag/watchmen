@@ -28,6 +28,7 @@ export default async function LoginPage({
   if (expired !== "1" && !error) {
     const session = await auth();
     if (session && session.error !== "RefreshAccessTokenError") redirect("/dashboard");
+    if (DEMO_MODE) await signIn("demo", { redirectTo: "/dashboard" });
   }
 
   return (
