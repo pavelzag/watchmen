@@ -185,8 +185,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     },
     async jwt({ token, account, user }) {
       if (!DEMO_MODE && token.isDemoUser) {
-        const { isDemoUser, ...rest } = token;
-        return rest;
+        return { ...token, isDemoUser: undefined, error: REFRESH_ACCESS_TOKEN_ERROR };
       }
 
       // Demo credentials: mark as demo, skip OAuth token handling.
