@@ -183,6 +183,7 @@ function exportJson(findings: CloudFinding[]) {
 
 interface InvestigationState {
   loading: boolean;
+  status: "idle" | FindingAgentRunSummary["status"];
   text: string | null;
   error: string | null;
   runId: string | null;
@@ -190,6 +191,7 @@ interface InvestigationState {
 
 interface PlanState {
   loading: boolean;
+  status: "idle" | FindingAgentRunSummary["status"];
   text: string | null;
   error: string | null;
   runId: string | null;
@@ -230,12 +232,14 @@ function FindingCard({
   const existingPlan = agentRuns?.plan_remediation;
   const [investigation, setInvestigation] = useState<InvestigationState>(() => ({
     loading: existingInvestigation?.status === "running",
+    status: existingInvestigation?.status ?? "idle",
     text: existingInvestigation?.report ?? null,
     error: existingInvestigation?.error ?? null,
     runId: existingInvestigation?.id ?? null,
   }));
   const [plan, setPlan] = useState<PlanState>(() => ({
     loading: existingPlan?.status === "running",
+    status: existingPlan?.status ?? "idle",
     text: existingPlan?.report ?? null,
     error: existingPlan?.error ?? null,
     runId: existingPlan?.id ?? null,
@@ -243,14 +247,19 @@ function FindingCard({
   }));
   const [investigationOpen, setInvestigationOpen] = useState(Boolean(existingInvestigation));
   const [planOpen, setPlanOpen] = useState(Boolean(existingPlan));
-  const hasInvestigationRun = Boolean(existingInvestigation || investigation.runId);
-  const hasPlanRun = Boolean(existingPlan || plan.runId);
-  const investigationFinished = Boolean((existingInvestigation && existingInvestigation.status !== "running") || (investigation.runId && !investigation.loading));
-  const planFinished = Boolean((existingPlan && existingPlan.status !== "running") || (plan.runId && !plan.loading));
+  const investigationRunning = investigation.loading || investigation.status === "running";
+  const planRunning = plan.loading || plan.status === "running";
+  const investigationSucceeded = investigation.status === "completed" && Boolean(investigation.text);
+  const planSucceeded = plan.status === "completed" && Boolean(plan.text);
+  const investigationFailed = !investigationSucceeded && investigation.status === "failed";
+  const planFailed = !planSucceeded && plan.status === "failed";
+  const investigationLocked = investigationRunning || investigationSucceeded;
+  const planLocked = planRunning || planSucceeded;
 
   useEffect(() => {
     setInvestigation({
       loading: existingInvestigation?.status === "running",
+      status: existingInvestigation?.status ?? "idle",
       text: existingInvestigation?.report ?? null,
       error: existingInvestigation?.error ?? null,
       runId: existingInvestigation?.id ?? null,
@@ -261,6 +270,7 @@ function FindingCard({
   useEffect(() => {
     setPlan({
       loading: existingPlan?.status === "running",
+      status: existingPlan?.status ?? "idle",
       text: existingPlan?.report ?? null,
       error: existingPlan?.error ?? null,
       runId: existingPlan?.id ?? null,
@@ -270,17 +280,18 @@ function FindingCard({
   }, [existingPlan]);
 
   async function investigate() {
-    if (existingInvestigation) return;
+    if (investigationLocked) return;
     if (demoMode) {
       setInvestigation({
         loading: false,
+        status: "failed",
         text: null,
         error: "AI is disabled in demo mode. For a preview with AI functionality or real, non-fake data, email zagalsky@gmail.com.",
         runId: null,
       });
       return;
     }
-    setInvestigation({ loading: true, text: null, error: null, runId: null });
+    setInvestigation({ loading: true, status: "running", text: null, error: null, runId: null });
     setInvestigationOpen(true);
     try {
       const browserAI = getActiveBrowserAIKey();
@@ -297,16 +308,18 @@ function FindingCard({
       if (!res.ok) {
         setInvestigation({
           loading: false,
+          status: "failed",
           text: null,
           error: data.error ?? "Failed to investigate finding",
           runId: data.runId ?? null,
         });
         return;
       }
-      setInvestigation({ loading: false, text: data.report, error: null, runId: data.runId ?? null });
+      setInvestigation({ loading: false, status: "completed", text: data.report, error: null, runId: data.runId ?? null });
     } catch (e) {
       setInvestigation({
         loading: false,
+        status: "failed",
         text: null,
         error: e instanceof Error ? e.message : "Failed to investigate finding",
         runId: null,
@@ -315,10 +328,11 @@ function FindingCard({
   }
 
   async function planFix() {
-    if (existingPlan) return;
+    if (planLocked) return;
     if (demoMode) {
       setPlan({
         loading: false,
+        status: "failed",
         text: null,
         error: "AI is disabled in demo mode. For a preview with AI functionality or real, non-fake data, email zagalsky@gmail.com.",
         runId: null,
@@ -326,7 +340,7 @@ function FindingCard({
       });
       return;
     }
-    setPlan({ loading: true, text: null, error: null, runId: null, previewEligible: false });
+    setPlan({ loading: true, status: "running", text: null, error: null, runId: null, previewEligible: false });
     setPlanOpen(true);
     try {
       const browserAI = getActiveBrowserAIKey();
@@ -343,6 +357,7 @@ function FindingCard({
       if (!res.ok) {
         setPlan({
           loading: false,
+          status: "failed",
           text: null,
           error: data.error ?? "Failed to plan remediation",
           runId: data.runId ?? null,
@@ -352,6 +367,7 @@ function FindingCard({
       }
       setPlan({
         loading: false,
+        status: "completed",
         text: data.report,
         error: null,
         runId: data.runId ?? null,
@@ -360,6 +376,7 @@ function FindingCard({
     } catch (e) {
       setPlan({
         loading: false,
+        status: "failed",
         text: null,
         error: e instanceof Error ? e.message : "Failed to plan remediation",
         runId: null,
@@ -434,10 +451,10 @@ function FindingCard({
         </div>
         <p className="text-sm font-semibold text-white uppercase tracking-tight flex items-center gap-2">
           {finding.title}
-          <button onClick={investigate} disabled={demoMode || investigation.loading || hasInvestigationRun} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed" title={hasInvestigationRun ? "Investigation already ran" : "Investigate with agent"}>
+          <button onClick={investigate} disabled={demoMode || investigationLocked} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed" title={investigationSucceeded ? "Investigation already ran" : investigationFailed ? "Retry investigation" : "Investigate with agent"}>
             {investigation.loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <FileSearch className="w-3 h-3" />}
           </button>
-          <button onClick={planFix} disabled={demoMode || plan.loading || hasPlanRun} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-cyan-400 disabled:opacity-40 disabled:cursor-not-allowed" title={hasPlanRun ? "Remediation plan already exists" : "Plan remediation"}>
+          <button onClick={planFix} disabled={demoMode || planLocked} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-cyan-400 disabled:opacity-40 disabled:cursor-not-allowed" title={planSucceeded ? "Remediation plan already exists" : planFailed ? "Retry remediation plan" : "Plan remediation"}>
             {plan.loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <ClipboardCheck className="w-3 h-3" />}
           </button>
         </p>
@@ -460,7 +477,7 @@ function FindingCard({
           <div className="flex items-center gap-2 flex-wrap">
             <button
               onClick={investigation.text ? () => setInvestigationOpen((o) => !o) : investigate}
-              disabled={investigation.loading || demoMode || Boolean(hasInvestigationRun && !investigation.text && !investigation.error)}
+              disabled={demoMode || investigationLocked}
               className={cn(
                 "flex items-center gap-1.5 text-xs font-medium transition-all duration-150 rounded-lg px-2.5 py-1",
                 investigation.loading
@@ -469,6 +486,8 @@ function FindingCard({
                     ? "text-slate-500 cursor-not-allowed bg-slate-500/5"
                   : investigation.text
                     ? "text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/15"
+                  : investigationFailed
+                    ? "text-red-300 hover:text-emerald-300 bg-red-500/10 hover:bg-emerald-500/10"
                     : "text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10"
               )}
             >
@@ -477,12 +496,12 @@ function FindingCard({
               ) : (
                 <FileSearch className="w-3 h-3" />
               )}
-              {investigation.loading ? "Investigating..." : demoMode ? "Disabled in demo" : investigationFinished ? "Investigation complete" : investigation.text ? "Investigation" : "Investigate"}
+              {investigation.loading ? "Investigating..." : demoMode ? "Disabled in demo" : investigationSucceeded ? "Investigation complete" : investigationFailed ? "Retry investigation" : investigation.text ? "Investigation" : "Investigate"}
             </button>
 
             <button
               onClick={plan.text ? () => setPlanOpen((o) => !o) : planFix}
-              disabled={plan.loading || demoMode || Boolean(hasPlanRun && !plan.text && !plan.error)}
+              disabled={demoMode || planLocked}
               className={cn(
                 "flex items-center gap-1.5 text-xs font-medium transition-all duration-150 rounded-lg px-2.5 py-1",
                 plan.loading
@@ -491,6 +510,8 @@ function FindingCard({
                     ? "text-slate-500 cursor-not-allowed bg-slate-500/5"
                   : plan.text
                     ? "text-cyan-400 hover:text-cyan-300 bg-cyan-500/10 hover:bg-cyan-500/15"
+                  : planFailed
+                    ? "text-red-300 hover:text-cyan-300 bg-red-500/10 hover:bg-cyan-500/10"
                     : "text-slate-400 hover:text-cyan-400 hover:bg-cyan-500/10"
               )}
             >
@@ -499,23 +520,41 @@ function FindingCard({
               ) : (
                 <ClipboardCheck className="w-3 h-3" />
               )}
-              {plan.loading ? "Planning..." : demoMode ? "Disabled in demo" : planFinished ? "Plan complete" : plan.text ? "Plan" : "Plan fix"}
+              {plan.loading ? "Planning..." : demoMode ? "Disabled in demo" : planSucceeded ? "Plan complete" : planFailed ? "Retry plan" : plan.text ? "Plan" : "Plan fix"}
             </button>
           </div>
 
         </div>
 
         {investigation.error && (
-          <div className="px-4 pb-3 flex items-center gap-1.5 text-xs text-red-400">
+          <div className="px-4 pb-3 flex items-center gap-2 text-xs text-red-400">
             <AlertCircle className="w-3 h-3 shrink-0" />
-            {investigation.error}
+            <span className="min-w-0 flex-1">{investigation.error}</span>
+            {investigationFailed && !demoMode && (
+              <button
+                type="button"
+                onClick={investigate}
+                className="shrink-0 rounded-md border border-red-500/30 px-2 py-0.5 text-red-300 hover:border-emerald-500/40 hover:text-emerald-300 hover:bg-emerald-500/10 transition-colors"
+              >
+                Retry
+              </button>
+            )}
           </div>
         )}
 
         {plan.error && (
-          <div className="px-4 pb-3 flex items-center gap-1.5 text-xs text-red-400">
+          <div className="px-4 pb-3 flex items-center gap-2 text-xs text-red-400">
             <AlertCircle className="w-3 h-3 shrink-0" />
-            {plan.error}
+            <span className="min-w-0 flex-1">{plan.error}</span>
+            {planFailed && !demoMode && (
+              <button
+                type="button"
+                onClick={planFix}
+                className="shrink-0 rounded-md border border-red-500/30 px-2 py-0.5 text-red-300 hover:border-cyan-500/40 hover:text-cyan-300 hover:bg-cyan-500/10 transition-colors"
+              >
+                Retry
+              </button>
+            )}
           </div>
         )}
 
@@ -552,11 +591,11 @@ function FindingCard({
                 />
                 <button
                   onClick={investigate}
-                  disabled={investigation.loading || demoMode || hasInvestigationRun}
+                  disabled={demoMode || investigationLocked}
                   className="mt-3 flex items-center gap-1 text-xs text-slate-600 hover:text-emerald-400 transition-colors"
                 >
                   <RefreshCw className="w-2.5 h-2.5" />
-                  {hasInvestigationRun ? "Already run" : demoMode ? "Disabled in demo" : "Run again"}
+                  {investigationSucceeded ? "Already run" : demoMode ? "Disabled in demo" : investigationFailed ? "Retry" : "Run again"}
                 </button>
               </>
             )}
@@ -606,11 +645,11 @@ function FindingCard({
                   )}
                   <button
                     onClick={planFix}
-                    disabled={plan.loading || demoMode || hasPlanRun}
+                    disabled={demoMode || planLocked}
                     className="flex items-center gap-1 text-xs text-slate-600 hover:text-cyan-400 transition-colors"
                   >
                     <RefreshCw className="w-2.5 h-2.5" />
-                    {hasPlanRun ? "Already run" : demoMode ? "Disabled in demo" : "Run again"}
+                    {planSucceeded ? "Already run" : demoMode ? "Disabled in demo" : planFailed ? "Retry" : "Run again"}
                   </button>
                 </div>
               </>
