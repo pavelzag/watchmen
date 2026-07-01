@@ -7,15 +7,14 @@ import { planRemediation, type PlanRemediationInput } from "@/lib/agent/plan-rem
 
 export const maxDuration = 300;
 
-const AGENT_RESPONSE_TIMEOUT_MS = 25_000;
+const AGENT_RESPONSE_TIMEOUT_MS = 120_000;
 
 function withTimeout<T>(work: Promise<T>, timeoutMs: number): Promise<T> {
-  return Promise.race([
-    work,
-    new Promise<T>((_, reject) => {
-      setTimeout(() => reject(new Error("Remediation planning is taking longer than expected. Try again with fewer findings, or check the agent run later.")), timeoutMs);
-    }),
-  ]);
+  let timeout: ReturnType<typeof setTimeout>;
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timeout = setTimeout(() => reject(new Error("Remediation planning timed out before Watchmen could finish the plan. Try again with fewer findings.")), timeoutMs);
+  });
+  return Promise.race([work, timeoutPromise]).finally(() => clearTimeout(timeout));
 }
 
 export async function POST(req: NextRequest) {
