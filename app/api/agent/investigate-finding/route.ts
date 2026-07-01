@@ -6,6 +6,19 @@ import { completeAgentRun, createAgentRun } from "@/lib/agent/store";
 import { investigateFinding } from "@/lib/agent/investigate-finding";
 import type { AgentFindingInput } from "@/lib/agent/types";
 
+export const maxDuration = 300;
+
+const AGENT_RESPONSE_TIMEOUT_MS = 25_000;
+
+function withTimeout<T>(work: Promise<T>, timeoutMs: number): Promise<T> {
+  return Promise.race([
+    work,
+    new Promise<T>((_, reject) => {
+      setTimeout(() => reject(new Error("Investigation is taking longer than expected. Try again with a narrower finding, or check the agent run later.")), timeoutMs);
+    }),
+  ]);
+}
+
 export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session?.user?.email) {
@@ -57,14 +70,17 @@ export async function POST(req: NextRequest) {
   });
 
   try {
-    const result = await investigateFinding({
-      runId: run.id,
-      userEmail: session.user.email,
-      isDemoUser: session.isDemoUser,
-      input: finding,
-      provider,
-      apiKey,
-    });
+    const result = await withTimeout(
+      investigateFinding({
+        runId: run.id,
+        userEmail: session.user.email,
+        isDemoUser: session.isDemoUser,
+        input: finding,
+        provider,
+        apiKey,
+      }),
+      AGENT_RESPONSE_TIMEOUT_MS
+    );
     const completed = await completeAgentRun({
       runId: run.id,
       status: "completed",

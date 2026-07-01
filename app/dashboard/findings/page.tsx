@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo, type MouseEvent } from "react";
 import Link from "next/link";
-import { ArrowLeft, ShieldAlert, ShieldCheck, RefreshCw, Sparkles, Loader2, ChevronDown, ChevronUp, AlertCircle, GitPullRequest, Search, X, Download, Star, FileSearch, ClipboardCheck } from "lucide-react";
+import { ArrowLeft, ShieldAlert, ShieldCheck, RefreshCw, Loader2, ChevronDown, ChevronUp, AlertCircle, GitPullRequest, Search, X, Download, Star, FileSearch, ClipboardCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { computeFindings } from "@/lib/findings";
 import type { GcpSnapshot, SecurityFinding, SecurityFindingSeverity } from "@/lib/gcp/types";
@@ -130,6 +130,16 @@ function savePinned(ids: Set<string>) {
   } catch {}
 }
 
+async function readJsonResponse(response: Response): Promise<any> {
+  const text = await response.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { error: text.slice(0, 500) };
+  }
+}
+
 // ── Export helpers ────────────────────────────────────────────────────────
 
 function exportCsv(findings: CloudFinding[]) {
@@ -170,12 +180,6 @@ function exportJson(findings: CloudFinding[]) {
 }
 
 // ── FindingCard ───────────────────────────────────────────────────────────
-
-interface RecState {
-  loading: boolean;
-  text: string | null;
-  error: string | null;
-}
 
 interface InvestigationState {
   loading: boolean;
@@ -222,7 +226,6 @@ function FindingCard({
   agentRuns?: FindingAgentRuns;
 }) {
   const demoMode = useDemoMode();
-  const [rec, setRec] = useState<RecState>({ loading: false, text: null, error: null });
   const existingInvestigation = agentRuns?.investigate_finding;
   const existingPlan = agentRuns?.plan_remediation;
   const [investigation, setInvestigation] = useState<InvestigationState>(() => ({
@@ -238,7 +241,6 @@ function FindingCard({
     runId: existingPlan?.id ?? null,
     previewEligible: Boolean(existingPlan?.previewEligible),
   }));
-  const [open, setOpen] = useState(false);
   const [investigationOpen, setInvestigationOpen] = useState(Boolean(existingInvestigation));
   const [planOpen, setPlanOpen] = useState(Boolean(existingPlan));
   const hasInvestigationRun = Boolean(existingInvestigation || investigation.runId);
@@ -267,37 +269,6 @@ function FindingCard({
     if (existingPlan) setPlanOpen(true);
   }, [existingPlan]);
 
-  async function askAI() {
-    if (demoMode) {
-      setRec({
-        loading: false,
-        text: null,
-        error: "AI is disabled in demo mode. For a preview with AI functionality or real, non-fake data, email zagalsky@gmail.com.",
-      });
-      return;
-    }
-    setRec({ loading: true, text: null, error: null });
-    setOpen(true);
-    try {
-      const res = await fetch("/api/findings/recommend", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...finding,
-          demoCredentials: (() => {
-            const browserAI = getActiveBrowserAIKey();
-            return browserAI ? { aiKey: browserAI.key, aiProvider: browserAI.provider } : undefined;
-          })(),
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed");
-      setRec({ loading: false, text: data.recommendation, error: null });
-    } catch (e) {
-      setRec({ loading: false, text: null, error: e instanceof Error ? e.message : "Error" });
-    }
-  }
-
   async function investigate() {
     if (existingInvestigation) return;
     if (demoMode) {
@@ -322,7 +293,7 @@ function FindingCard({
           demoCredentials: browserAI ? { aiKey: browserAI.key, aiProvider: browserAI.provider } : undefined,
         }),
       });
-      const data = await res.json();
+      const data = await readJsonResponse(res);
       if (!res.ok) {
         setInvestigation({
           loading: false,
@@ -368,7 +339,7 @@ function FindingCard({
           demoCredentials: browserAI ? { aiKey: browserAI.key, aiProvider: browserAI.provider } : undefined,
         }),
       });
-      const data = await res.json();
+      const data = await readJsonResponse(res);
       if (!res.ok) {
         setPlan({
           loading: false,
@@ -463,9 +434,6 @@ function FindingCard({
         </div>
         <p className="text-sm font-semibold text-white uppercase tracking-tight flex items-center gap-2">
           {finding.title}
-          <button onClick={askAI} disabled={demoMode} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-violet-400 disabled:opacity-40 disabled:cursor-not-allowed" title="Explain with AI">
-            <Sparkles className="w-3 h-3" />
-          </button>
           <button onClick={investigate} disabled={demoMode || investigation.loading || hasInvestigationRun} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed" title={hasInvestigationRun ? "Investigation already ran" : "Investigate with agent"}>
             {investigation.loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <FileSearch className="w-3 h-3" />}
           </button>
@@ -486,32 +454,10 @@ function FindingCard({
         )}
       </div>
 
-      {/* AI recommendation area */}
+      {/* Agent workflow area */}
       <div className="border-t border-slate-700/50">
         <div className="px-4 py-2 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 flex-wrap">
-            <button
-              onClick={rec.text ? () => setOpen((o) => !o) : askAI}
-              disabled={rec.loading || demoMode}
-              className={cn(
-                "flex items-center gap-1.5 text-xs font-medium transition-all duration-150 rounded-lg px-2.5 py-1",
-                rec.loading
-                  ? "text-slate-500 cursor-not-allowed"
-                  : demoMode
-                    ? "text-slate-500 cursor-not-allowed bg-slate-500/5"
-                  : rec.text
-                    ? "text-violet-400 hover:text-violet-300 bg-violet-500/10 hover:bg-violet-500/15"
-                    : "text-slate-400 hover:text-violet-400 hover:bg-violet-500/10"
-              )}
-            >
-              {rec.loading ? (
-                <Loader2 className="w-3 h-3 animate-spin" />
-              ) : (
-                <Sparkles className="w-3 h-3" />
-              )}
-              {rec.loading ? "Asking AI..." : demoMode ? "Disabled in demo" : rec.text ? "AI Recommendation" : "Ask AI"}
-            </button>
-
             <button
               onClick={investigation.text ? () => setInvestigationOpen((o) => !o) : investigate}
               disabled={investigation.loading || demoMode || Boolean(hasInvestigationRun && !investigation.text && !investigation.error)}
@@ -557,23 +503,7 @@ function FindingCard({
             </button>
           </div>
 
-          {rec.text && (
-            <button
-              onClick={() => setOpen((o) => !o)}
-              className="text-slate-500 hover:text-slate-300 transition-colors"
-              title={open ? "Minimize AI recommendation" : "Maximize AI recommendation"}
-            >
-              {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-            </button>
-          )}
         </div>
-
-        {rec.error && (
-          <div className="px-4 pb-3 flex items-center gap-1.5 text-xs text-red-400">
-            <AlertCircle className="w-3 h-3 shrink-0" />
-            {rec.error}
-          </div>
-        )}
 
         {investigation.error && (
           <div className="px-4 pb-3 flex items-center gap-1.5 text-xs text-red-400">
@@ -589,46 +519,30 @@ function FindingCard({
           </div>
         )}
 
-        {rec.text && open && (
-          <div className="px-4 pb-4 border-t border-slate-700/30">
-            <div className="mt-3 flex justify-end">
-              <CopyAiResponseButton text={rec.text} compact />
-            </div>
-            <div
-              onClick={copySuggestedCommand}
-              className="mt-3 text-xs text-slate-300 leading-relaxed prose-answer"
-              dangerouslySetInnerHTML={{ __html: renderMd(rec.text, finding) }}
-            />
-            <button
-              onClick={askAI}
-              disabled={rec.loading || demoMode}
-              className="mt-3 flex items-center gap-1 text-xs text-slate-600 hover:text-violet-400 transition-colors"
-            >
-              <RefreshCw className="w-2.5 h-2.5" />
-              {demoMode ? "Disabled in demo" : "Regenerate"}
-            </button>
-          </div>
-        )}
-
         {investigation.text && (
           <div className="px-4 pb-4 border-t border-slate-700/30">
-            <div className="mt-3 flex items-center justify-between gap-2">
-              <span className="text-[10px] uppercase tracking-wider text-slate-500 font-mono">
-                {investigation.runId ? `Run ${investigation.runId.slice(0, 18)}...` : "Audited agent run"}
+            <button
+              type="button"
+              onClick={() => setInvestigationOpen((o) => !o)}
+              className="mt-3 flex w-full items-center justify-between gap-2 rounded-md px-1 py-1 text-left hover:bg-emerald-500/5 transition-colors"
+              aria-expanded={investigationOpen}
+            >
+              <span className="min-w-0 text-[10px] uppercase tracking-wider text-slate-500 font-mono">
+                {investigation.runId ? `Investigation · Run ${investigation.runId.slice(0, 18)}...` : "Investigation · Audited agent run"}
               </span>
               <div className="flex items-center gap-2">
-                <CopyAiResponseButton text={investigation.text} compact />
-                <button
-                  type="button"
-                  onClick={() => setInvestigationOpen((o) => !o)}
-                  className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-slate-500 hover:text-emerald-300 transition-colors"
-                  title={investigationOpen ? "Minimize Investigation" : "Maximize Investigation"}
+                <span
+                  onClick={(event) => event.stopPropagation()}
+                  onKeyDown={(event) => event.stopPropagation()}
                 >
+                  <CopyAiResponseButton text={investigation.text} compact />
+                </span>
+                <span className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-slate-500">
                   {investigationOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
                   {investigationOpen ? "Minimize" : "Maximize"}
-                </button>
+                </span>
               </div>
-            </div>
+            </button>
             {investigationOpen && (
               <>
                 <div
@@ -651,23 +565,28 @@ function FindingCard({
 
         {plan.text && (
           <div className="px-4 pb-4 border-t border-slate-700/30">
-            <div className="mt-3 flex items-center justify-between gap-2">
-              <span className="text-[10px] uppercase tracking-wider text-slate-500 font-mono">
-                {plan.runId ? `Run ${plan.runId.slice(0, 18)}...` : "Approval-required plan"}
+            <button
+              type="button"
+              onClick={() => setPlanOpen((o) => !o)}
+              className="mt-3 flex w-full items-center justify-between gap-2 rounded-md px-1 py-1 text-left hover:bg-cyan-500/5 transition-colors"
+              aria-expanded={planOpen}
+            >
+              <span className="min-w-0 text-[10px] uppercase tracking-wider text-slate-500 font-mono">
+                {plan.runId ? `Plan · Run ${plan.runId.slice(0, 18)}...` : "Plan · Approval-required plan"}
               </span>
               <div className="flex items-center gap-2">
-                <CopyAiResponseButton text={plan.text} compact />
-                <button
-                  type="button"
-                  onClick={() => setPlanOpen((o) => !o)}
-                  className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-slate-500 hover:text-cyan-300 transition-colors"
-                  title={planOpen ? "Minimize Plan" : "Maximize Plan"}
+                <span
+                  onClick={(event) => event.stopPropagation()}
+                  onKeyDown={(event) => event.stopPropagation()}
                 >
+                  <CopyAiResponseButton text={plan.text} compact />
+                </span>
+                <span className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-slate-500">
                   {planOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
                   {planOpen ? "Minimize" : "Maximize"}
-                </button>
+                </span>
               </div>
-            </div>
+            </button>
             {planOpen && (
               <>
                 <div

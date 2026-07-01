@@ -5,6 +5,19 @@ import { resolveAI, type AIProvider } from "@/lib/ai/client";
 import { completeAgentRun, createAgentRun } from "@/lib/agent/store";
 import { planRemediation, type PlanRemediationInput } from "@/lib/agent/plan-remediation";
 
+export const maxDuration = 300;
+
+const AGENT_RESPONSE_TIMEOUT_MS = 25_000;
+
+function withTimeout<T>(work: Promise<T>, timeoutMs: number): Promise<T> {
+  return Promise.race([
+    work,
+    new Promise<T>((_, reject) => {
+      setTimeout(() => reject(new Error("Remediation planning is taking longer than expected. Try again with fewer findings, or check the agent run later.")), timeoutMs);
+    }),
+  ]);
+}
+
 export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session?.user?.email) {
@@ -58,12 +71,15 @@ export async function POST(req: NextRequest) {
   });
 
   try {
-    const result = await planRemediation({
-      runId: run.id,
-      input: agentInput,
-      provider,
-      apiKey,
-    });
+    const result = await withTimeout(
+      planRemediation({
+        runId: run.id,
+        input: agentInput,
+        provider,
+        apiKey,
+      }),
+      AGENT_RESPONSE_TIMEOUT_MS
+    );
     const completed = await completeAgentRun({
       runId: run.id,
       status: "completed",

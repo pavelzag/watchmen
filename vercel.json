@@ -7,6 +7,12 @@
     "app/api/github/terraform-pr/route.ts": {
       "maxDuration": 300
     },
+    "app/api/agent/investigate-finding/route.ts": {
+      "maxDuration": 300
+    },
+    "app/api/agent/plan-remediation/route.ts": {
+      "maxDuration": 300
+    },
     "app/api/**": {
       "maxDuration": 30
     }
