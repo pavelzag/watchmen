@@ -729,10 +729,11 @@ export default function FindingsPage() {
   const [agentRunsByFinding, setAgentRunsByFinding] = useState<Record<string, FindingAgentRuns>>({});
   const [search, setSearch] = useState("");
   const [showWatchlist, setShowWatchlist] = useState(false);
-  const [pinned, setPinned] = useState<Set<string>>(() => {
-    if (typeof window === "undefined") return new Set();
-    return loadPinned();
-  });
+  const [pinned, setPinned] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    setPinned(loadPinned());
+  }, []);
 
   useEffect(() => {
     const cloud = new URLSearchParams(window.location.search).get("cloud");

@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import type { RemediationTarget } from "@/lib/github/remediation-targets";
 import type { TfFilePatch } from "@/lib/github/terraform-remediation";
 import type {
@@ -534,6 +535,26 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
 
     if (changedTasks.length === 0) {
       return;
+    }
+
+    for (const task of changedTasks) {
+      const previous = previousById.get(task.id);
+      if (
+        previous &&
+        previous.status !== "completed" &&
+        task.status === "completed" &&
+        task.kind === "terraform_pr" &&
+        task.result?.prUrl
+      ) {
+        toast.success(`Pull request #${task.result.prNumber ?? ""} created`, {
+          description: task.result.repoFullName,
+          duration: 20_000,
+          action: {
+            label: "Open PR",
+            onClick: () => window.open(task.result?.prUrl, "_blank", "noopener,noreferrer"),
+          },
+        });
+      }
     }
 
     void fetch("/api/tasks", {

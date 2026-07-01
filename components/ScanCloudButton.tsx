@@ -16,11 +16,12 @@ const COOLDOWN_MS = 60_000;
 const STORAGE_KEY = "watchmen.last-scan-at";
 
 function useLastScan() {
-  const [lastScanAt, setLastScanAt] = useState<number | null>(() => {
-    if (typeof window === "undefined") return null;
+  const [lastScanAt, setLastScanAt] = useState<number | null>(null);
+
+  useEffect(() => {
     const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? Number(raw) : null;
-  });
+    setLastScanAt(raw ? Number(raw) : null);
+  }, []);
 
   function recordScan() {
     const now = Date.now();
