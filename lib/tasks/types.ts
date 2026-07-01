@@ -99,6 +99,7 @@ export interface BackgroundTask<K extends BackgroundTaskKind = BackgroundTaskKin
   status: BackgroundTaskStatus;
   createdAt: string;
   updatedAt: string;
+  lastProgressAt?: string;
   progress: TaskProgressEvent[];
   percent: number;
   error?: string | null;

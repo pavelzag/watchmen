@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { CheckCircle2, ChevronDown, ChevronUp, CircleAlert, ExternalLink, Loader2, Trash2 } from "lucide-react";
+import { CheckCircle2, ChevronDown, ChevronUp, CircleAlert, ExternalLink, Loader2, RefreshCw, Trash2 } from "lucide-react";
 import CopyTextButton from "@/components/CopyTextButton";
 import { useTaskCenter } from "@/components/TaskCenterProvider";
 import type { RemediationFileFailure, TfFilePatch } from "@/lib/github/terraform-remediation";
@@ -15,7 +15,7 @@ function statusColor(status: string): string {
 }
 
 export default function TasksPage() {
-  const { tasks, clearFinishedTasks, clearAllTasks, dismissTask, startTerraformPreviewBatch, startTerraformPr } = useTaskCenter();
+  const { tasks, clearFinishedTasks, clearAllTasks, dismissTask, retryTask, startTerraformPreviewBatch, startTerraformPr } = useTaskCenter();
   const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(new Set());
 
   function toggleExpanded(taskId: string) {
@@ -165,6 +165,7 @@ export default function TasksPage() {
                 </div>
                 <p style={{ fontFamily: "monospace", fontSize: 10, color: "var(--text-muted)" }}>
                   Started {new Date(task.createdAt).toLocaleTimeString()} · updated {new Date(task.updatedAt).toLocaleTimeString()}
+                  {task.lastProgressAt ? ` · last progress ${new Date(task.lastProgressAt).toLocaleTimeString()}` : ""}
                 </p>
               </div>
               <button
@@ -212,13 +213,25 @@ export default function TasksPage() {
               </div>
             </div>
 
-            {task.status === "failed" && task.error && (
+            {task.status === "failed" && (
               <div className="flex items-start justify-between gap-3 p-3" style={{ border: "1px solid #ef444444", background: "#1a0606" }}>
                 <div className="flex items-start gap-2">
                   <CircleAlert className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "#ef4444" }} />
-                  <p style={{ fontFamily: "monospace", fontSize: 10, color: "#f87171" }}>{task.error}</p>
+                  <p style={{ fontFamily: "monospace", fontSize: 10, color: "#f87171" }}>
+                    {task.error ?? "Task failed before returning an error message."}
+                  </p>
                 </div>
-                <CopyTextButton text={task.error} label="Copy" className="text-[10px] font-mono" style={{ color: "#f87171" }} />
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => retryTask(task.id)}
+                    className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-mono uppercase tracking-widest"
+                    style={{ border: "1px solid #f59e0b44", color: "#fbbf24", background: "#1a1206" }}
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    Retry
+                  </button>
+                  <CopyTextButton text={task.error ?? "Task failed before returning an error message."} label="Copy" className="text-[10px] font-mono" style={{ color: "#f87171" }} />
+                </div>
               </div>
             )}
 

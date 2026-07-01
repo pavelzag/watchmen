@@ -34,6 +34,7 @@ interface TaskCenterContextValue {
   startTerraformPreview: (params: TaskParamsMap["terraform_preview"]) => string;
   startTerraformPreviewBatch: (paramsList: TaskParamsMap["terraform_preview"][]) => string[];
   startTerraformPr: (params: TaskParamsMap["terraform_pr"]) => string;
+  retryTask: (taskId: string) => string | null;
   dismissTask: (taskId: string) => void;
   clearFinishedTasks: () => void;
   clearAllTasks: () => void;
@@ -44,8 +45,15 @@ const TaskCenterContext = createContext<TaskCenterContextValue | null>(null);
 const MAX_PROGRESS_ENTRIES = 12;
 const MAX_FINISHED_TASKS = 50;
 const MAX_TOTAL_TASKS = 75;
-const STALE_ACTIVE_TASK_MS = 2 * 60 * 60 * 1000;
 const PREVIEW_BATCH_CONCURRENCY = 2;
+const STALE_CHECK_INTERVAL_MS = 30 * 1000;
+const TASK_STALE_TIMEOUT_MS: Record<BackgroundTaskKind, number> = {
+  gcp_scan: 30 * 60 * 1000,
+  aws_scan: 30 * 60 * 1000,
+  attack_paths: 15 * 60 * 1000,
+  terraform_preview: 7 * 60 * 1000,
+  terraform_pr: 7 * 60 * 1000,
+};
 
 function taskTitle(kind: BackgroundTaskKind, params: TaskParamsMap[BackgroundTaskKind]): string {
   if (kind === "gcp_scan") return "GCP Cloud Scan";
@@ -64,6 +72,7 @@ function newTask<K extends BackgroundTaskKind>(kind: K, params: TaskParamsMap[K]
     status: "queued",
     createdAt: now,
     updatedAt: now,
+    lastProgressAt: now,
     progress: [],
     percent: 0,
     params,
@@ -77,45 +86,54 @@ function isActiveTask(task: AnyBackgroundTask): boolean {
 function markStaleTask(task: AnyBackgroundTask): AnyBackgroundTask {
   if (!isActiveTask(task)) return task;
   const updatedAt = new Date(task.updatedAt).getTime();
-  if (!Number.isFinite(updatedAt) || Date.now() - updatedAt < STALE_ACTIVE_TASK_MS) return task;
+  const lastProgressAt = new Date(task.lastProgressAt ?? task.updatedAt).getTime();
+  const freshnessTime = Number.isFinite(lastProgressAt) ? lastProgressAt : updatedAt;
+  const staleAfterMs = TASK_STALE_TIMEOUT_MS[task.kind];
+  if (!Number.isFinite(freshnessTime) || Date.now() - freshnessTime < staleAfterMs) return task;
 
   return {
     ...task,
     status: "failed",
-    error: task.error ?? "Task was restored from an old session and is no longer running.",
+    updatedAt: new Date().toISOString(),
+    error: task.error ?? `Task stopped reporting progress for ${Math.round(staleAfterMs / 60000)} minutes and was marked failed. Retry is available.`,
   } as AnyBackgroundTask;
 }
 
 function normalizeTask(task: AnyBackgroundTask): AnyBackgroundTask {
-  if (task.kind === "terraform_preview" && task.result) {
+  const normalizedTask = {
+    ...task,
+    lastProgressAt: task.lastProgressAt ?? task.updatedAt,
+  } as AnyBackgroundTask;
+
+  if (normalizedTask.kind === "terraform_preview" && normalizedTask.result) {
     return markStaleTask({
-      ...task,
+      ...normalizedTask,
       result: {
-        ...task.result,
-        failures: task.result.failures ?? [],
-        coveredTargetIds: task.result.coveredTargetIds ?? [],
-        uncoveredTargets: task.result.uncoveredTargets ?? [],
-        fullyAddressed: task.result.fullyAddressed ?? true,
-        suggestedBatches: task.result.suggestedBatches ?? [],
+        ...normalizedTask.result,
+        failures: normalizedTask.result.failures ?? [],
+        coveredTargetIds: normalizedTask.result.coveredTargetIds ?? [],
+        uncoveredTargets: normalizedTask.result.uncoveredTargets ?? [],
+        fullyAddressed: normalizedTask.result.fullyAddressed ?? true,
+        suggestedBatches: normalizedTask.result.suggestedBatches ?? [],
       },
     } as AnyBackgroundTask);
   }
 
-  if (task.kind === "terraform_pr" && task.result) {
+  if (normalizedTask.kind === "terraform_pr" && normalizedTask.result) {
     return markStaleTask({
-      ...task,
+      ...normalizedTask,
       result: {
-        ...task.result,
-        failures: task.result.failures ?? [],
-        coveredTargetIds: task.result.coveredTargetIds ?? [],
-        uncoveredTargets: task.result.uncoveredTargets ?? [],
-        fullyAddressed: task.result.fullyAddressed ?? true,
-        suggestedBatches: task.result.suggestedBatches ?? [],
+        ...normalizedTask.result,
+        failures: normalizedTask.result.failures ?? [],
+        coveredTargetIds: normalizedTask.result.coveredTargetIds ?? [],
+        uncoveredTargets: normalizedTask.result.uncoveredTargets ?? [],
+        fullyAddressed: normalizedTask.result.fullyAddressed ?? true,
+        suggestedBatches: normalizedTask.result.suggestedBatches ?? [],
       },
     } as AnyBackgroundTask);
   }
 
-  return markStaleTask(task);
+  return markStaleTask(normalizedTask);
 }
 
 function pruneTasks(tasks: AnyBackgroundTask[]): AnyBackgroundTask[] {
@@ -197,10 +215,12 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
     setTasks((current) => pruneTasks([task as AnyBackgroundTask, ...current]));
 
     const pushProgress = (event: TaskProgressEvent) => {
+      const now = new Date().toISOString();
       updateTask(task.id, (currentTask) => ({
         ...currentTask,
         status: "running",
-        updatedAt: new Date().toISOString(),
+        updatedAt: now,
+        lastProgressAt: now,
         percent: event.percent ?? currentTask.percent,
         progress: [...currentTask.progress.slice(-(MAX_PROGRESS_ENTRIES - 1)), event],
       } as AnyBackgroundTask));
@@ -211,6 +231,7 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
         ...currentTask,
         status: "completed",
         updatedAt: new Date().toISOString(),
+        lastProgressAt: currentTask.lastProgressAt ?? currentTask.updatedAt,
         percent: 100,
         result,
       } as AnyBackgroundTask));
@@ -221,6 +242,7 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
         ...currentTask,
         status: "failed",
         updatedAt: new Date().toISOString(),
+        lastProgressAt: currentTask.lastProgressAt ?? currentTask.updatedAt,
         error,
       } as AnyBackgroundTask));
     };
@@ -367,10 +389,12 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
       activeCount += 1;
 
       const pushProgress = (event: TaskProgressEvent) => {
+        const now = new Date().toISOString();
         updateTask(task.id, (currentTask) => ({
           ...currentTask,
           status: "running",
-          updatedAt: new Date().toISOString(),
+          updatedAt: now,
+          lastProgressAt: now,
           percent: event.percent ?? currentTask.percent,
           progress: [...currentTask.progress.slice(-(MAX_PROGRESS_ENTRIES - 1)), event],
         } as AnyBackgroundTask));
@@ -381,6 +405,7 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
           ...currentTask,
           status: "completed",
           updatedAt: new Date().toISOString(),
+          lastProgressAt: currentTask.lastProgressAt ?? currentTask.updatedAt,
           percent: 100,
           result,
         } as AnyBackgroundTask));
@@ -391,6 +416,7 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
           ...currentTask,
           status: "failed",
           updatedAt: new Date().toISOString(),
+          lastProgressAt: currentTask.lastProgressAt ?? currentTask.updatedAt,
           error,
         } as AnyBackgroundTask));
       };
@@ -440,6 +466,26 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
       }
     });
   }, [enqueueTask]);
+
+  const retryTask = useCallback((taskId: string): string | null => {
+    const task = tasks.find((item) => item.id === taskId);
+    if (!task || isActiveTask(task)) return null;
+
+    if (task.kind === "gcp_scan") return startGcpScan(task.params);
+    if (task.kind === "aws_scan") return startAwsScan(task.params);
+    if (task.kind === "attack_paths") return startAttackPathAnalysis();
+    if (task.kind === "terraform_preview") return startTerraformPreview(task.params);
+    if (task.kind === "terraform_pr") return startTerraformPr(task.params);
+
+    return null;
+  }, [
+    tasks,
+    startGcpScan,
+    startAwsScan,
+    startAttackPathAnalysis,
+    startTerraformPreview,
+    startTerraformPr,
+  ]);
 
   const dismissTask = useCallback((taskId: string) => {
     setTasks((current) => current.filter((task) => task.id !== taskId));
@@ -506,6 +552,18 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
   }, [mergeTasks]);
 
   useEffect(() => {
+    const interval = window.setInterval(() => {
+      setTasks((current) => {
+        const normalized = current.map(normalizeTask);
+        const changed = normalized.some((task, index) => task !== current[index]);
+        return changed ? pruneTasks(normalized) : current;
+      });
+    }, STALE_CHECK_INTERVAL_MS);
+
+    return () => window.clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
     try {
       window.localStorage.setItem(TASK_STORAGE_KEY, JSON.stringify(pruneTasks(tasks)));
     } catch {
@@ -515,23 +573,15 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
     if (!hasHydratedRef.current) return;
     const previousTasks = previousTasksRef.current;
     const previousById = new Map(previousTasks.map((task) => [task.id, task]));
-    const hasStructuralChange = previousTasks.length !== tasks.length;
-    const hasTerminalTransition = tasks.some((task) => {
-      const previous = previousById.get(task.id);
-      if (!previous) return false;
-      return previous.status !== task.status && (task.status === "completed" || task.status === "failed");
-    });
-    previousTasksRef.current = tasks;
-
-    if (!hasStructuralChange && !hasTerminalTransition) {
-      return;
-    }
 
     const changedTasks = tasks.filter((task) => {
       const previous = previousById.get(task.id);
       if (!previous) return true;
-      return previous.updatedAt !== task.updatedAt || previous.status !== task.status;
+      return previous.updatedAt !== task.updatedAt ||
+        previous.lastProgressAt !== task.lastProgressAt ||
+        previous.status !== task.status;
     });
+    previousTasksRef.current = tasks;
 
     if (changedTasks.length === 0) {
       return;
@@ -572,6 +622,7 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
     startTerraformPreview,
     startTerraformPreviewBatch,
     startTerraformPr,
+    retryTask,
     dismissTask,
     clearFinishedTasks,
     clearAllTasks,
@@ -583,6 +634,7 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
     startTerraformPreview,
     startTerraformPreviewBatch,
     startTerraformPr,
+    retryTask,
     dismissTask,
     clearFinishedTasks,
     clearAllTasks,
