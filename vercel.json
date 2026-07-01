@@ -1,6 +1,12 @@
 {
   "framework": "nextjs",
   "functions": {
+    "app/api/github/terraform-pr/preview/route.ts": {
+      "maxDuration": 300
+    },
+    "app/api/github/terraform-pr/route.ts": {
+      "maxDuration": 300
+    },
     "app/api/**": {
       "maxDuration": 30
     }

@@ -22,6 +22,8 @@ import {
 } from "@/lib/github/remediation-targets";
 import type { RemediationPlan, RemediationProgressEvent } from "@/lib/github/terraform-remediation";
 
+export const maxDuration = 300;
+
 class IncompleteRemediationError extends Error {
   statusCode = 422;
 }
@@ -374,12 +376,23 @@ export async function POST(req: NextRequest) {
           const close = () => {
             if (closed) return;
             closed = true;
+            clearInterval(heartbeat);
             try {
               controller.close();
             } catch {
               // Ignore double-close and late close races.
             }
           };
+          const heartbeat = setInterval(() => {
+            send({
+              type: "heartbeat",
+              progress: {
+                stage: "build_plan",
+                message: "Still running Terraform remediation workflow",
+                percent: undefined,
+              },
+            });
+          }, 10_000);
           void (async () => {
             try {
               const { remediationPlan, pr } = await executeCreatePrFlow(

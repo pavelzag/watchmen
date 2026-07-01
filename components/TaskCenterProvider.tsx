@@ -20,6 +20,11 @@ type StreamResultEnvelope<K extends BackgroundTaskKind> = {
   type: "result";
 } & TaskResultMap[K];
 
+type StreamHeartbeatEnvelope = {
+  type: "heartbeat";
+  progress?: TaskProgressEvent;
+};
+
 interface TaskCenterContextValue {
   tasks: AnyBackgroundTask[];
   startGcpScan: (params?: TaskParamsMap["gcp_scan"]) => string;
@@ -123,7 +128,7 @@ function pruneTasks(tasks: AnyBackgroundTask[]): AnyBackgroundTask[] {
 
 async function consumeNdjson<K extends BackgroundTaskKind>(
   response: Response,
-  onEvent: (event: StreamProgressEnvelope | StreamErrorEnvelope | StreamResultEnvelope<K>) => void
+  onEvent: (event: StreamProgressEnvelope | StreamErrorEnvelope | StreamResultEnvelope<K> | StreamHeartbeatEnvelope) => void
 ) {
   if (!response.body) {
     throw new Error("Streaming is not available.");
@@ -143,7 +148,7 @@ async function consumeNdjson<K extends BackgroundTaskKind>(
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed) continue;
-      onEvent(JSON.parse(trimmed) as StreamProgressEnvelope | StreamErrorEnvelope | StreamResultEnvelope<K>);
+      onEvent(JSON.parse(trimmed) as StreamProgressEnvelope | StreamErrorEnvelope | StreamResultEnvelope<K> | StreamHeartbeatEnvelope);
     }
   }
 }
@@ -242,7 +247,9 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
       }
 
       await consumeNdjson<"terraform_preview">(response, (event) => {
-        if (event.type === "progress") pushProgress(event.progress);
+        if (event.type === "heartbeat") {
+          if (event.progress) pushProgress(event.progress);
+        } else if (event.type === "progress") pushProgress(event.progress);
         else if (event.type === "error") fail(event.error);
         else {
           const { type: _type, ...result } = event;
@@ -269,7 +276,9 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
         }
 
         await consumeNdjson<"gcp_scan">(response, (event) => {
-          if (event.type === "progress") pushProgress(event.progress);
+          if (event.type === "heartbeat") {
+            if (event.progress) pushProgress(event.progress);
+          } else if (event.type === "progress") pushProgress(event.progress);
           else if (event.type === "error") fail(event.scanId ? `[api/scan:${event.scanId}] ${event.error}` : event.error);
           else {
             const { type: _type, ...result } = event;
@@ -297,7 +306,9 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
         }
 
         await consumeNdjson<"aws_scan">(response, (event) => {
-          if (event.type === "progress") pushProgress(event.progress);
+          if (event.type === "heartbeat") {
+            if (event.progress) pushProgress(event.progress);
+          } else if (event.type === "progress") pushProgress(event.progress);
           else if (event.type === "error") fail(event.scanId ? `[api/aws/scan:${event.scanId}] ${event.error}` : event.error);
           else {
             const { type: _type, ...result } = event;
@@ -320,7 +331,9 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
         }
 
         await consumeNdjson<"attack_paths">(response, (event) => {
-          if (event.type === "progress") pushProgress(event.progress);
+          if (event.type === "heartbeat") {
+            if (event.progress) pushProgress(event.progress);
+          } else if (event.type === "progress") pushProgress(event.progress);
           else if (event.type === "error") fail(event.error);
           else {
             const { type: _type, ...result } = event;
@@ -412,7 +425,9 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
         }
 
         await consumeNdjson<"terraform_pr">(response, (event) => {
-          if (event.type === "progress") pushProgress(event.progress);
+          if (event.type === "heartbeat") {
+            if (event.progress) pushProgress(event.progress);
+          } else if (event.type === "progress") pushProgress(event.progress);
           else if (event.type === "error") fail(event.error);
           else {
             const { type: _type, ...result } = event;

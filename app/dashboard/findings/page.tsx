@@ -192,26 +192,80 @@ interface PlanState {
   previewEligible: boolean;
 }
 
+interface FindingAgentRunSummary {
+  id: string;
+  workflow: "investigate_finding" | "plan_remediation";
+  status: "running" | "completed" | "failed";
+  findingId: string;
+  report?: string | null;
+  previewEligible?: boolean;
+  error?: string | null;
+  createdAt: string;
+  completedAt?: string | null;
+}
+
+type FindingAgentRuns = Partial<Record<"investigate_finding" | "plan_remediation", FindingAgentRunSummary>>;
+
 function FindingCard({
   finding,
   cfg,
   pinned,
   onTogglePin,
   onOpenRemediation,
+  agentRuns,
 }: {
   finding: CloudFinding;
   cfg: typeof SEVERITY_CONFIG[SecurityFindingSeverity];
   pinned: boolean;
   onTogglePin: (id: string) => void;
   onOpenRemediation: (finding: CloudFinding) => void;
+  agentRuns?: FindingAgentRuns;
 }) {
   const demoMode = useDemoMode();
   const [rec, setRec] = useState<RecState>({ loading: false, text: null, error: null });
-  const [investigation, setInvestigation] = useState<InvestigationState>({ loading: false, text: null, error: null, runId: null });
-  const [plan, setPlan] = useState<PlanState>({ loading: false, text: null, error: null, runId: null, previewEligible: false });
+  const existingInvestigation = agentRuns?.investigate_finding;
+  const existingPlan = agentRuns?.plan_remediation;
+  const [investigation, setInvestigation] = useState<InvestigationState>(() => ({
+    loading: existingInvestigation?.status === "running",
+    text: existingInvestigation?.report ?? null,
+    error: existingInvestigation?.error ?? null,
+    runId: existingInvestigation?.id ?? null,
+  }));
+  const [plan, setPlan] = useState<PlanState>(() => ({
+    loading: existingPlan?.status === "running",
+    text: existingPlan?.report ?? null,
+    error: existingPlan?.error ?? null,
+    runId: existingPlan?.id ?? null,
+    previewEligible: Boolean(existingPlan?.previewEligible),
+  }));
   const [open, setOpen] = useState(false);
-  const [investigationOpen, setInvestigationOpen] = useState(false);
-  const [planOpen, setPlanOpen] = useState(false);
+  const [investigationOpen, setInvestigationOpen] = useState(Boolean(existingInvestigation));
+  const [planOpen, setPlanOpen] = useState(Boolean(existingPlan));
+  const hasInvestigationRun = Boolean(existingInvestigation || investigation.runId);
+  const hasPlanRun = Boolean(existingPlan || plan.runId);
+  const investigationFinished = Boolean((existingInvestigation && existingInvestigation.status !== "running") || (investigation.runId && !investigation.loading));
+  const planFinished = Boolean((existingPlan && existingPlan.status !== "running") || (plan.runId && !plan.loading));
+
+  useEffect(() => {
+    setInvestigation({
+      loading: existingInvestigation?.status === "running",
+      text: existingInvestigation?.report ?? null,
+      error: existingInvestigation?.error ?? null,
+      runId: existingInvestigation?.id ?? null,
+    });
+    if (existingInvestigation) setInvestigationOpen(true);
+  }, [existingInvestigation]);
+
+  useEffect(() => {
+    setPlan({
+      loading: existingPlan?.status === "running",
+      text: existingPlan?.report ?? null,
+      error: existingPlan?.error ?? null,
+      runId: existingPlan?.id ?? null,
+      previewEligible: Boolean(existingPlan?.previewEligible),
+    });
+    if (existingPlan) setPlanOpen(true);
+  }, [existingPlan]);
 
   async function askAI() {
     if (demoMode) {
@@ -245,6 +299,7 @@ function FindingCard({
   }
 
   async function investigate() {
+    if (existingInvestigation) return;
     if (demoMode) {
       setInvestigation({
         loading: false,
@@ -268,7 +323,15 @@ function FindingCard({
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed to investigate finding");
+      if (!res.ok) {
+        setInvestigation({
+          loading: false,
+          text: null,
+          error: data.error ?? "Failed to investigate finding",
+          runId: data.runId ?? null,
+        });
+        return;
+      }
       setInvestigation({ loading: false, text: data.report, error: null, runId: data.runId ?? null });
     } catch (e) {
       setInvestigation({
@@ -281,6 +344,7 @@ function FindingCard({
   }
 
   async function planFix() {
+    if (existingPlan) return;
     if (demoMode) {
       setPlan({
         loading: false,
@@ -305,7 +369,16 @@ function FindingCard({
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed to plan remediation");
+      if (!res.ok) {
+        setPlan({
+          loading: false,
+          text: null,
+          error: data.error ?? "Failed to plan remediation",
+          runId: data.runId ?? null,
+          previewEligible: false,
+        });
+        return;
+      }
       setPlan({
         loading: false,
         text: data.report,
@@ -393,10 +466,10 @@ function FindingCard({
           <button onClick={askAI} disabled={demoMode} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-violet-400 disabled:opacity-40 disabled:cursor-not-allowed" title="Explain with AI">
             <Sparkles className="w-3 h-3" />
           </button>
-          <button onClick={investigate} disabled={demoMode || investigation.loading} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed" title="Investigate with agent">
+          <button onClick={investigate} disabled={demoMode || investigation.loading || hasInvestigationRun} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed" title={hasInvestigationRun ? "Investigation already ran" : "Investigate with agent"}>
             {investigation.loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <FileSearch className="w-3 h-3" />}
           </button>
-          <button onClick={planFix} disabled={demoMode || plan.loading} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-cyan-400 disabled:opacity-40 disabled:cursor-not-allowed" title="Plan remediation">
+          <button onClick={planFix} disabled={demoMode || plan.loading || hasPlanRun} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-cyan-400 disabled:opacity-40 disabled:cursor-not-allowed" title={hasPlanRun ? "Remediation plan already exists" : "Plan remediation"}>
             {plan.loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <ClipboardCheck className="w-3 h-3" />}
           </button>
         </p>
@@ -441,7 +514,7 @@ function FindingCard({
 
             <button
               onClick={investigation.text ? () => setInvestigationOpen((o) => !o) : investigate}
-              disabled={investigation.loading || demoMode}
+              disabled={investigation.loading || demoMode || Boolean(hasInvestigationRun && !investigation.text && !investigation.error)}
               className={cn(
                 "flex items-center gap-1.5 text-xs font-medium transition-all duration-150 rounded-lg px-2.5 py-1",
                 investigation.loading
@@ -458,12 +531,12 @@ function FindingCard({
               ) : (
                 <FileSearch className="w-3 h-3" />
               )}
-              {investigation.loading ? "Investigating..." : demoMode ? "Disabled in demo" : investigation.text ? "Investigation" : "Investigate"}
+              {investigation.loading ? "Investigating..." : demoMode ? "Disabled in demo" : investigationFinished ? "Investigation complete" : investigation.text ? "Investigation" : "Investigate"}
             </button>
 
             <button
               onClick={plan.text ? () => setPlanOpen((o) => !o) : planFix}
-              disabled={plan.loading || demoMode}
+              disabled={plan.loading || demoMode || Boolean(hasPlanRun && !plan.text && !plan.error)}
               className={cn(
                 "flex items-center gap-1.5 text-xs font-medium transition-all duration-150 rounded-lg px-2.5 py-1",
                 plan.loading
@@ -480,7 +553,7 @@ function FindingCard({
               ) : (
                 <ClipboardCheck className="w-3 h-3" />
               )}
-              {plan.loading ? "Planning..." : demoMode ? "Disabled in demo" : plan.text ? "Plan" : "Plan fix"}
+              {plan.loading ? "Planning..." : demoMode ? "Disabled in demo" : planFinished ? "Plan complete" : plan.text ? "Plan" : "Plan fix"}
             </button>
           </div>
 
@@ -557,11 +630,11 @@ function FindingCard({
             />
             <button
               onClick={investigate}
-              disabled={investigation.loading || demoMode}
+              disabled={investigation.loading || demoMode || hasInvestigationRun}
               className="mt-3 flex items-center gap-1 text-xs text-slate-600 hover:text-emerald-400 transition-colors"
             >
               <RefreshCw className="w-2.5 h-2.5" />
-              {demoMode ? "Disabled in demo" : "Run again"}
+              {hasInvestigationRun ? "Already run" : demoMode ? "Disabled in demo" : "Run again"}
             </button>
           </div>
         )}
@@ -591,11 +664,11 @@ function FindingCard({
               )}
               <button
                 onClick={planFix}
-                disabled={plan.loading || demoMode}
+                disabled={plan.loading || demoMode || hasPlanRun}
                 className="flex items-center gap-1 text-xs text-slate-600 hover:text-cyan-400 transition-colors"
               >
                 <RefreshCw className="w-2.5 h-2.5" />
-                {demoMode ? "Disabled in demo" : "Run again"}
+                {hasPlanRun ? "Already run" : demoMode ? "Disabled in demo" : "Run again"}
               </button>
             </div>
           </div>
@@ -653,6 +726,7 @@ export default function FindingsPage() {
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
   const [showRemediate, setShowRemediate] = useState(false);
   const [remediationFindings, setRemediationFindings] = useState<CloudFinding[]>([]);
+  const [agentRunsByFinding, setAgentRunsByFinding] = useState<Record<string, FindingAgentRuns>>({});
   const [search, setSearch] = useState("");
   const [showWatchlist, setShowWatchlist] = useState(false);
   const [pinned, setPinned] = useState<Set<string>>(() => {
@@ -714,6 +788,18 @@ export default function FindingsPage() {
 
       setFindings(nextFindings);
       setFetchedAt(fetchedAts.sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] ?? null);
+      if (nextFindings.length > 0) {
+        const ids = nextFindings.map((finding) => encodeURIComponent(finding.id)).join(",");
+        const runsResponse = await fetch(`/api/agent/finding-runs?ids=${ids}`);
+        if (runsResponse.ok) {
+          const data = await runsResponse.json();
+          setAgentRunsByFinding(data.runs ?? {});
+        } else {
+          setAgentRunsByFinding({});
+        }
+      } else {
+        setAgentRunsByFinding({});
+      }
       if (errors.length > 0 && nextFindings.length === 0) throw new Error(errors.join("; "));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
@@ -990,6 +1076,7 @@ export default function FindingsPage() {
                   pinned={pinned.has(finding.id)}
                   onTogglePin={togglePin}
                   onOpenRemediation={(targetFinding) => openRemediation([targetFinding])}
+                  agentRuns={agentRunsByFinding[finding.id]}
                 />
               ))}
             </div>

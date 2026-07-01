@@ -14,6 +14,8 @@ import { resolveAI } from "@/lib/ai/client";
 import type { AttackPath } from "@/lib/gcp/attack-paths";
 import type { SecurityFinding } from "@/lib/gcp/types";
 
+export const maxDuration = 300;
+
 interface RequestBody {
   repoFullName: string;
   defaultBranch: string;
@@ -152,12 +154,23 @@ export async function POST(req: NextRequest) {
           const close = () => {
             if (closed) return;
             closed = true;
+            clearInterval(heartbeat);
             try {
               controller.close();
             } catch {
               // Ignore double-close and late close races.
             }
           };
+          const heartbeat = setInterval(() => {
+            send({
+              type: "heartbeat",
+              progress: {
+                stage: "build_plan",
+                message: "Still building Terraform preview",
+                percent: undefined,
+              },
+            });
+          }, 10_000);
 
           void (async () => {
             try {
