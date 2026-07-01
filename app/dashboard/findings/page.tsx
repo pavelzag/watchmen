@@ -557,18 +557,13 @@ function FindingCard({
             </button>
           </div>
 
-          {(rec.text || investigation.text || plan.text) && (
+          {rec.text && (
             <button
-              onClick={() => {
-                if (plan.text) setPlanOpen((o) => !o);
-                else if (investigation.text) setInvestigationOpen((o) => !o);
-                else setOpen((o) => !o);
-              }}
+              onClick={() => setOpen((o) => !o)}
               className="text-slate-500 hover:text-slate-300 transition-colors"
+              title={open ? "Minimize AI recommendation" : "Maximize AI recommendation"}
             >
-              {(plan.text ? planOpen : investigation.text ? investigationOpen : open)
-                ? <ChevronUp className="w-3.5 h-3.5" />
-                : <ChevronDown className="w-3.5 h-3.5" />}
+              {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
             </button>
           )}
         </div>
@@ -615,62 +610,92 @@ function FindingCard({
           </div>
         )}
 
-        {investigation.text && investigationOpen && (
+        {investigation.text && (
           <div className="px-4 pb-4 border-t border-slate-700/30">
             <div className="mt-3 flex items-center justify-between gap-2">
               <span className="text-[10px] uppercase tracking-wider text-slate-500 font-mono">
                 {investigation.runId ? `Run ${investigation.runId.slice(0, 18)}...` : "Audited agent run"}
               </span>
-              <CopyAiResponseButton text={investigation.text} compact />
+              <div className="flex items-center gap-2">
+                <CopyAiResponseButton text={investigation.text} compact />
+                <button
+                  type="button"
+                  onClick={() => setInvestigationOpen((o) => !o)}
+                  className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-slate-500 hover:text-emerald-300 transition-colors"
+                  title={investigationOpen ? "Minimize Investigation" : "Maximize Investigation"}
+                >
+                  {investigationOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                  {investigationOpen ? "Minimize" : "Maximize"}
+                </button>
+              </div>
             </div>
-            <div
-              onClick={copySuggestedCommand}
-              className="mt-3 text-xs text-slate-300 leading-relaxed prose-answer"
-              dangerouslySetInnerHTML={{ __html: renderMd(investigation.text, finding) }}
-            />
-            <button
-              onClick={investigate}
-              disabled={investigation.loading || demoMode || hasInvestigationRun}
-              className="mt-3 flex items-center gap-1 text-xs text-slate-600 hover:text-emerald-400 transition-colors"
-            >
-              <RefreshCw className="w-2.5 h-2.5" />
-              {hasInvestigationRun ? "Already run" : demoMode ? "Disabled in demo" : "Run again"}
-            </button>
+            {investigationOpen && (
+              <>
+                <div
+                  onClick={copySuggestedCommand}
+                  className="mt-3 text-xs text-slate-300 leading-relaxed prose-answer"
+                  dangerouslySetInnerHTML={{ __html: renderMd(investigation.text, finding) }}
+                />
+                <button
+                  onClick={investigate}
+                  disabled={investigation.loading || demoMode || hasInvestigationRun}
+                  className="mt-3 flex items-center gap-1 text-xs text-slate-600 hover:text-emerald-400 transition-colors"
+                >
+                  <RefreshCw className="w-2.5 h-2.5" />
+                  {hasInvestigationRun ? "Already run" : demoMode ? "Disabled in demo" : "Run again"}
+                </button>
+              </>
+            )}
           </div>
         )}
 
-        {plan.text && planOpen && (
+        {plan.text && (
           <div className="px-4 pb-4 border-t border-slate-700/30">
             <div className="mt-3 flex items-center justify-between gap-2">
               <span className="text-[10px] uppercase tracking-wider text-slate-500 font-mono">
                 {plan.runId ? `Run ${plan.runId.slice(0, 18)}...` : "Approval-required plan"}
               </span>
-              <CopyAiResponseButton text={plan.text} compact />
-            </div>
-            <div
-              onClick={copySuggestedCommand}
-              className="mt-3 text-xs text-slate-300 leading-relaxed prose-answer"
-              dangerouslySetInnerHTML={{ __html: renderMd(plan.text, finding) }}
-            />
-            <div className="mt-3 flex items-center gap-2 flex-wrap">
-              {plan.previewEligible && finding.cloud === "gcp" && (
+              <div className="flex items-center gap-2">
+                <CopyAiResponseButton text={plan.text} compact />
                 <button
-                  onClick={() => onOpenRemediation(finding)}
-                  className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-lg border border-violet-500/40 text-violet-300 hover:bg-violet-500/10 transition-colors"
+                  type="button"
+                  onClick={() => setPlanOpen((o) => !o)}
+                  className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-slate-500 hover:text-cyan-300 transition-colors"
+                  title={planOpen ? "Minimize Plan" : "Maximize Plan"}
                 >
-                  <GitPullRequest className="w-3 h-3" />
-                  Open PR workflow
+                  {planOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                  {planOpen ? "Minimize" : "Maximize"}
                 </button>
-              )}
-              <button
-                onClick={planFix}
-                disabled={plan.loading || demoMode || hasPlanRun}
-                className="flex items-center gap-1 text-xs text-slate-600 hover:text-cyan-400 transition-colors"
-              >
-                <RefreshCw className="w-2.5 h-2.5" />
-                {hasPlanRun ? "Already run" : demoMode ? "Disabled in demo" : "Run again"}
-              </button>
+              </div>
             </div>
+            {planOpen && (
+              <>
+                <div
+                  onClick={copySuggestedCommand}
+                  className="mt-3 text-xs text-slate-300 leading-relaxed prose-answer"
+                  dangerouslySetInnerHTML={{ __html: renderMd(plan.text, finding) }}
+                />
+                <div className="mt-3 flex items-center gap-2 flex-wrap">
+                  {plan.previewEligible && finding.cloud === "gcp" && (
+                    <button
+                      onClick={() => onOpenRemediation(finding)}
+                      className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-lg border border-violet-500/40 text-violet-300 hover:bg-violet-500/10 transition-colors"
+                    >
+                      <GitPullRequest className="w-3 h-3" />
+                      Open PR workflow
+                    </button>
+                  )}
+                  <button
+                    onClick={planFix}
+                    disabled={plan.loading || demoMode || hasPlanRun}
+                    className="flex items-center gap-1 text-xs text-slate-600 hover:text-cyan-400 transition-colors"
+                  >
+                    <RefreshCw className="w-2.5 h-2.5" />
+                    {hasPlanRun ? "Already run" : demoMode ? "Disabled in demo" : "Run again"}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         )}
       </div>
