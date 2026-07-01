@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo, type MouseEvent } from "react";
 import Link from "next/link";
-import { ArrowLeft, ShieldAlert, ShieldCheck, RefreshCw, Sparkles, Loader2, ChevronDown, ChevronUp, AlertCircle, GitPullRequest, Search, X, Download, Star } from "lucide-react";
+import { ArrowLeft, ShieldAlert, ShieldCheck, RefreshCw, Sparkles, Loader2, ChevronDown, ChevronUp, AlertCircle, GitPullRequest, Search, X, Download, Star, FileSearch, ClipboardCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { computeFindings } from "@/lib/findings";
 import type { GcpSnapshot, SecurityFinding, SecurityFindingSeverity } from "@/lib/gcp/types";
@@ -177,20 +177,41 @@ interface RecState {
   error: string | null;
 }
 
+interface InvestigationState {
+  loading: boolean;
+  text: string | null;
+  error: string | null;
+  runId: string | null;
+}
+
+interface PlanState {
+  loading: boolean;
+  text: string | null;
+  error: string | null;
+  runId: string | null;
+  previewEligible: boolean;
+}
+
 function FindingCard({
   finding,
   cfg,
   pinned,
   onTogglePin,
+  onOpenRemediation,
 }: {
   finding: CloudFinding;
   cfg: typeof SEVERITY_CONFIG[SecurityFindingSeverity];
   pinned: boolean;
   onTogglePin: (id: string) => void;
+  onOpenRemediation: (finding: CloudFinding) => void;
 }) {
   const demoMode = useDemoMode();
   const [rec, setRec] = useState<RecState>({ loading: false, text: null, error: null });
+  const [investigation, setInvestigation] = useState<InvestigationState>({ loading: false, text: null, error: null, runId: null });
+  const [plan, setPlan] = useState<PlanState>({ loading: false, text: null, error: null, runId: null, previewEligible: false });
   const [open, setOpen] = useState(false);
+  const [investigationOpen, setInvestigationOpen] = useState(false);
+  const [planOpen, setPlanOpen] = useState(false);
 
   async function askAI() {
     if (demoMode) {
@@ -220,6 +241,86 @@ function FindingCard({
       setRec({ loading: false, text: data.recommendation, error: null });
     } catch (e) {
       setRec({ loading: false, text: null, error: e instanceof Error ? e.message : "Error" });
+    }
+  }
+
+  async function investigate() {
+    if (demoMode) {
+      setInvestigation({
+        loading: false,
+        text: null,
+        error: "AI is disabled in demo mode. For a preview with AI functionality or real, non-fake data, email zagalsky@gmail.com.",
+        runId: null,
+      });
+      return;
+    }
+    setInvestigation({ loading: true, text: null, error: null, runId: null });
+    setInvestigationOpen(true);
+    try {
+      const browserAI = getActiveBrowserAIKey();
+      const res = await fetch("/api/agent/investigate-finding", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          finding,
+          prompt: `Investigate finding ${finding.id}`,
+          demoCredentials: browserAI ? { aiKey: browserAI.key, aiProvider: browserAI.provider } : undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to investigate finding");
+      setInvestigation({ loading: false, text: data.report, error: null, runId: data.runId ?? null });
+    } catch (e) {
+      setInvestigation({
+        loading: false,
+        text: null,
+        error: e instanceof Error ? e.message : "Failed to investigate finding",
+        runId: null,
+      });
+    }
+  }
+
+  async function planFix() {
+    if (demoMode) {
+      setPlan({
+        loading: false,
+        text: null,
+        error: "AI is disabled in demo mode. For a preview with AI functionality or real, non-fake data, email zagalsky@gmail.com.",
+        runId: null,
+        previewEligible: false,
+      });
+      return;
+    }
+    setPlan({ loading: true, text: null, error: null, runId: null, previewEligible: false });
+    setPlanOpen(true);
+    try {
+      const browserAI = getActiveBrowserAIKey();
+      const res = await fetch("/api/agent/plan-remediation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          finding,
+          objective: `Plan remediation for ${finding.title} on ${finding.resourceName}`,
+          demoCredentials: browserAI ? { aiKey: browserAI.key, aiProvider: browserAI.provider } : undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to plan remediation");
+      setPlan({
+        loading: false,
+        text: data.report,
+        error: null,
+        runId: data.runId ?? null,
+        previewEligible: Boolean(data.plan?.previewEligible),
+      });
+    } catch (e) {
+      setPlan({
+        loading: false,
+        text: null,
+        error: e instanceof Error ? e.message : "Failed to plan remediation",
+        runId: null,
+        previewEligible: false,
+      });
     }
   }
 
@@ -292,6 +393,12 @@ function FindingCard({
           <button onClick={askAI} disabled={demoMode} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-violet-400 disabled:opacity-40 disabled:cursor-not-allowed" title="Explain with AI">
             <Sparkles className="w-3 h-3" />
           </button>
+          <button onClick={investigate} disabled={demoMode || investigation.loading} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed" title="Investigate with agent">
+            {investigation.loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <FileSearch className="w-3 h-3" />}
+          </button>
+          <button onClick={planFix} disabled={demoMode || plan.loading} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-cyan-400 disabled:opacity-40 disabled:cursor-not-allowed" title="Plan remediation">
+            {plan.loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <ClipboardCheck className="w-3 h-3" />}
+          </button>
         </p>
         <p className="text-xs text-slate-400 leading-relaxed group-hover:text-slate-300 transition-colors">
           {finding.description}
@@ -309,34 +416,84 @@ function FindingCard({
       {/* AI recommendation area */}
       <div className="border-t border-slate-700/50">
         <div className="px-4 py-2 flex items-center justify-between gap-2">
-          <button
-            onClick={rec.text ? () => setOpen((o) => !o) : askAI}
-            disabled={rec.loading || demoMode}
-            className={cn(
-              "flex items-center gap-1.5 text-xs font-medium transition-all duration-150 rounded-lg px-2.5 py-1",
-              rec.loading
-                ? "text-slate-500 cursor-not-allowed"
-                : demoMode
-                  ? "text-slate-500 cursor-not-allowed bg-slate-500/5"
-                : rec.text
-                  ? "text-violet-400 hover:text-violet-300 bg-violet-500/10 hover:bg-violet-500/15"
-                  : "text-slate-400 hover:text-violet-400 hover:bg-violet-500/10"
-            )}
-          >
-            {rec.loading ? (
-              <Loader2 className="w-3 h-3 animate-spin" />
-            ) : (
-              <Sparkles className="w-3 h-3" />
-            )}
-            {rec.loading ? "Asking AI…" : demoMode ? "Disabled in demo" : rec.text ? "AI Recommendation" : "Ask AI"}
-          </button>
-
-          {rec.text && (
+          <div className="flex items-center gap-2 flex-wrap">
             <button
-              onClick={() => setOpen((o) => !o)}
+              onClick={rec.text ? () => setOpen((o) => !o) : askAI}
+              disabled={rec.loading || demoMode}
+              className={cn(
+                "flex items-center gap-1.5 text-xs font-medium transition-all duration-150 rounded-lg px-2.5 py-1",
+                rec.loading
+                  ? "text-slate-500 cursor-not-allowed"
+                  : demoMode
+                    ? "text-slate-500 cursor-not-allowed bg-slate-500/5"
+                  : rec.text
+                    ? "text-violet-400 hover:text-violet-300 bg-violet-500/10 hover:bg-violet-500/15"
+                    : "text-slate-400 hover:text-violet-400 hover:bg-violet-500/10"
+              )}
+            >
+              {rec.loading ? (
+                <Loader2 className="w-3 h-3 animate-spin" />
+              ) : (
+                <Sparkles className="w-3 h-3" />
+              )}
+              {rec.loading ? "Asking AI..." : demoMode ? "Disabled in demo" : rec.text ? "AI Recommendation" : "Ask AI"}
+            </button>
+
+            <button
+              onClick={investigation.text ? () => setInvestigationOpen((o) => !o) : investigate}
+              disabled={investigation.loading || demoMode}
+              className={cn(
+                "flex items-center gap-1.5 text-xs font-medium transition-all duration-150 rounded-lg px-2.5 py-1",
+                investigation.loading
+                  ? "text-slate-500 cursor-not-allowed"
+                  : demoMode
+                    ? "text-slate-500 cursor-not-allowed bg-slate-500/5"
+                  : investigation.text
+                    ? "text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/15"
+                    : "text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10"
+              )}
+            >
+              {investigation.loading ? (
+                <Loader2 className="w-3 h-3 animate-spin" />
+              ) : (
+                <FileSearch className="w-3 h-3" />
+              )}
+              {investigation.loading ? "Investigating..." : demoMode ? "Disabled in demo" : investigation.text ? "Investigation" : "Investigate"}
+            </button>
+
+            <button
+              onClick={plan.text ? () => setPlanOpen((o) => !o) : planFix}
+              disabled={plan.loading || demoMode}
+              className={cn(
+                "flex items-center gap-1.5 text-xs font-medium transition-all duration-150 rounded-lg px-2.5 py-1",
+                plan.loading
+                  ? "text-slate-500 cursor-not-allowed"
+                  : demoMode
+                    ? "text-slate-500 cursor-not-allowed bg-slate-500/5"
+                  : plan.text
+                    ? "text-cyan-400 hover:text-cyan-300 bg-cyan-500/10 hover:bg-cyan-500/15"
+                    : "text-slate-400 hover:text-cyan-400 hover:bg-cyan-500/10"
+              )}
+            >
+              {plan.loading ? (
+                <Loader2 className="w-3 h-3 animate-spin" />
+              ) : (
+                <ClipboardCheck className="w-3 h-3" />
+              )}
+              {plan.loading ? "Planning..." : demoMode ? "Disabled in demo" : plan.text ? "Plan" : "Plan fix"}
+            </button>
+          </div>
+
+          {(rec.text || investigation.text || plan.text) && (
+            <button
+              onClick={() => {
+                if (plan.text) setPlanOpen((o) => !o);
+                else if (investigation.text) setInvestigationOpen((o) => !o);
+                else setOpen((o) => !o);
+              }}
               className="text-slate-500 hover:text-slate-300 transition-colors"
             >
-              {open
+              {(plan.text ? planOpen : investigation.text ? investigationOpen : open)
                 ? <ChevronUp className="w-3.5 h-3.5" />
                 : <ChevronDown className="w-3.5 h-3.5" />}
             </button>
@@ -347,6 +504,20 @@ function FindingCard({
           <div className="px-4 pb-3 flex items-center gap-1.5 text-xs text-red-400">
             <AlertCircle className="w-3 h-3 shrink-0" />
             {rec.error}
+          </div>
+        )}
+
+        {investigation.error && (
+          <div className="px-4 pb-3 flex items-center gap-1.5 text-xs text-red-400">
+            <AlertCircle className="w-3 h-3 shrink-0" />
+            {investigation.error}
+          </div>
+        )}
+
+        {plan.error && (
+          <div className="px-4 pb-3 flex items-center gap-1.5 text-xs text-red-400">
+            <AlertCircle className="w-3 h-3 shrink-0" />
+            {plan.error}
           </div>
         )}
 
@@ -368,6 +539,65 @@ function FindingCard({
               <RefreshCw className="w-2.5 h-2.5" />
               {demoMode ? "Disabled in demo" : "Regenerate"}
             </button>
+          </div>
+        )}
+
+        {investigation.text && investigationOpen && (
+          <div className="px-4 pb-4 border-t border-slate-700/30">
+            <div className="mt-3 flex items-center justify-between gap-2">
+              <span className="text-[10px] uppercase tracking-wider text-slate-500 font-mono">
+                {investigation.runId ? `Run ${investigation.runId.slice(0, 18)}...` : "Audited agent run"}
+              </span>
+              <CopyAiResponseButton text={investigation.text} compact />
+            </div>
+            <div
+              onClick={copySuggestedCommand}
+              className="mt-3 text-xs text-slate-300 leading-relaxed prose-answer"
+              dangerouslySetInnerHTML={{ __html: renderMd(investigation.text, finding) }}
+            />
+            <button
+              onClick={investigate}
+              disabled={investigation.loading || demoMode}
+              className="mt-3 flex items-center gap-1 text-xs text-slate-600 hover:text-emerald-400 transition-colors"
+            >
+              <RefreshCw className="w-2.5 h-2.5" />
+              {demoMode ? "Disabled in demo" : "Run again"}
+            </button>
+          </div>
+        )}
+
+        {plan.text && planOpen && (
+          <div className="px-4 pb-4 border-t border-slate-700/30">
+            <div className="mt-3 flex items-center justify-between gap-2">
+              <span className="text-[10px] uppercase tracking-wider text-slate-500 font-mono">
+                {plan.runId ? `Run ${plan.runId.slice(0, 18)}...` : "Approval-required plan"}
+              </span>
+              <CopyAiResponseButton text={plan.text} compact />
+            </div>
+            <div
+              onClick={copySuggestedCommand}
+              className="mt-3 text-xs text-slate-300 leading-relaxed prose-answer"
+              dangerouslySetInnerHTML={{ __html: renderMd(plan.text, finding) }}
+            />
+            <div className="mt-3 flex items-center gap-2 flex-wrap">
+              {plan.previewEligible && finding.cloud === "gcp" && (
+                <button
+                  onClick={() => onOpenRemediation(finding)}
+                  className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-lg border border-violet-500/40 text-violet-300 hover:bg-violet-500/10 transition-colors"
+                >
+                  <GitPullRequest className="w-3 h-3" />
+                  Open PR workflow
+                </button>
+              )}
+              <button
+                onClick={planFix}
+                disabled={plan.loading || demoMode}
+                className="flex items-center gap-1 text-xs text-slate-600 hover:text-cyan-400 transition-colors"
+              >
+                <RefreshCw className="w-2.5 h-2.5" />
+                {demoMode ? "Disabled in demo" : "Run again"}
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -422,6 +652,7 @@ export default function FindingsPage() {
   const [cloudFilter, setCloudFilter] = useState<CloudFilter>("all");
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
   const [showRemediate, setShowRemediate] = useState(false);
+  const [remediationFindings, setRemediationFindings] = useState<CloudFinding[]>([]);
   const [search, setSearch] = useState("");
   const [showWatchlist, setShowWatchlist] = useState(false);
   const [pinned, setPinned] = useState<Set<string>>(() => {
@@ -445,6 +676,11 @@ export default function FindingsPage() {
       savePinned(next);
       return next;
     });
+  }
+
+  function openRemediation(findingsToRemediate: CloudFinding[]) {
+    setRemediationFindings(findingsToRemediate.filter((finding) => finding.cloud === "gcp"));
+    setShowRemediate(true);
   }
 
   async function load() {
@@ -551,7 +787,7 @@ export default function FindingsPage() {
         </div>
         {!loading && gcpRemediableFindings.length > 0 && (
           <button
-            onClick={() => setShowRemediate(true)}
+            onClick={() => openRemediation(gcpRemediableFindings)}
             className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-violet-500/40 text-violet-400 hover:bg-violet-500/10 transition-colors"
           >
             <GitPullRequest className="w-3.5 h-3.5" />
@@ -726,8 +962,11 @@ export default function FindingsPage() {
 
       {showRemediate && (
         <RemediateModal
-          targets={gcpRemediableFindings.map(remediationTargetFromFinding)}
-          onClose={() => setShowRemediate(false)}
+          targets={(remediationFindings.length > 0 ? remediationFindings : gcpRemediableFindings).map(remediationTargetFromFinding)}
+          onClose={() => {
+            setShowRemediate(false);
+            setRemediationFindings([]);
+          }}
         />
       )}
 
@@ -750,6 +989,7 @@ export default function FindingsPage() {
                   cfg={cfg}
                   pinned={pinned.has(finding.id)}
                   onTogglePin={togglePin}
+                  onOpenRemediation={(targetFinding) => openRemediation([targetFinding])}
                 />
               ))}
             </div>

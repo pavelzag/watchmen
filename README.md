@@ -8,6 +8,14 @@ Watchmen scans your cloud infrastructure for misconfigurations, runs SOC 2 Type 
 
 ---
 
+## Planned v0.7.0 — agentic security operations
+
+v0.7.0 is planned around guided agentic workflows that help users investigate findings, plan safe remediation, and verify fixes using Watchmen's existing scan, compliance, attack path, request log, and Terraform/GitHub capabilities.
+
+See [Watchmen v0.7.0 Agentic Roadmap](docs/v0.7-agentic-roadmap.md) for the implementation plan, milestone sequence, safety requirements, and out-of-scope boundaries.
+
+---
+
 ## v0.4.0 — changes since v0.3.0
 
 This release focuses on making Watchmen more usable as a real multi-cloud operator console: better AWS/GCP parity, clearer scan status, faster navigation, safer task cleanup, and more resilient auth and cloud API handling.

@@ -139,3 +139,37 @@ CREATE INDEX IF NOT EXISTS idx_agent_events_cluster_analytics
 
 DELETE FROM agent_events
 WHERE received_at < NOW() - INTERVAL '30 days';
+
+CREATE TABLE IF NOT EXISTS agent_runs (
+  id              TEXT PRIMARY KEY,
+  user_email      TEXT NOT NULL,
+  workflow        TEXT NOT NULL,
+  status          TEXT NOT NULL,
+  prompt          TEXT NOT NULL DEFAULT '',
+  input           JSONB NOT NULL DEFAULT '{}',
+  output          JSONB NOT NULL DEFAULT '{}',
+  error           TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  completed_at    TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_runs_lookup
+  ON agent_runs (user_email, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS agent_steps (
+  id                BIGSERIAL PRIMARY KEY,
+  run_id            TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+  step_index        INT NOT NULL,
+  tool_name         TEXT NOT NULL,
+  status            TEXT NOT NULL,
+  input             JSONB NOT NULL DEFAULT '{}',
+  output            JSONB NOT NULL DEFAULT '{}',
+  error             TEXT,
+  requires_approval BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  completed_at      TIMESTAMPTZ
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_steps_run_order
+  ON agent_steps (run_id, step_index);
