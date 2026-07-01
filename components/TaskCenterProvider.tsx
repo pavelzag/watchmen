@@ -252,6 +252,7 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
   }, [tasks, updateTask]);
 
   const runTerraformPreviewTask = useCallback(async (
+    taskId: string,
     params: TaskParamsMap["terraform_preview"],
     pushProgress: (event: TaskProgressEvent) => void,
     succeed: (result: TaskResultMap["terraform_preview"]) => void,
@@ -261,7 +262,7 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
       const response = await fetch("/api/github/terraform-pr/preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...params, stream: true }),
+        body: JSON.stringify({ ...params, taskId, stream: true }),
       });
 
       if (!response.ok && !response.body) {
@@ -371,7 +372,7 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
 
   const startTerraformPreview = useCallback((params: TaskParamsMap["terraform_preview"]) => {
     return enqueueTask("terraform_preview", params, async (_taskId, pushProgress, succeed, fail) => {
-      await runTerraformPreviewTask(params, pushProgress, succeed, fail);
+      await runTerraformPreviewTask(_taskId, params, pushProgress, succeed, fail);
     });
   }, [enqueueTask, runTerraformPreviewTask]);
 
@@ -422,7 +423,7 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
       };
 
       setTimeout(() => {
-        void runTerraformPreviewTask(task.params, pushProgress, succeed, fail)
+        void runTerraformPreviewTask(task.id, task.params, pushProgress, succeed, fail)
           .finally(() => {
             activeCount -= 1;
             startNext();
@@ -443,7 +444,7 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
         const response = await fetch("/api/github/terraform-pr", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...params, stream: true }),
+          body: JSON.stringify({ ...params, taskId: _taskId, stream: true }),
         });
 
         if (!response.ok && !response.body) {

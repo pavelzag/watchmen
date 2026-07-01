@@ -1,16 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { getUserCloudCredentials } from "@/lib/credentials";
-import { buildRemediationPlan } from "@/lib/github/terraform-remediation";
-import {
-  buildRemediationBatchSuggestions,
-  remediationTargetFromAttackPath,
-  remediationTargetFromFinding,
-  shouldAutoSplitRemediationTargets,
-  type RemediationTarget,
-} from "@/lib/github/remediation-targets";
-import { debugError, debugLog, withDebugTiming } from "@/lib/debug";
 import { resolveAI } from "@/lib/ai/client";
+import { auth } from "@/lib/auth";
+import { rejectDemoAi } from "@/lib/ai/demo";
+import { getUserCloudCredentials } from "@/lib/credentials";
+import { buildRemediationBatchSuggestions, remediationTargetFromAttackPath, remediationTargetFromFinding, shouldAutoSplitRemediationTargets, type RemediationTarget } from "@/lib/github/remediation-targets";
+import { buildRemediationPlan, type RemediationProgressEvent } from "@/lib/github/terraform-remediation";
+import { debugLog } from "@/lib/debug";
+import { createBackgroundTask, getBackgroundTask, upsertBackgroundTask } from "@/lib/tasks/store";
+import type { TaskResultMap } from "@/lib/tasks/types";
 import type { AttackPath } from "@/lib/gcp/attack-paths";
 import type { SecurityFinding } from "@/lib/gcp/types";
 
@@ -19,17 +16,111 @@ export const maxDuration = 300;
 interface RequestBody {
   repoFullName: string;
   defaultBranch: string;
+  taskId?: string;
   paths?: AttackPath[];
   findings?: SecurityFinding[];
   targets?: RemediationTarget[];
   stream?: boolean;
 }
 
-/**
- * POST /api/github/terraform-pr/preview
- * Returns the remediation plan (patches) without creating a branch or PR.
- * Used by the UI to show a diff preview before the user confirms.
- */
+function sendTaskEvent(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  encoder: TextEncoder,
+  event: unknown
+) {
+  controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+}
+
+function createSplitResult(targets: RemediationTarget[]) {
+  const suggestedBatches = buildRemediationBatchSuggestions(targets);
+  return {
+    ok: true,
+    patches: [],
+    summary: `Split ${targets.length} selected items into ${suggestedBatches.length} smaller remediation batch${suggestedBatches.length === 1 ? "" : "es"}.`,
+    failures: [],
+    coveredTargetIds: [],
+    uncoveredTargets: targets,
+    fullyAddressed: false,
+    suggestedBatches,
+  };
+}
+
+function createTaskStream(
+  email: string,
+  taskId: string
+): Response {
+  const encoder = new TextEncoder();
+  let closed = false;
+  let lastProgressCount = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const close = () => {
+        if (closed) return;
+        closed = true;
+        try {
+          controller.close();
+        } catch {
+          // Ignore late close races.
+        }
+      };
+
+      void (async () => {
+        try {
+          while (!closed) {
+            const snapshot = await getBackgroundTask(email, taskId);
+            if (!snapshot) {
+              sendTaskEvent(controller, encoder, { type: "error", error: "Terraform preview task not found." });
+              close();
+              return;
+            }
+
+            const newProgress = snapshot.progress.slice(lastProgressCount);
+            for (const progress of newProgress) {
+              sendTaskEvent(controller, encoder, { type: "progress", progress });
+            }
+            lastProgressCount = snapshot.progress.length;
+
+            if (snapshot.status === "completed") {
+              sendTaskEvent(controller, encoder, { type: "result", ...(snapshot.result as TaskResultMap["terraform_preview"]) });
+              close();
+              return;
+            }
+
+            if (snapshot.status === "failed") {
+              sendTaskEvent(controller, encoder, { type: "error", error: snapshot.error ?? "Terraform preview failed." });
+              close();
+              return;
+            }
+
+            sendTaskEvent(controller, encoder, {
+              type: "heartbeat",
+              progress: snapshot.progress.at(-1),
+            });
+
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+          }
+        } catch (error) {
+          sendTaskEvent(controller, encoder, {
+            type: "error",
+            error: error instanceof Error ? error.message : "Terraform preview streaming failed.",
+          });
+          close();
+        }
+      })();
+    },
+    cancel() {
+      closed = true;
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+    },
+  });
+}
+
 export async function POST(req: NextRequest) {
   const scope = "api/github/terraform-pr/preview:POST";
   const session = await auth();
@@ -37,6 +128,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const email = session.user.email;
+
+  const demoBlocked = rejectDemoAi(session);
+  if (demoBlocked) return demoBlocked;
 
   let body: RequestBody;
   try {
@@ -64,21 +158,11 @@ export async function POST(req: NextRequest) {
   }
 
   if (shouldAutoSplitRemediationTargets(targets)) {
-    const suggestedBatches = buildRemediationBatchSuggestions(targets);
-    const splitResult = {
-      patches: [],
-      summary: `Split ${targets.length} selected items into ${suggestedBatches.length} smaller remediation batch${suggestedBatches.length === 1 ? "" : "es"}.`,
-      failures: [],
-      coveredTargetIds: [],
-      uncoveredTargets: targets,
-      fullyAddressed: false,
-      suggestedBatches,
-    };
-
+    const splitResult = createSplitResult(targets);
     debugLog(scope, "preview auto-split", {
       repoFullName,
       targetCount: targets.length,
-      batchCount: suggestedBatches.length,
+      batchCount: splitResult.suggestedBatches.length,
     });
 
     if (body.stream) {
@@ -101,158 +185,120 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(splitResult);
   }
 
-  let creds: Record<string, string> | null = null;
-  try {
-    creds = await Promise.race([
-      getUserCloudCredentials(email, "github"),
-      new Promise<null>((_, reject) =>
-        setTimeout(() => reject(new Error("DB timeout")), 8_000)
-      ),
-    ]);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : "Failed to load credentials";
-    return NextResponse.json({ error: msg }, { status: 503 });
-  }
-  if (!creds?.token) {
-    return NextResponse.json(
-      { error: "GitHub token not configured", tokenRequired: true },
-      { status: 422 }
-    );
-  }
+  const task = createBackgroundTask("terraform_preview", {
+    repoFullName,
+    defaultBranch: body.defaultBranch,
+    targets,
+  }, {
+    id: body.taskId,
+    status: "queued",
+  });
 
-  let aiKey: Awaited<ReturnType<typeof resolveAI>>;
-  try {
-    aiKey = await resolveAI(email);
-  } catch {
-    return NextResponse.json(
-      { error: "No AI API key configured. Please add one in Settings → AI Keys." },
-      { status: 422 }
-    );
-  }
+  await upsertBackgroundTask(email, task);
 
   try {
-    debugLog(scope, "request received", {
-      email,
-      repoFullName,
-      defaultBranch: body.defaultBranch,
-      targetCount: targets.length,
-      targetKinds: [...new Set(targets.map((target) => target.kind))],
-    });
+    const runningTask = {
+      ...task,
+      status: "running" as const,
+      updatedAt: new Date().toISOString(),
+      lastProgressAt: task.lastProgressAt ?? task.updatedAt,
+    };
+    await upsertBackgroundTask(email, runningTask);
+
+    const execution = (async () => {
+      try {
+        const [owner, repoName] = repoFullName.split("/");
+        const [creds, ai] = await Promise.all([
+          getUserCloudCredentials(email, "github"),
+          resolveAI(email),
+        ]);
+        if (!creds?.token) {
+          throw new Error("GitHub token not configured");
+        }
+
+        const progressPersists: Promise<void>[] = [];
+        const plan = await buildRemediationPlan(
+          creds.token,
+          owner,
+          repoName,
+          targets,
+          ai.provider,
+          ai.key,
+          {
+            scope: `api/github/terraform-pr/preview:${task.id}`,
+            onProgress: (progress: RemediationProgressEvent) => {
+              const now = new Date().toISOString();
+              const updatedTask = {
+                ...runningTask,
+                updatedAt: now,
+                lastProgressAt: now,
+                status: "running" as const,
+                percent: progress.percent ?? runningTask.percent,
+                progress: [...runningTask.progress, progress].slice(-12),
+              };
+              runningTask.updatedAt = updatedTask.updatedAt;
+              runningTask.lastProgressAt = updatedTask.lastProgressAt;
+              runningTask.percent = updatedTask.percent;
+              runningTask.progress = updatedTask.progress;
+              progressPersists.push(upsertBackgroundTask(email, updatedTask).catch(() => {}));
+            },
+          }
+        );
+
+        await Promise.allSettled(progressPersists);
+        const result: TaskResultMap["terraform_preview"] = {
+          ok: true,
+          repoFullName,
+          defaultBranch: body.defaultBranch,
+          patches: plan.patches,
+          failures: plan.failures,
+          coveredTargetIds: plan.coveredTargetIds,
+          uncoveredTargets: plan.uncoveredTargets,
+          fullyAddressed: plan.fullyAddressed,
+          suggestedBatches: plan.suggestedBatches,
+          summary: plan.summary,
+          targets,
+        };
+
+        const completedTask = {
+          ...runningTask,
+          status: "completed" as const,
+          updatedAt: new Date().toISOString(),
+          lastProgressAt: runningTask.lastProgressAt ?? runningTask.updatedAt,
+          percent: 100,
+          result,
+        };
+        await upsertBackgroundTask(email, completedTask);
+        return result;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Analysis failed";
+        await upsertBackgroundTask(email, {
+          ...task,
+          ...runningTask,
+          status: "failed",
+          error: message,
+          updatedAt: new Date().toISOString(),
+        });
+        throw error;
+      }
+    })();
+
     if (body.stream) {
-      const encoder = new TextEncoder();
-      const stream = new ReadableStream<Uint8Array>({
-        start(controller) {
-          let closed = false;
-          const send = (event: unknown) => {
-            if (closed) return;
-            try {
-              controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
-            } catch {
-              closed = true;
-            }
-          };
-          const close = () => {
-            if (closed) return;
-            closed = true;
-            clearInterval(heartbeat);
-            try {
-              controller.close();
-            } catch {
-              // Ignore double-close and late close races.
-            }
-          };
-          const heartbeat = setInterval(() => {
-            send({
-              type: "heartbeat",
-              progress: {
-                stage: "build_plan",
-                message: "Still building Terraform preview",
-                percent: undefined,
-              },
-            });
-          }, 10_000);
-
-          void (async () => {
-            try {
-              const plan = await withDebugTiming(scope, "buildRemediationPlan", {
-                repoFullName,
-                targetCount: targets.length,
-                aiProvider: aiKey.provider,
-              }, () => buildRemediationPlan(
-                creds.token,
-                owner,
-                repo,
-                targets,
-                aiKey.provider,
-                aiKey.key,
-                {
-                  scope,
-                  onProgress: (progress) => send({ type: "progress", progress }),
-                }
-              ));
-              if (plan.patches.length === 0) {
-                debugLog(scope, "no patches generated", {
-                  repoFullName,
-                  summary: plan.summary,
-                  targetCount: targets.length,
-                  suggestedBatchCount: plan.suggestedBatches.length,
-                });
-              }
-              send({
-                type: "result",
-                patches: plan.patches,
-                summary: plan.summary,
-                failures: plan.failures,
-                coveredTargetIds: plan.coveredTargetIds,
-                uncoveredTargets: plan.uncoveredTargets,
-                fullyAddressed: plan.fullyAddressed,
-                suggestedBatches: plan.suggestedBatches,
-              });
-              close();
-            } catch (err) {
-              debugError(scope, "streamed preview generation failed", err, { email, repoFullName, targetCount: targets.length });
-              const msg = err instanceof Error ? err.message : "Analysis failed";
-              send({ type: "error", error: msg });
-              close();
-            }
-          })();
-        },
-      });
-
-      return new Response(stream, {
-        headers: {
-          "Content-Type": "application/x-ndjson; charset=utf-8",
-          "Cache-Control": "no-cache, no-transform",
-        },
-      });
+      void execution.catch(() => {});
+      return createTaskStream(email, task.id);
     }
 
-    const plan = await withDebugTiming(scope, "buildRemediationPlan", {
-      repoFullName,
-      targetCount: targets.length,
-      aiProvider: aiKey.provider,
-    }, () => buildRemediationPlan(creds.token, owner, repo, targets, aiKey.provider, aiKey.key, { scope }));
-    if (plan.patches.length === 0) {
-      debugLog(scope, "no patches generated", {
-        repoFullName,
-        summary: plan.summary,
-        targetCount: targets.length,
-        suggestedBatchCount: plan.suggestedBatches.length,
-      });
-    }
-    return NextResponse.json({
-      patches: plan.patches,
-      summary: plan.summary,
-      failures: plan.failures,
-      coveredTargetIds: plan.coveredTargetIds,
-      uncoveredTargets: plan.uncoveredTargets,
-      fullyAddressed: plan.fullyAddressed,
-      suggestedBatches: plan.suggestedBatches,
+    const result = await execution;
+    return NextResponse.json({ taskId: task.id, result });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Analysis failed";
+    console.error("[api/github/terraform-pr/preview] error:", error);
+    await upsertBackgroundTask(email, {
+      ...task,
+      status: "failed",
+      error: message,
+      updatedAt: new Date().toISOString(),
     });
-  } catch (err) {
-    debugError(scope, "preview generation failed", err, { email, repoFullName, targetCount: targets.length });
-    console.error("[api/github/terraform-pr/preview] error:", err);
-    const msg = err instanceof Error ? err.message : "Analysis failed";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
