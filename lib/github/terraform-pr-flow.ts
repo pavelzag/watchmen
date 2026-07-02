@@ -2,6 +2,7 @@ import { sql } from "@/lib/db";
 import { getDefaultBranchSha, createBranch, createFile, updateFile, createPullRequest } from "@/lib/github/client";
 import { buildRemediationPlan, type RemediationPlan, type RemediationProgressEvent } from "@/lib/github/terraform-remediation";
 import { debugLog, withDebugTiming } from "@/lib/debug";
+import { logTerraformError, logTerraformInfo, logTerraformWarn } from "@/lib/github/terraform-logging";
 import { postToSlack } from "@/lib/alerting";
 import type { AIProvider } from "@/lib/ai/client";
 import type { RemediationTarget } from "@/lib/github/remediation-targets";
@@ -26,6 +27,15 @@ export async function executeTerraformPrFlow(
   const { email, token, owner, repo, repoFullName, defaultBranch, targets, aiKey } = params;
   const scope = "api/github/terraform-pr:POST";
 
+  logTerraformInfo(scope, "flow_start", {
+    repoFullName,
+    owner,
+    repo,
+    defaultBranch,
+    targetCount: targets.length,
+    aiProvider: aiKey.provider,
+  });
+
   onProgress?.({
     stage: "build_plan",
     message: "Building remediation plan",
@@ -47,12 +57,32 @@ export async function executeTerraformPrFlow(
     { scope, onProgress }
   ));
 
+  logTerraformInfo(scope, "plan_ready", {
+    repoFullName,
+    patchCount: remediationPlan.patches.length,
+    failureCount: remediationPlan.failures.length,
+    coveredTargetCount: remediationPlan.coveredTargetIds.length,
+    uncoveredTargetCount: remediationPlan.uncoveredTargets.length,
+    fullyAddressed: remediationPlan.fullyAddressed,
+    summary: remediationPlan.summary,
+  });
+
   if (remediationPlan.patches.length === 0) {
+    logTerraformWarn(scope, "no_patches_generated", {
+      repoFullName,
+      targetCount: targets.length,
+      failureCount: remediationPlan.failures.length,
+    });
     return { remediationPlan, pr: { html_url: "", number: 0 } };
   }
 
   if (!remediationPlan.fullyAddressed) {
     const uncoveredTitles = remediationPlan.uncoveredTargets.map((target) => target.title);
+    logTerraformWarn(scope, "partial_remediation_blocked", {
+      repoFullName,
+      uncoveredCount: remediationPlan.uncoveredTargets.length,
+      uncoveredTitles,
+    });
     throw new IncompleteRemediationError(
       `Refusing to open a partial remediation PR. ${remediationPlan.uncoveredTargets.length} selected item${remediationPlan.uncoveredTargets.length === 1 ? "" : "s"} remain uncovered: ${uncoveredTitles.join(", ")}`
     );
@@ -63,6 +93,10 @@ export async function executeTerraformPrFlow(
     message: `Creating branch from ${defaultBranch}`,
     percent: 78,
     metadata: { defaultBranch },
+  });
+  logTerraformInfo(scope, "create_branch_start", {
+    repoFullName,
+    defaultBranch,
   });
   const headSha = await withDebugTiming(scope, "getDefaultBranchSha", { repoFullName, defaultBranch }, () =>
     getDefaultBranchSha(token, owner, repo, defaultBranch)
@@ -77,8 +111,23 @@ export async function executeTerraformPrFlow(
   const targetTitles = addressedTargets.map((target) => target.title).join(", ");
   let completed = 0;
   const totalOps = remediationPlan.patches.reduce((sum, patch) => sum + (patch.isNewFile ? 1 : 2), 0);
+  logTerraformInfo(scope, "commit_phase_start", {
+    repoFullName,
+    branchName,
+    patchCount: remediationPlan.patches.length,
+    totalOps,
+    addressedTargetCount: addressedTargets.length,
+  });
 
   for (const patch of remediationPlan.patches) {
+    logTerraformInfo(scope, "apply_patch_start", {
+      repoFullName,
+      branchName,
+      path: patch.path,
+      isNewFile: patch.isNewFile === true,
+      completed,
+      totalOps,
+    });
     onProgress?.({
       stage: "commit_files",
       message: `Applying ${patch.path}`,
@@ -97,6 +146,11 @@ export async function executeTerraformPrFlow(
         )
       );
       completed += 1;
+      logTerraformInfo(scope, "apply_patch_created", {
+        repoFullName,
+        branchName,
+        path: patch.path,
+      });
     } else {
       const rootDir = patch.path.includes("/") ? patch.path.slice(0, patch.path.lastIndexOf("/") + 1) : "";
       const filename = patch.path.slice(rootDir.length).replace(/-faulty(\.tf)$/, "$1").replace(/\.tf$/, "-faulty.tf");
@@ -110,6 +164,12 @@ export async function executeTerraformPrFlow(
         )
       );
       completed += 1;
+      logTerraformInfo(scope, "apply_patch_preserved_original", {
+        repoFullName,
+        branchName,
+        path: faultyPath,
+        sourcePath: patch.path,
+      });
 
       onProgress?.({
         stage: "commit_files",
@@ -128,6 +188,11 @@ export async function executeTerraformPrFlow(
         )
       );
       completed += 1;
+      logTerraformInfo(scope, "apply_patch_updated", {
+        repoFullName,
+        branchName,
+        path: patch.path,
+      });
     }
   }
 
@@ -169,6 +234,12 @@ ${targetDetails}
     percent: 94,
     metadata: { branchName },
   });
+  logTerraformInfo(scope, "pr_creation_start", {
+    repoFullName,
+    branchName,
+    defaultBranch,
+    addressedTargetCount: addressedTargets.length,
+  });
   const pr = await withDebugTiming(scope, "createPullRequest", { repoFullName, branchName }, () =>
     createPullRequest(
       token,
@@ -180,6 +251,12 @@ ${targetDetails}
       defaultBranch
     )
   );
+  logTerraformInfo(scope, "pr_created", {
+    repoFullName,
+    branchName,
+    prNumber: pr.number,
+    prUrl: pr.html_url,
+  });
 
   onProgress?.({
     stage: "notify",
@@ -228,6 +305,10 @@ ${targetDetails}
     }
   } catch (error) {
     debugLog(scope, "slack notification skipped", { error: error instanceof Error ? error.message : String(error) });
+    logTerraformWarn(scope, "slack_notification_skipped", {
+      repoFullName,
+      branchName,
+    });
   }
 
   onProgress?.({
@@ -236,7 +317,14 @@ ${targetDetails}
     percent: 100,
     metadata: { prNumber: pr.number, prUrl: pr.html_url },
   });
+  logTerraformInfo(scope, "flow_complete", {
+    repoFullName,
+    branchName,
+    prNumber: pr.number,
+    prUrl: pr.html_url,
+    patchCount: remediationPlan.patches.length,
+    failureCount: remediationPlan.failures.length,
+  });
 
   return { remediationPlan, pr };
 }
-

@@ -5,6 +5,7 @@ import { rejectDemoAi } from "@/lib/ai/demo";
 import { getUserCloudCredentials } from "@/lib/credentials";
 import { remediationTargetFromAttackPath, remediationTargetFromFinding, type RemediationTarget } from "@/lib/github/remediation-targets";
 import { executeTerraformPrFlow } from "@/lib/github/terraform-pr-flow";
+import { isTerraformVerboseEnabled, logTerraformError, logTerraformInfo } from "@/lib/github/terraform-logging";
 import { createBackgroundTask, getBackgroundTask, upsertBackgroundTask } from "@/lib/tasks/store";
 import type { AttackPath } from "@/lib/gcp/attack-paths";
 import type { SecurityFinding } from "@/lib/gcp/types";
@@ -102,6 +103,7 @@ function createTaskStream(email: string, taskId: string): Response {
 }
 
 export async function POST(req: NextRequest) {
+  const scope = "api/github/terraform-pr:POST";
   const session = await auth();
   if (!session?.user?.email) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -136,6 +138,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "repoFullName must be in 'owner/repo' format" }, { status: 400 });
   }
 
+  logTerraformInfo(scope, "request_received", {
+    repoFullName,
+    targetCount: targets.length,
+    stream: body.stream === true,
+    taskId: body.taskId,
+  });
+
   const task = createBackgroundTask("terraform_pr", {
     repoFullName,
     defaultBranch: body.defaultBranch,
@@ -146,6 +155,11 @@ export async function POST(req: NextRequest) {
   });
 
   await upsertBackgroundTask(email, task);
+  logTerraformInfo(scope, "task_queued", {
+    taskId: task.id,
+    repoFullName,
+    targetCount: targets.length,
+  });
 
   try {
     const runningTask = {
@@ -155,6 +169,10 @@ export async function POST(req: NextRequest) {
       lastProgressAt: task.lastProgressAt ?? task.updatedAt,
     };
     await upsertBackgroundTask(email, runningTask);
+    logTerraformInfo(scope, "task_running", {
+      taskId: task.id,
+      repoFullName,
+    });
 
     const execution = (async () => {
       try {
@@ -165,6 +183,11 @@ export async function POST(req: NextRequest) {
         if (!creds?.token) {
           throw new Error("GitHub token not configured");
         }
+        logTerraformInfo(scope, "credentials_loaded", {
+          taskId: task.id,
+          repoFullName,
+          aiProvider: ai.provider,
+        });
 
         const [ownerName, repoName] = repoFullName.split("/");
         const { remediationPlan, pr } = await executeTerraformPrFlow(
@@ -182,6 +205,16 @@ export async function POST(req: NextRequest) {
             },
           },
           (progress) => {
+            if (isTerraformVerboseEnabled()) {
+              logTerraformInfo(scope, "progress", {
+                taskId: task.id,
+                repoFullName,
+                stage: progress.stage,
+                percent: progress.percent,
+                message: progress.message,
+                metadata: progress.metadata,
+              });
+            }
             const now = new Date().toISOString();
             const updatedTask = {
               ...runningTask,
@@ -226,9 +259,21 @@ export async function POST(req: NextRequest) {
           },
         };
         await upsertBackgroundTask(email, completedTask);
+        logTerraformInfo(scope, "task_completed", {
+          taskId: task.id,
+          repoFullName,
+          prNumber: pr.number,
+          prUrl: pr.html_url,
+          patchCount: remediationPlan.patches.length,
+          failureCount: remediationPlan.failures.length,
+        });
         return completedTask.result;
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to create PR";
+        logTerraformError(scope, "task_failed", error, {
+          taskId: task.id,
+          repoFullName,
+        });
         await upsertBackgroundTask(email, {
           ...task,
           ...runningTask,
@@ -250,6 +295,10 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to create PR";
     console.error("[api/github/terraform-pr] error:", error);
+    logTerraformError(scope, "request_failed", error, {
+      taskId: task.id,
+      repoFullName,
+    });
     await upsertBackgroundTask(email, {
       ...task,
       status: "failed",

@@ -6,6 +6,7 @@ import { getUserCloudCredentials } from "@/lib/credentials";
 import { buildRemediationBatchSuggestions, remediationTargetFromAttackPath, remediationTargetFromFinding, shouldAutoSplitRemediationTargets, type RemediationTarget } from "@/lib/github/remediation-targets";
 import { buildRemediationPlan, type RemediationProgressEvent } from "@/lib/github/terraform-remediation";
 import { debugLog } from "@/lib/debug";
+import { isTerraformVerboseEnabled, logTerraformError, logTerraformInfo } from "@/lib/github/terraform-logging";
 import { createBackgroundTask, getBackgroundTask, upsertBackgroundTask } from "@/lib/tasks/store";
 import type { TaskResultMap } from "@/lib/tasks/types";
 import type { AttackPath } from "@/lib/gcp/attack-paths";
@@ -157,9 +158,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "repoFullName must be in 'owner/repo' format" }, { status: 400 });
   }
 
+  logTerraformInfo(scope, "request_received", {
+    repoFullName,
+    targetCount: targets.length,
+    stream: body.stream === true,
+    taskId: body.taskId,
+  });
+
   if (shouldAutoSplitRemediationTargets(targets)) {
     const splitResult = createSplitResult(targets);
     debugLog(scope, "preview auto-split", {
+      repoFullName,
+      targetCount: targets.length,
+      batchCount: splitResult.suggestedBatches.length,
+    });
+    logTerraformInfo(scope, "auto_split", {
       repoFullName,
       targetCount: targets.length,
       batchCount: splitResult.suggestedBatches.length,
@@ -195,6 +208,11 @@ export async function POST(req: NextRequest) {
   });
 
   await upsertBackgroundTask(email, task);
+  logTerraformInfo(scope, "task_queued", {
+    taskId: task.id,
+    repoFullName,
+    targetCount: targets.length,
+  });
 
   try {
     const runningTask = {
@@ -204,6 +222,10 @@ export async function POST(req: NextRequest) {
       lastProgressAt: task.lastProgressAt ?? task.updatedAt,
     };
     await upsertBackgroundTask(email, runningTask);
+    logTerraformInfo(scope, "task_running", {
+      taskId: task.id,
+      repoFullName,
+    });
 
     const execution = (async () => {
       try {
@@ -215,6 +237,11 @@ export async function POST(req: NextRequest) {
         if (!creds?.token) {
           throw new Error("GitHub token not configured");
         }
+        logTerraformInfo(scope, "credentials_loaded", {
+          taskId: task.id,
+          repoFullName,
+          aiProvider: ai.provider,
+        });
 
         const progressPersists: Promise<void>[] = [];
         const plan = await buildRemediationPlan(
@@ -227,6 +254,16 @@ export async function POST(req: NextRequest) {
           {
             scope: `api/github/terraform-pr/preview:${task.id}`,
             onProgress: (progress: RemediationProgressEvent) => {
+              if (isTerraformVerboseEnabled()) {
+                logTerraformInfo(scope, "progress", {
+                  taskId: task.id,
+                  repoFullName,
+                  stage: progress.stage,
+                  percent: progress.percent,
+                  message: progress.message,
+                  metadata: progress.metadata,
+                });
+              }
               const now = new Date().toISOString();
               const updatedTask = {
                 ...runningTask,
@@ -246,6 +283,15 @@ export async function POST(req: NextRequest) {
         );
 
         await Promise.allSettled(progressPersists);
+        logTerraformInfo(scope, "plan_ready", {
+          taskId: task.id,
+          repoFullName,
+          patchCount: plan.patches.length,
+          failureCount: plan.failures.length,
+          coveredTargetCount: plan.coveredTargetIds.length,
+          uncoveredTargetCount: plan.uncoveredTargets.length,
+          fullyAddressed: plan.fullyAddressed,
+        });
         const result: TaskResultMap["terraform_preview"] = {
           ok: true,
           repoFullName,
@@ -269,9 +315,20 @@ export async function POST(req: NextRequest) {
           result,
         };
         await upsertBackgroundTask(email, completedTask);
+        logTerraformInfo(scope, "task_completed", {
+          taskId: task.id,
+          repoFullName,
+          patchCount: result.patches.length,
+          failureCount: result.failures.length,
+          fullyAddressed: result.fullyAddressed,
+        });
         return result;
       } catch (error) {
         const message = error instanceof Error ? error.message : "Analysis failed";
+        logTerraformError(scope, "task_failed", error, {
+          taskId: task.id,
+          repoFullName,
+        });
         await upsertBackgroundTask(email, {
           ...task,
           ...runningTask,
@@ -293,6 +350,10 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Analysis failed";
     console.error("[api/github/terraform-pr/preview] error:", error);
+    logTerraformError(scope, "request_failed", error, {
+      repoFullName,
+      taskId: task.id,
+    });
     await upsertBackgroundTask(email, {
       ...task,
       status: "failed",
