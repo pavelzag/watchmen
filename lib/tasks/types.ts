@@ -17,7 +17,8 @@ export type BackgroundTaskKind =
   | "aws_scan"
   | "attack_paths"
   | "terraform_preview"
-  | "terraform_pr";
+  | "terraform_pr"
+  | "verify_fix";
 
 export interface TaskResultMap {
   gcp_scan: {
@@ -70,6 +71,31 @@ export interface TaskResultMap {
     suggestedBatches?: RemediationBatchSuggestion[];
     targets: RemediationTarget[];
   };
+  verify_fix: {
+    ok: boolean;
+    sourceTaskId?: string;
+    sourceTaskKind?: "terraform_preview" | "terraform_pr";
+    repoFullName?: string;
+    defaultBranch?: string;
+    targets: RemediationTarget[];
+    fetchedAt?: string;
+    snapshotFreshness: {
+      gcp?: string | null;
+      aws?: string | null;
+    };
+    resolvedTargets: RemediationTarget[];
+    remainingTargets: RemediationTarget[];
+    complianceControls: Array<{
+      cloud: "gcp" | "aws";
+      standard: string;
+      category: string;
+      id: string;
+      title: string;
+      status: string;
+    }>;
+    summary: string;
+    report: string;
+  };
 }
 
 export interface TaskParamsMap {
@@ -88,6 +114,13 @@ export interface TaskParamsMap {
   terraform_pr: {
     repoFullName: string;
     defaultBranch: string;
+    targets: RemediationTarget[];
+  };
+  verify_fix: {
+    sourceTaskId?: string;
+    sourceTaskKind?: "terraform_preview" | "terraform_pr";
+    repoFullName?: string;
+    defaultBranch?: string;
     targets: RemediationTarget[];
   };
 }

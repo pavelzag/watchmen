@@ -15,7 +15,7 @@ function statusColor(status: string): string {
 }
 
 export default function TasksPage() {
-  const { tasks, clearFinishedTasks, clearAllTasks, dismissTask, retryTask, startTerraformPreviewBatch, startTerraformPr } = useTaskCenter();
+  const { tasks, clearFinishedTasks, clearAllTasks, dismissTask, retryTask, startTerraformPreviewBatch, startTerraformPr, startVerifyFix } = useTaskCenter();
   const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(new Set());
 
   function toggleExpanded(taskId: string) {
@@ -108,6 +108,22 @@ export default function TasksPage() {
     );
   }
 
+  function renderVerificationTargets(label: string, targets: RemediationTarget[]) {
+    if (targets.length === 0) return null;
+    return (
+      <div className="space-y-1">
+        <p style={{ fontFamily: "monospace", fontSize: 9, color: "#6b7280", letterSpacing: 2 }}>
+          // {label.toUpperCase()}
+        </p>
+        {targets.map((target) => (
+          <p key={target.id} style={{ fontFamily: "monospace", fontSize: 10, color: "#9ca3af" }}>
+            - {target.title}
+          </p>
+        ))}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -150,7 +166,8 @@ export default function TasksPage() {
               const showMoreInfo =
                 task.status === "completed" &&
                 ((task.kind === "terraform_preview" && (task.result?.targets?.length ?? 0) > 0) ||
-                  (task.kind === "terraform_pr" && (task.result?.targets?.length ?? 0) > 0));
+                  (task.kind === "terraform_pr" && (task.result?.targets?.length ?? 0) > 0) ||
+                  (task.kind === "verify_fix" && ((task.result?.resolvedTargets?.length ?? 0) > 0 || (task.result?.remainingTargets?.length ?? 0) > 0)));
               const isExpanded = expandedTaskIds.has(task.id);
 
               return (
@@ -356,6 +373,50 @@ export default function TasksPage() {
               </div>
             )}
 
+            {task.status === "completed" && task.kind === "verify_fix" && task.result && (
+              <div className="space-y-2">
+                {(() => {
+                  const resolved = task.result.resolvedTargets ?? [];
+                  const remaining = task.result.remainingTargets ?? [];
+                  return (
+                    <>
+                      <div className="flex items-center gap-2" style={{ color: remaining.length === 0 ? "#22c55e" : "#fbbf24" }}>
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span style={{ fontFamily: "monospace", fontSize: 11 }}>
+                          {task.result.summary}
+                        </span>
+                      </div>
+                      {task.result.report && (
+                        <p style={{ fontFamily: "monospace", fontSize: 10, color: "var(--text-muted)", lineHeight: 1.6 }}>
+                          {task.result.report}
+                        </p>
+                      )}
+                      <CopyTextButton
+                        text={task.result.summary}
+                        label="Copy summary"
+                        className="text-[10px] font-mono"
+                        style={{ color: "var(--green)" }}
+                      />
+                      {renderVerificationTargets("Resolved targets", resolved)}
+                      {renderVerificationTargets("Remaining targets", remaining)}
+                      {task.result.complianceControls.length > 0 && (
+                        <div className="space-y-1">
+                          <p style={{ fontFamily: "monospace", fontSize: 9, color: "#6b7280", letterSpacing: 2 }}>
+                            // RELATED COMPLIANCE CONTROLS
+                          </p>
+                          {task.result.complianceControls.map((control) => (
+                            <p key={`${control.cloud}-${control.id}`} style={{ fontFamily: "monospace", fontSize: 10, color: "#9ca3af" }}>
+                              - [{control.cloud.toUpperCase()}] {control.standard} · {control.title} ({control.status})
+                            </p>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+              </div>
+            )}
+
             {showMoreInfo && (
               <div className="space-y-3">
                 <button
@@ -391,7 +452,30 @@ export default function TasksPage() {
                             {renderFailures(task.result.failures ?? [])}
                           </div>
                         )
+                        : task.kind === "verify_fix" && task.result
+                          ? (
+                            <div className="space-y-3">
+                              {renderVerificationTargets("Resolved targets", task.result.resolvedTargets ?? [])}
+                              {renderVerificationTargets("Remaining targets", task.result.remainingTargets ?? [])}
+                            </div>
+                          )
                         : null}
+                    {task.status === "completed" && (task.kind === "terraform_preview" || task.kind === "terraform_pr") && (task.result?.targets?.length ?? 0) > 0 && (
+                      <button
+                        onClick={() => startVerifyFix({
+                          sourceTaskId: task.id,
+                          sourceTaskKind: task.kind,
+                          repoFullName: task.result!.repoFullName,
+                          defaultBranch: task.result!.defaultBranch,
+                          targets: task.result!.targets,
+                        })}
+                        className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-mono uppercase tracking-widest"
+                        style={{ border: "1px solid #6366f144", color: "#a78bfa", background: "#140f28" }}
+                      >
+                        <CheckCircle2 className="w-3 h-3" />
+                        Verify Fix
+                      </button>
+                    )}
                   </div>
                 )}
               </div>

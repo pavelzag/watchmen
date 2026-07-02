@@ -11,7 +11,8 @@ function taskTitle(kind: BackgroundTaskKind, params: TaskParamsMap[BackgroundTas
   if (kind === "aws_scan") return "AWS Cloud Scan";
   if (kind === "attack_paths") return "Attack Path Analysis";
   if (kind === "terraform_preview") return `Terraform Preview · ${(params as TaskParamsMap["terraform_preview"]).repoFullName}`;
-  return `Terraform PR · ${(params as TaskParamsMap["terraform_pr"]).repoFullName}`;
+  if (kind === "terraform_pr") return `Terraform PR · ${(params as TaskParamsMap["terraform_pr"]).repoFullName}`;
+  return "Verify Fix";
 }
 
 export function createBackgroundTask<K extends BackgroundTaskKind>(
@@ -75,6 +76,19 @@ export function normalizeBackgroundTask(task: AnyBackgroundTask): AnyBackgroundT
         uncoveredTargets: normalized.result.uncoveredTargets ?? [],
         fullyAddressed: normalized.result.fullyAddressed ?? true,
         suggestedBatches: normalized.result.suggestedBatches ?? [],
+      },
+    } as AnyBackgroundTask;
+  }
+
+  if (normalized.kind === "verify_fix" && normalized.result) {
+    return {
+      ...normalized,
+      result: {
+        ...normalized.result,
+        resolvedTargets: normalized.result.resolvedTargets ?? [],
+        remainingTargets: normalized.result.remainingTargets ?? [],
+        complianceControls: normalized.result.complianceControls ?? [],
+        snapshotFreshness: normalized.result.snapshotFreshness ?? {},
       },
     } as AnyBackgroundTask;
   }

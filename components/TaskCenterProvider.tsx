@@ -34,6 +34,7 @@ interface TaskCenterContextValue {
   startTerraformPreview: (params: TaskParamsMap["terraform_preview"]) => string;
   startTerraformPreviewBatch: (paramsList: TaskParamsMap["terraform_preview"][]) => string[];
   startTerraformPr: (params: TaskParamsMap["terraform_pr"]) => string;
+  startVerifyFix: (params: TaskParamsMap["verify_fix"]) => string;
   retryTask: (taskId: string) => string | null;
   dismissTask: (taskId: string) => void;
   clearFinishedTasks: () => void;
@@ -53,6 +54,7 @@ const TASK_STALE_TIMEOUT_MS: Record<BackgroundTaskKind, number> = {
   attack_paths: 15 * 60 * 1000,
   terraform_preview: 7 * 60 * 1000,
   terraform_pr: 7 * 60 * 1000,
+  verify_fix: 10 * 60 * 1000,
 };
 
 function taskTitle(kind: BackgroundTaskKind, params: TaskParamsMap[BackgroundTaskKind]): string {
@@ -60,7 +62,8 @@ function taskTitle(kind: BackgroundTaskKind, params: TaskParamsMap[BackgroundTas
   if (kind === "aws_scan") return "AWS Cloud Scan";
   if (kind === "attack_paths") return "Attack Path Analysis";
   if (kind === "terraform_preview") return `Terraform Preview · ${(params as TaskParamsMap["terraform_preview"]).repoFullName}`;
-  return `Terraform PR · ${(params as TaskParamsMap["terraform_pr"]).repoFullName}`;
+  if (kind === "terraform_pr") return `Terraform PR · ${(params as TaskParamsMap["terraform_pr"]).repoFullName}`;
+  return "Verify Fix";
 }
 
 function newTask<K extends BackgroundTaskKind>(kind: K, params: TaskParamsMap[K]): BackgroundTask<K> {
@@ -138,6 +141,19 @@ function normalizeTask(task: AnyBackgroundTask): AnyBackgroundTask {
         uncoveredTargets: normalizedTask.result.uncoveredTargets ?? [],
         fullyAddressed: normalizedTask.result.fullyAddressed ?? true,
         suggestedBatches: normalizedTask.result.suggestedBatches ?? [],
+      },
+    } as AnyBackgroundTask);
+  }
+
+  if (normalizedTask.kind === "verify_fix" && normalizedTask.result) {
+    return markStaleTask({
+      ...normalizedTask,
+      result: {
+        ...normalizedTask.result,
+        resolvedTargets: normalizedTask.result.resolvedTargets ?? [],
+        remainingTargets: normalizedTask.result.remainingTargets ?? [],
+        complianceControls: normalizedTask.result.complianceControls ?? [],
+        snapshotFreshness: normalizedTask.result.snapshotFreshness ?? {},
       },
     } as AnyBackgroundTask);
   }
@@ -515,6 +531,61 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
     });
   }, [enqueueTask]);
 
+  const startVerifyFix = useCallback((params: TaskParamsMap["verify_fix"]) => {
+    return enqueueTask("verify_fix", params, async (_taskId, pushProgress, succeed, fail) => {
+      try {
+        pushProgress({
+          stage: "start",
+          message: "Verifying the latest snapshots against the remediation targets",
+          percent: 10,
+        });
+        const response = await fetch("/api/agent/verify-fix", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...params, stream: true }),
+        });
+
+        const data = await response.json().catch(() => ({})) as {
+          error?: string;
+          report?: string;
+          verification?: TaskResultMap["verify_fix"];
+        };
+
+        if (!response.ok) {
+          throw new Error(data.error ?? "Failed to verify fix");
+        }
+
+        if (!data.verification) {
+          throw new Error(data.error ?? "Failed to verify fix");
+        }
+
+        pushProgress({
+          stage: "complete",
+          message: data.verification.remainingTargets.length === 0
+            ? "Remediation appears resolved"
+            : "Some targets still need attention",
+          percent: 100,
+          metadata: {
+            resolvedTargets: data.verification.resolvedTargets.length,
+            remainingTargets: data.verification.remainingTargets.length,
+          },
+        });
+
+        succeed({
+          ...data.verification,
+          report: data.report ?? data.verification.report,
+          sourceTaskId: params.sourceTaskId,
+          sourceTaskKind: params.sourceTaskKind,
+          repoFullName: params.repoFullName,
+          defaultBranch: params.defaultBranch,
+          targets: params.targets,
+        });
+      } catch (error) {
+        fail(error instanceof Error ? error.message : "Failed to verify fix");
+      }
+    });
+  }, [enqueueTask]);
+
   const retryTask = useCallback((taskId: string): string | null => {
     const task = tasks.find((item) => item.id === taskId);
     if (!task || isActiveTask(task)) return null;
@@ -524,6 +595,7 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
     if (task.kind === "attack_paths") return startAttackPathAnalysis();
     if (task.kind === "terraform_preview") return startTerraformPreview(task.params);
     if (task.kind === "terraform_pr") return startTerraformPr(task.params);
+    if (task.kind === "verify_fix") return startVerifyFix(task.params);
 
     return null;
   }, [
@@ -533,6 +605,7 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
     startAttackPathAnalysis,
     startTerraformPreview,
     startTerraformPr,
+    startVerifyFix,
   ]);
 
   const dismissTask = useCallback((taskId: string) => {
@@ -697,6 +770,7 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
     startTerraformPreview,
     startTerraformPreviewBatch,
     startTerraformPr,
+    startVerifyFix,
     retryTask,
     dismissTask,
     clearFinishedTasks,
@@ -709,6 +783,7 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
     startTerraformPreview,
     startTerraformPreviewBatch,
     startTerraformPr,
+    startVerifyFix,
     retryTask,
     dismissTask,
     clearFinishedTasks,
