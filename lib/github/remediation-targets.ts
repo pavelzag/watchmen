@@ -228,6 +228,17 @@ function expiredServiceAccountKeyGuard(target: RemediationTarget): string | null
   return null;
 }
 
+function isServiceAccountKeyHygieneFinding(target: Pick<RemediationTarget, "id" | "title">): boolean {
+  const id = target.id.toLowerCase();
+  const title = target.title.toLowerCase();
+  return (
+    id.startsWith("multiple_sa_keys:") ||
+    id.startsWith("expired_sa_key:") ||
+    title.includes("multiple keys") ||
+    title.includes("expired service account key")
+  );
+}
+
 function attackPathProjectIds(path: AttackPath): string[] {
   return [...new Set(path.nodes.map((node) => node.projectId).filter(Boolean))];
 }
@@ -259,7 +270,9 @@ export function remediationTargetFromAttackPath(path: AttackPath): RemediationTa
 }
 
 export function remediationTargetFromFinding(finding: SecurityFinding): RemediationTarget {
-  const autoRemediable = !finding.id.toLowerCase().startsWith("sa_not_in_list:");
+  const autoRemediable =
+    !finding.id.toLowerCase().startsWith("sa_not_in_list:") &&
+    !isServiceAccountKeyHygieneFinding({ id: finding.id, title: finding.title });
   const target: RemediationTarget = {
     id: finding.id,
     kind: "finding",

@@ -106,6 +106,7 @@ export async function planRemediation(params: {
   const selectedTargets = findings
     .filter((finding) => finding.cloud === "gcp")
     .map((finding) => remediationTargetFromFinding(toGcpSecurityFinding(finding)));
+  const previewTargets = selectedTargets.filter((target) => target.autoRemediable !== false);
   const excludedFindings = findings
     .filter((finding) => finding.cloud !== "gcp")
     .map((finding) => ({
@@ -125,11 +126,11 @@ export async function planRemediation(params: {
     output: {
       selectedTargets,
       excludedFindings,
-      previewEligible: selectedTargets.length > 0,
+      previewEligible: previewTargets.length > 0,
     },
   });
 
-  const previewEligible = selectedTargets.length > 0;
+  const previewEligible = previewTargets.length > 0;
   const plan = {
     objective,
     selectedTargets,

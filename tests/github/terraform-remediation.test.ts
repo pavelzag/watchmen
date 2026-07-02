@@ -159,6 +159,30 @@ resource "google_compute_firewall" "fw-open-ssh" {
     expect(target.promptDetails.join("\n")).toContain("Do not invent key IDs");
   });
 
+  it("marks service-account key hygiene findings as manual review only", async () => {
+    const plan = await buildRemediationPlan(
+      TOKEN,
+      OWNER,
+      REPO,
+      [
+        remediationTargetFromFinding(makeFinding({
+          id: "multiple_sa_keys:proj-1:wm-attack-multikey-sa@proj-1.iam.gserviceaccount.com",
+          title: "Service Account with Multiple Keys",
+          description: "Service account has 9 user-managed keys.",
+          resourceType: "service_account",
+          resourceName: "wm-attack-multikey-sa@proj-1.iam.gserviceaccount.com",
+        })),
+      ],
+      PROVIDER,
+      API_KEY
+    );
+
+    expect(plan.patches).toHaveLength(0);
+    expect(plan.fullyAddressed).toBe(false);
+    expect(plan.summary).toContain("manual review");
+    expect(mockCallAI).not.toHaveBeenCalled();
+  });
+
   it("skips files where AI returns identical content", async () => {
     mockSearchTfFiles.mockResolvedValue(["main.tf"]);
     mockGetFileContent.mockImplementation(async (_token, _owner, _repo, filePath) => {
