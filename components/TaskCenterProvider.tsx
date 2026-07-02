@@ -625,6 +625,11 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
     }
 
     if (!hasHydratedRef.current) return;
+    if (previousTasksRef.current.length === 0) {
+      previousTasksRef.current = tasks;
+      return;
+    }
+
     const previousTasks = previousTasksRef.current;
     const previousById = new Map(previousTasks.map((task) => [task.id, task]));
 

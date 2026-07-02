@@ -165,6 +165,7 @@ export default function RemediateModal({ targets, onClose }: Props) {
   const [creationSummary, setCreationSummary] = useState<string | null>(null);
   const [analysisTaskId, setAnalysisTaskId] = useState<string | null>(null);
   const [creationTaskId, setCreationTaskId] = useState<string | null>(null);
+  const [isCreatingPr, setIsCreatingPr] = useState(false);
   const { tasks, startTerraformPreview, startTerraformPr } = useTaskCenter();
   const creationStartedAtRef = useRef<number | null>(null);
   const creationCompletionTimerRef = useRef<number | null>(null);
@@ -226,9 +227,10 @@ export default function RemediateModal({ targets, onClose }: Props) {
 
   async function createPr() {
     if (!selectedRepo) return;
-    if (creationTaskId) return;
+    if (creationTaskId || isCreatingPr) return;
     creationStartedAtRef.current = Date.now();
-    setStep("creating");
+    setIsCreatingPr(true);
+    setStep("preview");
     setNoChanges(false);
     setPrUrl(null);
     setPrNumber(null);
@@ -305,6 +307,7 @@ export default function RemediateModal({ targets, onClose }: Props) {
           setPrNumber(result.prNumber ?? null);
           setCreationSummary(result.prNumber ? `Pull request #${result.prNumber} created` : null);
         }
+        setIsCreatingPr(false);
         setStep("done");
       };
       const elapsed = creationStartedAtRef.current ? Date.now() - creationStartedAtRef.current : 0;
@@ -315,6 +318,7 @@ export default function RemediateModal({ targets, onClose }: Props) {
       const error = task.error;
       const applyFailure = () => {
         setErrorMsg(error ?? "Unknown error creating PR");
+        setIsCreatingPr(false);
         setStep("error");
       };
       const elapsed = creationStartedAtRef.current ? Date.now() - creationStartedAtRef.current : 0;
@@ -371,11 +375,11 @@ export default function RemediateModal({ targets, onClose }: Props) {
             >
               // Fix with GitHub PR
             </p>
-            <p style={{ fontFamily: "monospace", fontSize: 10, color: "var(--border-dim)", marginTop: 2 }}>
-              {step === "select-paths" && "Select findings or attack paths to remediate"}
-              {step === "select-repo" && "Choose a repository with Terraform files"}
-              {step === "analyzing" && "Scanning Terraform files…"}
-              {step === "preview" && analysisSummary && analysisSummary}
+          <p style={{ fontFamily: "monospace", fontSize: 10, color: "var(--border-dim)", marginTop: 2 }}>
+            {step === "select-paths" && "Select findings or attack paths to remediate"}
+            {step === "select-repo" && "Choose a repository with Terraform files"}
+            {step === "analyzing" && "Scanning Terraform files…"}
+            {step === "preview" && analysisSummary && analysisSummary}
               {step === "preview" && !analysisSummary && patches.length > 0 && (
                 patches.every(p => p.isNewFile)
                   ? "New security file will be created"
@@ -384,7 +388,7 @@ export default function RemediateModal({ targets, onClose }: Props) {
                     : `${patches.length} file${patches.length === 1 ? "" : "s"} will be changed`
               )}
               {step === "preview" && !analysisSummary && patches.length === 0 && "No changes needed"}
-              {step === "creating" && (creationSummary ?? "Opening pull request…")}
+              {step === "preview" && isCreatingPr && (creationSummary ?? "Opening pull request…")}
               {step === "done" && "Pull request created"}
               {step === "error" && "Something went wrong"}
             </p>
@@ -396,6 +400,59 @@ export default function RemediateModal({ targets, onClose }: Props) {
 
         {/* Body (scrollable) */}
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
+
+          {(step === "preview" || step === "done") && (
+            <div className="space-y-3">
+              {isCreatingPr && (
+                <div className="flex items-center gap-2 p-3" style={{ border: "1px solid rgba(0,170,43,0.25)", background: "rgba(0,170,43,0.04)" }}>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: "var(--green)" }} />
+                  <p style={{ fontFamily: "monospace", fontSize: 10, color: "var(--green)" }}>
+                    Opening pull request…
+                  </p>
+                </div>
+              )}
+
+              {step === "done" && (
+                <div className="space-y-3">
+                  {noChanges || !prUrl ? (
+                    <div className="flex items-start gap-3 p-4" style={{ border: "1px solid var(--border-dim)", background: "rgba(0,170,43,0.04)" }}>
+                      <Check className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "var(--green)" }} />
+                      <div className="flex-1 flex items-start justify-between gap-3">
+                        <p style={{ fontFamily: "monospace", fontSize: 11, color: "#9ca3af", lineHeight: 1.6 }}>
+                          No changes were needed — your Terraform files already address these findings or attack paths, or no matching resources were found.
+                        </p>
+                        <CopyTextButton
+                          text={creationSummary ?? "No changes were needed — your Terraform files already address these findings or attack paths, or no matching resources were found."}
+                          label="Copy"
+                          className="text-[10px] font-mono"
+                          style={{ color: "var(--green)" }}
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-4 space-y-3" style={{ border: "1px solid rgba(0,170,43,0.4)", background: "rgba(0,170,43,0.05)" }}>
+                      <div className="flex items-center gap-2">
+                        <Check className="w-4 h-4" style={{ color: "var(--green)" }} />
+                        <p style={{ fontFamily: "monospace", fontSize: 12, color: "var(--green)", fontWeight: 700 }}>
+                          Pull Request #{prNumber} created
+                        </p>
+                      </div>
+                      <a
+                        href={prUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-2 text-xs font-mono transition-opacity hover:opacity-80"
+                        style={{ color: "#60a5fa", textDecoration: "underline" }}
+                      >
+                        <ExternalLink className="w-3 h-3" />
+                        {prUrl}
+                      </a>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* ── Step 1: select paths ─────────────────────────────────── */}
           {step === "select-paths" && (
@@ -639,97 +696,7 @@ export default function RemediateModal({ targets, onClose }: Props) {
             </>
           )}
 
-          {/* ── Step 5: creating ─────────────────────────────────────── */}
-          {step === "creating" && (
-            <div className="flex flex-col items-center justify-center py-12 gap-4">
-              <Loader2 className="w-8 h-8 animate-spin" style={{ color: "var(--green)" }} />
-              <p style={{ fontFamily: "monospace", fontSize: 12, color: "var(--text-muted)" }}>
-                Creating branch, committing fixes, and opening PR…
-              </p>
-              <div className="w-full max-w-md" style={{ border: "1px solid var(--border-dim)", background: "#050505", height: 10 }}>
-                <div
-                  style={{
-                    width: `${creationPercent}%`,
-                    height: "100%",
-                    background: "linear-gradient(90deg, rgba(0,170,43,0.5), rgba(34,197,94,0.95))",
-                    transition: "width 180ms ease",
-                  }}
-                />
-              </div>
-              <div className="w-full max-w-md space-y-2">
-                {creationProgress.length === 0 && (
-                  <p style={{ fontFamily: "monospace", fontSize: 10, color: "var(--border-dim)" }}>
-                    Initializing PR creation…
-                  </p>
-                )}
-                {creationProgress.map((progress, index) => (
-                  <div
-                    key={`${progress.stage}-${index}-${progress.message}`}
-                    className="flex items-start justify-between gap-3"
-                  >
-                    <p style={{ fontFamily: "monospace", fontSize: 10, color: index === creationProgress.length - 1 ? "#e5e7eb" : "#6b7280", lineHeight: 1.5 }}>
-                      {progress.message}
-                    </p>
-                    {(typeof progress.completed === "number" && typeof progress.total === "number") && (
-                      <span style={{ fontFamily: "monospace", fontSize: 9, color: "var(--border-dim)", whiteSpace: "nowrap" }}>
-                        {progress.completed}/{progress.total}
-                      </span>
-                    )}
-                  </div>
-                ))}
-              </div>
-              <p style={{ fontFamily: "monospace", fontSize: 10, color: "var(--green)" }}>
-                You can close this modal and continue from{" "}
-                <Link href="/dashboard/tasks" style={{ textDecoration: "underline", color: "var(--green)" }}>
-                  Task Center
-                </Link>
-                .
-              </p>
-            </div>
-          )}
-
-          {/* ── Step 6: done ─────────────────────────────────────────── */}
-          {step === "done" && (
-            <div className="space-y-4">
-              {noChanges || !prUrl ? (
-                <div className="flex items-start gap-3 p-4" style={{ border: "1px solid var(--border-dim)", background: "rgba(0,170,43,0.04)" }}>
-                  <Check className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "var(--green)" }} />
-                  <div className="flex-1 flex items-start justify-between gap-3">
-                    <p style={{ fontFamily: "monospace", fontSize: 11, color: "#9ca3af", lineHeight: 1.6 }}>
-                      No changes were needed — your Terraform files already address these findings or attack paths, or no matching resources were found.
-                    </p>
-                    <CopyTextButton
-                      text={creationSummary ?? "No changes were needed — your Terraform files already address these findings or attack paths, or no matching resources were found."}
-                      label="Copy"
-                      className="text-[10px] font-mono"
-                      style={{ color: "var(--green)" }}
-                    />
-                  </div>
-                </div>
-              ) : (
-                <div className="p-4 space-y-3" style={{ border: "1px solid rgba(0,170,43,0.4)", background: "rgba(0,170,43,0.05)" }}>
-                  <div className="flex items-center gap-2">
-                    <Check className="w-4 h-4" style={{ color: "var(--green)" }} />
-                    <p style={{ fontFamily: "monospace", fontSize: 12, color: "var(--green)", fontWeight: 700 }}>
-                      Pull Request #{prNumber} created
-                    </p>
-                  </div>
-                  <a
-                    href={prUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-2 text-xs font-mono transition-opacity hover:opacity-80"
-                    style={{ color: "#60a5fa", textDecoration: "underline" }}
-                  >
-                    <ExternalLink className="w-3 h-3" />
-                    {prUrl}
-                  </a>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* ── Step 7: error ────────────────────────────────────────── */}
+          {/* ── Step 6: error ────────────────────────────────────────── */}
           {step === "error" && (
             <div className="flex items-start gap-3 p-4" style={{ border: "1px solid #ef444444", background: "#1a0606" }}>
               <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "#ef4444" }} />
@@ -851,10 +818,11 @@ export default function RemediateModal({ targets, onClose }: Props) {
               <button
                 type="button"
                 onClick={createPr}
+                disabled={isCreatingPr}
                 className="flex items-center gap-2 text-xs font-mono font-bold px-5 py-2 transition-all"
-                style={{ background: "var(--green)", color: "var(--bg)" }}
+                style={isCreatingPr ? { background: "var(--green)", color: "var(--bg)", opacity: 0.7 } : { background: "var(--green)", color: "var(--bg)" }}
               >
-                Create PR <ChevronRight className="w-3 h-3" />
+                {isCreatingPr ? "Creating…" : "Create PR"} <ChevronRight className="w-3 h-3" />
               </button>
             )}
             {step === "preview" && patches.length === 0 && (
