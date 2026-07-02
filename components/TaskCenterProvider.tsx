@@ -187,6 +187,7 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
   const previousTasksRef = useRef<AnyBackgroundTask[]>([]);
   const persistTimerRef = useRef<number | null>(null);
   const pendingPersistTasksRef = useRef<Map<string, AnyBackgroundTask>>(new Map());
+  const notifiedTaskIdsRef = useRef<Set<string>>(new Set());
 
   const mergeTasks = useCallback((localTasks: AnyBackgroundTask[], remoteTasks: AnyBackgroundTask[]) => {
     const merged = new Map<string, AnyBackgroundTask>();
@@ -654,14 +655,9 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
     });
 
     for (const task of changedTasks) {
-      const previous = previousById.get(task.id);
-      if (
-        previous &&
-        previous.status !== "completed" &&
-        task.status === "completed" &&
-        task.kind === "terraform_pr" &&
-        task.result?.prUrl
-      ) {
+      const alreadyNotified = notifiedTaskIdsRef.current.has(task.id);
+      if (task.kind === "terraform_pr" && task.status === "completed" && task.result?.prUrl && !alreadyNotified) {
+        notifiedTaskIdsRef.current.add(task.id);
         toast.success(`Pull request #${task.result.prNumber ?? ""} created`, {
           description: task.result.repoFullName,
           duration: 5_000,
