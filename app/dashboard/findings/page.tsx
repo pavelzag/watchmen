@@ -392,6 +392,13 @@ function FindingCard({
     setInvestigationOpen(true);
     setPlanOpen(true);
 
+    if (remediationSucceeded) {
+      if (finding.cloud === "gcp" && plan.previewEligible) {
+        onOpenRemediation(finding);
+      }
+      return;
+    }
+
     const jobs: Promise<void>[] = [];
     if (!investigationSucceeded && !investigationRunning) {
       jobs.push(runInvestigation());
@@ -403,6 +410,8 @@ function FindingCard({
     if (jobs.length === 0) return;
     await Promise.allSettled(jobs);
   }
+
+  const canOpenPrWorkflow = remediationSucceeded && finding.cloud === "gcp" && plan.previewEligible;
 
   async function copySuggestedCommand(event: MouseEvent<HTMLDivElement>) {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-copy-command]");
@@ -489,14 +498,16 @@ function FindingCard({
         <div className="px-4 py-2 flex items-center justify-between gap-2">
           <button
             onClick={remediate}
-            disabled={demoMode || remediationRunning || remediationSucceeded}
+            disabled={demoMode || remediationRunning || (remediationSucceeded && !canOpenPrWorkflow)}
             className={cn(
               "flex items-center gap-1.5 text-xs font-medium transition-all duration-150 rounded-lg px-2.5 py-1",
               remediationRunning
                 ? "text-slate-500 cursor-not-allowed"
                 : demoMode
                   ? "text-slate-500 cursor-not-allowed bg-slate-500/5"
-                  : remediationSucceeded
+                  : canOpenPrWorkflow
+                    ? "text-violet-300 bg-violet-500/10 hover:bg-violet-500/15 hover:text-violet-200"
+                    : remediationSucceeded
                     ? "text-emerald-400 bg-emerald-500/10"
                     : remediationFailed
                       ? "text-rose-300 hover:text-emerald-300 bg-rose-500/10 hover:bg-emerald-500/10"
@@ -508,7 +519,17 @@ function FindingCard({
             ) : (
               <FileSearch className="w-3 h-3" />
             )}
-            {remediationRunning ? "Remediating..." : demoMode ? "Disabled in demo" : remediationSucceeded ? "Remediated" : remediationFailed ? "Retry remediation" : "Investigate and plan fix"}
+            {remediationRunning
+              ? "Remediating..."
+              : demoMode
+                ? "Disabled in demo"
+                : canOpenPrWorkflow
+                  ? "Open PR workflow"
+                  : remediationSucceeded
+                    ? "Remediated"
+                    : remediationFailed
+                      ? "Retry remediation"
+                      : "Investigate and plan fix"}
           </button>
         </div>
 

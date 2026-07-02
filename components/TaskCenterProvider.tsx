@@ -627,7 +627,8 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
       ) {
         toast.success(`Pull request #${task.result.prNumber ?? ""} created`, {
           description: task.result.repoFullName,
-          duration: 20_000,
+          duration: 5_000,
+          closeButton: true,
           action: {
             label: "Open PR",
             onClick: () => window.open(task.result?.prUrl, "_blank", "noopener,noreferrer"),
