@@ -71,9 +71,10 @@ export function computeFindings(snapshot: GcpSnapshot): SecurityFinding[] {
 
   // ── HIGH ──────────────────────────────────────────────────────────────────
 
-  // expired_sa_key: service accounts with any key past validBeforeTime
+  // expired_sa_key: service accounts with any user-managed key past validBeforeTime
   for (const sa of snapshot.serviceAccounts) {
     const expiredKeys = sa.keys.filter((k) => {
+      if (k.keyType !== "USER_MANAGED") return false;
       if (!k.validBeforeTime) return false;
       return new Date(k.validBeforeTime) < now;
     });

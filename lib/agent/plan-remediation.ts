@@ -80,6 +80,8 @@ Rules:
 - Require explicit user approval before Terraform preview or PR creation.
 - If a resource is not eligible for automated Terraform remediation, say so.
 - Do not invent owners, repos, files, or commands not present in the input.
+- For expired service account key findings, do not invent key IDs, service account emails, or Terraform resource blocks. If the input does not provide a specific key ID, recommend manual verification/deletion instead of Terraform.
+- If the input only says a service account has expired keys, treat that as evidence of a stale snapshot unless the JSON explicitly includes the key metadata.
 
 Input:
 ${JSON.stringify(params, null, 2)}`;

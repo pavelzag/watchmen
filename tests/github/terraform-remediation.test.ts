@@ -145,6 +145,20 @@ resource "google_compute_firewall" "fw-open-ssh" {
     expect(plan.fullyAddressed).toBe(true);
   });
 
+  it("adds a guardrail for expired service account key findings", async () => {
+    const target = remediationTargetFromFinding(makeFinding({
+      id: "expired_sa_key:proj-1:user-sa@proj-1.iam.gserviceaccount.com",
+      title: "Expired Service Account Key",
+      description: 'Service account "user-sa@proj-1.iam.gserviceaccount.com" has 1 expired key(s).',
+      resourceType: "service_account",
+      resourceName: "user-sa@proj-1.iam.gserviceaccount.com",
+      remediationHint: 'Rotate or delete expired keys for "user-sa@proj-1.iam.gserviceaccount.com" in the GCP Console > IAM > Service Accounts.',
+    }));
+
+    expect(target.promptDetails.join("\n")).toContain("Guard: only treat keys as expired");
+    expect(target.promptDetails.join("\n")).toContain("Do not invent key IDs");
+  });
+
   it("skips files where AI returns identical content", async () => {
     mockSearchTfFiles.mockResolvedValue(["main.tf"]);
     mockGetFileContent.mockImplementation(async (_token, _owner, _repo, filePath) => {

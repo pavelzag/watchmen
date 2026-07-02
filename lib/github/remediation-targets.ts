@@ -221,6 +221,13 @@ function collectTerms(...values: Array<string | null | undefined>): string[] {
   return [...terms];
 }
 
+function expiredServiceAccountKeyGuard(target: RemediationTarget): string | null {
+  if (target.id.toLowerCase().startsWith("expired_sa_key:") || target.title === "Expired Service Account Key") {
+    return "    - Guard: only treat keys as expired when the input explicitly provides a USER_MANAGED key with a past validBeforeTime. Do not invent key IDs, resource names, or Terraform resources; if the key ID is missing, recommend manual review.";
+  }
+  return null;
+}
+
 function attackPathProjectIds(path: AttackPath): string[] {
   return [...new Set(path.nodes.map((node) => node.projectId).filter(Boolean))];
 }
@@ -253,7 +260,7 @@ export function remediationTargetFromAttackPath(path: AttackPath): RemediationTa
 
 export function remediationTargetFromFinding(finding: SecurityFinding): RemediationTarget {
   const autoRemediable = !finding.id.toLowerCase().startsWith("sa_not_in_list:");
-  return {
+  const target: RemediationTarget = {
     id: finding.id,
     kind: "finding",
     severity: finding.severity,
@@ -278,4 +285,11 @@ export function remediationTargetFromFinding(finding: SecurityFinding): Remediat
     ].filter(Boolean),
     autoRemediable,
   };
+
+  const guard = expiredServiceAccountKeyGuard(target);
+  if (guard) {
+    target.promptDetails.push(guard);
+  }
+
+  return target;
 }
