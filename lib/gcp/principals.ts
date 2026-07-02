@@ -15,6 +15,7 @@ export type GcpPrincipalAccess = {
 };
 
 const SERVICE_ACCOUNT_EMAIL_PROJECT_RE = /^serviceAccount:[^@]+@([^.]+)\.iam\.gserviceaccount\.com$/;
+const GOOGLE_MANAGED_SERVICE_AGENT_EMAIL_RE = /^serviceAccount:service-(\d+)@gcp-sa-[^.]+\.iam\.gserviceaccount\.com$/;
 
 function addScope(scopes: BindingScope[], projectId: string, resourceType: string, resourceName: string, bindings?: IamBinding[]) {
   if (!bindings || bindings.length === 0) return;
@@ -64,6 +65,16 @@ function inferProjectIdFromServiceAccountEmail(email: string): string | null {
   return match ? match[1] : null;
 }
 
+export function inferOwningProjectIdFromServiceAccountEmail(email: string): string | null {
+  const agentMatch = email.match(GOOGLE_MANAGED_SERVICE_AGENT_EMAIL_RE);
+  if (agentMatch) return agentMatch[1];
+  return inferProjectIdFromServiceAccountEmail(`serviceAccount:${email}`);
+}
+
+export function isGoogleManagedServiceAgentEmail(email: string): boolean {
+  return GOOGLE_MANAGED_SERVICE_AGENT_EMAIL_RE.test(`serviceAccount:${email}`);
+}
+
 export function collectGcpUsers(snapshot: GcpSnapshot): GcpPrincipalAccess[] {
   const users = new Map<string, { projects: Set<string>; roles: Set<string>; resourceTypes: Set<string> }>();
 
@@ -106,9 +117,9 @@ export function collectGcpServiceAccountReferences(snapshot: GcpSnapshot): GcpPr
       accounts.set(email, { projects: new Set(), roles: new Set(), resourceTypes: new Set() });
     }
     const account = accounts.get(email)!;
-    account.projects.add(projectId);
-    const inferredProjectId = inferProjectIdFromServiceAccountEmail(`serviceAccount:${email}`);
+    const inferredProjectId = inferOwningProjectIdFromServiceAccountEmail(email);
     if (inferredProjectId) account.projects.add(inferredProjectId);
+    account.projects.add(projectId);
     account.resourceTypes.add(resourceType);
     if (role) account.roles.add(role);
   }

@@ -1,8 +1,11 @@
 import type { GcpSnapshot, SecurityFinding } from "@/lib/gcp/types";
+import {
+  inferOwningProjectIdFromServiceAccountEmail,
+  isGoogleManagedServiceAgentEmail,
+} from "@/lib/gcp/principals";
 import { scanEnvVars } from "@/lib/secrets-detection";
 
 const PUBLIC_MEMBERS = new Set(["allUsers", "allAuthenticatedUsers"]);
-const SERVICE_ACCOUNT_EMAIL_PROJECT_RE = /^serviceAccount:[^@]+@([^.]+)\.iam\.gserviceaccount\.com$/;
 
 function isPublicMember(member: string): boolean {
   return PUBLIC_MEMBERS.has(member);
@@ -10,11 +13,6 @@ function isPublicMember(member: string): boolean {
 
 function hasPublicBinding(bindings: { role: string; members: string[] }[]): boolean {
   return bindings.some((b) => b.members.some(isPublicMember));
-}
-
-function inferProjectIdFromServiceAccountEmail(email: string): string | null {
-  const match = email.match(SERVICE_ACCOUNT_EMAIL_PROJECT_RE);
-  return match ? match[1] : null;
 }
 
 /**
@@ -303,16 +301,23 @@ export function computeFindings(snapshot: GcpSnapshot): SecurityFinding[] {
   }
 
   for (const email of unknownSas) {
-    const inferredProjectId = inferProjectIdFromServiceAccountEmail(`serviceAccount:${email}`);
+    const inferredProjectId = inferOwningProjectIdFromServiceAccountEmail(email);
+    const googleManaged = isGoogleManagedServiceAgentEmail(email);
     findings.push({
-      id: `sa_not_in_list:${email}`,
+      id: `${googleManaged ? "gcp_service_agent" : "sa_not_in_list"}:${email}`,
       severity: "low",
-      title: "Unknown Service Account in IAM Bindings",
-      description: `Service account "${email}" appears in IAM bindings but is not in the discovered service accounts list.`,
+      title: googleManaged
+        ? "Google-managed Service Agent in IAM Bindings"
+        : "Unknown Service Account in IAM Bindings",
+      description: googleManaged
+        ? `Google-managed service agent "${email}" appears in IAM bindings but is not in the discovered service accounts list.`
+        : `Service account "${email}" appears in IAM bindings but is not in the discovered service accounts list.`,
       resourceName: email,
       projectId: inferredProjectId ?? "unknown",
-      resourceType: "service_account",
-      remediationHint: `Verify that "${email}" still exists and remove it from IAM bindings if it has been deleted.`,
+      resourceType: googleManaged ? "service_agent" : "service_account",
+      remediationHint: googleManaged
+        ? `Verify that the Google service agent "${email}" is still required before removing it from IAM bindings.`
+        : `Verify that "${email}" still exists and remove it from IAM bindings if it has been deleted.`,
     });
   }
 
