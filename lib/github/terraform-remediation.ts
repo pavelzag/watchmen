@@ -541,6 +541,8 @@ Rules:
 - Restrict open firewall rules (source_ranges containing 0.0.0.0/0 or ::/0) to internal CIDRs unless the target details indicate a narrower scope
 - Remove public allUsers/allAuthenticatedUsers principals from Cloud Run, Secret Manager, and Storage IAM bindings
 - For roles/editor, roles/owner, and roles/storage.admin bindings, replace broad membership with least-privilege access scoped to only the resources actually needed
+- If you need a service account key, use a single google_service_account_key resource. Do not create locals that store hard-coded key IDs or key ID arrays.
+- Do not emit locals blocks unless they are required for the fixed Terraform file. Never invent *_key_ids locals or for_each loops over service account keys.
 - For publicly exposed storage buckets, add public_access_prevention = "enforced" when the bucket resource exists in this file
 - For Cloud SQL instances with disabled backups, enable backups and set a concrete start_time
 - Preserve unrelated resources and arguments exactly as-is
@@ -733,10 +735,30 @@ Rules:
 - Restrict open firewall rules (source_ranges 0.0.0.0/0 or ::/0) to internal CIDRs such as ["10.0.0.0/8"] unless the finding clearly demands a narrower range
 - Remove public allUsers/allAuthenticatedUsers access from Cloud Run, Secret Manager, and Storage IAM bindings
 - For overly broad project IAM grants (roles/owner, roles/editor, roles/storage.admin), replace them with least-privilege bindings scoped only to the required resources
+- If you need a service account key, use a single google_service_account_key resource. Do not create locals that store hard-coded key IDs or key ID arrays.
+- Do not emit locals blocks unless they are required for the fixed Terraform file. Never invent *_key_ids locals or for_each loops over service account keys.
 - For public storage buckets, enforce public_access_prevention = "enforced" when you touch the bucket resource
 - For Cloud SQL backup misconfigurations, enable backups and use a concrete start_time
 - Include provider configuration only when needed by the generated resources
 - Return ONLY the complete Terraform file content, no markdown fences, no explanation`;
+}
+
+function removeKeyIdLocals(content: string): string {
+  return content.replace(/(^|\n)locals\s*\{([\s\S]*?)\n\}/g, (match, prefix, body) => {
+    const assignmentNames = [...body.matchAll(/^\s*([A-Za-z0-9_]+)\s*=/gm)].map((entry) => entry[1]);
+    if (assignmentNames.length === 0) return match;
+    if (!assignmentNames.every((name) => name.endsWith("_key_ids"))) return match;
+    debugLog("github/terraform-remediation", "stripKeyIdLocals", {
+      assignmentNames,
+    });
+    return prefix.trimEnd();
+  });
+}
+
+function sanitizeTerraformRemediationContent(content: string): string {
+  return removeKeyIdLocals(content)
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 async function generateNewSecurityFile(
@@ -881,7 +903,7 @@ async function remediateExistingFiles(
         ])
       );
 
-      const trimmedFixed = fixedContent.trim();
+      const trimmedFixed = sanitizeTerraformRemediationContent(fixedContent.trim());
       completed += 1;
       emitProgress(onProgress, {
         stage: "analyze_files",
@@ -1103,7 +1125,7 @@ export async function buildRemediationPlan(
         {
           path: "watchmen-security-fixes.tf",
           originalContent: "",
-          fixedContent: fallback.content,
+          fixedContent: sanitizeTerraformRemediationContent(fallback.content),
           sha: "",
           isNewFile: true,
           targetIdsCovered: fallback.targetIdsCovered,
@@ -1165,7 +1187,7 @@ export async function buildRemediationPlan(
         patches.push({
           path: "watchmen-security-fixes.tf",
           originalContent: "",
-          fixedContent: fallback.content,
+          fixedContent: sanitizeTerraformRemediationContent(fallback.content),
           sha: "",
           isNewFile: true,
           targetIdsCovered: fallback.targetIdsCovered,
