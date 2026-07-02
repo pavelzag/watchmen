@@ -411,15 +411,12 @@ function FindingCard({
     await Promise.allSettled(jobs);
   }
 
-  const canOpenPrWorkflow = finding.cloud === "gcp";
   const remediationActionLabel = remediationRunning
     ? "Remediating..."
     : demoMode
       ? "Disabled in demo"
-      : remediationSucceeded && canOpenPrWorkflow
+      : remediationSucceeded
         ? "Create PR"
-        : remediationSucceeded
-          ? "Remediated"
         : remediationFailed
           ? "Retry remediation"
           : "Investigate and plan fix";
@@ -427,13 +424,11 @@ function FindingCard({
     ? "text-slate-500 cursor-not-allowed"
     : demoMode
       ? "text-slate-500 cursor-not-allowed bg-slate-500/5"
-      : remediationSucceeded && canOpenPrWorkflow
+      : remediationSucceeded
         ? "text-violet-300 bg-violet-500/10 hover:bg-violet-500/15 hover:text-violet-200"
-        : remediationSucceeded
-          ? "text-emerald-400 bg-emerald-500/10"
-          : remediationFailed
-            ? "text-rose-300 hover:text-emerald-300 bg-rose-500/10 hover:bg-emerald-500/10"
-            : "text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10";
+        : remediationFailed
+          ? "text-rose-300 hover:text-emerald-300 bg-rose-500/10 hover:bg-emerald-500/10"
+          : "text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10";
 
   async function copySuggestedCommand(event: MouseEvent<HTMLDivElement>) {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-copy-command]");
@@ -520,7 +515,7 @@ function FindingCard({
         <div className="px-4 py-2 flex items-center justify-between gap-2">
           <button
             onClick={remediate}
-            disabled={demoMode || remediationRunning || (remediationSucceeded && !canOpenPrWorkflow)}
+            disabled={demoMode || remediationRunning}
             className={cn(
               "flex items-center gap-1.5 text-xs font-medium transition-all duration-150 rounded-lg px-2.5 py-1",
               remediationActionClassName
@@ -617,7 +612,7 @@ function FindingCard({
                   dangerouslySetInnerHTML={{ __html: renderMd(plan.text, finding) }}
                 />
                 <div className="mt-3 flex items-center gap-2 flex-wrap">
-                  {finding.cloud === "gcp" && (
+                  {remediationSucceeded && (
                     <button
                       onClick={() => onOpenRemediation(finding)}
                       className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-lg border border-violet-500/40 text-violet-300 hover:bg-violet-500/10 transition-colors"
@@ -712,7 +707,7 @@ export default function FindingsPage() {
   }
 
   function openRemediation(findingsToRemediate: CloudFinding[]) {
-    setRemediationFindings(findingsToRemediate.filter((finding) => finding.cloud === "gcp"));
+    setRemediationFindings(findingsToRemediate);
     setShowRemediate(true);
   }
 
@@ -803,7 +798,7 @@ export default function FindingsPage() {
     low: cloudFiltered.filter((f) => f.severity === "low").length,
   };
 
-  const gcpRemediableFindings = displayed.filter((f) => f.cloud === "gcp");
+  const remediableFindings = displayed;
   const bySeverity = severities
     .map((sev) => ({
       severity: sev,
@@ -830,13 +825,13 @@ export default function FindingsPage() {
             </span>
           )}
         </div>
-        {!loading && gcpRemediableFindings.length > 0 && (
+        {!loading && remediableFindings.length > 0 && (
           <button
-            onClick={() => openRemediation(gcpRemediableFindings)}
+            onClick={() => openRemediation(remediableFindings)}
             className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-violet-500/40 text-violet-400 hover:bg-violet-500/10 transition-colors"
           >
             <GitPullRequest className="w-3.5 h-3.5" />
-            Fix GCP with GitHub PR
+            Fix with GitHub PR
           </button>
         )}
         <ExportButton findings={displayed} />
@@ -1007,7 +1002,7 @@ export default function FindingsPage() {
 
       {showRemediate && (
         <RemediateModal
-          targets={(remediationFindings.length > 0 ? remediationFindings : gcpRemediableFindings).map(remediationTargetFromFinding)}
+          targets={(remediationFindings.length > 0 ? remediationFindings : remediableFindings).map(remediationTargetFromFinding)}
           onClose={() => {
             setShowRemediate(false);
             setRemediationFindings([]);
