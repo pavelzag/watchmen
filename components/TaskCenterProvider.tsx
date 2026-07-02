@@ -91,6 +91,15 @@ function markStaleTask(task: AnyBackgroundTask): AnyBackgroundTask {
   const staleAfterMs = TASK_STALE_TIMEOUT_MS[task.kind];
   if (!Number.isFinite(freshnessTime) || Date.now() - freshnessTime < staleAfterMs) return task;
 
+  console.info("[task-center] mark-stale", {
+    taskId: task.id,
+    kind: task.kind,
+    status: task.status,
+    updatedAt: task.updatedAt,
+    lastProgressAt: task.lastProgressAt,
+    staleAfterMs,
+  });
+
   return {
     ...task,
     status: "failed",
@@ -212,6 +221,18 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
       const tasksToPersist = [...pendingPersistTasksRef.current.values()];
       pendingPersistTasksRef.current.clear();
       if (!hasHydratedRef.current || tasksToPersist.length === 0) return;
+      console.info("[task-center] persist-flush", {
+        taskCount: tasksToPersist.length,
+        tasks: tasksToPersist.map((task) => ({
+          taskId: task.id,
+          kind: task.kind,
+          status: task.status,
+          updatedAt: task.updatedAt,
+          createdAt: task.createdAt,
+          lastProgressAt: task.lastProgressAt,
+          percent: task.percent,
+        })),
+      });
       void fetch("/api/tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -516,6 +537,7 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
   const dismissTask = useCallback((taskId: string) => {
     cancelPendingPersist();
     setTasks((current) => current.filter((task) => task.id !== taskId));
+    console.info("[task-center] dismiss", { taskId });
     void fetch("/api/tasks", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
@@ -526,6 +548,7 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
   const clearFinishedTasks = useCallback(() => {
     cancelPendingPersist();
     setTasks((current) => current.filter(isActiveTask));
+    console.info("[task-center] clear-finished");
     void fetch("/api/tasks", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
@@ -536,6 +559,7 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
   const clearAllTasks = useCallback(() => {
     cancelPendingPersist();
     setTasks([]);
+    console.info("[task-center] clear-all");
     try {
       window.localStorage.removeItem(TASK_STORAGE_KEY);
     } catch {
@@ -615,6 +639,19 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
     if (changedTasks.length === 0) {
       return;
     }
+
+    console.info("[task-center] changed-tasks", {
+      taskCount: changedTasks.length,
+      tasks: changedTasks.map((task) => ({
+        taskId: task.id,
+        kind: task.kind,
+        status: task.status,
+        updatedAt: task.updatedAt,
+        createdAt: task.createdAt,
+        lastProgressAt: task.lastProgressAt,
+        percent: task.percent,
+      })),
+    });
 
     for (const task of changedTasks) {
       const previous = previousById.get(task.id);

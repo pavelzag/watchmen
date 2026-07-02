@@ -12,6 +12,7 @@ export async function GET() {
 
   try {
     await ensureBackgroundTasksTable();
+    console.info("[api/tasks] GET", { email });
     const result = await sql`
       SELECT task_data
       FROM user_background_tasks
@@ -19,6 +20,22 @@ export async function GET() {
       ORDER BY updated_at DESC
       LIMIT 100
     `;
+    console.info("[api/tasks] GET result", {
+      email,
+      taskCount: result.rows.length,
+      tasks: result.rows.map((row) => {
+        const task = row.task_data as AnyBackgroundTask;
+        return {
+          taskId: task.id,
+          kind: task.kind,
+          status: task.status,
+          updatedAt: task.updatedAt,
+          createdAt: task.createdAt,
+          lastProgressAt: task.lastProgressAt,
+          percent: task.percent,
+        };
+      }),
+    });
 
     return NextResponse.json({
       tasks: result.rows.map((row) => row.task_data as AnyBackgroundTask),
@@ -44,6 +61,19 @@ export async function POST(req: NextRequest) {
         ? [body.task]
         : [];
     await ensureBackgroundTasksTable();
+    console.info("[api/tasks] POST", {
+      email,
+      taskCount: tasks.length,
+      tasks: tasks.map((task) => ({
+        taskId: task.id,
+        kind: task.kind,
+        status: task.status,
+        updatedAt: task.updatedAt,
+        createdAt: task.createdAt,
+        lastProgressAt: task.lastProgressAt,
+        percent: task.percent,
+      })),
+    });
 
     for (const task of tasks) {
       await sql`
@@ -67,6 +97,11 @@ export async function POST(req: NextRequest) {
       `;
     }
 
+    console.info("[api/tasks] POST saved", {
+      email,
+      taskIds: tasks.map((task) => task.id),
+    });
+
     return NextResponse.json({ ok: true });
   } catch (error) {
     console.error("[api/tasks] POST error:", error);
@@ -84,6 +119,12 @@ export async function DELETE(req: NextRequest) {
   try {
     const body = (await req.json().catch(() => ({}))) as { ids?: string[]; clearAll?: boolean; clearFinished?: boolean };
     await ensureBackgroundTasksTable();
+    console.info("[api/tasks] DELETE", {
+      email,
+      clearAll: body.clearAll === true,
+      clearFinished: body.clearFinished === true,
+      ids: Array.isArray(body.ids) ? body.ids.filter(Boolean) : [],
+    });
 
     if (body.clearAll) {
       await sql`
@@ -117,6 +158,10 @@ export async function DELETE(req: NextRequest) {
           AND task_id = ${id}
       `;
     }
+    console.info("[api/tasks] DELETE saved", {
+      email,
+      ids,
+    });
     return NextResponse.json({ ok: true });
   } catch (error) {
     console.error("[api/tasks] DELETE error:", error);
