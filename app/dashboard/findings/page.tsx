@@ -393,9 +393,7 @@ function FindingCard({
     setPlanOpen(true);
 
     if (remediationSucceeded) {
-      if (finding.cloud === "gcp") {
-        onOpenRemediation(finding);
-      }
+      onOpenRemediation(finding);
       return;
     }
 
