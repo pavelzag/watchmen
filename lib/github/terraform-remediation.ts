@@ -189,7 +189,22 @@ async function searchTfFilesCached(
 ): Promise<string[]> {
   const cacheKey = `${owner}/${repo}`;
   const cached = tfPathCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) return cached.paths;
+  if (cached && cached.expiresAt > Date.now()) {
+    debugLog("github/terraform-remediation", "searchTfFilesCached:hit", {
+      cacheKey,
+      pathCount: cached.paths.length,
+      expiresInMs: cached.expiresAt - Date.now(),
+    });
+    return cached.paths;
+  }
+  if (cached) {
+    debugLog("github/terraform-remediation", "searchTfFilesCached:expired", {
+      cacheKey,
+      pathCount: cached.paths.length,
+    });
+  } else {
+    debugLog("github/terraform-remediation", "searchTfFilesCached:miss", { cacheKey });
+  }
 
   const paths = await searchTfFiles(token, owner, repo);
   tfPathCache.set(cacheKey, { paths, expiresAt: Date.now() + TF_PATH_CACHE_TTL_MS });
@@ -597,6 +612,13 @@ async function fetchRelevantFiles(
   const preferredPaths = rankedPaths.filter((path) => !path.deprioritized);
   const deprioritizedPaths = rankedPaths.filter((path) => path.deprioritized);
   const fetchPlan = [...preferredPaths, ...deprioritizedPaths].slice(0, Math.min(rankedPaths.length, MAX_FETCHED_FILES));
+  debugLog(scope, "fetchRelevantFiles:start", {
+    rankedCount: rankedPaths.length,
+    fetchPlanCount: fetchPlan.length,
+    preferredCount: preferredPaths.length,
+    deprioritizedCount: deprioritizedPaths.length,
+    targetCount: targets.length,
+  });
 
   for (let start = 0; start < fetchPlan.length; start += FETCH_BATCH_SIZE) {
     const batch = fetchPlan.slice(start, Math.min(start + FETCH_BATCH_SIZE, fetchPlan.length));
@@ -622,7 +644,10 @@ async function fetchRelevantFiles(
     }, async () => {
       await mapWithConcurrency(batch, FETCH_CONCURRENCY, async ({ filePath, pathScore }) => {
         try {
-          const data = await getFileContent(token, owner, repo, filePath);
+          const data = await withDebugTiming(scope, "fetchCandidateFile", {
+            filePath,
+            batchStart: start,
+          }, () => getFileContent(token, owner, repo, filePath));
           fileMap.set(filePath, data);
 
           const { score: contentScore, matchedTargetCount } = getFileRelevanceScore(data.content, targets);
@@ -659,6 +684,12 @@ async function fetchRelevantFiles(
           debugError(scope, "candidateFetchFailed", error, { filePath });
         }
       });
+    });
+    debugLog(scope, "fetchCandidateBatch:complete", {
+      batchStart: start,
+      batchSize: batch.length,
+      fetchedCount: fileMap.size,
+      relevantCount: relevantFiles.size,
     });
 
     if (relevantFiles.size >= MAX_RELEVANT_FILES) {
@@ -718,6 +749,12 @@ async function generateNewSecurityFile(
 ): Promise<GeneratedFileResult> {
   try {
     const prompt = buildNewFilePrompt(targets);
+    debugLog(scope, "generateFallbackFile:prompt", {
+      targetCount: targets.length,
+      promptLength: prompt.length,
+      timeoutMs,
+      targetIds: targets.slice(0, 10).map((target) => target.id),
+    });
     emitProgress(onProgress, {
       stage: "generate_fallback",
       message: "Generating fallback Terraform security file",
@@ -735,6 +772,10 @@ async function generateNewSecurityFile(
         ),
       ])
     );
+    debugLog(scope, "generateFallbackFile:result", {
+      targetCount: targets.length,
+      contentLength: content.length,
+    });
     return {
       content: content.trim() || null,
       targetIdsCovered: targets.map((target) => target.id),
@@ -915,6 +956,7 @@ export async function buildRemediationPlan(
   options: BuildRemediationPlanOptions = {}
 ): Promise<RemediationPlan> {
   const scope = options.scope ?? "github/terraform-remediation";
+  const planStartedAt = Date.now();
   const manualReviewTargets = targets.filter((target) => target.autoRemediable === false);
   const autoTargets = targets.filter((target) => target.autoRemediable !== false);
   emitProgress(options.onProgress, {
@@ -932,6 +974,13 @@ export async function buildRemediationPlan(
   });
 
   if (autoTargets.length === 0) {
+    debugLog(scope, "buildRemediationPlan:complete", {
+      durationMs: Date.now() - planStartedAt,
+      patchCount: 0,
+      failureCount: 0,
+      uncoveredCount: targets.length,
+      reason: "manual_review_only",
+    });
     return {
       patches: [],
       failures: [],
@@ -967,15 +1016,22 @@ export async function buildRemediationPlan(
   });
 
   if (tfPaths.length === 0) {
-      return {
-        patches: [],
-        failures: [],
-        coveredTargetIds: [],
-        uncoveredTargets: targets,
-        fullyAddressed: false,
-        suggestedBatches: buildRemediationBatchSuggestions(targets),
-        summary: "No Terraform files found in this repository.",
-      };
+    debugLog(scope, "buildRemediationPlan:complete", {
+      durationMs: Date.now() - planStartedAt,
+      patchCount: 0,
+      failureCount: 0,
+      uncoveredCount: targets.length,
+      reason: "no_terraform_files",
+    });
+    return {
+      patches: [],
+      failures: [],
+      coveredTargetIds: [],
+      uncoveredTargets: targets,
+      fullyAddressed: false,
+      suggestedBatches: buildRemediationBatchSuggestions(targets),
+      summary: "No Terraform files found in this repository.",
+    };
   }
 
   const rankedPaths = rankTfPaths(tfPaths, targets);
@@ -1018,6 +1074,13 @@ export async function buildRemediationPlan(
   if (relevantFiles.length === 0) {
     const fallback = await generateNewSecurityFile(autoTargets, aiProvider, aiApiKey, AI_TIMEOUT_MS, scope, options.onProgress);
     if (!fallback.content) {
+      debugLog(scope, "buildRemediationPlan:complete", {
+        durationMs: Date.now() - planStartedAt,
+        patchCount: 0,
+        failureCount: 0,
+        uncoveredCount: targets.length,
+        reason: "no_fallback_generated",
+      });
       return {
         patches: [],
         failures: [],
@@ -1028,6 +1091,13 @@ export async function buildRemediationPlan(
         summary: `No Terraform files matched the selected findings or attack paths, and AI could not generate a fallback fix file.${manualReviewTargets.length > 0 ? ` ${manualReviewTargets.length} item${manualReviewTargets.length === 1 ? "" : "s"} also require manual review.` : ""}`,
       };
     }
+    debugLog(scope, "buildRemediationPlan:complete", {
+      durationMs: Date.now() - planStartedAt,
+      patchCount: 1,
+      failureCount: 0,
+      uncoveredCount: manualReviewTargets.length,
+      reason: "generated_fallback_file",
+    });
     return {
       patches: [
         {
@@ -1123,6 +1193,13 @@ export async function buildRemediationPlan(
     if (shouldAttemptFallbackForTargets(autoTargets)) {
       const fallback = await generateNewSecurityFile(autoTargets, aiProvider, aiApiKey, FALLBACK_AI_TIMEOUT_MS, scope, options.onProgress);
       if (fallback.content) {
+        debugLog(scope, "buildRemediationPlan:complete", {
+          durationMs: Date.now() - planStartedAt,
+          patchCount: 1,
+          failureCount: 0,
+          uncoveredCount: manualReviewTargets.length,
+          reason: "generated_fallback_file",
+        });
         return {
           patches: [
             {
@@ -1152,6 +1229,15 @@ export async function buildRemediationPlan(
     message: `Prepared ${patches.length} patch${patches.length === 1 ? "" : "es"}`,
     percent: 100,
     metadata: { patchCount: patches.length, relevantFileCount: relevantFiles.length },
+  });
+  debugLog(scope, "buildRemediationPlan:complete", {
+    durationMs: Date.now() - planStartedAt,
+    patchCount: patches.length,
+    failureCount: failures.length,
+    relevantFileCount: relevantFiles.length,
+    coveredTargetCount: coveredTargetIds.size,
+    uncoveredCount: uncoveredTargets.length,
+    fullyAddressed: uncoveredTargets.length === 0,
   });
   return {
     patches,
