@@ -14,6 +14,8 @@ export type GcpPrincipalAccess = {
   resourceTypes: string[];
 };
 
+const SERVICE_ACCOUNT_EMAIL_PROJECT_RE = /^serviceAccount:[^@]+@([^.]+)\.iam\.gserviceaccount\.com$/;
+
 function addScope(scopes: BindingScope[], projectId: string, resourceType: string, resourceName: string, bindings?: IamBinding[]) {
   if (!bindings || bindings.length === 0) return;
   scopes.push({ projectId, resourceType, resourceName, bindings });
@@ -55,6 +57,11 @@ function memberEmail(member: string, prefixes: string[]): string | null {
     }
   }
   return null;
+}
+
+function inferProjectIdFromServiceAccountEmail(email: string): string | null {
+  const match = email.match(SERVICE_ACCOUNT_EMAIL_PROJECT_RE);
+  return match ? match[1] : null;
 }
 
 export function collectGcpUsers(snapshot: GcpSnapshot): GcpPrincipalAccess[] {
@@ -100,6 +107,8 @@ export function collectGcpServiceAccountReferences(snapshot: GcpSnapshot): GcpPr
     }
     const account = accounts.get(email)!;
     account.projects.add(projectId);
+    const inferredProjectId = inferProjectIdFromServiceAccountEmail(`serviceAccount:${email}`);
+    if (inferredProjectId) account.projects.add(inferredProjectId);
     account.resourceTypes.add(resourceType);
     if (role) account.roles.add(role);
   }

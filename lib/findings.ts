@@ -2,6 +2,7 @@ import type { GcpSnapshot, SecurityFinding } from "@/lib/gcp/types";
 import { scanEnvVars } from "@/lib/secrets-detection";
 
 const PUBLIC_MEMBERS = new Set(["allUsers", "allAuthenticatedUsers"]);
+const SERVICE_ACCOUNT_EMAIL_PROJECT_RE = /^serviceAccount:[^@]+@([^.]+)\.iam\.gserviceaccount\.com$/;
 
 function isPublicMember(member: string): boolean {
   return PUBLIC_MEMBERS.has(member);
@@ -9,6 +10,11 @@ function isPublicMember(member: string): boolean {
 
 function hasPublicBinding(bindings: { role: string; members: string[] }[]): boolean {
   return bindings.some((b) => b.members.some(isPublicMember));
+}
+
+function inferProjectIdFromServiceAccountEmail(email: string): string | null {
+  const match = email.match(SERVICE_ACCOUNT_EMAIL_PROJECT_RE);
+  return match ? match[1] : null;
 }
 
 /**
@@ -297,13 +303,14 @@ export function computeFindings(snapshot: GcpSnapshot): SecurityFinding[] {
   }
 
   for (const email of unknownSas) {
+    const inferredProjectId = inferProjectIdFromServiceAccountEmail(`serviceAccount:${email}`);
     findings.push({
       id: `sa_not_in_list:${email}`,
       severity: "low",
       title: "Unknown Service Account in IAM Bindings",
       description: `Service account "${email}" appears in IAM bindings but is not in the discovered service accounts list.`,
       resourceName: email,
-      projectId: "unknown",
+      projectId: inferredProjectId ?? "unknown",
       resourceType: "service_account",
       remediationHint: `Verify that "${email}" still exists and remove it from IAM bindings if it has been deleted.`,
     });
