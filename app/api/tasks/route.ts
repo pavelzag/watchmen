@@ -78,7 +78,7 @@ export async function POST(req: NextRequest) {
     for (const task of tasks) {
       await sql`
         INSERT INTO user_background_tasks (user_email, task_id, task_kind, task_status, task_data, dismissed, updated_at, created_at)
-        VALUES (
+      VALUES (
           ${email},
           ${task.id},
           ${task.kind},
@@ -88,12 +88,16 @@ export async function POST(req: NextRequest) {
           ${task.updatedAt},
           ${task.createdAt}
         )
-        ON CONFLICT (user_email, task_id) DO UPDATE
+      ON CONFLICT (user_email, task_id) DO UPDATE
           SET task_kind = EXCLUDED.task_kind,
               task_status = EXCLUDED.task_status,
               task_data = EXCLUDED.task_data,
               dismissed = FALSE,
               updated_at = EXCLUDED.updated_at
+          WHERE NOT (
+            user_background_tasks.task_status IN ('completed', 'failed')
+            AND EXCLUDED.task_status NOT IN ('completed', 'failed')
+          )
       `;
     }
 

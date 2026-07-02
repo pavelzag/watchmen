@@ -102,6 +102,10 @@ export async function upsertBackgroundTask(userEmail: string, task: AnyBackgroun
           task_data = EXCLUDED.task_data,
           dismissed = FALSE,
           updated_at = EXCLUDED.updated_at
+      WHERE NOT (
+        user_background_tasks.task_status IN ('completed', 'failed')
+        AND EXCLUDED.task_status NOT IN ('completed', 'failed')
+      )
   `;
 }
 
