@@ -6,7 +6,7 @@ import { getUserCloudCredentials } from "@/lib/credentials";
 import { buildRemediationBatchSuggestions, remediationTargetFromAttackPath, remediationTargetFromFinding, shouldAutoSplitRemediationTargets, type RemediationTarget } from "@/lib/github/remediation-targets";
 import { buildRemediationPlan, type RemediationProgressEvent } from "@/lib/github/terraform-remediation";
 import { debugLog } from "@/lib/debug";
-import { isTerraformVerboseEnabled, logTerraformError, logTerraformInfo } from "@/lib/github/terraform-logging";
+import { isTerraformVerboseEnabled, logTerraformError, logTerraformInfo, logTerraformWarn } from "@/lib/github/terraform-logging";
 import { createBackgroundTask, getBackgroundTask, upsertBackgroundTask } from "@/lib/tasks/store";
 import type { TaskResultMap } from "@/lib/tasks/types";
 import type { AttackPath } from "@/lib/gcp/attack-paths";
@@ -47,12 +47,14 @@ function createSplitResult(targets: RemediationTarget[]) {
 }
 
 function createTaskStream(
+  scope: string,
   email: string,
   taskId: string
 ): Response {
   const encoder = new TextEncoder();
   let closed = false;
   let lastProgressCount = 0;
+  let pollCount = 0;
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       const close = () => {
@@ -68,26 +70,72 @@ function createTaskStream(
       void (async () => {
         try {
           while (!closed) {
+            pollCount += 1;
+            logTerraformInfo(scope, "stream_poll", {
+              email,
+              taskId,
+              pollCount,
+              lastProgressCount,
+            });
             const snapshot = await getBackgroundTask(email, taskId);
             if (!snapshot) {
+              logTerraformWarn(scope, "stream_snapshot_missing", {
+                email,
+                taskId,
+                pollCount,
+              });
               sendTaskEvent(controller, encoder, { type: "error", error: "Terraform preview task not found." });
               close();
               return;
             }
 
+            logTerraformInfo(scope, "stream_snapshot", {
+              email,
+              taskId,
+              pollCount,
+              status: snapshot.status,
+              progressCount: snapshot.progress.length,
+              percent: snapshot.percent,
+              lastProgressAt: snapshot.lastProgressAt,
+            });
+
             const newProgress = snapshot.progress.slice(lastProgressCount);
+            if (newProgress.length > 0) {
+              logTerraformInfo(scope, "stream_emit_progress", {
+                email,
+                taskId,
+                pollCount,
+                newProgressCount: newProgress.length,
+                progressCount: snapshot.progress.length,
+              });
+            }
             for (const progress of newProgress) {
               sendTaskEvent(controller, encoder, { type: "progress", progress });
             }
             lastProgressCount = snapshot.progress.length;
 
             if (snapshot.status === "completed") {
-              sendTaskEvent(controller, encoder, { type: "result", ...(snapshot.result as TaskResultMap["terraform_preview"]) });
+              const result = snapshot.result as TaskResultMap["terraform_preview"] | undefined;
+              logTerraformInfo(scope, "stream_emit_result", {
+                email,
+                taskId,
+                pollCount,
+                progressCount: snapshot.progress.length,
+                hasResult: Boolean(result),
+                patchCount: result?.patches?.length ?? 0,
+              });
+              sendTaskEvent(controller, encoder, { type: "result", ...(result ?? {}) });
               close();
               return;
             }
 
             if (snapshot.status === "failed") {
+              logTerraformWarn(scope, "stream_emit_error", {
+                email,
+                taskId,
+                pollCount,
+                error: snapshot.error ?? "Terraform preview failed.",
+              });
               sendTaskEvent(controller, encoder, { type: "error", error: snapshot.error ?? "Terraform preview failed." });
               close();
               return;
@@ -97,10 +145,28 @@ function createTaskStream(
               type: "heartbeat",
               progress: snapshot.progress.at(-1),
             });
+            logTerraformInfo(scope, "stream_heartbeat", {
+              email,
+              taskId,
+              pollCount,
+              progressCount: snapshot.progress.length,
+              percent: snapshot.percent,
+            });
 
             await new Promise((resolve) => setTimeout(resolve, 1500));
           }
+          logTerraformInfo(scope, "stream_closed", {
+            email,
+            taskId,
+            pollCount,
+            reason: "cancelled",
+          });
         } catch (error) {
+          logTerraformError(scope, "stream_failed", error, {
+            email,
+            taskId,
+            pollCount,
+          });
           sendTaskEvent(controller, encoder, {
             type: "error",
             error: error instanceof Error ? error.message : "Terraform preview streaming failed.",
@@ -342,7 +408,7 @@ export async function POST(req: NextRequest) {
 
     if (body.stream) {
       void execution.catch(() => {});
-      return createTaskStream(email, task.id);
+      return createTaskStream(scope, email, task.id);
     }
 
     const result = await execution;

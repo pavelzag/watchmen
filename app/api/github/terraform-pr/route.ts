@@ -5,8 +5,9 @@ import { rejectDemoAi } from "@/lib/ai/demo";
 import { getUserCloudCredentials } from "@/lib/credentials";
 import { remediationTargetFromAttackPath, remediationTargetFromFinding, type RemediationTarget } from "@/lib/github/remediation-targets";
 import { executeTerraformPrFlow } from "@/lib/github/terraform-pr-flow";
-import { isTerraformVerboseEnabled, logTerraformError, logTerraformInfo } from "@/lib/github/terraform-logging";
+import { isTerraformVerboseEnabled, logTerraformError, logTerraformInfo, logTerraformWarn } from "@/lib/github/terraform-logging";
 import { createBackgroundTask, getBackgroundTask, upsertBackgroundTask } from "@/lib/tasks/store";
+import type { TaskResultMap } from "@/lib/tasks/types";
 import type { AttackPath } from "@/lib/gcp/attack-paths";
 import type { SecurityFinding } from "@/lib/gcp/types";
 
@@ -34,36 +35,100 @@ function createTaskStream(email: string, taskId: string): Response {
   const encoder = new TextEncoder();
   let closed = false;
   let lastProgressCount = 0;
+  let pollCount = 0;
 
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       void (async () => {
         try {
           while (!closed) {
+            pollCount += 1;
+            logTerraformInfo("api/github/terraform-pr:stream", "poll", {
+              email,
+              taskId,
+              pollCount,
+              lastProgressCount,
+            });
             const snapshot = await getBackgroundTask(email, taskId);
             if (!snapshot) {
+              logTerraformWarn("api/github/terraform-pr:stream", "snapshot_missing", {
+                email,
+                taskId,
+                pollCount,
+              });
               sendTaskEvent(controller, encoder, { type: "error", error: "Terraform PR task not found." });
+              logTerraformInfo("api/github/terraform-pr:stream", "emit_error", {
+                taskId,
+                reason: "snapshot_missing",
+              });
               closed = true;
+              logTerraformInfo("api/github/terraform-pr:stream", "closing", {
+                taskId,
+                reason: "snapshot_missing",
+              });
               controller.close();
               return;
             }
 
+            logTerraformInfo("api/github/terraform-pr:stream", "snapshot", {
+              email,
+              taskId,
+              pollCount,
+              status: snapshot.status,
+              progressCount: snapshot.progress.length,
+              percent: snapshot.percent,
+              lastProgressAt: snapshot.lastProgressAt,
+            });
+
             const newProgress = snapshot.progress.slice(lastProgressCount);
+            if (newProgress.length > 0) {
+              logTerraformInfo("api/github/terraform-pr:stream", "emit_progress", {
+                email,
+                taskId,
+                pollCount,
+                newProgressCount: newProgress.length,
+                progressCount: snapshot.progress.length,
+              });
+            }
             for (const progress of newProgress) {
               sendTaskEvent(controller, encoder, { type: "progress", progress });
             }
             lastProgressCount = snapshot.progress.length;
 
             if (snapshot.status === "completed") {
-              sendTaskEvent(controller, encoder, { type: "result", ...(snapshot.result ?? {}) });
+              const result = snapshot.result as TaskResultMap["terraform_pr"] | undefined;
+              logTerraformInfo("api/github/terraform-pr:stream", "emit_result", {
+                email,
+                taskId,
+                pollCount,
+                progressCount: snapshot.progress.length,
+                hasResult: Boolean(result),
+                prNumber: result?.prNumber,
+                prUrl: result?.prUrl,
+              });
+              sendTaskEvent(controller, encoder, { type: "result", ...(result ?? {}) });
               closed = true;
+              logTerraformInfo("api/github/terraform-pr:stream", "closing", {
+                taskId,
+                reason: "completed",
+              });
               controller.close();
               return;
             }
 
             if (snapshot.status === "failed") {
+              logTerraformWarn("api/github/terraform-pr:stream", "emit_error", {
+                email,
+                taskId,
+                pollCount,
+                error: snapshot.error ?? "Terraform PR creation failed.",
+              });
               sendTaskEvent(controller, encoder, { type: "error", error: snapshot.error ?? "Terraform PR creation failed." });
               closed = true;
+              logTerraformInfo("api/github/terraform-pr:stream", "closing", {
+                taskId,
+                reason: "failed",
+              });
               controller.close();
               return;
             }
@@ -72,10 +137,26 @@ function createTaskStream(email: string, taskId: string): Response {
               type: "heartbeat",
               progress: snapshot.progress.at(-1),
             });
+            logTerraformInfo("api/github/terraform-pr:stream", "heartbeat", {
+              email,
+              taskId,
+              pollCount,
+              progressCount: snapshot.progress.length,
+              percent: snapshot.percent,
+            });
 
             await new Promise((resolve) => setTimeout(resolve, 1500));
           }
+          logTerraformInfo("api/github/terraform-pr:stream", "closing", {
+            taskId,
+            reason: "cancelled",
+          });
         } catch (error) {
+          logTerraformError("api/github/terraform-pr:stream", "stream_failed", error, {
+            email,
+            taskId,
+            pollCount,
+          });
           sendTaskEvent(controller, encoder, {
             type: "error",
             error: error instanceof Error ? error.message : "Terraform PR streaming failed.",
@@ -91,6 +172,11 @@ function createTaskStream(email: string, taskId: string): Response {
     },
     cancel() {
       closed = true;
+      logTerraformInfo("api/github/terraform-pr:stream", "cancelled", {
+        email,
+        taskId,
+        pollCount,
+      });
     },
   });
 
