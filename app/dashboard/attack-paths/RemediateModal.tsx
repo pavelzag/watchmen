@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { X, ChevronRight, Loader2, ExternalLink, AlertTriangle, Check } from "lucide-react";
 import { type RemediationTarget } from "@/lib/github/remediation-targets";
 import type { RemediationProgressEvent, TfFilePatch } from "@/lib/github/terraform-remediation";
@@ -166,6 +166,8 @@ export default function RemediateModal({ targets, onClose }: Props) {
   const [analysisTaskId, setAnalysisTaskId] = useState<string | null>(null);
   const [creationTaskId, setCreationTaskId] = useState<string | null>(null);
   const { tasks, startTerraformPreview, startTerraformPr } = useTaskCenter();
+  const creationStartedAtRef = useRef<number | null>(null);
+  const creationCompletionTimerRef = useRef<number | null>(null);
 
   const selectedTargets = targets.filter((target) => selectedPathIds.has(target.id));
 
@@ -224,7 +226,13 @@ export default function RemediateModal({ targets, onClose }: Props) {
 
   async function createPr() {
     if (!selectedRepo) return;
+    if (creationTaskId) return;
+    creationStartedAtRef.current = Date.now();
     setStep("creating");
+    setNoChanges(false);
+    setPrUrl(null);
+    setPrNumber(null);
+    setErrorMsg(null);
     setCreationProgress([]);
     setCreationPercent(0);
     setCreationSummary(null);
@@ -281,21 +289,48 @@ export default function RemediateModal({ targets, onClose }: Props) {
     setCreationProgress(task.progress as RemediationProgressEvent[]);
     setCreationPercent(task.percent);
 
+    if (creationCompletionTimerRef.current !== null) {
+      window.clearTimeout(creationCompletionTimerRef.current);
+      creationCompletionTimerRef.current = null;
+    }
+
     if (task.status === "completed" && task.kind === "terraform_pr" && task.result) {
-      if (task.result.patchCount === 0) {
-        setNoChanges(true);
-        setCreationSummary(task.result.message ?? "No changes were needed.");
-      } else {
-        setPrUrl(task.result.prUrl ?? null);
-        setPrNumber(task.result.prNumber ?? null);
-        setCreationSummary(task.result.prNumber ? `Pull request #${task.result.prNumber} created` : null);
-      }
-      setStep("done");
+      const result = task.result;
+      const applyResult = () => {
+        if (result.patchCount === 0) {
+          setNoChanges(true);
+          setCreationSummary(result.message ?? "No changes were needed.");
+        } else {
+          setPrUrl(result.prUrl ?? null);
+          setPrNumber(result.prNumber ?? null);
+          setCreationSummary(result.prNumber ? `Pull request #${result.prNumber} created` : null);
+        }
+        setStep("done");
+      };
+      const elapsed = creationStartedAtRef.current ? Date.now() - creationStartedAtRef.current : 0;
+      const minVisibleMs = 450;
+      const delay = Math.max(0, minVisibleMs - elapsed);
+      creationCompletionTimerRef.current = window.setTimeout(applyResult, delay);
     } else if (task.status === "failed") {
-      setErrorMsg(task.error ?? "Unknown error creating PR");
-      setStep("error");
+      const error = task.error;
+      const applyFailure = () => {
+        setErrorMsg(error ?? "Unknown error creating PR");
+        setStep("error");
+      };
+      const elapsed = creationStartedAtRef.current ? Date.now() - creationStartedAtRef.current : 0;
+      const minVisibleMs = 300;
+      const delay = Math.max(0, minVisibleMs - elapsed);
+      creationCompletionTimerRef.current = window.setTimeout(applyFailure, delay);
     }
   }, [creationTaskId, tasks]);
+
+  useEffect(() => {
+    return () => {
+      if (creationCompletionTimerRef.current !== null) {
+        window.clearTimeout(creationCompletionTimerRef.current);
+      }
+    };
+  }, []);
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -304,6 +339,7 @@ export default function RemediateModal({ targets, onClose }: Props) {
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
       style={{ background: "rgba(0,0,0,0.75)", backdropFilter: "blur(2px)" }}
       onClick={(e) => {
+        if (step === "creating" || step === "analyzing") return;
         if (e.target === e.currentTarget) onClose();
       }}
     >
@@ -315,6 +351,7 @@ export default function RemediateModal({ targets, onClose }: Props) {
           maxHeight: "90vh",
           overflow: "hidden",
         }}
+        onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div
@@ -352,7 +389,7 @@ export default function RemediateModal({ targets, onClose }: Props) {
               {step === "error" && "Something went wrong"}
             </p>
           </div>
-          <button onClick={onClose} style={{ color: "var(--text-muted)" }} className="hover:text-white transition-colors">
+          <button type="button" onClick={onClose} style={{ color: "var(--text-muted)" }} className="hover:text-white transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -726,6 +763,7 @@ export default function RemediateModal({ targets, onClose }: Props) {
           {/* Back / Cancel */}
           {(step === "select-paths" || step === "error") && (
             <button
+              type="button"
               onClick={onClose}
               className="text-xs font-mono px-4 py-2 transition-colors"
               style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}
@@ -735,6 +773,7 @@ export default function RemediateModal({ targets, onClose }: Props) {
           )}
           {step === "select-repo" && (
             <button
+              type="button"
               onClick={() => setStep("select-paths")}
               className="text-xs font-mono px-4 py-2 transition-colors"
               style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}
@@ -744,6 +783,7 @@ export default function RemediateModal({ targets, onClose }: Props) {
           )}
           {step === "preview" && (
             <button
+              type="button"
               onClick={() => setStep("select-repo")}
               className="text-xs font-mono px-4 py-2 transition-colors"
               style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}
@@ -753,6 +793,7 @@ export default function RemediateModal({ targets, onClose }: Props) {
           )}
           {step === "done" && (
             <button
+              type="button"
               onClick={onClose}
               className="text-xs font-mono px-4 py-2 transition-colors"
               style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}
@@ -762,6 +803,7 @@ export default function RemediateModal({ targets, onClose }: Props) {
           )}
           {step === "error" && (
             <button
+              type="button"
               onClick={() => {
                 setErrorMsg(null);
                 setStep("select-repo");
@@ -777,6 +819,7 @@ export default function RemediateModal({ targets, onClose }: Props) {
           <div className="ml-auto">
             {step === "select-paths" && (
               <button
+                type="button"
                 onClick={loadRepos}
                 disabled={selectedPathIds.size === 0}
                 className="flex items-center gap-2 text-xs font-mono font-bold px-5 py-2 transition-all"
@@ -791,6 +834,7 @@ export default function RemediateModal({ targets, onClose }: Props) {
             )}
             {step === "select-repo" && !tokenRequired && (
               <button
+                type="button"
                 onClick={analyze}
                 disabled={!selectedRepo}
                 className="flex items-center gap-2 text-xs font-mono font-bold px-5 py-2 transition-all"
@@ -805,6 +849,7 @@ export default function RemediateModal({ targets, onClose }: Props) {
             )}
             {step === "preview" && patches.length > 0 && (
               <button
+                type="button"
                 onClick={createPr}
                 className="flex items-center gap-2 text-xs font-mono font-bold px-5 py-2 transition-all"
                 style={{ background: "var(--green)", color: "var(--bg)" }}
@@ -814,6 +859,7 @@ export default function RemediateModal({ targets, onClose }: Props) {
             )}
             {step === "preview" && patches.length === 0 && (
               <button
+                type="button"
                 onClick={onClose}
                 className="text-xs font-mono px-4 py-2"
                 style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}
