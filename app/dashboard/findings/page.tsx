@@ -393,7 +393,7 @@ function FindingCard({
     setPlanOpen(true);
 
     if (remediationSucceeded) {
-      if (finding.cloud === "gcp" && plan.previewEligible) {
+      if (finding.cloud === "gcp") {
         onOpenRemediation(finding);
       }
       return;
@@ -411,7 +411,7 @@ function FindingCard({
     await Promise.allSettled(jobs);
   }
 
-  const canOpenPrWorkflow = remediationSucceeded && finding.cloud === "gcp" && plan.previewEligible;
+  const canOpenPrWorkflow = remediationSucceeded && finding.cloud === "gcp";
 
   async function copySuggestedCommand(event: MouseEvent<HTMLDivElement>) {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-copy-command]");
@@ -615,7 +615,7 @@ function FindingCard({
                   dangerouslySetInnerHTML={{ __html: renderMd(plan.text, finding) }}
                 />
                 <div className="mt-3 flex items-center gap-2 flex-wrap">
-                  {plan.previewEligible && finding.cloud === "gcp" && (
+                  {finding.cloud === "gcp" && (
                     <button
                       onClick={() => onOpenRemediation(finding)}
                       className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-lg border border-violet-500/40 text-violet-300 hover:bg-violet-500/10 transition-colors"

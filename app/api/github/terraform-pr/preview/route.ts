@@ -3,7 +3,7 @@ import { resolveAI } from "@/lib/ai/client";
 import { auth } from "@/lib/auth";
 import { rejectDemoAi } from "@/lib/ai/demo";
 import { getUserCloudCredentials } from "@/lib/credentials";
-import { buildRemediationBatchSuggestions, remediationTargetFromAttackPath, remediationTargetFromFinding, shouldAutoSplitRemediationTargets, type RemediationTarget } from "@/lib/github/remediation-targets";
+import { remediationTargetFromAttackPath, remediationTargetFromFinding, type RemediationTarget } from "@/lib/github/remediation-targets";
 import { buildRemediationPlan, type RemediationProgressEvent } from "@/lib/github/terraform-remediation";
 import { debugLog } from "@/lib/debug";
 import { isTerraformVerboseEnabled, logTerraformError, logTerraformInfo, logTerraformWarn } from "@/lib/github/terraform-logging";
@@ -30,20 +30,6 @@ function sendTaskEvent(
   event: unknown
 ) {
   controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
-}
-
-function createSplitResult(targets: RemediationTarget[]) {
-  const suggestedBatches = buildRemediationBatchSuggestions(targets);
-  return {
-    ok: true,
-    patches: [],
-    summary: `Split ${targets.length} selected items into ${suggestedBatches.length} smaller remediation batch${suggestedBatches.length === 1 ? "" : "es"}.`,
-    failures: [],
-    coveredTargetIds: [],
-    uncoveredTargets: targets,
-    fullyAddressed: false,
-    suggestedBatches,
-  };
 }
 
 function createTaskStream(
@@ -230,39 +216,6 @@ export async function POST(req: NextRequest) {
     stream: body.stream === true,
     taskId: body.taskId,
   });
-
-  if (shouldAutoSplitRemediationTargets(targets)) {
-    const splitResult = createSplitResult(targets);
-    debugLog(scope, "preview auto-split", {
-      repoFullName,
-      targetCount: targets.length,
-      batchCount: splitResult.suggestedBatches.length,
-    });
-    logTerraformInfo(scope, "auto_split", {
-      repoFullName,
-      targetCount: targets.length,
-      batchCount: splitResult.suggestedBatches.length,
-    });
-
-    if (body.stream) {
-      const encoder = new TextEncoder();
-      const stream = new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(encoder.encode(`${JSON.stringify({ type: "result", ...splitResult })}\n`));
-          controller.close();
-        },
-      });
-
-      return new Response(stream, {
-        headers: {
-          "Content-Type": "application/x-ndjson; charset=utf-8",
-          "Cache-Control": "no-cache, no-transform",
-        },
-      });
-    }
-
-    return NextResponse.json(splitResult);
-  }
 
   const task = createBackgroundTask("terraform_preview", {
     repoFullName,
