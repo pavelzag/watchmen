@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo, type MouseEvent } from "react";
 import Link from "next/link";
-import { ArrowLeft, ShieldAlert, ShieldCheck, RefreshCw, Loader2, ChevronDown, ChevronUp, AlertCircle, GitPullRequest, Search, X, Download, Star, FileSearch, ClipboardCheck } from "lucide-react";
+import { ArrowLeft, ShieldAlert, ShieldCheck, RefreshCw, Loader2, ChevronDown, ChevronUp, AlertCircle, GitPullRequest, Search, X, Download, Star, FileSearch } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { computeFindings } from "@/lib/findings";
 import type { GcpSnapshot, SecurityFinding, SecurityFindingSeverity } from "@/lib/gcp/types";
@@ -255,6 +255,9 @@ function FindingCard({
   const planFailed = !planSucceeded && plan.status === "failed";
   const investigationLocked = investigationRunning || investigationSucceeded;
   const planLocked = planRunning || planSucceeded;
+  const remediationRunning = investigationRunning || planRunning;
+  const remediationSucceeded = investigationSucceeded && planSucceeded;
+  const remediationFailed = (!investigationSucceeded && investigation.status === "failed") || (!planSucceeded && plan.status === "failed");
 
   useEffect(() => {
     setInvestigation({
@@ -279,7 +282,7 @@ function FindingCard({
     if (existingPlan) setPlanOpen(true);
   }, [existingPlan]);
 
-  async function investigate() {
+  async function runInvestigation() {
     if (investigationLocked) return;
     if (demoMode) {
       setInvestigation({
@@ -327,7 +330,7 @@ function FindingCard({
     }
   }
 
-  async function planFix() {
+  async function runPlanFix() {
     if (planLocked) return;
     if (demoMode) {
       setPlan({
@@ -383,6 +386,22 @@ function FindingCard({
         previewEligible: false,
       });
     }
+  }
+
+  async function remediate() {
+    setInvestigationOpen(true);
+    setPlanOpen(true);
+
+    const jobs: Promise<void>[] = [];
+    if (!investigationSucceeded && !investigationRunning) {
+      jobs.push(runInvestigation());
+    }
+    if (!planSucceeded && !planRunning) {
+      jobs.push(runPlanFix());
+    }
+
+    if (jobs.length === 0) return;
+    await Promise.allSettled(jobs);
   }
 
   async function copySuggestedCommand(event: MouseEvent<HTMLDivElement>) {
@@ -451,12 +470,6 @@ function FindingCard({
         </div>
         <p className="text-sm font-semibold text-white uppercase tracking-tight flex items-center gap-2">
           {finding.title}
-          <button onClick={investigate} disabled={demoMode || investigationLocked} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed" title={investigationSucceeded ? "Investigation already ran" : investigationFailed ? "Retry investigation" : "Investigate with agent"}>
-            {investigation.loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <FileSearch className="w-3 h-3" />}
-          </button>
-          <button onClick={planFix} disabled={demoMode || planLocked} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-cyan-400 disabled:opacity-40 disabled:cursor-not-allowed" title={planSucceeded ? "Remediation plan already exists" : planFailed ? "Retry remediation plan" : "Plan remediation"}>
-            {plan.loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <ClipboardCheck className="w-3 h-3" />}
-          </button>
         </p>
         <p className="text-xs text-slate-400 leading-relaxed group-hover:text-slate-300 transition-colors">
           {finding.description}
@@ -474,71 +487,35 @@ function FindingCard({
       {/* Agent workflow area */}
       <div className="border-t border-slate-700/50">
         <div className="px-4 py-2 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              onClick={investigation.text ? () => setInvestigationOpen((o) => !o) : investigate}
-              disabled={demoMode || investigationLocked}
-              className={cn(
-                "flex items-center gap-1.5 text-xs font-medium transition-all duration-150 rounded-lg px-2.5 py-1",
-                investigation.loading
-                  ? "text-slate-500 cursor-not-allowed"
-                  : demoMode
-                    ? "text-slate-500 cursor-not-allowed bg-slate-500/5"
-                  : investigation.text
-                    ? "text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/15"
-                  : investigationFailed
-                    ? "text-red-300 hover:text-emerald-300 bg-red-500/10 hover:bg-emerald-500/10"
-                    : "text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10"
-              )}
-            >
-              {investigation.loading ? (
-                <Loader2 className="w-3 h-3 animate-spin" />
-              ) : (
-                <FileSearch className="w-3 h-3" />
-              )}
-              {investigation.loading ? "Investigating..." : demoMode ? "Disabled in demo" : investigationSucceeded ? "Investigation complete" : investigationFailed ? "Retry investigation" : investigation.text ? "Investigation" : "Investigate"}
-            </button>
-
-            <button
-              onClick={plan.text ? () => setPlanOpen((o) => !o) : planFix}
-              disabled={demoMode || planLocked}
-              className={cn(
-                "flex items-center gap-1.5 text-xs font-medium transition-all duration-150 rounded-lg px-2.5 py-1",
-                plan.loading
-                  ? "text-slate-500 cursor-not-allowed"
-                  : demoMode
-                    ? "text-slate-500 cursor-not-allowed bg-slate-500/5"
-                  : plan.text
-                    ? "text-cyan-400 hover:text-cyan-300 bg-cyan-500/10 hover:bg-cyan-500/15"
-                  : planFailed
-                    ? "text-red-300 hover:text-cyan-300 bg-red-500/10 hover:bg-cyan-500/10"
-                    : "text-slate-400 hover:text-cyan-400 hover:bg-cyan-500/10"
-              )}
-            >
-              {plan.loading ? (
-                <Loader2 className="w-3 h-3 animate-spin" />
-              ) : (
-                <ClipboardCheck className="w-3 h-3" />
-              )}
-              {plan.loading ? "Planning..." : demoMode ? "Disabled in demo" : planSucceeded ? "Plan complete" : planFailed ? "Retry plan" : plan.text ? "Plan" : "Plan fix"}
-            </button>
-          </div>
-
+          <button
+            onClick={remediate}
+            disabled={demoMode || remediationRunning || remediationSucceeded}
+            className={cn(
+              "flex items-center gap-1.5 text-xs font-medium transition-all duration-150 rounded-lg px-2.5 py-1",
+              remediationRunning
+                ? "text-slate-500 cursor-not-allowed"
+                : demoMode
+                  ? "text-slate-500 cursor-not-allowed bg-slate-500/5"
+                  : remediationSucceeded
+                    ? "text-emerald-400 bg-emerald-500/10"
+                    : remediationFailed
+                      ? "text-rose-300 hover:text-emerald-300 bg-rose-500/10 hover:bg-emerald-500/10"
+                      : "text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10"
+            )}
+          >
+            {remediationRunning ? (
+              <Loader2 className="w-3 h-3 animate-spin" />
+            ) : (
+              <FileSearch className="w-3 h-3" />
+            )}
+            {remediationRunning ? "Remediating..." : demoMode ? "Disabled in demo" : remediationSucceeded ? "Remediated" : remediationFailed ? "Retry remediation" : "Investigate and plan fix"}
+          </button>
         </div>
 
         {investigation.error && (
           <div className="px-4 pb-3 flex items-center gap-2 text-xs text-red-400">
             <AlertCircle className="w-3 h-3 shrink-0" />
             <span className="min-w-0 flex-1">{investigation.error}</span>
-            {investigationFailed && !demoMode && (
-              <button
-                type="button"
-                onClick={investigate}
-                className="shrink-0 rounded-md border border-red-500/30 px-2 py-0.5 text-red-300 hover:border-emerald-500/40 hover:text-emerald-300 hover:bg-emerald-500/10 transition-colors"
-              >
-                Retry
-              </button>
-            )}
           </div>
         )}
 
@@ -546,15 +523,6 @@ function FindingCard({
           <div className="px-4 pb-3 flex items-center gap-2 text-xs text-red-400">
             <AlertCircle className="w-3 h-3 shrink-0" />
             <span className="min-w-0 flex-1">{plan.error}</span>
-            {planFailed && !demoMode && (
-              <button
-                type="button"
-                onClick={planFix}
-                className="shrink-0 rounded-md border border-red-500/30 px-2 py-0.5 text-red-300 hover:border-cyan-500/40 hover:text-cyan-300 hover:bg-cyan-500/10 transition-colors"
-              >
-                Retry
-              </button>
-            )}
           </div>
         )}
 
@@ -589,14 +557,6 @@ function FindingCard({
                   className="mt-3 text-xs text-slate-300 leading-relaxed prose-answer"
                   dangerouslySetInnerHTML={{ __html: renderMd(investigation.text, finding) }}
                 />
-                <button
-                  onClick={investigate}
-                  disabled={demoMode || investigationLocked}
-                  className="mt-3 flex items-center gap-1 text-xs text-slate-600 hover:text-emerald-400 transition-colors"
-                >
-                  <RefreshCw className="w-2.5 h-2.5" />
-                  {investigationSucceeded ? "Already run" : demoMode ? "Disabled in demo" : investigationFailed ? "Retry" : "Run again"}
-                </button>
               </>
             )}
           </div>
@@ -643,14 +603,6 @@ function FindingCard({
                       Open PR workflow
                     </button>
                   )}
-                  <button
-                    onClick={planFix}
-                    disabled={demoMode || planLocked}
-                    className="flex items-center gap-1 text-xs text-slate-600 hover:text-cyan-400 transition-colors"
-                  >
-                    <RefreshCw className="w-2.5 h-2.5" />
-                    {planSucceeded ? "Already run" : demoMode ? "Disabled in demo" : planFailed ? "Retry" : "Run again"}
-                  </button>
                 </div>
               </>
             )}

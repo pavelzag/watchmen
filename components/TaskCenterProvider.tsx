@@ -176,6 +176,8 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
   const [tasks, setTasks] = useState<AnyBackgroundTask[]>([]);
   const hasHydratedRef = useRef(false);
   const previousTasksRef = useRef<AnyBackgroundTask[]>([]);
+  const persistTimerRef = useRef<number | null>(null);
+  const pendingPersistTasksRef = useRef<Map<string, AnyBackgroundTask>>(new Map());
 
   const mergeTasks = useCallback((localTasks: AnyBackgroundTask[], remoteTasks: AnyBackgroundTask[]) => {
     const merged = new Map<string, AnyBackgroundTask>();
@@ -193,6 +195,29 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
     setTasks((current) =>
       current.map((task) => (task.id === taskId ? updater(task) : task))
     );
+  }, []);
+
+  const cancelPendingPersist = useCallback(() => {
+    if (persistTimerRef.current !== null) {
+      window.clearTimeout(persistTimerRef.current);
+      persistTimerRef.current = null;
+    }
+    pendingPersistTasksRef.current.clear();
+  }, []);
+
+  const schedulePersist = useCallback(() => {
+    if (persistTimerRef.current !== null) return;
+    persistTimerRef.current = window.setTimeout(() => {
+      persistTimerRef.current = null;
+      const tasksToPersist = [...pendingPersistTasksRef.current.values()];
+      pendingPersistTasksRef.current.clear();
+      if (!hasHydratedRef.current || tasksToPersist.length === 0) return;
+      void fetch("/api/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tasks: tasksToPersist }),
+      }).catch(() => {});
+    }, 1200);
   }, []);
 
   const enqueueTask = useCallback(<K extends BackgroundTaskKind>(
@@ -489,24 +514,27 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
   ]);
 
   const dismissTask = useCallback((taskId: string) => {
+    cancelPendingPersist();
     setTasks((current) => current.filter((task) => task.id !== taskId));
     void fetch("/api/tasks", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ids: [taskId] }),
     }).catch(() => {});
-  }, []);
+  }, [cancelPendingPersist]);
 
   const clearFinishedTasks = useCallback(() => {
+    cancelPendingPersist();
     setTasks((current) => current.filter(isActiveTask));
     void fetch("/api/tasks", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ clearFinished: true }),
     }).catch(() => {});
-  }, []);
+  }, [cancelPendingPersist]);
 
   const clearAllTasks = useCallback(() => {
+    cancelPendingPersist();
     setTasks([]);
     try {
       window.localStorage.removeItem(TASK_STORAGE_KEY);
@@ -518,7 +546,7 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ clearAll: true }),
     }).catch(() => {});
-  }, []);
+  }, [cancelPendingPersist]);
 
   useEffect(() => {
     let cancelled = false;
@@ -608,12 +636,19 @@ export function TaskCenterProvider({ children }: { children: React.ReactNode }) 
       }
     }
 
-    void fetch("/api/tasks", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tasks: changedTasks }),
-    }).catch(() => {});
-  }, [tasks]);
+    for (const task of changedTasks) {
+      pendingPersistTasksRef.current.set(task.id, task);
+    }
+    schedulePersist();
+  }, [tasks, schedulePersist]);
+
+  useEffect(() => {
+    return () => {
+      if (persistTimerRef.current !== null) {
+        window.clearTimeout(persistTimerRef.current);
+      }
+    };
+  }, []);
 
   const value = useMemo<TaskCenterContextValue>(() => ({
     tasks,
