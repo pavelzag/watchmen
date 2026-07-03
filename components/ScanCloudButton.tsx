@@ -119,10 +119,11 @@ export default function ScanCloudButton({ onScanComplete, variant = "terminal" }
 
   if (variant === "modern") {
     return (
-      <div className="flex flex-col items-end gap-0.5">
+      <div className="relative inline-flex group">
         <button
           onClick={scan}
           disabled={isDisabled}
+          title={scannedLabel ?? undefined}
           className={cn(
             "flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors",
             isDisabled
@@ -134,17 +135,20 @@ export default function ScanCloudButton({ onScanComplete, variant = "terminal" }
           {scanning ? "Scanning…" : inCooldown ? `Wait ${cooldownSecs}s` : label}
         </button>
         {scannedLabel && (
-          <span className="text-[10px] text-slate-600 tabular-nums">{scannedLabel}</span>
+          <div className="pointer-events-none absolute bottom-full left-1/2 mb-2 hidden -translate-x-1/2 whitespace-nowrap rounded border border-slate-700 bg-slate-950 px-2 py-1 text-[10px] font-mono tabular-nums text-slate-300 shadow-lg group-hover:block">
+            {scannedLabel}
+          </div>
         )}
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col items-start gap-0.5">
+    <div className="relative inline-flex group">
       <button
         onClick={scan}
         disabled={isDisabled}
+        title={scannedLabel ?? undefined}
         className="flex items-center gap-2 px-3 py-1.5 text-xs uppercase tracking-widest transition-all"
         style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)", opacity: isDisabled ? 0.5 : 1 }}
       >
@@ -152,9 +156,9 @@ export default function ScanCloudButton({ onScanComplete, variant = "terminal" }
         {scanning ? "Scanning…" : inCooldown ? `Wait ${cooldownSecs}s` : label}
       </button>
       {scannedLabel && (
-        <span className="text-[9px] uppercase tracking-widest tabular-nums" style={{ color: "var(--text-muted)", opacity: 0.5 }}>
+        <div className="pointer-events-none absolute bottom-full left-1/2 mb-2 hidden -translate-x-1/2 whitespace-nowrap rounded border border-slate-700 bg-slate-950 px-2 py-1 text-[10px] font-mono tabular-nums text-slate-300 shadow-lg group-hover:block">
           {scannedLabel}
-        </span>
+        </div>
       )}
     </div>
   );
