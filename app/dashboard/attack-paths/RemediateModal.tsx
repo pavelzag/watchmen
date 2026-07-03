@@ -184,6 +184,17 @@ export default function RemediateModal({ targets, onClose, autoCreatePr = false 
   const creationCompletionTimerRef = useRef<number | null>(null);
   const autoAnalysisStartedRef = useRef(false);
   const autoCreateStartedRef = useRef(false);
+  const workflowStageLabels: Record<Step, string> = {
+    "select-paths": "Select findings",
+    "select-repo": "Select repo",
+    analyzing: "Generate preview",
+    preview: "Review diff",
+    "confirm-pr": "Confirm destination",
+    creating: "Create PR",
+    done: "Done",
+    error: "Error",
+  };
+  const workflowStages: Step[] = ["select-paths", "select-repo", "analyzing", "preview", "confirm-pr", "creating", "done"];
 
   const selectedTargets = targets.filter((target) => selectedPathIds.has(target.id));
 
@@ -493,12 +504,12 @@ export default function RemediateModal({ targets, onClose, autoCreatePr = false 
             >
               // Fix with GitHub PR
             </p>
-          <p style={{ fontFamily: "monospace", fontSize: 10, color: "var(--border-dim)", marginTop: 2 }}>
-            {step === "select-paths" && "Select findings or attack paths to remediate"}
-            {step === "select-repo" && "Choose a repository with Terraform files"}
-            {step === "analyzing" && "Scanning Terraform files…"}
-            {step === "preview" && analysisSummary && analysisSummary}
-            {step === "confirm-pr" && "Confirm the PR destination before opening it"}
+            <p style={{ fontFamily: "monospace", fontSize: 10, color: "var(--border-dim)", marginTop: 2 }}>
+              {step === "select-paths" && "Select findings or attack paths to remediate"}
+              {step === "select-repo" && "Choose a repository with Terraform files"}
+              {step === "analyzing" && "Scanning Terraform files…"}
+              {step === "preview" && analysisSummary && analysisSummary}
+              {step === "confirm-pr" && "Confirm the PR destination before opening it"}
               {step === "preview" && !analysisSummary && patches.length > 0 && (
                 patches.every(p => p.isNewFile)
                   ? "New security file will be created"
@@ -519,6 +530,42 @@ export default function RemediateModal({ targets, onClose, autoCreatePr = false 
 
         {/* Body (scrollable) */}
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          {autoCreatePr && (
+            <div className="space-y-2 p-3" style={{ border: "1px solid rgba(167,139,250,0.28)", background: "rgba(88,28,135,0.08)" }}>
+              <div className="flex items-center gap-2">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: "rgb(196,181,253)" }} />
+                <p style={{ fontFamily: "monospace", fontSize: 10, color: "rgb(196,181,253)", textTransform: "uppercase", letterSpacing: 2 }}>
+                  Auto PR flow active
+                </p>
+              </div>
+              <div className="grid gap-1.5 sm:grid-cols-3 md:grid-cols-4">
+                {workflowStages.map((workflowStage) => {
+                  const active = workflowStages.indexOf(workflowStage) <= workflowStages.indexOf(step);
+                  return (
+                    <div
+                      key={workflowStage}
+                      className="flex items-center gap-2 px-2 py-1"
+                      style={{
+                        border: "1px solid " + (active ? "rgba(167,139,250,0.35)" : "var(--border-dim)"),
+                        background: active ? "rgba(167,139,250,0.08)" : "transparent",
+                      }}
+                    >
+                      <span
+                        className="h-1.5 w-1.5 rounded-full"
+                        style={{ background: active ? "rgb(196,181,253)" : "var(--border-dim)" }}
+                      />
+                      <span style={{ fontFamily: "monospace", fontSize: 9, color: active ? "rgb(221,214,254)" : "var(--text-muted)", textTransform: "uppercase", letterSpacing: 1 }}>
+                        {workflowStageLabels[workflowStage]}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+              <p style={{ fontFamily: "monospace", fontSize: 10, color: "var(--text-muted)" }}>
+                Current stage: {workflowStageLabels[step]}
+              </p>
+            </div>
+          )}
 
           {(step === "preview" || step === "done") && (
             <div className="space-y-3">
