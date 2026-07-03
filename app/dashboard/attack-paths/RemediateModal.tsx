@@ -212,7 +212,16 @@ export default function RemediateModal({ targets, onClose, autoCreatePr = false 
         return;
       }
       if (!res.ok) throw new Error(data.error ?? "Failed to load repos");
-      setRepos(data.repos ?? []);
+      const nextRepos = Array.isArray(data.repos) ? data.repos : [];
+      setRepos(nextRepos);
+      if (autoCreatePr && nextRepos.length > 0) {
+        const preferredRepo = githubDefaults?.repoFullName
+          ? nextRepos.find((repo: GhRepo) => repo.full_name === githubDefaults.repoFullName)
+          : nextRepos[0];
+        if (preferredRepo) {
+          setSelectedRepo(preferredRepo);
+        }
+      }
     } catch (e) {
       setRepoError(e instanceof Error ? e.message : "Network error");
     }
