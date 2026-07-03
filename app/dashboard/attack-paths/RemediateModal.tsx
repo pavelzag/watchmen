@@ -37,6 +37,7 @@ type Step =
 interface Props {
   targets: RemediationTarget[];
   onClose: () => void;
+  autoCreatePr?: boolean;
 }
 
 // ─── Diff view (before/after) ─────────────────────────────────────────────────
@@ -148,7 +149,7 @@ function SevBadge({ severity }: { severity: RemediationTarget["severity"] }) {
 
 // ─── Modal ────────────────────────────────────────────────────────────────────
 
-export default function RemediateModal({ targets, onClose }: Props) {
+export default function RemediateModal({ targets, onClose, autoCreatePr = false }: Props) {
   const [step, setStep] = useState<Step>("select-paths");
   const [selectedPathIds, setSelectedPathIds] = useState<Set<string>>(
     new Set(targets.map((target) => target.id))
@@ -181,6 +182,8 @@ export default function RemediateModal({ targets, onClose }: Props) {
   const { tasks, startTerraformPreview, startTerraformPr } = useTaskCenter();
   const creationStartedAtRef = useRef<number | null>(null);
   const creationCompletionTimerRef = useRef<number | null>(null);
+  const autoAnalysisStartedRef = useRef(false);
+  const autoCreateStartedRef = useRef(false);
 
   const selectedTargets = targets.filter((target) => selectedPathIds.has(target.id));
 
@@ -331,6 +334,20 @@ export default function RemediateModal({ targets, onClose }: Props) {
     void loadBranches(selectedRepo);
   }, [selectedRepo, githubDefaults?.repoFullName, githubDefaults?.defaultBranch]);
 
+  useEffect(() => {
+    if (!autoCreatePr || autoAnalysisStartedRef.current) return;
+    if (step !== "select-paths") return;
+    if (targets.length === 0) return;
+    void loadRepos();
+  }, [autoCreatePr, step, targets.length]);
+
+  useEffect(() => {
+    if (!autoCreatePr || autoAnalysisStartedRef.current) return;
+    if (step !== "select-repo" || !selectedRepo || tokenRequired || repoError) return;
+    autoAnalysisStartedRef.current = true;
+    analyze();
+  }, [autoCreatePr, step, selectedRepo, tokenRequired, repoError]);
+
   // ── Close on Escape ────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -361,6 +378,19 @@ export default function RemediateModal({ targets, onClose }: Props) {
       setStep("error");
     }
   }, [analysisTaskId, tasks]);
+
+  useEffect(() => {
+    if (!autoCreatePr || autoCreateStartedRef.current) return;
+    if (step !== "preview" || patches.length === 0 || noChanges || isCreatingPr) return;
+    autoCreateStartedRef.current = true;
+    beginCreatePr();
+  }, [autoCreatePr, step, patches.length, noChanges, isCreatingPr]);
+
+  useEffect(() => {
+    if (!autoCreatePr || autoCreateStartedRef.current === false) return;
+    if (step !== "confirm-pr" || isCreatingPr || creationTaskId) return;
+    createPr();
+  }, [autoCreatePr, step, isCreatingPr, creationTaskId]);
 
   useEffect(() => {
     if (!creationTaskId) return;

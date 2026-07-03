@@ -176,7 +176,7 @@ function buildWorkflow(query: string, intent: QueryIntent, hasGcpSnapshot: boole
   const actions: QueryWorkflowAction[] = [];
   const findingsHrefBase = cloud ? `/dashboard/findings?cloud=${cloud}` : "/dashboard/findings";
   const findingsHref = severity ? `${findingsHrefBase}&severity=${severity}` : findingsHrefBase;
-  const remediationHref = `${findingsHref}${findingsHref.includes("?") ? "&" : "?"}remediate=1`;
+  const remediationHref = `${findingsHref}${findingsHref.includes("?") ? "&" : "?"}remediate=1&autopr=1`;
 
   if (wantsScan) {
     actions.push({

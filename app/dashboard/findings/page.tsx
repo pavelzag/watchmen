@@ -844,6 +844,7 @@ export default function FindingsPage() {
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
   const [showRemediate, setShowRemediate] = useState(false);
   const [remediationFindings, setRemediationFindings] = useState<CloudFinding[]>([]);
+  const [remediationAutoCreatePr, setRemediationAutoCreatePr] = useState(false);
   const [agentRunsByFinding, setAgentRunsByFinding] = useState<Record<string, FindingAgentRuns>>({});
   const [search, setSearch] = useState("");
   const [showWatchlist, setShowWatchlist] = useState(false);
@@ -877,8 +878,9 @@ export default function FindingsPage() {
     });
   }
 
-  function openRemediation(findingsToRemediate: CloudFinding[]) {
+  function openRemediation(findingsToRemediate: CloudFinding[], autoCreatePr = false) {
     setRemediationFindings(findingsToRemediate);
+    setRemediationAutoCreatePr(autoCreatePr);
     setShowRemediate(true);
   }
 
@@ -985,7 +987,7 @@ export default function FindingsPage() {
     if (params.get("remediate") !== "1") return;
     if (remediableFindings.length === 0) return;
     autoOpenRemediationRef.current = true;
-    openRemediation(remediableFindings);
+    openRemediation(remediableFindings, params.get("autopr") === "1");
   }, [loading, remediableFindings]);
 
   return (
@@ -1183,9 +1185,11 @@ export default function FindingsPage() {
       {showRemediate && (
         <RemediateModal
           targets={(remediationFindings.length > 0 ? remediationFindings : remediableFindings).map(remediationTargetFromFinding)}
+          autoCreatePr={remediationAutoCreatePr}
           onClose={() => {
             setShowRemediate(false);
             setRemediationFindings([]);
+            setRemediationAutoCreatePr(false);
           }}
         />
       )}
