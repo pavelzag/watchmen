@@ -346,6 +346,10 @@ export default function DashboardClient({
 
   function handleResult(result: QueryResult) {
     setResults((prev) => [result, ...prev]);
+    if (result.workflow?.autoRunTask === "gcp_scan") {
+      appendSyncLog("[gcp-dashboard] Ask AI requested a GCP scan", { query: result.query });
+      startGcpScan();
+    }
   }
 
   const effectiveConnections = cloudConnections ?? { gcp: false, aws: false };

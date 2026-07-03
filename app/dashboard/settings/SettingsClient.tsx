@@ -20,6 +20,20 @@ interface CloudCredRecord {
   updatedAt: string;
 }
 
+interface GithubRepoRecord {
+  full_name: string;
+  default_branch: string;
+  private: boolean;
+  html_url: string;
+}
+
+interface GithubRemediationDefaultsRecord {
+  repoFullName: string;
+  defaultBranch: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 type TraceSourceMode = "polling" | "streaming";
 type GcpComputeTraceSource = "cloud_logging" | "pubsub";
 type GcpGkeTraceSource = GcpComputeTraceSource | "ebpf_agent";
@@ -198,6 +212,16 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
   const [cloudSaving, setCloudSaving] = useState<Record<string, boolean>>({ gcp: false, aws: false, ghcr: false, dockerhub: false, github: false });
   const [cloudDeleting, setCloudDeleting] = useState<Record<string, boolean>>({ gcp: false, aws: false, ghcr: false, dockerhub: false, github: false });
   const [cloudErrors, setCloudErrors] = useState<Record<string, string>>({ gcp: "", aws: "", ghcr: "", dockerhub: "", github: "" });
+  const [githubRemediationDefaults, setGithubRemediationDefaults] = useState<GithubRemediationDefaultsRecord | null>(null);
+  const [githubRemediationRepos, setGithubRemediationRepos] = useState<GithubRepoRecord[]>([]);
+  const [githubRemediationBranches, setGithubRemediationBranches] = useState<string[]>([]);
+  const [githubRemediationRepoSearch, setGithubRemediationRepoSearch] = useState("");
+  const [githubRemediationRepoFullName, setGithubRemediationRepoFullName] = useState("");
+  const [githubRemediationBranch, setGithubRemediationBranch] = useState("");
+  const [githubRemediationLoading, setGithubRemediationLoading] = useState(false);
+  const [githubRemediationBranchesLoading, setGithubRemediationBranchesLoading] = useState(false);
+  const [githubRemediationSaving, setGithubRemediationSaving] = useState(false);
+  const [githubRemediationError, setGithubRemediationError] = useState<string | null>(null);
 
   const [ghcrToken, setGhcrToken] = useState("");
   const [showGhcrToken, setShowGhcrToken] = useState(false);
@@ -294,6 +318,98 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
         .finally(() => setLocalTunnelLoading(false));
     }
   }, [isDemoUser]);
+
+  useEffect(() => {
+    if (isDemoUser) return;
+    setGithubRemediationLoading(true);
+    fetch("/api/settings/github-remediation")
+      .then((r) => r.json())
+      .then((d) => {
+        setGithubRemediationDefaults(d.defaults ?? null);
+        if (d.defaults?.repoFullName) {
+          setGithubRemediationRepoFullName(d.defaults.repoFullName);
+          setGithubRemediationBranch(d.defaults.defaultBranch ?? "");
+        }
+      })
+      .catch(() => setGithubRemediationError("Failed to load GitHub remediation defaults."))
+      .finally(() => setGithubRemediationLoading(false));
+  }, [isDemoUser]);
+
+  useEffect(() => {
+    if (isDemoUser) return;
+    const hasGithubToken = cloudCreds.some((c) => c.provider === "github");
+    if (!hasGithubToken) {
+      setGithubRemediationRepos([]);
+      setGithubRemediationLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setGithubRemediationLoading(true);
+    fetch("/api/github/repos")
+      .then((r) => r.json())
+      .then((d) => {
+        if (cancelled) return;
+        if (Array.isArray(d.repos)) {
+          setGithubRemediationRepos(d.repos);
+          if (!githubRemediationRepoFullName && githubRemediationDefaults?.repoFullName) {
+            setGithubRemediationRepoFullName(githubRemediationDefaults.repoFullName);
+            setGithubRemediationBranch(githubRemediationDefaults.defaultBranch ?? "");
+          }
+        } else {
+          setGithubRemediationRepos([]);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setGithubRemediationError("Failed to load GitHub repositories.");
+      })
+      .finally(() => {
+        if (!cancelled) setGithubRemediationLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isDemoUser, cloudCreds, githubRemediationDefaults?.repoFullName, githubRemediationRepoFullName]);
+
+  useEffect(() => {
+    if (!githubRemediationRepoFullName) {
+      setGithubRemediationBranches([]);
+      setGithubRemediationBranch("");
+      return;
+    }
+
+    const repo = githubRemediationRepos.find((item) => item.full_name === githubRemediationRepoFullName);
+    if (!repo) return;
+
+    let cancelled = false;
+    setGithubRemediationBranchesLoading(true);
+    setGithubRemediationError(null);
+    fetch(`/api/github/repos/${encodeURIComponent(repo.full_name.split("/")[0])}/${encodeURIComponent(repo.full_name.split("/")[1])}/branches`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (cancelled) return;
+        const branches = Array.isArray(d.branches) ? d.branches : [];
+        setGithubRemediationBranches(branches);
+        setGithubRemediationBranch((current) => {
+          if (current && branches.includes(current)) return current;
+          if (githubRemediationDefaults?.repoFullName === repo.full_name && githubRemediationDefaults.defaultBranch) {
+            return githubRemediationDefaults.defaultBranch;
+          }
+          return repo.default_branch || branches[0] || "";
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setGithubRemediationError("Failed to load branches for the selected repository.");
+      })
+      .finally(() => {
+        if (!cancelled) setGithubRemediationBranchesLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [githubRemediationRepoFullName, githubRemediationRepos, githubRemediationDefaults]);
 
   // Load alert rules
   useEffect(() => {
@@ -723,6 +839,32 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
       setCloudErrors((err) => ({ ...err, [provider]: e instanceof Error ? e.message : "Network error" }));
     } finally {
       setCloudDeleting((d) => ({ ...d, [provider]: false }));
+    }
+  }
+
+  async function saveGithubRemediationDefaults() {
+    if (!githubRemediationRepoFullName || !githubRemediationBranch) return;
+    setGithubRemediationSaving(true);
+    setGithubRemediationError(null);
+    try {
+      const res = await fetch("/api/settings/github-remediation", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          repoFullName: githubRemediationRepoFullName,
+          defaultBranch: githubRemediationBranch,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setGithubRemediationError(data.error ?? "Failed to save GitHub remediation defaults.");
+        return;
+      }
+      setGithubRemediationDefaults(data.defaults ?? null);
+    } catch (e) {
+      setGithubRemediationError(e instanceof Error ? e.message : "Failed to save GitHub remediation defaults.");
+    } finally {
+      setGithubRemediationSaving(false);
     }
   }
 
@@ -1390,6 +1532,152 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
                       {isSaving ? "Testing…" : record ? "Update & Test" : "Connect & Test"}
                     </button>
                   </div>
+                </div>
+              );
+            })()}
+
+            {/* GitHub Remediation Defaults */}
+            {(() => {
+              const record = cloudCreds.find((c) => c.provider === "github");
+              const selectedRepo = githubRemediationRepos.find((repo) => repo.full_name === githubRemediationRepoFullName) ?? null;
+              const filteredRepos = githubRemediationRepos.filter((repo) =>
+                repo.full_name.toLowerCase().includes(githubRemediationRepoSearch.toLowerCase())
+              );
+              return (
+                <div className="border p-5 space-y-4 transition-all duration-150" style={{ background: "rgba(16, 185, 129, 0.04)", borderColor: "rgba(16, 185, 129, 0.18)" }}>
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <span className="text-sm font-bold" style={{ color: "var(--text-strong)" }}>GitHub remediation defaults</span>
+                      <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
+                        Default repository and branch used when Watchmen opens remediation PRs.
+                      </p>
+                    </div>
+                    {githubRemediationDefaults && (
+                      <span className="text-xs font-mono" style={{ color: "var(--green)" }}>
+                        {githubRemediationDefaults.repoFullName} @ {githubRemediationDefaults.defaultBranch}
+                      </span>
+                    )}
+                  </div>
+
+                  {!record ? (
+                    <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                      Connect a GitHub PAT above first so Watchmen can load your repositories and branches.
+                    </p>
+                  ) : (
+                    <div className="space-y-3">
+                      <input
+                        type="text"
+                        value={githubRemediationRepoSearch}
+                        onChange={(e) => setGithubRemediationRepoSearch(e.target.value)}
+                        placeholder="Search repositories…"
+                        className="w-full px-3 py-2 bg-transparent border text-xs placeholder:opacity-30 outline-none font-mono"
+                        style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
+                      />
+                      <div className="space-y-1 max-h-56 overflow-y-auto">
+                        {githubRemediationLoading ? (
+                          <p className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>Loading repositories…</p>
+                        ) : filteredRepos.length === 0 ? (
+                          <p className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>No repositories found.</p>
+                        ) : filteredRepos.map((repo) => (
+                          <button
+                            key={repo.full_name}
+                            type="button"
+                            onClick={() => setGithubRemediationRepoFullName(repo.full_name)}
+                            className="w-full flex items-center justify-between gap-3 px-3 py-2 text-left transition-colors"
+                            style={{
+                              border: "1px solid",
+                              borderColor: githubRemediationRepoFullName === repo.full_name ? "var(--green)" : "var(--border-dim)",
+                              background: githubRemediationRepoFullName === repo.full_name ? "rgba(0,170,43,0.07)" : "transparent",
+                            }}
+                          >
+                            <span className="text-xs font-mono" style={{ color: "var(--text-primary)" }}>
+                              {repo.full_name}
+                            </span>
+                            <span className="text-[10px] font-mono" style={{ color: "var(--text-muted)" }}>
+                              {repo.default_branch}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+
+                      {selectedRepo && (
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div className="space-y-1">
+                            <label className="text-[10px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Selected repository</label>
+                            <div className="px-3 py-2 border text-xs font-mono" style={{ borderColor: "var(--border-dim)", color: "var(--text-primary)" }}>
+                              {selectedRepo.full_name}
+                            </div>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Default branch</label>
+                            <select
+                              value={githubRemediationBranch}
+                              onChange={(e) => setGithubRemediationBranch(e.target.value)}
+                              className="w-full px-3 py-2 bg-transparent border text-xs outline-none font-mono"
+                              style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
+                            >
+                              {githubRemediationBranchesLoading && <option value="">Loading branches…</option>}
+                              {!githubRemediationBranchesLoading && githubRemediationBranches.length === 0 && <option value="">No branches found</option>}
+                              {githubRemediationBranches.map((branch) => (
+                                <option key={branch} value={branch}>
+                                  {branch}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={saveGithubRemediationDefaults}
+                          disabled={!githubRemediationRepoFullName || !githubRemediationBranch || githubRemediationSaving}
+                          className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold transition-all duration-150"
+                          style={
+                            githubRemediationRepoFullName && githubRemediationBranch && !githubRemediationSaving
+                              ? { background: "var(--green)", color: "var(--bg)" }
+                              : { border: "1px solid var(--border-dim)", color: "var(--text-muted)", opacity: 0.5 }
+                          }
+                        >
+                          {githubRemediationSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                          {githubRemediationSaving ? "Saving…" : "Save default"}
+                        </button>
+                        {githubRemediationDefaults && (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              setGithubRemediationSaving(true);
+                              setGithubRemediationError(null);
+                              try {
+                                const res = await fetch("/api/settings/github-remediation", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clear: true }) });
+                                const data = await res.json();
+                                if (!res.ok) {
+                                  setGithubRemediationError(data.error ?? "Failed to clear GitHub remediation defaults.");
+                                  return;
+                                }
+                                setGithubRemediationDefaults(null);
+                                setGithubRemediationRepoFullName("");
+                                setGithubRemediationBranch("");
+                              } catch (e) {
+                                setGithubRemediationError(e instanceof Error ? e.message : "Failed to clear GitHub remediation defaults.");
+                              } finally {
+                                setGithubRemediationSaving(false);
+                              }
+                            }}
+                            className="text-xs font-mono"
+                            style={{ color: "var(--text-muted)" }}
+                          >
+                            Clear default
+                          </button>
+                        )}
+                      </div>
+
+                      {githubRemediationError && (
+                        <p className="text-xs text-red-400 font-mono">{githubRemediationError}</p>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })()}

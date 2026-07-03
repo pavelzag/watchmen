@@ -22,6 +22,20 @@ interface QueryBoxProps {
   placeholder?: string;
 }
 
+export type QueryWorkflowAction = {
+  label: string;
+  href: string;
+  description?: string;
+};
+
+export interface QueryWorkflow {
+  kind: "scan" | "remediate" | "inspect";
+  summary: string;
+  autoRunTask?: "gcp_scan" | "aws_scan";
+  primaryHref?: string;
+  actions: QueryWorkflowAction[];
+}
+
 export interface QueryResult {
   query: string;
   answer: string;
@@ -34,6 +48,7 @@ export interface QueryResult {
     region?: string;
   };
   resources?: ResourceItem[];
+  workflow?: QueryWorkflow;
   fetchedAt: string;
 }
 

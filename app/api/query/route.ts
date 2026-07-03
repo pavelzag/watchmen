@@ -89,6 +89,20 @@ type QueryLogger = {
   currentStep?: string;
 };
 
+type QueryWorkflowAction = {
+  label: string;
+  href: string;
+  description?: string;
+};
+
+type QueryWorkflow = {
+  kind: "scan" | "remediate" | "inspect";
+  summary: string;
+  autoRunTask?: "gcp_scan" | "aws_scan";
+  primaryHref?: string;
+  actions: QueryWorkflowAction[];
+};
+
 function logQueryStep(logger: QueryLogger | undefined, step: string, data: Record<string, unknown> = {}) {
   if (!logger) return;
   logger.currentStep = step;
@@ -117,6 +131,106 @@ function clearQueryWatchdogs(watchdogs: Array<ReturnType<typeof setTimeout>>) {
 function increment(map: Record<string, number>, key: unknown) {
   const normalized = String(key || "unknown");
   map[normalized] = (map[normalized] ?? 0) + 1;
+}
+
+function inferSeverityFilter(query: string): "critical" | "high" | "medium" | "low" | undefined {
+  const q = query.toLowerCase();
+  if (q.includes("critical")) return "critical";
+  if (q.includes("high")) return "high";
+  if (q.includes("medium")) return "medium";
+  if (q.includes("low")) return "low";
+  return undefined;
+}
+
+function inferWorkflowCloud(query: string, intent: QueryIntent, hasGcpSnapshot: boolean, hasAwsSnapshot: boolean): "gcp" | "aws" | undefined {
+  const q = query.toLowerCase();
+  if (q.includes("aws")) return "aws";
+  if (q.includes("gcp") || q.includes("google cloud") || q.includes("terraform")) return "gcp";
+  if (intent.projectId && /^\d{12}$/.test(intent.projectId)) return "aws";
+  if (intent.projectId && /^[a-z][a-z0-9-]+[a-z0-9]$/.test(intent.projectId)) return "gcp";
+  if (hasGcpSnapshot && !hasAwsSnapshot) return "gcp";
+  if (hasAwsSnapshot && !hasGcpSnapshot) return "aws";
+  return undefined;
+}
+
+function buildWorkflow(query: string, intent: QueryIntent, hasGcpSnapshot: boolean, hasAwsSnapshot: boolean): QueryWorkflow | undefined {
+  const q = query.toLowerCase();
+  const wantsScan = /\b(scan|rescan|refresh)\b/.test(q) || (
+    intent.queryType === "security_findings" && /\b(find|show|list|report|discover|hunt)\b/.test(q)
+  );
+  const wantsRemediation = /\b(remediate|remediation|fix|create pr|open pr|pull request|terraform pr)\b/.test(q);
+  const wantsVerification = /\b(verify|validation|check fix)\b/.test(q);
+  const cloud = inferWorkflowCloud(query, intent, hasGcpSnapshot, hasAwsSnapshot);
+  const severity = inferSeverityFilter(query);
+
+  if (!wantsScan && !wantsRemediation && !wantsVerification && intent.queryType !== "security_findings") {
+    return undefined;
+  }
+
+  const actions: QueryWorkflowAction[] = [];
+  const findingsHrefBase = cloud ? `/dashboard/findings?cloud=${cloud}` : "/dashboard/findings";
+  const findingsHref = severity ? `${findingsHrefBase}&severity=${severity}` : findingsHrefBase;
+  const remediationHref = `${findingsHref}${findingsHref.includes("?") ? "&" : "?"}remediate=1`;
+
+  if (wantsScan) {
+    actions.push({
+      label: cloud === "aws" ? "Refresh AWS findings" : "Refresh GCP findings",
+      href: findingsHrefBase,
+      description: "Open the latest findings after the next scan finishes.",
+    });
+  }
+
+  if (wantsRemediation || intent.queryType === "security_findings") {
+    actions.push({
+      label: severity ? `Open ${severity} findings` : "Open findings",
+      href: findingsHref,
+      description: "Inspect the filtered findings list in the Security Findings page.",
+    });
+    actions.push({
+      label: "Open remediation",
+      href: remediationHref,
+      description: "Open the remediation modal for the filtered findings.",
+    });
+  }
+
+  if (wantsVerification) {
+    actions.push({
+      label: "Open findings",
+      href: findingsHrefBase,
+      description: "Review the latest snapshot before re-running verification.",
+    });
+  }
+
+  if (actions.length === 0) return undefined;
+
+  const autoRunTask =
+    wantsScan && cloud === "aws"
+      ? "aws_scan"
+      : wantsScan
+        ? "gcp_scan"
+        : undefined;
+
+  const workflowKind: QueryWorkflow["kind"] =
+    wantsRemediation || intent.queryType === "security_findings"
+      ? "remediate"
+      : wantsScan
+        ? "scan"
+        : "inspect";
+
+  const summary =
+    workflowKind === "scan"
+      ? `Watchmen can run a ${cloud === "aws" ? "AWS" : "GCP"} scan, then open the findings list for follow-up remediation.`
+      : workflowKind === "remediate"
+        ? `Watchmen can open the filtered findings and launch the remediation flow from there.`
+        : `Watchmen can open the latest findings view for verification and review.`;
+
+  return {
+    kind: workflowKind,
+    summary,
+    autoRunTask,
+    primaryHref: actions[0]?.href,
+    actions,
+  };
 }
 
 async function fetchProcessorHistory(logger?: QueryLogger) {
@@ -1044,6 +1158,7 @@ export async function POST(req: NextRequest) {
       isAwsMock,
     });
     if (scenarioContext) combinedSnapshot.trace_scenarios = scenarioContext;
+    const workflow = buildWorkflow(query, intent, Boolean(gcpSnapshot), Boolean(awsSnapshot));
 
     // For auth log queries, fetch live data on-demand instead of using the snapshot
     if (intent.queryType === "auth_logs") {
@@ -1125,6 +1240,7 @@ export async function POST(req: NextRequest) {
         intent,
         answer,
         resources: [],
+        ...(workflow ? { workflow } : {}),
         fetchedAt: gcpSnapshot?.fetchedAt || awsSnapshot?.fetchedAt || new Date().toISOString(),
       }));
     }
@@ -1162,6 +1278,7 @@ export async function POST(req: NextRequest) {
       intent,
       answer,
       resources,
+      ...(workflow ? { workflow } : {}),
       fetchedAt: gcpSnapshot?.fetchedAt || awsSnapshot?.fetchedAt
     }));
   } catch (err) {

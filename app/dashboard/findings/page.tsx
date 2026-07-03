@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo, type MouseEvent } from "react";
+import { useEffect, useState, useMemo, useRef, type MouseEvent } from "react";
 import Link from "next/link";
 import { ArrowLeft, ShieldAlert, ShieldCheck, RefreshCw, Loader2, ChevronDown, ChevronUp, AlertCircle, GitPullRequest, Search, X, Download, Star, FileSearch, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -833,16 +833,22 @@ export default function FindingsPage() {
   const [search, setSearch] = useState("");
   const [showWatchlist, setShowWatchlist] = useState(false);
   const [pinned, setPinned] = useState<Set<string>>(new Set());
+  const autoOpenRemediationRef = useRef(false);
 
   useEffect(() => {
     setPinned(loadPinned());
   }, []);
 
   useEffect(() => {
-    const cloud = new URLSearchParams(window.location.search).get("cloud");
+    const params = new URLSearchParams(window.location.search);
+    const cloud = params.get("cloud");
     if (cloud === "gcp" || cloud === "aws") {
       setCloudFilter(cloud);
       setFilter("all");
+    }
+    const severity = params.get("severity");
+    if (severity === "critical" || severity === "high" || severity === "medium" || severity === "low") {
+      setFilter(severity);
     }
   }, []);
 
@@ -957,6 +963,15 @@ export default function FindingsPage() {
     .filter((g) => g.items.length > 0);
 
   const pinnedCount = pinned.size;
+
+  useEffect(() => {
+    if (loading || autoOpenRemediationRef.current) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("remediate") !== "1") return;
+    if (remediableFindings.length === 0) return;
+    autoOpenRemediationRef.current = true;
+    openRemediation(remediableFindings);
+  }, [loading, remediableFindings]);
 
   return (
     <div className="space-y-6">

@@ -57,6 +57,30 @@ describe('ResultCard', () => {
         expect(screen.getByText(/\[Buckets\]/)).toBeInTheDocument();
     });
 
+    it('renders workflow actions when provided', () => {
+        render(
+            <ResultCard
+                result={{
+                    ...mockResult,
+                    workflow: {
+                        kind: "remediate",
+                        summary: "Watchmen can open the filtered findings and launch the remediation flow from there.",
+                        actions: [
+                            { label: "Open findings", href: "/dashboard/findings?cloud=gcp&severity=critical" },
+                            { label: "Open remediation", href: "/dashboard/findings?cloud=gcp&severity=critical&remediate=1" },
+                        ],
+                    },
+                }}
+                index={0}
+            />
+        );
+
+        expect(screen.getByText(/security workflow/)).toBeInTheDocument();
+        expect(screen.getByText(/open the filtered findings and launch the remediation flow/)).toBeInTheDocument();
+        expect(screen.getByRole('link', { name: /open findings/i })).toHaveAttribute('href', '/dashboard/findings?cloud=gcp&severity=critical');
+        expect(screen.getByRole('link', { name: /open remediation/i })).toHaveAttribute('href', '/dashboard/findings?cloud=gcp&severity=critical&remediate=1');
+    });
+
     it('toggles intent debug information', () => {
         render(<ResultCard result={mockResult} index={0} />);
 

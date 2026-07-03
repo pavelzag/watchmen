@@ -17,11 +17,19 @@ interface GhRepo {
   html_url: string;
 }
 
+interface GithubRemediationDefaults {
+  repoFullName: string;
+  defaultBranch: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 type Step =
   | "select-paths"
   | "select-repo"
   | "analyzing"
   | "preview"
+  | "confirm-pr"
   | "creating"
   | "done"
   | "error";
@@ -148,8 +156,12 @@ export default function RemediateModal({ targets, onClose }: Props) {
   const [repos, setRepos] = useState<GhRepo[]>([]);
   const [repoSearch, setRepoSearch] = useState("");
   const [selectedRepo, setSelectedRepo] = useState<GhRepo | null>(null);
+  const [selectedBranch, setSelectedBranch] = useState("");
+  const [branches, setBranches] = useState<string[]>([]);
+  const [branchesLoading, setBranchesLoading] = useState(false);
   const [repoError, setRepoError] = useState<string | null>(null);
   const [tokenRequired, setTokenRequired] = useState(false);
+  const [githubDefaults, setGithubDefaults] = useState<GithubRemediationDefaults | null>(null);
   const [patches, setPatches] = useState<TfFilePatch[]>([]);
   const [prUrl, setPrUrl] = useState<string | null>(null);
   const [prNumber, setPrNumber] = useState<number | null>(null);
@@ -203,6 +215,45 @@ export default function RemediateModal({ targets, onClose }: Props) {
     }
   }
 
+  async function loadGithubDefaults() {
+    try {
+      const res = await fetch("/api/settings/github-remediation");
+      const data = await res.json();
+      if (res.ok) {
+        setGithubDefaults(data.defaults ?? null);
+      }
+    } catch {
+      // Ignore defaults loading errors in the modal.
+    }
+  }
+
+  async function loadBranches(repo: GhRepo | null) {
+    if (!repo) {
+      setBranches([]);
+      setSelectedBranch("");
+      return;
+    }
+
+    setBranchesLoading(true);
+    try {
+      const [owner, repoName] = repo.full_name.split("/");
+      const res = await fetch(`/api/github/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repoName)}/branches`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to load branches");
+      const branchNames = Array.isArray(data.branches) ? data.branches : [];
+      setBranches(branchNames);
+      setSelectedBranch(() => {
+        if (githubDefaults?.repoFullName === repo.full_name && githubDefaults.defaultBranch) return githubDefaults.defaultBranch;
+        return repo.default_branch || branchNames[0] || "";
+      });
+    } catch (e) {
+      setRepoError(e instanceof Error ? e.message : "Failed to load branches");
+      setBranches([]);
+    } finally {
+      setBranchesLoading(false);
+    }
+  }
+
   // ── Step 3: analyze ───────────────────────────────────────────────────────
 
   async function analyze() {
@@ -217,10 +268,15 @@ export default function RemediateModal({ targets, onClose }: Props) {
     setAnalysisUncoveredTargets([]);
     const taskId = startTerraformPreview({
       repoFullName: selectedRepo.full_name,
-      defaultBranch: selectedRepo.default_branch,
+      defaultBranch: selectedBranch || selectedRepo.default_branch,
       targets: selectedTargets,
     });
     setAnalysisTaskId(taskId);
+  }
+
+  function beginCreatePr() {
+    if (!selectedRepo) return;
+    setStep("confirm-pr");
   }
 
   // ── Step 5: create PR ─────────────────────────────────────────────────────
@@ -230,7 +286,7 @@ export default function RemediateModal({ targets, onClose }: Props) {
     if (creationTaskId || isCreatingPr) return;
     creationStartedAtRef.current = Date.now();
     setIsCreatingPr(true);
-    setStep("preview");
+    setStep("creating");
     setNoChanges(false);
     setPrUrl(null);
     setPrNumber(null);
@@ -240,7 +296,7 @@ export default function RemediateModal({ targets, onClose }: Props) {
     setCreationSummary(null);
     const taskId = startTerraformPr({
       repoFullName: selectedRepo.full_name,
-      defaultBranch: selectedRepo.default_branch,
+      defaultBranch: selectedBranch || selectedRepo.default_branch,
       targets: selectedTargets,
     });
     setCreationTaskId(taskId);
@@ -251,6 +307,29 @@ export default function RemediateModal({ targets, onClose }: Props) {
   const filteredRepos = repos.filter((r) =>
     r.full_name.toLowerCase().includes(repoSearch.toLowerCase())
   );
+
+  useEffect(() => {
+    void loadGithubDefaults();
+  }, []);
+
+  useEffect(() => {
+    if (step !== "select-repo" || !repos.length) return;
+    if (githubDefaults?.repoFullName && !selectedRepo) {
+      const repo = repos.find((item) => item.full_name === githubDefaults.repoFullName);
+      if (repo) {
+        setSelectedRepo(repo);
+      }
+    }
+  }, [step, repos, githubDefaults, selectedRepo]);
+
+  useEffect(() => {
+    if (!selectedRepo) {
+      setBranches([]);
+      setSelectedBranch("");
+      return;
+    }
+    void loadBranches(selectedRepo);
+  }, [selectedRepo, githubDefaults?.repoFullName, githubDefaults?.defaultBranch]);
 
   // ── Close on Escape ────────────────────────────────────────────────────────
 
@@ -380,6 +459,7 @@ export default function RemediateModal({ targets, onClose }: Props) {
             {step === "select-repo" && "Choose a repository with Terraform files"}
             {step === "analyzing" && "Scanning Terraform files…"}
             {step === "preview" && analysisSummary && analysisSummary}
+            {step === "confirm-pr" && "Confirm the PR destination before opening it"}
               {step === "preview" && !analysisSummary && patches.length > 0 && (
                 patches.every(p => p.isNewFile)
                   ? "New security file will be created"
@@ -388,7 +468,7 @@ export default function RemediateModal({ targets, onClose }: Props) {
                     : `${patches.length} file${patches.length === 1 ? "" : "s"} will be changed`
               )}
               {step === "preview" && !analysisSummary && patches.length === 0 && "No changes needed"}
-              {step === "preview" && isCreatingPr && (creationSummary ?? "Opening pull request…")}
+              {step === "creating" && (creationSummary ?? "Opening pull request…")}
               {step === "done" && "Pull request created"}
               {step === "error" && "Something went wrong"}
             </p>
@@ -572,6 +652,41 @@ export default function RemediateModal({ targets, onClose }: Props) {
                       </button>
                     ))}
                   </div>
+                  {selectedRepo && (
+                    <div className="space-y-3 p-4" style={{ border: "1px solid var(--border-dim)", background: "rgba(0,170,43,0.04)" }}>
+                      <div className="flex items-center justify-between gap-3 flex-wrap">
+                        <div className="space-y-1">
+                          <p style={{ fontFamily: "monospace", fontSize: 10, color: "var(--border-dim)" }}>
+                            Selected repo
+                          </p>
+                          <p style={{ fontFamily: "monospace", fontSize: 11, color: "#e5e7eb" }}>
+                            {selectedRepo.full_name}
+                          </p>
+                        </div>
+                        <div className="space-y-1 min-w-[180px]">
+                          <p style={{ fontFamily: "monospace", fontSize: 10, color: "var(--border-dim)" }}>
+                            Branch
+                          </p>
+                          <select
+                            value={selectedBranch}
+                            onChange={(e) => setSelectedBranch(e.target.value)}
+                            className="w-full px-3 py-2 bg-transparent text-xs font-mono outline-none"
+                            style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
+                          >
+                            {branchesLoading && <option value="">Loading branches…</option>}
+                            {!branchesLoading && branches.length === 0 && (
+                              <option value="">{selectedRepo.default_branch}</option>
+                            )}
+                            {branches.map((branch) => (
+                              <option key={branch} value={branch}>
+                                {branch}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
             </>
@@ -630,8 +745,21 @@ export default function RemediateModal({ targets, onClose }: Props) {
           )}
 
           {/* ── Step 4: preview ──────────────────────────────────────── */}
-          {step === "preview" && (
+          {(step === "preview" || step === "confirm-pr" || step === "creating" || step === "done") && (
             <>
+              {step === "confirm-pr" && (
+                <div className="flex items-start gap-3 p-4" style={{ border: "1px solid #f59e0b44", background: "#1a1206" }}>
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "#f59e0b" }} />
+                  <div className="space-y-1">
+                    <p style={{ fontFamily: "monospace", fontSize: 11, color: "#fbbf24", fontWeight: 700 }}>
+                      Confirm PR creation
+                    </p>
+                    <p style={{ fontFamily: "monospace", fontSize: 10, color: "#9ca3af", lineHeight: 1.6 }}>
+                      Watchmen will open a PR in {selectedRepo?.full_name ?? "the selected repository"} targeting branch {selectedBranch || selectedRepo?.default_branch || "default"}.
+                    </p>
+                  </div>
+                </div>
+              )}
               {noChanges || patches.length === 0 ? (
                 <div className="flex items-start gap-3 p-4" style={{ border: "1px solid var(--border-dim)", background: "rgba(0,170,43,0.04)" }}>
                   <Check className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "var(--green)" }} />
@@ -758,6 +886,16 @@ export default function RemediateModal({ targets, onClose }: Props) {
               ← Back
             </button>
           )}
+          {step === "confirm-pr" && (
+            <button
+              type="button"
+              onClick={() => setStep("preview")}
+              className="text-xs font-mono px-4 py-2 transition-colors"
+              style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}
+            >
+              ← Back
+            </button>
+          )}
           {step === "done" && (
             <button
               type="button"
@@ -817,12 +955,23 @@ export default function RemediateModal({ targets, onClose }: Props) {
             {step === "preview" && patches.length > 0 && (
               <button
                 type="button"
+                onClick={beginCreatePr}
+                disabled={isCreatingPr}
+                className="flex items-center gap-2 text-xs font-mono font-bold px-5 py-2 transition-all"
+                style={{ background: "var(--green)", color: "var(--bg)" }}
+              >
+                Create PR <ChevronRight className="w-3 h-3" />
+              </button>
+            )}
+            {step === "confirm-pr" && (
+              <button
+                type="button"
                 onClick={createPr}
                 disabled={isCreatingPr}
                 className="flex items-center gap-2 text-xs font-mono font-bold px-5 py-2 transition-all"
                 style={isCreatingPr ? { background: "var(--green)", color: "var(--bg)", opacity: 0.7 } : { background: "var(--green)", color: "var(--bg)" }}
               >
-                {isCreatingPr ? "Creating…" : "Create PR"} <ChevronRight className="w-3 h-3" />
+                {isCreatingPr ? "Creating…" : "Confirm & Create PR"} <ChevronRight className="w-3 h-3" />
               </button>
             )}
             {step === "preview" && patches.length === 0 && (

@@ -27,6 +27,11 @@ export interface GhRepo {
   html_url: string;
 }
 
+export interface GhBranch {
+  name: string;
+  protected: boolean;
+}
+
 /** List all repos accessible to the token (up to 100, sorted by updated). */
 export async function listRepos(token: string): Promise<GhRepo[]> {
   const res = await ghFetch(
@@ -50,6 +55,25 @@ export async function listRepos(token: string): Promise<GhRepo[]> {
     private: r.private,
     default_branch: r.default_branch,
     html_url: r.html_url,
+  }));
+}
+
+export async function listBranches(token: string, owner: string, repo: string): Promise<GhBranch[]> {
+  const res = await ghFetch(
+    `${GITHUB_API}/repos/${owner}/${repo}/branches?per_page=100`,
+    { headers: ghHeaders(token) }
+  );
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`GitHub listBranches failed (${res.status}): ${body.slice(0, 200)}`);
+  }
+  const data = (await res.json()) as Array<{
+    name: string;
+    protected: boolean;
+  }>;
+  return data.map((branch) => ({
+    name: branch.name,
+    protected: branch.protected,
   }));
 }
 

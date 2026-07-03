@@ -72,6 +72,7 @@ export default function ResultCard({ result, index }: ResultCardProps) {
   const resources = result.resources ?? [];
   const visibleResources = showAllResources ? resources : resources.slice(0, CHIP_LIMIT);
   const hasMore = resources.length > CHIP_LIMIT;
+  const workflow = result.workflow;
 
   return (
     <div
@@ -101,6 +102,32 @@ export default function ResultCard({ result, index }: ResultCardProps) {
 
       {/* Answer */}
       <div className="px-3 md:px-4 py-3">
+        {workflow && (
+          <div className="mb-3 space-y-2 border border-slate-800 bg-slate-950/70 p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[10px] uppercase tracking-wider text-violet-300 font-mono">// security workflow</p>
+                <p className="mt-1 text-xs text-slate-300 leading-relaxed">{workflow.summary}</p>
+              </div>
+              {workflow.kind === "scan" && (
+                <span className="text-[10px] uppercase tracking-widest text-emerald-300 font-mono shrink-0">
+                  auto scan
+                </span>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {workflow.actions.map((action) => (
+                <Link
+                  key={action.href}
+                  href={action.href}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] uppercase tracking-widest border border-violet-500/30 text-violet-300 hover:text-violet-200 hover:bg-violet-500/10 transition-colors"
+                >
+                  {action.label}
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="mb-2 flex justify-end">
           <CopyAiResponseButton text={result.answer} compact />
         </div>

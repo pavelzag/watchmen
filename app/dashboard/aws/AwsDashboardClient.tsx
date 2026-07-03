@@ -193,6 +193,10 @@ export default function AwsDashboardClient({
 
   function handleResult(result: QueryResult) {
     setResults((prev) => [result, ...prev]);
+    if (result.workflow?.autoRunTask === "aws_scan") {
+      appendSyncLog("[aws-dashboard] Ask AI requested an AWS scan", { query: result.query });
+      startAwsScan();
+    }
   }
 
   return (
