@@ -495,6 +495,10 @@ function FindingCard({
     await Promise.allSettled(jobs);
   }
 
+  function createPrNow() {
+    onOpenRemediation(finding);
+  }
+
   const remediationActionLabel = remediationRunning
     ? "Remediating..."
     : demoMode
@@ -596,7 +600,7 @@ function FindingCard({
 
       {/* Agent workflow area */}
       <div className="border-t border-slate-700/50">
-        <div className="px-4 py-2 flex items-center justify-between gap-2">
+        <div className="px-4 py-2 flex items-center gap-2 flex-wrap">
           <button
             onClick={remediate}
             disabled={demoMode || remediationRunning}
@@ -612,6 +616,17 @@ function FindingCard({
             )}
             {remediationActionLabel}
           </button>
+          {!remediationSucceeded && !demoMode && (
+            <button
+              type="button"
+              onClick={createPrNow}
+              className="flex items-center gap-1.5 text-xs font-medium transition-all duration-150 rounded-lg px-2.5 py-1 border border-violet-500/40 text-violet-300 hover:bg-violet-500/10 hover:text-violet-200"
+              title="Skip investigation and plan and go straight to the PR flow"
+            >
+              <GitPullRequest className="w-3 h-3" />
+              Create PR now
+            </button>
+          )}
         </div>
 
         {investigation.error && (
