@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import AwsSnapshotStats from "@/components/AwsSnapshotStats";
 import QueryBox, { type QueryResult } from "@/components/QueryBox";
 import ResultCard from "@/components/ResultCard";
@@ -36,6 +37,7 @@ export default function AwsDashboardClient({
   const [syncLog, setSyncLog] = useState<string[]>([]);
   const [syncLogOpen, setSyncLogOpen] = useState(true);
   const [askAiOpen, setAskAiOpen] = useState(true);
+  const router = useRouter();
   const { tasks, startAwsScan } = useTaskCenter();
   const hasLoadedInitialSnapshotRef = useRef(false);
   const scanRequestCountRef = useRef(0);
@@ -196,6 +198,13 @@ export default function AwsDashboardClient({
     if (result.workflow?.autoRunTask === "aws_scan") {
       appendSyncLog("[aws-dashboard] Ask AI requested an AWS scan", { query: result.query });
       startAwsScan();
+    }
+    if (result.workflow?.kind === "remediate" && result.workflow.primaryHref) {
+      appendSyncLog("[aws-dashboard] Ask AI requested remediation flow", {
+        query: result.query,
+        href: result.workflow.primaryHref,
+      });
+      router.push(result.workflow.primaryHref);
     }
   }
 

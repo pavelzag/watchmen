@@ -350,6 +350,13 @@ export default function DashboardClient({
       appendSyncLog("[gcp-dashboard] Ask AI requested a GCP scan", { query: result.query });
       startGcpScan();
     }
+    if (result.workflow?.kind === "remediate" && result.workflow.primaryHref) {
+      appendSyncLog("[gcp-dashboard] Ask AI requested remediation flow", {
+        query: result.query,
+        href: result.workflow.primaryHref,
+      });
+      router.push(result.workflow.primaryHref);
+    }
   }
 
   const effectiveConnections = cloudConnections ?? { gcp: false, aws: false };

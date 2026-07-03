@@ -253,7 +253,10 @@ function buildWorkflow(query: string, intent: QueryIntent, hasGcpSnapshot: boole
     kind: workflowKind,
     summary,
     autoRunTask,
-    primaryHref: actions[0]?.href,
+    primaryHref:
+      workflowKind === "remediate"
+        ? remediationHref
+        : actions[0]?.href,
     actions,
     stages,
   };
