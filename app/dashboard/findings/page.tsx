@@ -705,6 +705,7 @@ function FindingCard({
                 <div className="mt-3 flex items-center gap-2 flex-wrap">
                   {remediationSucceeded && (
                     <button
+                      type="button"
                       onClick={() => onOpenRemediation(finding)}
                       className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-lg border border-violet-500/40 text-violet-300 hover:bg-violet-500/10 transition-colors"
                     >
@@ -714,6 +715,7 @@ function FindingCard({
                   )}
                   {remediationSucceeded && (
                     <button
+                      type="button"
                       onClick={runVerifyFix}
                       disabled={demoMode || verificationRunning}
                       className={cn(
@@ -728,6 +730,14 @@ function FindingCard({
                     </button>
                   )}
                 </div>
+                {verificationRunning && (
+                  <div className="flex items-center gap-2" style={{ color: "#67e8f9" }}>
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    <span style={{ fontFamily: "monospace", fontSize: 10 }}>
+                      Verifying fix against the latest snapshots...
+                    </span>
+                  </div>
+                )}
               </>
             )}
           </div>
