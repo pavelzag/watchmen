@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo, type MouseEvent } from "react";
 import Link from "next/link";
-import { ArrowLeft, ShieldAlert, ShieldCheck, RefreshCw, Loader2, ChevronDown, ChevronUp, AlertCircle, GitPullRequest, Search, X, Download, Star, FileSearch } from "lucide-react";
+import { ArrowLeft, ShieldAlert, ShieldCheck, RefreshCw, Loader2, ChevronDown, ChevronUp, AlertCircle, GitPullRequest, Search, X, Download, Star, FileSearch, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { computeFindings } from "@/lib/findings";
 import type { GcpSnapshot, SecurityFinding, SecurityFindingSeverity } from "@/lib/gcp/types";
@@ -198,9 +198,17 @@ interface PlanState {
   previewEligible: boolean;
 }
 
+interface VerificationState {
+  loading: boolean;
+  status: "idle" | FindingAgentRunSummary["status"];
+  text: string | null;
+  error: string | null;
+  runId: string | null;
+}
+
 interface FindingAgentRunSummary {
   id: string;
-  workflow: "investigate_finding" | "plan_remediation";
+  workflow: "investigate_finding" | "plan_remediation" | "verify_fix";
   status: "running" | "completed" | "failed";
   findingId: string;
   report?: string | null;
@@ -210,7 +218,7 @@ interface FindingAgentRunSummary {
   completedAt?: string | null;
 }
 
-type FindingAgentRuns = Partial<Record<"investigate_finding" | "plan_remediation", FindingAgentRunSummary>>;
+type FindingAgentRuns = Partial<Record<"investigate_finding" | "plan_remediation" | "verify_fix", FindingAgentRunSummary>>;
 
 function FindingCard({
   finding,
@@ -230,6 +238,7 @@ function FindingCard({
   const demoMode = useDemoMode();
   const existingInvestigation = agentRuns?.investigate_finding;
   const existingPlan = agentRuns?.plan_remediation;
+  const existingVerification = agentRuns?.verify_fix;
   const [investigation, setInvestigation] = useState<InvestigationState>(() => ({
     loading: existingInvestigation?.status === "running",
     status: existingInvestigation?.status ?? "idle",
@@ -245,16 +254,28 @@ function FindingCard({
     runId: existingPlan?.id ?? null,
     previewEligible: Boolean(existingPlan?.previewEligible),
   }));
+  const [verification, setVerification] = useState<VerificationState>(() => ({
+    loading: existingVerification?.status === "running",
+    status: existingVerification?.status ?? "idle",
+    text: existingVerification?.report ?? null,
+    error: existingVerification?.error ?? null,
+    runId: existingVerification?.id ?? null,
+  }));
   const [investigationOpen, setInvestigationOpen] = useState(Boolean(existingInvestigation));
   const [planOpen, setPlanOpen] = useState(Boolean(existingPlan));
+  const [verificationOpen, setVerificationOpen] = useState(Boolean(existingVerification));
   const investigationRunning = investigation.loading || investigation.status === "running";
   const planRunning = plan.loading || plan.status === "running";
+  const verificationRunning = verification.loading || verification.status === "running";
   const investigationSucceeded = investigation.status === "completed" && Boolean(investigation.text);
   const planSucceeded = plan.status === "completed" && Boolean(plan.text);
+  const verificationSucceeded = verification.status === "completed" && Boolean(verification.text);
   const investigationFailed = !investigationSucceeded && investigation.status === "failed";
   const planFailed = !planSucceeded && plan.status === "failed";
+  const verificationFailed = !verificationSucceeded && verification.status === "failed";
   const investigationLocked = investigationRunning || investigationSucceeded;
   const planLocked = planRunning || planSucceeded;
+  const verificationLocked = verificationRunning;
   const remediationRunning = investigationRunning || planRunning;
   const remediationSucceeded = investigationSucceeded && planSucceeded;
   const remediationFailed = (!investigationSucceeded && investigation.status === "failed") || (!planSucceeded && plan.status === "failed");
@@ -281,6 +302,17 @@ function FindingCard({
     });
     if (existingPlan) setPlanOpen(true);
   }, [existingPlan]);
+
+  useEffect(() => {
+    setVerification({
+      loading: existingVerification?.status === "running",
+      status: existingVerification?.status ?? "idle",
+      text: existingVerification?.report ?? null,
+      error: existingVerification?.error ?? null,
+      runId: existingVerification?.id ?? null,
+    });
+    if (existingVerification) setVerificationOpen(true);
+  }, [existingVerification]);
 
   async function runInvestigation() {
     if (investigationLocked) return;
@@ -384,6 +416,60 @@ function FindingCard({
         error: e instanceof Error ? e.message : "Failed to plan remediation",
         runId: null,
         previewEligible: false,
+      });
+    }
+  }
+
+  async function runVerifyFix() {
+    if (verificationLocked) return;
+    if (demoMode) {
+      setVerification({
+        loading: false,
+        status: "failed",
+        text: null,
+        error: "AI is disabled in demo mode. For a preview with AI functionality or real, non-fake data, email zagalsky@gmail.com.",
+        runId: null,
+      });
+      return;
+    }
+
+    setVerification({ loading: true, status: "running", text: null, error: null, runId: null });
+    setVerificationOpen(true);
+    try {
+      const browserAI = getActiveBrowserAIKey();
+      const res = await fetch("/api/agent/verify-fix", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          targets: [remediationTargetFromFinding(finding)],
+          demoCredentials: browserAI ? { aiKey: browserAI.key, aiProvider: browserAI.provider } : undefined,
+        }),
+      });
+      const data = await readJsonResponse(res);
+      if (!res.ok) {
+        setVerification({
+          loading: false,
+          status: "failed",
+          text: null,
+          error: data.error ?? "Failed to verify fix",
+          runId: data.runId ?? null,
+        });
+        return;
+      }
+      setVerification({
+        loading: false,
+        status: "completed",
+        text: data.report,
+        error: null,
+        runId: data.runId ?? null,
+      });
+    } catch (e) {
+      setVerification({
+        loading: false,
+        status: "failed",
+        text: null,
+        error: e instanceof Error ? e.message : "Failed to verify fix",
+        runId: null,
       });
     }
   }
@@ -542,6 +628,13 @@ function FindingCard({
           </div>
         )}
 
+        {verification.error && (
+          <div className="px-4 pb-3 flex items-center gap-2 text-xs text-red-400">
+            <AlertCircle className="w-3 h-3 shrink-0" />
+            <span className="min-w-0 flex-1">{verification.error}</span>
+          </div>
+        )}
+
         {investigation.text && (
           <div className="px-4 pb-4 border-t border-slate-700/30">
             <button
@@ -619,8 +712,57 @@ function FindingCard({
                       Create PR
                     </button>
                   )}
+                  {remediationSucceeded && (
+                    <button
+                      onClick={runVerifyFix}
+                      disabled={demoMode || verificationRunning}
+                      className={cn(
+                        "flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-lg border transition-colors",
+                        demoMode || verificationRunning
+                          ? "border-slate-700 text-slate-500 cursor-not-allowed"
+                          : "border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/10"
+                      )}
+                    >
+                      {verificationRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
+                      {verificationRunning ? "Verifying..." : verificationSucceeded ? "Verify Fix Again" : "Verify Fix"}
+                    </button>
+                  )}
                 </div>
               </>
+            )}
+          </div>
+        )}
+
+        {verification.text && (
+          <div className="px-4 pb-4 border-t border-slate-700/30">
+            <button
+              type="button"
+              onClick={() => setVerificationOpen((o) => !o)}
+              className="mt-3 flex w-full items-center justify-between gap-2 rounded-md px-1 py-1 text-left hover:bg-cyan-500/5 transition-colors"
+              aria-expanded={verificationOpen}
+            >
+              <span className="min-w-0 text-[10px] uppercase tracking-wider text-slate-500 font-mono">
+                {verification.runId ? `Verify Fix · Run ${verification.runId.slice(0, 18)}...` : "Verify Fix · Latest snapshot check"}
+              </span>
+              <div className="flex items-center gap-2">
+                <span
+                  onClick={(event) => event.stopPropagation()}
+                  onKeyDown={(event) => event.stopPropagation()}
+                >
+                  <CopyAiResponseButton text={verification.text} compact />
+                </span>
+                <span className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-slate-500">
+                  {verificationOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                  {verificationOpen ? "Minimize" : "Maximize"}
+                </span>
+              </div>
+            </button>
+            {verificationOpen && (
+              <div
+                onClick={copySuggestedCommand}
+                className="mt-3 text-xs text-slate-300 leading-relaxed prose-answer"
+                dangerouslySetInnerHTML={{ __html: renderMd(verification.text, finding) }}
+              />
             )}
           </div>
         )}

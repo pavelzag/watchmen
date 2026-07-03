@@ -99,22 +99,27 @@ export interface FindingAgentRunSummary {
   completedAt?: string | null;
 }
 
-function getFindingIdForRun(row: any): string | null {
+function getFindingIdsForRun(row: any): string[] {
   const input = row.input ?? {};
-  if (typeof input.id === "string") return input.id;
-  if (typeof input.finding?.id === "string") return input.finding.id;
-  return null;
+  if (typeof input.id === "string") return [input.id];
+  if (typeof input.finding?.id === "string") return [input.finding.id];
+  if (Array.isArray(input.targets)) {
+    return input.targets
+      .map((target: any) => (typeof target?.id === "string" ? target.id : null))
+      .filter((value: string | null): value is string => Boolean(value));
+  }
+  return [];
 }
 
 function summarizeFindingRun(row: any): FindingAgentRunSummary | null {
-  const findingId = getFindingIdForRun(row);
-  if (!findingId) return null;
+  const findingIds = getFindingIdsForRun(row);
+  if (findingIds.length === 0) return null;
   const output = row.output ?? {};
   return {
     id: row.id,
     workflow: row.workflow,
     status: row.status,
-    findingId,
+    findingId: findingIds[0],
     report: typeof output.report === "string" ? output.report : null,
     previewEligible: Boolean(output.plan?.previewEligible),
     error: row.error,
@@ -136,10 +141,15 @@ export async function listFindingAgentRuns(params: {
     SELECT id, workflow, status, input, output, error, created_at, completed_at
     FROM agent_runs
     WHERE user_email = ${params.userEmail}
-      AND workflow IN ('investigate_finding', 'plan_remediation')
+    AND workflow IN ('investigate_finding', 'plan_remediation', 'verify_fix')
       AND (
         input->>'id' IN (SELECT value FROM jsonb_array_elements_text(${findingIdsJson}::jsonb))
         OR input->'finding'->>'id' IN (SELECT value FROM jsonb_array_elements_text(${findingIdsJson}::jsonb))
+        OR EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(COALESCE(input->'targets', '[]'::jsonb)) AS target
+          WHERE target->>'id' IN (SELECT value FROM jsonb_array_elements_text(${findingIdsJson}::jsonb))
+        )
       )
     ORDER BY created_at DESC
     LIMIT 500
@@ -149,9 +159,12 @@ export async function listFindingAgentRuns(params: {
   for (const row of result.rows) {
     const summary = summarizeFindingRun(row);
     if (!summary) continue;
-    byFinding[summary.findingId] ??= {};
-    if (!byFinding[summary.findingId]?.[summary.workflow]) {
-      byFinding[summary.findingId]![summary.workflow] = summary;
+    const findingIds = getFindingIdsForRun(row);
+    for (const findingId of findingIds) {
+      byFinding[findingId] ??= {};
+      if (!byFinding[findingId]?.[summary.workflow]) {
+        byFinding[findingId]![summary.workflow] = { ...summary, findingId };
+      }
     }
   }
 
