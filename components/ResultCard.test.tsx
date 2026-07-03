@@ -62,12 +62,17 @@ describe('ResultCard', () => {
             <ResultCard
                 result={{
                     ...mockResult,
-                    workflow: {
+                workflow: {
                         kind: "remediate",
                         summary: "Watchmen can open the filtered findings and launch the remediation flow from there.",
                         actions: [
                             { label: "Open findings", href: "/dashboard/findings?cloud=gcp&severity=critical" },
-                            { label: "Open remediation", href: "/dashboard/findings?cloud=gcp&severity=critical&remediate=1" },
+                            { label: "Create PR", href: "/dashboard/findings?cloud=gcp&severity=critical&remediate=1" },
+                        ],
+                        stages: [
+                            { label: "Open filtered findings" },
+                            { label: "Generate Terraform preview" },
+                            { label: "Create PR with fixes" },
                         ],
                     },
                 }}
@@ -76,9 +81,10 @@ describe('ResultCard', () => {
         );
 
         expect(screen.getByText(/security workflow/)).toBeInTheDocument();
+        expect(screen.getByText(/workflow stages/i)).toBeInTheDocument();
         expect(screen.getByText(/open the filtered findings and launch the remediation flow/)).toBeInTheDocument();
         expect(screen.getByRole('link', { name: /open findings/i })).toHaveAttribute('href', '/dashboard/findings?cloud=gcp&severity=critical');
-        expect(screen.getByRole('link', { name: /open remediation/i })).toHaveAttribute('href', '/dashboard/findings?cloud=gcp&severity=critical&remediate=1');
+        expect(screen.getByRole('link', { name: /create pr/i })).toHaveAttribute('href', '/dashboard/findings?cloud=gcp&severity=critical&remediate=1');
     });
 
     it('toggles intent debug information', () => {

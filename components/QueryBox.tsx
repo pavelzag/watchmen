@@ -28,12 +28,18 @@ export type QueryWorkflowAction = {
   description?: string;
 };
 
+export type QueryWorkflowStage = {
+  label: string;
+  description?: string;
+};
+
 export interface QueryWorkflow {
   kind: "scan" | "remediate" | "inspect";
   summary: string;
   autoRunTask?: "gcp_scan" | "aws_scan";
   primaryHref?: string;
   actions: QueryWorkflowAction[];
+  stages: QueryWorkflowStage[];
 }
 
 export interface QueryResult {

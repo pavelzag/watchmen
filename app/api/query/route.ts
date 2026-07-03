@@ -95,12 +95,18 @@ type QueryWorkflowAction = {
   description?: string;
 };
 
+type QueryWorkflowStage = {
+  label: string;
+  description?: string;
+};
+
 type QueryWorkflow = {
   kind: "scan" | "remediate" | "inspect";
   summary: string;
   autoRunTask?: "gcp_scan" | "aws_scan";
   primaryHref?: string;
   actions: QueryWorkflowAction[];
+  stages: QueryWorkflowStage[];
 };
 
 function logQueryStep(logger: QueryLogger | undefined, step: string, data: Record<string, unknown> = {}) {
@@ -187,9 +193,9 @@ function buildWorkflow(query: string, intent: QueryIntent, hasGcpSnapshot: boole
       description: "Inspect the filtered findings list in the Security Findings page.",
     });
     actions.push({
-      label: "Open remediation",
+      label: "Create PR",
       href: remediationHref,
-      description: "Open the remediation modal for the filtered findings.",
+      description: "Open the remediation modal for the filtered findings and create a PR.",
     });
   }
 
@@ -221,8 +227,27 @@ function buildWorkflow(query: string, intent: QueryIntent, hasGcpSnapshot: boole
     workflowKind === "scan"
       ? `Watchmen can run a ${cloud === "aws" ? "AWS" : "GCP"} scan, then open the findings list for follow-up remediation.`
       : workflowKind === "remediate"
-        ? `Watchmen can open the filtered findings and launch the remediation flow from there.`
+        ? `Watchmen can open the filtered findings, generate a Terraform preview, and create a PR with the fixes.`
         : `Watchmen can open the latest findings view for verification and review.`;
+
+  const stages: QueryWorkflowStage[] =
+    workflowKind === "scan"
+      ? [
+          { label: `Refresh ${cloud === "aws" ? "AWS" : "GCP"} findings` },
+          { label: "Review the latest findings" },
+          { label: "Open remediation" },
+        ]
+      : workflowKind === "remediate"
+        ? [
+            { label: "Open filtered findings" },
+            { label: "Generate Terraform preview" },
+            { label: "Confirm destination repo and branch" },
+            { label: "Create PR with fixes" },
+          ]
+        : [
+            { label: "Open the latest findings" },
+            { label: "Review the current snapshot" },
+          ];
 
   return {
     kind: workflowKind,
@@ -230,6 +255,7 @@ function buildWorkflow(query: string, intent: QueryIntent, hasGcpSnapshot: boole
     autoRunTask,
     primaryHref: actions[0]?.href,
     actions,
+    stages,
   };
 }
 

@@ -73,6 +73,7 @@ export default function ResultCard({ result, index }: ResultCardProps) {
   const visibleResources = showAllResources ? resources : resources.slice(0, CHIP_LIMIT);
   const hasMore = resources.length > CHIP_LIMIT;
   const workflow = result.workflow;
+  const workflowStages = workflow?.stages ?? [];
 
   return (
     <div
@@ -115,6 +116,24 @@ export default function ResultCard({ result, index }: ResultCardProps) {
                 </span>
               )}
             </div>
+            {workflowStages.length > 0 && (
+              <div className="space-y-1.5 rounded border border-slate-800 bg-slate-900/70 p-2">
+                <p className="text-[10px] uppercase tracking-wider text-slate-500 font-mono">Workflow stages</p>
+                <div className="space-y-1">
+                  {workflowStages.map((stage, stageIndex) => (
+                    <div key={`${stage.label}-${stageIndex}`} className="flex items-start gap-2 text-xs">
+                      <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center border border-violet-500/30 text-[9px] font-mono text-violet-300">
+                        {stageIndex + 1}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-slate-200">{stage.label}</p>
+                        {stage.description && <p className="text-[10px] text-slate-500">{stage.description}</p>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="flex flex-wrap gap-2">
               {workflow.actions.map((action) => (
                 <Link
