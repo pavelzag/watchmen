@@ -925,7 +925,8 @@ const DEFAULT_HIDDEN_GKE_HEALTH_PATHS = new Set([
   "/healthz",
 ]);
 
-const EXPECTED_REQUEST_USER_AGENT_RE = /\b(GoogleHC|kube-probe|ELB-HealthChecker|HealthChecker|watchmen-trace-poller)\b/i;
+const EXPECTED_REQUEST_USER_AGENT_RE = /\b(GoogleHC|kube-probe|ELB-HealthChecker|HealthChecker)\b/i;
+const WATCHMEN_TRACE_POLLER_USER_AGENT_RE = /\bwatchmen-trace-poller\b/i;
 
 function isExpectedLiveRequest({
   path,
@@ -934,10 +935,12 @@ function isExpectedLiveRequest({
   path?: string;
   userAgent?: string;
 }): boolean {
+  if (WATCHMEN_TRACE_POLLER_USER_AGENT_RE.test(userAgent ?? "")) return false;
+  if ((path ?? "").includes("watchmen_trace_probe=")) return false;
+
   const cleanPath = (path ?? "").split("?")[0].replace(/\/+$/, "") || "/";
   if (EXPECTED_REQUEST_PATHS.has(cleanPath.toLowerCase())) return true;
   if (EXPECTED_REQUEST_USER_AGENT_RE.test(userAgent ?? "")) return true;
-  if ((path ?? "").includes("watchmen_trace_probe=")) return true;
   return false;
 }
 
@@ -1764,20 +1767,77 @@ function parseTraceAppLog(msg: string): { method: string; path: string; status: 
   };
 }
 
-// Parse nginx JSON access logs: {"time":...,"remote_addr":...,"method":...,"uri":...,"status":200,...}
+function pickStringField(record: Record<string, any>, keys: string[]): string {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) return value;
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  }
+  return "";
+}
+
+function pickNumberField(record: Record<string, any>, keys: string[]): number {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim()) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return 0;
+}
+
+function requestLineParts(value: string): { method: string; path: string } | null {
+  const match = value.match(/\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|TRACE)\s+(\S+)(?:\s+HTTP\/[\d.]+)?/i);
+  if (!match) return null;
+  return { method: match[1].toUpperCase(), path: match[2] };
+}
+
+function latencyFieldToMs(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.round(value * 1000);
+  if (typeof value !== "string" || !value.trim()) return 0;
+  if (/^\d+(?:\.\d+)?$/.test(value)) return Math.round(Number(value) * 1000);
+  return Math.round(durationToMs(value));
+}
+
+// Parse nginx JSON and common text access logs.
 function parseNginxLog(msg: string): { method: string; path: string; status: number; latencyMs: number; remoteIp: string; userAgent: string } | null {
-	try {
-		const j = JSON.parse(msg);
-    if (!j.method && !j.uri) return null;
+  try {
+    const j = JSON.parse(msg);
+    const httpRequest = j.httpRequest && typeof j.httpRequest === "object" ? j.httpRequest : {};
+    const method =
+      pickStringField(j, ["method", "requestMethod", "request_method", "httpMethod", "verb"]) ||
+      pickStringField(httpRequest, ["requestMethod", "method"]);
+    const path =
+      pickStringField(j, ["uri", "path", "requestUri", "request_uri", "url", "requestUrl", "request_url"]) ||
+      pickStringField(httpRequest, ["requestUrl", "url"]);
+    const requestLine = requestLineParts(pickStringField(j, ["request", "requestLine", "message"]));
+    const resolvedMethod = method.toUpperCase() || requestLine?.method || "";
+    const resolvedPath = path || requestLine?.path || "";
+    if (!resolvedMethod && !resolvedPath) return null;
     return {
-      method:    j.method ?? "",
-      path:      j.uri ?? "",
-      status:    Number(j.status ?? 0),
-      latencyMs: j.request_time ? Math.round(Number(j.request_time) * 1000) : 0,
-      remoteIp:  j.remote_addr ?? j.x_forwarded_for ?? "",
-		userAgent: j.user_agent ?? "",
-	};
-  } catch { return null; }
+      method: resolvedMethod,
+      path: resolvedPath,
+      status: pickNumberField(j, ["status", "statusCode", "status_code", "responseStatus"]) || pickNumberField(httpRequest, ["status"]),
+      latencyMs:
+        latencyFieldToMs(j.request_time ?? j.requestTime ?? j.latency ?? j.duration ?? j.duration_s ?? j.duration_seconds) ||
+        latencyFieldToMs(httpRequest.latency),
+      remoteIp: pickStringField(j, ["remote_addr", "remoteAddr", "remoteIp", "x_forwarded_for", "client_ip"]) || pickStringField(httpRequest, ["remoteIp"]),
+      userAgent: pickStringField(j, ["user_agent", "userAgent", "http_user_agent"]) || pickStringField(httpRequest, ["userAgent"]),
+    };
+  } catch {
+    const combined = msg.match(/(\S+)\s+\S+\s+\S+\s+\[[^\]]+\]\s+"(\w+)\s+(\S+)\s+HTTP\/[\d.]+"\s+(\d{3})(?:\s+\S+){0,3}(?:\s+"[^"]*")?\s+"([^"]*)"/);
+    if (!combined) return null;
+    return {
+      remoteIp: combined[1],
+      method: combined[2].toUpperCase(),
+      path: combined[3],
+      status: Number(combined[4]),
+      latencyMs: 0,
+      userAgent: combined[5] ?? "",
+    };
+  }
 }
 
 function parseStructuredRequestLog(msg: string): {
@@ -4157,7 +4217,8 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       setLiveEvents([]);
       return;
     }
-    const allTargets = liveScope === "all"
+    const shouldWatchAllTargets = liveScope === "all" || !hasFocusedLiveTarget;
+    const allTargets = shouldWatchAllTargets
       ? allLiveMonitorTargets
       : (liveMonitorTarget ? [liveMonitorTarget] : []);
     const hasGkeNodes = nodes.some(node => node.type === "gke");
@@ -4182,7 +4243,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       setLiveEvents(prev => prev.filter(event => pollNowMs - eventTimestampMs(event.ts) < LIVE_EVENT_RETENTION_MS));
       liveTimestamps.current = liveTimestamps.current.filter(t => pollNowMs - t < 60_000);
       setLiveRps(estimateRateFromTimestamps(liveTimestamps.current, pollNowMs, LIVE_RPS_WINDOW_MS));
-      const includeExpectedRequests = liveScope === "all";
+      const includeExpectedRequests = shouldWatchAllTargets;
       const agentEventsPromise = shouldUseAgentEvents(traceSourceConfig)
         ? fetch(
             `/api/agents/events/query?${new URLSearchParams({
@@ -4198,7 +4259,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
             .catch(() => [] as AgentEventRow[])
         : Promise.resolve([] as AgentEventRow[]);
       const cloudLoggingTargets = allTargets.filter(target => shouldPollLiveTarget(target, traceSourceConfig));
-      const targets = liveScope === "all" && cloudLoggingTargets.length > LIVE_ALL_CLOUD_LOGGING_BATCH_SIZE
+      const targets = shouldWatchAllTargets && cloudLoggingTargets.length > LIVE_ALL_CLOUD_LOGGING_BATCH_SIZE
         ? (() => {
             const start = livePollCursorRef.current % cloudLoggingTargets.length;
             const batch = Array.from(
@@ -4366,7 +4427,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       } catch { /* ignore polling errors */ }
     };
 
-    const pollIntervalMs = liveScope === "all" ? LIVE_POLL_ALL_MS : LIVE_POLL_ACTIVE_MS;
+    const pollIntervalMs = shouldWatchAllTargets ? LIVE_POLL_ALL_MS : LIVE_POLL_ACTIVE_MS;
     const id = setInterval(poll, pollIntervalMs);
     poll(); // immediate first check
     return () => { clearInterval(id); };
