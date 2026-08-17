@@ -443,6 +443,7 @@ function buildTopology(
       label: cluster.name.slice(0, 22).toUpperCase(),
       sublabel: `GKE · ${cluster.location}`,
       projectId: cluster.projectId,
+      resourceName: cluster.name,
     });
 
     // Connect snapshot LBs in same project
@@ -1897,6 +1898,42 @@ interface LogEntry {
   payload?: unknown;
 }
 
+function agentEventToLogEntry(row: AgentEventRow): LogEntry {
+  const ev = row.event ?? {};
+  const method = ev.method ?? "";
+  const path = ev.path ?? "";
+  const status = typeof ev.status === "number" ? ev.status : undefined;
+  const host = ev.hostname ?? row.cluster_name ?? row.agent_id;
+  const rawData = typeof ev.data === "string" ? ev.data : "";
+  const userAgent = extractHeaderValue(rawData, "User-Agent") ?? "";
+  const requestLine = method && path ? `${method} ${path}` : ev.type ?? "agent_event";
+  const message = rawData || JSON.stringify(ev);
+
+  return {
+    timestamp: row.received_at,
+    severity: status && status >= 500 ? "ERROR" : status && status >= 400 ? "WARNING" : "INFO",
+    message,
+    payload: ev,
+    container: ev.comm ?? "ebpf-agent",
+    pod: host,
+    httpRequest: method || path || status !== undefined
+      ? {
+          method,
+          url: path || requestLine,
+          status,
+          latency: "",
+          requestSize: "",
+          remoteIp: "",
+          serverIp: "",
+          referer: "",
+          responseSize: "",
+          userAgent,
+          protocol: "",
+        }
+      : undefined,
+  };
+}
+
 interface LogEntryDetails {
   title: string;
   timestamp: string;
@@ -2302,10 +2339,10 @@ function LogEntryModal({
 }
 
 function NodeDetail({
-  node, status, inPath, response, url, method, onClose, onIstioDetected,
+  node, status, inPath, response, url, method, usesAgentEvents, onClose, onIstioDetected,
 }: {
   node: GraphNode; status: NodeStatus; inPath: boolean;
-  response: ProxyResponse | null; url: string; method: string; onClose: () => void;
+  response: ProxyResponse | null; url: string; method: string; usesAgentEvents?: boolean; onClose: () => void;
   onIstioDetected?: (nodeId: string) => void;
 }) {
   const meta = node.type === "sidecar" && node.container
@@ -2358,6 +2395,11 @@ function NodeDetail({
     if (node.cloud === "aws") return;
     if (tab !== "logs" || !node.projectId) return;
     if (node.type !== "gke" && node.type !== "sidecar") return;
+    if (usesAgentEvents) {
+      setAvailableContainers(["ebpf-agent"]);
+      setSelectedContainer("ebpf-agent");
+      return;
+    }
     const params = new URLSearchParams({ projectId: node.projectId, mode: "containers" });
     fetch(`/api/gcp/logs?${params}`)
       .then(r => r.json())
@@ -2367,12 +2409,31 @@ function NodeDetail({
         if (containers.includes("istio-proxy")) onIstioDetected?.(node.id);
       })
       .catch(() => {});
-  }, [tab, node.cloud, node.id, node.projectId, node.type, onIstioDetected]);
+  }, [tab, node.cloud, node.id, node.projectId, node.type, onIstioDetected, usesAgentEvents]);
 
   const refreshLogs = useCallback(async ({ showLoading = false }: { showLoading?: boolean } = {}) => {
     if (!node.projectId) return;
     if (showLoading) setLoadingLogs(true);
     setLogsError(null);
+    if (usesAgentEvents && node.cloud !== "aws" && (node.type === "gke" || node.type === "sidecar")) {
+      const params = new URLSearchParams({
+        limit: String(LOG_DRAWER_LIMIT),
+      });
+      const cluster = node.resourceName ?? node.label;
+      if (cluster) params.set("cluster", cluster);
+
+      try {
+        const res = await fetch(`/api/agents/events/query?${params}`, { cache: "no-store" });
+        const d = await res.json();
+        if (d.error) { setLogsError(d.error); return; }
+        setLogs(((d.events ?? []) as AgentEventRow[]).map(agentEventToLogEntry));
+      } catch (e) {
+        setLogsError(e instanceof Error ? e.message : "Failed to fetch agent events.");
+      } finally {
+        if (showLoading) setLoadingLogs(false);
+      }
+      return;
+    }
     const params = new URLSearchParams({ projectId: node.projectId, limit: String(LOG_DRAWER_LIMIT) });
     const endpoint = node.cloud === "aws" ? "/api/aws/logs" : "/api/gcp/logs";
     if (node.cloud === "aws") {
@@ -2411,7 +2472,7 @@ function NodeDetail({
     } finally {
       if (showLoading) setLoadingLogs(false);
     }
-  }, [node.cloud, node.projectId, node.type, node.resourceName, node.label, node.region, node.container, selectedContainer]);
+  }, [node.cloud, node.projectId, node.type, node.resourceName, node.label, node.region, node.container, selectedContainer, usesAgentEvents]);
 
   // Fetch logs when tab or container selection changes, then keep them fresh while visible.
   useEffect(() => {
@@ -2685,7 +2746,11 @@ function NodeDetail({
             {/* Header row */}
             <div className="flex items-center gap-1.5">
               <span className="text-[9px] uppercase tracking-widest text-slate-600 flex-1 truncate">
-                {node.cloud === "aws" ? "CloudWatch Logs" : "Cloud Logging"} · {node.projectId}
+                {usesAgentEvents && (node.type === "gke" || node.type === "sidecar")
+                  ? "eBPF Agent Events"
+                  : node.cloud === "aws"
+                    ? "CloudWatch Logs"
+                    : "Cloud Logging"} · {node.projectId}
               </span>
               <button
                 onClick={handleCopyLogs}
@@ -5571,6 +5636,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
               response={response}
               url={url}
               method={method}
+              usesAgentEvents={shouldUseAgentEvents(traceSourceConfig)}
               onClose={() => { setSelectedNode(null); setShowResponse(true); }}
               onIstioDetected={handleIstioDetected}
             />
