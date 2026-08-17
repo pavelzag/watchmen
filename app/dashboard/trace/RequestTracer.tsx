@@ -800,7 +800,9 @@ function inferActivePath(url: string, nodes: GraphNode[], edges: GraphEdge[]): S
     if (!n.matchUrl) return false;
     const mu = n.matchUrl.replace(/^https?:\/\//, "").split(/[/:]/)[0];
     return target === mu || url.startsWith(n.matchUrl);
-  });
+  }) ?? (target === "127.0.0.1" || target === "localhost"
+    ? nodes.find(n => n.cloud === "kubernetes" && n.k8sKind === "service")
+    : undefined);
 
   if (matched) {
     const addDownstream = (id: string) => {
@@ -850,7 +852,7 @@ function buildLiveLogParams(target: LiveMonitorTarget, after: string): URLSearch
     after,
     limit: String(LIVE_LOG_FETCH_LIMIT),
   });
-  if (target.cloud === "kubernetes") {
+  if (target.cloud === "kubernetes" && target.kind === "gke") {
     if (target.namespace) params.set("namespace", target.namespace);
     if (target.pod) params.set("pod", target.pod);
     if (target.deployment) params.set("deployment", target.deployment);
@@ -881,7 +883,7 @@ function buildLiveLogParams(target: LiveMonitorTarget, after: string): URLSearch
 }
 
 function liveTargetLabel(target: LiveMonitorTarget): string {
-  if (target.cloud === "kubernetes") {
+  if (target.cloud === "kubernetes" && target.kind === "gke") {
     if (target.pod) return `Pod · ${target.pod}`;
     if (target.deployment) return `K8s · ${target.deployment}`;
     return `K8s · ${target.resourceName ?? target.container}`;
@@ -1575,6 +1577,7 @@ function requestPriority(method?: string, path?: string): number {
 const ENDPOINT_CLOUDS: { id: EndpointCloud; label: string }[] = [
   { id: "gcp", label: "GCP" },
   { id: "aws", label: "AWS" },
+  { id: "kubernetes", label: "K8S" },
 ];
 
 const GCP_ENDPOINT_FILTERS: { id: GcpEndpointFilter; label: string }[] = [
@@ -2569,7 +2572,8 @@ function NodeDetail({
   // Tabs — only nodes that have their own logs/routes get the tab bar.
   // LBs are infrastructure (no container logs); they only get routes if matchUrl is set.
   const hasAwsLambdaLogs = node.cloud === "aws" && node.type === "cloudrun";
-  const hasLogs = hasAwsLambdaLogs || (node.cloud !== "aws" && (node.type === "gke" || node.type === "cloudrun" || node.type === "vm" || node.type === "sidecar"));
+  const hasLocalKubernetesLogs = node.cloud === "kubernetes" && (node.k8sKind === "pod" || node.k8sKind === "deployment" || node.k8sKind === "daemonset" || node.k8sKind === "statefulset" || node.k8sKind === "service");
+  const hasLogs = hasAwsLambdaLogs || hasLocalKubernetesLogs || (node.cloud !== "aws" && node.cloud !== "kubernetes" && (node.type === "gke" || node.type === "cloudrun" || node.type === "vm" || node.type === "sidecar"));
   const hasRoutes = node.type === "gke" || node.type === "cloudrun" || node.type === "lb" || node.type === "vm";
   const showTabs  = hasLogs || hasRoutes;
   const [tab, setTab] = useState<NodeDetailTab>("info");
@@ -2599,6 +2603,12 @@ function NodeDetail({
   useEffect(() => {
     if (node.cloud === "aws") return;
     if (tab !== "logs" || !node.projectId) return;
+    if (node.cloud === "kubernetes") {
+      const containers = node.containers?.length ? node.containers : node.container ? [node.container] : [];
+      setAvailableContainers(containers);
+      if (containers.length > 0 && !selectedContainer) setSelectedContainer(containers[0]);
+      return;
+    }
     if (node.type !== "gke" && node.type !== "sidecar") return;
     if (usesAgentEvents) {
       setAvailableContainers(["ebpf-agent"]);
@@ -2614,12 +2624,34 @@ function NodeDetail({
         if (containers.includes("istio-proxy")) onIstioDetected?.(node.id);
       })
       .catch(() => {});
-  }, [tab, node.cloud, node.id, node.projectId, node.type, onIstioDetected, usesAgentEvents]);
+  }, [selectedContainer, tab, node.cloud, node.container, node.containers, node.id, node.projectId, node.type, onIstioDetected, usesAgentEvents]);
 
   const refreshLogs = useCallback(async ({ showLoading = false }: { showLoading?: boolean } = {}) => {
     if (!node.projectId) return;
     if (showLoading) setLoadingLogs(true);
     setLogsError(null);
+    if (node.cloud === "kubernetes") {
+      const params = new URLSearchParams({ limit: String(LOG_DRAWER_LIMIT) });
+      if (node.namespace) params.set("namespace", node.namespace);
+      if (selectedContainer) params.set("container", selectedContainer);
+      if (node.k8sKind === "pod" && node.resourceName) {
+        params.set("pod", node.resourceName);
+      } else if (node.resourceName) {
+        params.set("deployment", node.resourceName);
+      }
+
+      try {
+        const res = await fetch(`/api/kubernetes/local/logs?${params}`, { cache: "no-store" });
+        const d = await res.json();
+        if (d.error) { setLogsError(d.error); return; }
+        setLogs(d.entries ?? []);
+      } catch (e) {
+        setLogsError(e instanceof Error ? e.message : "Failed to fetch Kubernetes logs.");
+      } finally {
+        if (showLoading) setLoadingLogs(false);
+      }
+      return;
+    }
     if (usesAgentEvents && node.cloud !== "aws" && (node.type === "gke" || node.type === "sidecar")) {
       const params = new URLSearchParams({
         limit: String(LOG_DRAWER_LIMIT),
@@ -2685,7 +2717,7 @@ function NodeDetail({
     } finally {
       if (showLoading) setLoadingLogs(false);
     }
-  }, [node.cloud, node.projectId, node.type, node.resourceName, node.label, node.region, node.container, selectedContainer, usesAgentEvents]);
+  }, [node.cloud, node.projectId, node.type, node.resourceName, node.label, node.region, node.container, node.namespace, node.k8sKind, selectedContainer, usesAgentEvents]);
 
   // Fetch logs when tab or container selection changes, then keep them fresh while visible.
   useEffect(() => {
@@ -2892,8 +2924,11 @@ function NodeDetail({
             <div className="border border-slate-800 bg-[#0d0d0d] divide-y divide-slate-800">
               <MetaRow label="Name" value={node.label} mono />
               {node.sublabel && <MetaRow label="Info" value={node.sublabel} />}
-              {node.projectId && <MetaRow label="Project" value={node.projectId} mono />}
+              {node.projectId && <MetaRow label={node.cloud === "kubernetes" ? "Cluster" : "Project"} value={node.projectId} mono />}
+              {node.namespace && <MetaRow label="Namespace" value={node.namespace} mono />}
+              {node.k8sKind && <MetaRow label="K8s Kind" value={node.k8sKind} mono />}
               {node.matchUrl && <MetaRow label="Address" value={node.matchUrl} mono />}
+              {node.accessHint && <MetaRow label="Port Forward" value={node.accessHint} mono />}
               {availableContainers.length > 0 && (
                 <MetaRow label="Containers" value={availableContainers.join(", ")} mono />
               )}
@@ -2963,7 +2998,9 @@ function NodeDetail({
                   ? "eBPF Agent Events"
                   : node.cloud === "aws"
                     ? "CloudWatch Logs"
-                    : "Cloud Logging"} · {node.projectId}
+                    : node.cloud === "kubernetes"
+                      ? "Kubernetes Pod Logs"
+                      : "Cloud Logging"} · {node.projectId}
               </span>
               <button
                 onClick={handleCopyLogs}
@@ -3423,6 +3460,16 @@ function MetaRow({ label, value, mono }: { label: string; value: string | number
       <span className={cn("text-[10px] text-slate-300 text-right break-all", mono && "font-mono")}>{value}</span>
     </div>
   );
+}
+
+function withDemoTraceId(rawUrl: string, traceId: string): string {
+  try {
+    const parsed = new URL(rawUrl);
+    parsed.searchParams.set("demo_trace_id", traceId);
+    return parsed.toString();
+  } catch {
+    return rawUrl;
+  }
 }
 
 export default function RequestTracer({ demoMode = false }: { demoMode?: boolean }) {
@@ -4049,6 +4096,18 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const filteredAwsEksClusters = useMemo(
     () => awsSnapshot?.eksClusters ?? [],
     [awsSnapshot]
+  );
+  const localKubernetesServices = useMemo(
+    () => (localKubernetesResources?.resources ?? []).filter((resource) => resource.kind === "service"),
+    [localKubernetesResources]
+  );
+  const localKubernetesWorkloads = useMemo(
+    () => (localKubernetesResources?.resources ?? []).filter((resource) => resource.kind === "deployment" || resource.kind === "daemonset" || resource.kind === "statefulset"),
+    [localKubernetesResources]
+  );
+  const localKubernetesPods = useMemo(
+    () => (localKubernetesResources?.resources ?? []).filter((resource) => resource.kind === "pod"),
+    [localKubernetesResources]
   );
   const hasAwsEndpointForFilter = useMemo(() => {
     if (awsEndpointFilter === "lambda") return filteredAwsLambdaFunctions.length > 0;
@@ -4863,8 +4922,8 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       return;
     }
 
-    const invalidUrl = targetUrls.find(targetUrl => getProxyUrlValidationError(targetUrl));
-    const validationError = invalidUrl ? getProxyUrlValidationError(invalidUrl) : null;
+    const invalidUrl = targetUrls.find(targetUrl => getProxyUrlValidationError(targetUrl, endpointCloud));
+    const validationError = invalidUrl ? getProxyUrlValidationError(invalidUrl, endpointCloud) : null;
     if (validationError) {
       console.warn("[trace/send] validation failed", {
         endpointCloud,
@@ -4893,10 +4952,16 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       parsedBody = p.ok ? p.val : bodyText;
     }
     const traceTarget = serializeLiveTraceTarget(liveMonitorTarget);
+    const traceId = `watchmen-${endpointCloud}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const requestHeaders = {
+      "X-Watchmen-Trace-Id": traceId,
+      "X-Demo-Trace-Id": traceId,
+    };
+    const requestUrls = targetUrls.map((targetUrl) => withDemoTraceId(targetUrl, traceId));
     console.info("[trace/send] proxy request prepared", {
       endpointCloud,
       method,
-      targetUrls,
+      targetUrls: requestUrls,
       selectedEndpointUrl,
       traceTarget,
       liveMode,
@@ -4905,18 +4970,18 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       activePath: [...activePath],
     });
 
-    const httpPromise = targetUrls.length === 1
+    const httpPromise = requestUrls.length === 1
       ? fetch("/api/proxy", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url: targetUrls[0], method, body: parsedBody, traceTarget }),
+          body: JSON.stringify({ url: requestUrls[0], method, headers: requestHeaders, body: parsedBody, traceTarget }),
         }).then(r => r.json() as Promise<ProxyResponse>)
       : Promise.all(
-          targetUrls.map(async targetUrl => {
+          requestUrls.map(async targetUrl => {
             const res = await fetch("/api/proxy", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ url: targetUrl, method, body: parsedBody, traceTarget }),
+              body: JSON.stringify({ url: targetUrl, method, headers: requestHeaders, body: parsedBody, traceTarget }),
             });
             return res.json() as Promise<ProxyResponse>;
           })
@@ -5034,10 +5099,10 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
         <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar flex flex-col gap-2">
 
           {/* URL suggestions */}
-          {(loadingEntryPoints || snapshot || awsSnapshot || entryPoints.length > 0) && (
+          {(loadingEntryPoints || loadingLocalKubernetes || snapshot || awsSnapshot || localKubernetesResources || entryPoints.length > 0) && (
             <div className="flex flex-col gap-1">
               <div className="flex flex-col gap-1 px-1 pb-1">
-                <div className="grid grid-cols-2 gap-1">
+                <div className="grid grid-cols-3 gap-1">
                   {ENDPOINT_CLOUDS.map(cloud => (
                     <button
                       key={cloud.id}
@@ -5056,7 +5121,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                   ))}
                 </div>
                 <div className="flex flex-wrap gap-1">
-                  {(endpointCloud === "gcp" ? GCP_ENDPOINT_FILTERS : AWS_ENDPOINT_FILTERS).map(filter => (
+                  {(endpointCloud === "gcp" ? GCP_ENDPOINT_FILTERS : endpointCloud === "aws" ? AWS_ENDPOINT_FILTERS : []).map(filter => (
                   <button
                     key={filter.id}
                     onClick={() => {
@@ -5227,6 +5292,80 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                       </HoverTooltip>
                     );
                   })}
+                </>
+              )}
+              {endpointCloud === "kubernetes" && (
+                <>
+                  {loadingLocalKubernetes && (
+                    <div className="flex items-center gap-2 px-2 py-1.5 text-[10px] text-slate-600">
+                      <Loader2 size={9} className="animate-spin shrink-0" />
+                      <span>Reading local kubeconfig…</span>
+                    </div>
+                  )}
+                  {!loadingLocalKubernetes && !localKubernetesResources?.cluster.ok && (
+                    <div className="px-2 py-2 text-[10px] text-slate-500 border border-slate-800/60 bg-[#0a0a0a]/60">
+                      {localKubernetesResources?.cluster.error ?? "Local Kubernetes is not enabled. Configure it in Settings."}
+                    </div>
+                  )}
+                  {!loadingLocalKubernetes && localKubernetesResources?.cluster.ok && (
+                    <>
+                      <div className="text-[9px] uppercase tracking-widest text-slate-600 px-1 pt-1">
+                        Local Kubernetes · {localKubernetesResources.cluster.clusterName}
+                      </div>
+                      {localKubernetesServices.map(service => {
+                        const value = "http://127.0.0.1:18080";
+                        const isSelected = isEndpointSelected(value);
+                        const firstPort = service.ports?.[0]?.port ?? 80;
+                        const hint = service.accessHint ?? `kubectl -n ${service.namespace ?? "default"} port-forward service/${service.name} 18080:${firstPort}`;
+                        return (
+                          <HoverTooltip
+                            key={`local-k8s-svc-${service.namespace}-${service.name}`}
+                            content={
+                              <>
+                                <div className="text-emerald-400 font-bold uppercase tracking-widest text-[8px] mb-1">{service.name}</div>
+                                <div className="text-sky-300 font-mono break-all">{hint}</div>
+                                <div className="text-slate-500 mt-1">{service.serviceType} · {service.namespace}</div>
+                              </>
+                            }
+                          >
+                            <button onClick={() => toggleEndpointSelection(value)}
+                              className={cn(
+                                "w-full text-left text-[10px] px-2 py-1.5 transition-colors rounded-sm relative overflow-hidden",
+                                isSelected
+                                  ? "bg-emerald-950/60 ring-2 ring-emerald-500/80 border border-emerald-500/35 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.22)]"
+                                  : "bg-[#0a0a0a]/60 hover:bg-[#0c120d]"
+                              )}
+                            >
+                              <div className={cn("break-words", isSelected ? "text-slate-200" : "text-slate-400")}>
+                                SVC · {service.name}
+                                {isSelected && <span className="ml-2 text-[8px] text-emerald-300 uppercase tracking-widest">Selected</span>}
+                              </div>
+                              <div className={cn("mt-0.5 font-mono whitespace-pre-wrap break-all", isSelected ? "text-emerald-300" : "text-emerald-400")}>{value}</div>
+                              <div className="mt-0.5 font-mono whitespace-pre-wrap break-all text-slate-500">{hint}</div>
+                            </button>
+                          </HoverTooltip>
+                        );
+                      })}
+                      {localKubernetesWorkloads.length > 0 && (
+                        <div className="text-[9px] uppercase tracking-widest text-slate-600 px-1 pt-1">Workloads</div>
+                      )}
+                      {localKubernetesWorkloads.slice(0, 12).map(workload => (
+                        <div key={`local-k8s-workload-${workload.namespace}-${workload.kind}-${workload.name}`} className="px-2 py-1.5 text-[10px] border border-slate-800/60 bg-[#0a0a0a]/60">
+                          <div className="text-slate-300 break-words">{workload.kind.toUpperCase()} · {workload.name}</div>
+                          <div className="text-slate-500 font-mono break-all">{workload.namespace} · {(workload.containers ?? []).join(", ") || "containers unknown"}</div>
+                        </div>
+                      ))}
+                      {localKubernetesPods.length > 0 && (
+                        <div className="text-[9px] uppercase tracking-widest text-slate-600 px-1 pt-1">Pods</div>
+                      )}
+                      {localKubernetesPods.slice(0, 16).map(pod => (
+                        <div key={`local-k8s-pod-${pod.namespace}-${pod.name}`} className="px-2 py-1.5 text-[10px] border border-slate-800/60 bg-[#0a0a0a]/60">
+                          <div className="text-slate-300 break-words">POD · {pod.name}</div>
+                          <div className="text-slate-500 font-mono break-all">{pod.namespace} · {pod.phase ?? "Unknown"} · {(pod.containers ?? []).join(", ")}</div>
+                        </div>
+                      ))}
+                    </>
+                  )}
                 </>
               )}
               {endpointCloud === "aws" && !awsSnapshot && (
@@ -5424,6 +5563,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
           <div className="flex items-center justify-between text-[9px] text-slate-600">
             <span>
               {traceScanRunning ? `Scanning ${endpointCloud.toUpperCase()}…` :
+               endpointCloud === "kubernetes" && loadingLocalKubernetes ? "Loading local Kubernetes…" :
                loadingSnapshot ? "Loading topology…" :
                selectedCloudHasSnapshot ? `${nodes.length - 1} ${endpointCloud.toUpperCase()} resources` : `No ${endpointCloud.toUpperCase()} snapshot`}
               {endpointCloud === "gcp" && !loadingSnapshot && loadingEntryPoints && " · scanning…"}
@@ -5436,10 +5576,10 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                 "flex items-center gap-1 hover:text-slate-400 transition-colors uppercase tracking-widest",
                 traceScanRunning && "cursor-not-allowed opacity-60"
               )}
-              title={`Run full ${endpointCloud.toUpperCase()} scan`}
+              title={endpointCloud === "kubernetes" ? "Refresh local Kubernetes resources" : `Run full ${endpointCloud.toUpperCase()} scan`}
             >
               <RefreshCw size={10} className={traceScanRunning ? "animate-spin" : ""} />
-              <span>{traceScanRunning ? "Scanning" : `Scan ${endpointCloud.toUpperCase()}`}</span>
+              <span>{traceScanRunning ? "Scanning" : endpointCloud === "kubernetes" ? "Refresh K8S" : `Scan ${endpointCloud.toUpperCase()}`}</span>
             </button>
           </div>
         </div>

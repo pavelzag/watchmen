@@ -1,5 +1,5 @@
 export default function Footer() {
-  const version = process.env.NEXT_PUBLIC_VERSION ?? "0.7.0";
+  const version = process.env.NEXT_PUBLIC_VERSION ?? "0.8.0";
   return (
     <footer className="text-center py-4 text-xs space-y-1" style={{ color: "#003010" }}>
       <p>Constructed with love by Pavel Zagalsky &nbsp;·&nbsp; <span style={{ color: "#005c16" }}>v{version}</span></p>

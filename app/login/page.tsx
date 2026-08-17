@@ -249,7 +249,7 @@ export default async function LoginPage({
         {/* Bottom decoration */}
         <div className="mt-4 flex items-center justify-center gap-2 text-xs" style={{ color: "#003010" }}>
           <ShieldAlert className="w-3 h-3" />
-          <span>WATCHMEN v0.7.0 · CLOUD SECURITY EXPLORER</span>
+          <span>WATCHMEN v0.8.0 · CLOUD SECURITY EXPLORER</span>
         </div>
       </div>
       <Footer />

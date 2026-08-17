@@ -6,7 +6,7 @@ import Image from "next/image";
 const MATRIX_CHARS = "アイウエオカキクケコサシスセソタチツテトナニヌネノ01100110$#@!%&*01001101ABCDEF><|{}[]";
 
 const STATUS_SIGNIN = [
-  "INITIALIZING WATCHMEN v0.7.0...",
+  "INITIALIZING WATCHMEN v0.8.0...",
   "LOADING SECURITY MODULES...",
   "ESTABLISHING ENCRYPTED CHANNEL...",
   "CONNECTING TO GCP / AWS APIS...",

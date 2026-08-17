@@ -187,7 +187,7 @@ export function loadLocalKubeConfig(config: LocalKubernetesConfig): k8s.KubeConf
 }
 
 function getClusterName(kc: k8s.KubeConfig): string {
-  return kc.getCurrentContextObject()?.cluster || kc.getCurrentCluster()?.name || kc.getCurrentContext() || "local-kubernetes";
+  return kc.getCurrentCluster()?.name || kc.getCurrentContext() || "local-kubernetes";
 }
 
 function labelsOf(resource: { metadata?: { labels?: Record<string, string> } }): Record<string, string> {
@@ -197,7 +197,7 @@ function labelsOf(resource: { metadata?: { labels?: Record<string, string> } }):
 export function normalizeKubernetesService(service: any, clusterName = "local-kubernetes"): LocalKubernetesResource {
   const namespace = service.metadata?.namespace ?? "default";
   const name = service.metadata?.name ?? "";
-  const ports = (service.spec?.ports ?? []).map((port: any) => ({
+  const ports = ((service.spec?.ports ?? []) as any[]).map((port: any) => ({
     name: port.name ?? "",
     protocol: port.protocol ?? "TCP",
     port: Number(port.port ?? 0),
@@ -265,13 +265,6 @@ export function parseKubernetesLogLine(line: string): { timestamp: string; messa
   const match = line.match(/^(\d{4}-\d{2}-\d{2}T[^\s]+)\s+(.*)$/);
   if (!match) return { timestamp: "", message: line };
   return { timestamp: match[1], message: match[2] };
-}
-
-function labelsToSelector(labels: Record<string, string>): string {
-  return Object.entries(labels)
-    .filter(([, value]) => value !== "")
-    .map(([key, value]) => `${key}=${value}`)
-    .join(",");
 }
 
 function classifyKubernetesError(error: any): Pick<LocalKubernetesStatus, "code" | "error"> {
@@ -372,20 +365,20 @@ export async function getLocalKubernetesResources(config: LocalKubernetesConfig)
     .filter((namespace: string) => !namespaceFilter || namespace === namespaceFilter);
 
   const [pods, services, deployments, daemonsets, statefulsets] = await Promise.all([
-    listForNamespaces(namespaceNames, namespaceFilter, () => core.listPodForAllNamespaces({}), (namespace) => core.listNamespacedPod({ namespace })),
+    listForNamespaces(namespaceNames, namespaceFilter, () => core.listPodForAllNamespaces({}), (namespace: string) => core.listNamespacedPod({ namespace })),
     listForNamespaces(namespaceNames, namespaceFilter, async () => {
-      const lists = await Promise.all(namespaceNames.map((namespace) => core.listNamespacedService({ namespace })));
+      const lists = await Promise.all(namespaceNames.map((namespace: string) => core.listNamespacedService({ namespace })));
       return { items: lists.flatMap((list: any) => list.items ?? []) };
-    }, (namespace) => core.listNamespacedService({ namespace })),
-    listForNamespaces(namespaceNames, namespaceFilter, () => apps.listDeploymentForAllNamespaces({}), (namespace) => apps.listNamespacedDeployment({ namespace })),
+    }, (namespace: string) => core.listNamespacedService({ namespace })),
+    listForNamespaces(namespaceNames, namespaceFilter, () => apps.listDeploymentForAllNamespaces({}), (namespace: string) => apps.listNamespacedDeployment({ namespace })),
     listForNamespaces(namespaceNames, namespaceFilter, async () => {
-      const lists = await Promise.all(namespaceNames.map((namespace) => apps.listNamespacedDaemonSet({ namespace })));
+      const lists = await Promise.all(namespaceNames.map((namespace: string) => apps.listNamespacedDaemonSet({ namespace })));
       return { items: lists.flatMap((list: any) => list.items ?? []) };
-    }, (namespace) => apps.listNamespacedDaemonSet({ namespace })),
+    }, (namespace: string) => apps.listNamespacedDaemonSet({ namespace })),
     listForNamespaces(namespaceNames, namespaceFilter, async () => {
-      const lists = await Promise.all(namespaceNames.map((namespace) => apps.listNamespacedStatefulSet({ namespace })));
+      const lists = await Promise.all(namespaceNames.map((namespace: string) => apps.listNamespacedStatefulSet({ namespace })));
       return { items: lists.flatMap((list: any) => list.items ?? []) };
-    }, (namespace) => apps.listNamespacedStatefulSet({ namespace })),
+    }, (namespace: string) => apps.listNamespacedStatefulSet({ namespace })),
   ]);
 
   const clusterResource: LocalKubernetesResource = {
@@ -396,7 +389,7 @@ export async function getLocalKubernetesResources(config: LocalKubernetesConfig)
     clusterName: status.clusterName,
     labels: {},
   };
-  const namespaceResources = namespaceNames.map((namespace) => ({
+  const namespaceResources = namespaceNames.map((namespace: string) => ({
     id: `local-kubernetes:namespace:${namespace}`,
     provider: "local_kubernetes" as const,
     kind: "namespace" as const,
@@ -469,7 +462,7 @@ export async function getLocalKubernetesLogs(config: LocalKubernetesConfig, opti
     const containers = options.container
       ? [options.container]
       : (pod.spec?.containers ?? []).map((container: any) => container.name).filter(Boolean);
-    await Promise.all(containers.map(async (container) => {
+    await Promise.all(containers.map(async (container: string) => {
       const raw = await core.readNamespacedPodLog({
         name: pod.metadata?.name,
         namespace,

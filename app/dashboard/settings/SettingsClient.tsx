@@ -190,6 +190,27 @@ interface ErrorEntry {
   message: string;
 }
 
+interface LocalKubernetesConfigRecord {
+  enabled: boolean;
+  kubeconfigPath: string;
+  context: string;
+  namespace: string;
+}
+
+interface LocalKubernetesStatusRecord {
+  ok: boolean;
+  enabled: boolean;
+  kubeconfigPath: string;
+  context: string;
+  namespace: string;
+  clusterName: string;
+  serverUrl: string;
+  kubernetesVersion: string;
+  nodeCount: number;
+  namespaceCount: number;
+  error?: string;
+}
+
 export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) {
   const [keys, setKeys] = useState<AIKeyRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -244,6 +265,17 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
   const [localTunnel, setLocalTunnel] = useState<LocalTunnelStatus | null>(null);
   const [localTunnelLoading, setLocalTunnelLoading] = useState(false);
   const [localTunnelAction, setLocalTunnelAction] = useState<"start" | "stop" | null>(null);
+  const [localKubernetesConfig, setLocalKubernetesConfig] = useState<LocalKubernetesConfigRecord>({
+    enabled: false,
+    kubeconfigPath: "~/.kube/config",
+    context: "",
+    namespace: "watchmen",
+  });
+  const [localKubernetesStatus, setLocalKubernetesStatus] = useState<LocalKubernetesStatusRecord | null>(null);
+  const [localKubernetesLoading, setLocalKubernetesLoading] = useState(false);
+  const [localKubernetesTesting, setLocalKubernetesTesting] = useState(false);
+  const [localKubernetesSaving, setLocalKubernetesSaving] = useState(false);
+  const [localKubernetesError, setLocalKubernetesError] = useState<string | null>(null);
 
   // Browser-only AI keys
   const [browserKeys, setBrowserKeys] = useState<BrowserAIKeys>({});
@@ -316,6 +348,16 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
         .then((d) => setLocalTunnel(d.status ?? null))
         .catch(() => {})
         .finally(() => setLocalTunnelLoading(false));
+
+      setLocalKubernetesLoading(true);
+      fetch("/api/kubernetes/local/status")
+        .then((r) => r.json())
+        .then((d) => {
+          if (d.config) setLocalKubernetesConfig(d.config);
+          if (d.status) setLocalKubernetesStatus(d.status);
+        })
+        .catch(() => setLocalKubernetesError("Failed to load local Kubernetes settings."))
+        .finally(() => setLocalKubernetesLoading(false));
     }
   }, [isDemoUser]);
 
@@ -531,6 +573,33 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
       setGcpTraceError(e instanceof Error ? e.message : "Failed to save trace source settings.");
     } finally {
       setGcpTraceSaving(false);
+    }
+  }
+
+  async function testLocalKubernetes(save = false) {
+    if (save) {
+      setLocalKubernetesSaving(true);
+    } else {
+      setLocalKubernetesTesting(true);
+    }
+    setLocalKubernetesError(null);
+    try {
+      const res = await fetch("/api/kubernetes/local/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...localKubernetesConfig, save }),
+      });
+      const data = await res.json();
+      if (data.config) setLocalKubernetesConfig(data.config);
+      if (data.status) setLocalKubernetesStatus(data.status);
+      if (!res.ok) {
+        setLocalKubernetesError(data.status?.error ?? data.error ?? "Local Kubernetes connection failed.");
+      }
+    } catch (e) {
+      setLocalKubernetesError(e instanceof Error ? e.message : "Local Kubernetes connection failed.");
+    } finally {
+      setLocalKubernetesTesting(false);
+      setLocalKubernetesSaving(false);
     }
   }
 
@@ -1086,6 +1155,132 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
                 </div>
               );
             })}
+          </div>
+        )}
+      </div>
+      <div className="space-y-4">
+        <div>
+          <h2 className="text-xs font-bold uppercase tracking-widest" style={{ color: "var(--border-dim)" }}>Local Kubernetes</h2>
+          <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
+            Discover services, workloads, pods, and pod logs from a local kubeconfig without GCP or AWS inventory.
+          </p>
+        </div>
+
+        {isDemoUser ? (
+          <div className="border p-4 text-xs" style={{ borderColor: "var(--border-dim)", background: "rgba(15, 23, 42, 0.45)", color: "var(--text-muted)" }}>
+            Local Kubernetes configuration is disabled in demo mode.
+          </div>
+        ) : localKubernetesLoading ? (
+          <div className="animate-pulse h-44" style={{ background: "var(--bg-card2)", border: "1px solid var(--border-dim)" }} />
+        ) : (
+          <div className="border p-5 space-y-4" style={{ background: "rgba(14, 165, 233, 0.04)", borderColor: "rgba(14, 165, 233, 0.16)" }}>
+            <div className="flex items-start justify-between gap-4 flex-wrap">
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-bold" style={{ color: "var(--text-strong)" }}>Trace Source: Local Kubernetes</span>
+                  <span className={cn(
+                    "px-2 py-0.5 border text-[10px] uppercase tracking-widest",
+                    localKubernetesStatus?.ok
+                      ? "text-emerald-400 border-emerald-500/25 bg-emerald-500/10"
+                      : localKubernetesConfig.enabled
+                        ? "text-amber-400 border-amber-500/25 bg-amber-500/10"
+                        : "text-slate-400 border-slate-600/30 bg-slate-700/20"
+                  )}>
+                    {localKubernetesStatus?.ok ? "Connected" : localKubernetesConfig.enabled ? "Needs Check" : "Disabled"}
+                  </span>
+                </div>
+                <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
+                  {localKubernetesStatus?.ok
+                    ? `${localKubernetesStatus.clusterName} · ${localKubernetesStatus.kubernetesVersion}`
+                    : localKubernetesStatus?.error ?? "Enable this source and test the kubeconfig connection."}
+                </p>
+              </div>
+              <label className="flex items-center gap-2 text-xs cursor-pointer" style={{ color: "var(--text-primary)" }}>
+                <input
+                  type="checkbox"
+                  checked={localKubernetesConfig.enabled}
+                  onChange={(e) => setLocalKubernetesConfig((current) => ({ ...current, enabled: e.target.checked }))}
+                />
+                Enable
+              </label>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Kubeconfig Path</label>
+                <input
+                  type="text"
+                  value={localKubernetesConfig.kubeconfigPath}
+                  onChange={(e) => setLocalKubernetesConfig((current) => ({ ...current, kubeconfigPath: e.target.value }))}
+                  placeholder="~/.kube/config"
+                  className="w-full px-3 py-2 bg-transparent border text-xs outline-none font-mono"
+                  style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Context</label>
+                <input
+                  type="text"
+                  value={localKubernetesConfig.context}
+                  onChange={(e) => setLocalKubernetesConfig((current) => ({ ...current, context: e.target.value }))}
+                  placeholder="current-context"
+                  className="w-full px-3 py-2 bg-transparent border text-xs outline-none font-mono"
+                  style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>Namespace Filter</label>
+                <input
+                  type="text"
+                  value={localKubernetesConfig.namespace}
+                  onChange={(e) => setLocalKubernetesConfig((current) => ({ ...current, namespace: e.target.value }))}
+                  placeholder="watchmen"
+                  className="w-full px-3 py-2 bg-transparent border text-xs outline-none font-mono"
+                  style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
+                />
+              </div>
+            </div>
+
+            {localKubernetesStatus?.ok && (
+              <div className="grid gap-2 sm:grid-cols-5 text-xs">
+                {[
+                  ["Cluster", localKubernetesStatus.clusterName],
+                  ["Server", localKubernetesStatus.serverUrl],
+                  ["Nodes", localKubernetesStatus.nodeCount],
+                  ["Namespaces", localKubernetesStatus.namespaceCount],
+                  ["Context", localKubernetesStatus.context],
+                ].map(([label, value]) => (
+                  <div key={label} className="border p-2 min-w-0" style={{ borderColor: "var(--border-dim)", background: "rgba(2, 6, 23, 0.35)" }}>
+                    <div className="text-[9px] uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>{label}</div>
+                    <div className="font-mono mt-1 truncate" style={{ color: "var(--text-primary)" }}>{value}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                onClick={() => testLocalKubernetes(false)}
+                disabled={localKubernetesTesting || localKubernetesSaving}
+                className="terminal-btn text-xs px-3 py-1.5"
+              >
+                {localKubernetesTesting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Test Connection"}
+              </button>
+              <button
+                onClick={() => testLocalKubernetes(true)}
+                disabled={localKubernetesTesting || localKubernetesSaving}
+                className="terminal-btn text-xs px-3 py-1.5"
+              >
+                {localKubernetesSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Save"}
+              </button>
+              <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+                Environment overrides: WATCHMEN_KUBECONFIG, WATCHMEN_KUBE_CONTEXT, WATCHMEN_KUBE_NAMESPACE.
+              </span>
+            </div>
+
+            {localKubernetesError && (
+              <p className="text-xs font-mono text-red-400">{localKubernetesError}</p>
+            )}
           </div>
         )}
       </div>

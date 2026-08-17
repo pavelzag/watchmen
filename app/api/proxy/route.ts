@@ -5,20 +5,33 @@ import { publishLiveTraceEvent, type LiveTraceIngressEvent } from "@/lib/live-tr
 // Blocked headers — never forward credentials or host overrides to upstream.
 const BLOCKED_HEADERS = new Set(["authorization", "cookie", "host", "x-forwarded-for", "x-real-ip"]);
 
-function isBlockedUrl(rawUrl: string): boolean {
+function isLocalTargetAllowed(traceTarget: unknown): boolean {
+  return (
+    typeof traceTarget === "object" &&
+    traceTarget !== null &&
+    (traceTarget as { cloud?: unknown }).cloud === "kubernetes" &&
+    (process.env.NODE_ENV !== "production" || process.env.WATCHMEN_ALLOW_LOCAL_TARGETS === "true")
+  );
+}
+
+function getBlockedUrlReason(rawUrl: string, traceTarget: unknown): string | null {
   let parsed: URL;
-  try { parsed = new URL(rawUrl); } catch { return true; }
-  if (parsed.protocol !== "https:") return true;
+  try { parsed = new URL(rawUrl); } catch { return "Invalid URL"; }
+  const allowLocal = isLocalTargetAllowed(traceTarget);
+  if (parsed.protocol !== "https:" && !(allowLocal && parsed.protocol === "http:")) return "Only HTTPS URLs are allowed.";
   const h = parsed.hostname.toLowerCase();
   // Metadata endpoints
-  if (h === "169.254.169.254" || h === "metadata.google.internal" || h === "metadata.internal") return true;
+  if (h === "169.254.169.254" || h === "metadata.google.internal" || h === "metadata.internal") return "Metadata endpoints are blocked.";
   // Loopback / link-local
-  if (h === "localhost" || h === "127.0.0.1" || h === "::1" || h === "0.0.0.0") return true;
+  if (!allowLocal && (h === "localhost" || h === "127.0.0.1" || h === "::1" || h === "0.0.0.0")) return "Localhost targets are blocked.";
   // RFC-1918 private ranges
-  if (/^10\./.test(h)) return true;
-  if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return true;
-  if (/^192\.168\./.test(h)) return true;
-  return false;
+  if (!allowLocal && /^10\./.test(h)) return "Private-network targets are blocked.";
+  if (!allowLocal && /^172\.(1[6-9]|2\d|3[01])\./.test(h)) return "Private-network targets are blocked.";
+  if (!allowLocal && /^192\.168\./.test(h)) return "Private-network targets are blocked.";
+  if (allowLocal && process.env.NODE_ENV === "production" && process.env.WATCHMEN_ALLOW_LOCAL_TARGETS !== "true") {
+    return "Local Kubernetes target proxying requires WATCHMEN_ALLOW_LOCAL_TARGETS=true in production.";
+  }
+  return null;
 }
 
 export async function POST(req: NextRequest) {
@@ -34,8 +47,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "url is required" }, { status: 400 });
   }
 
-  if (isBlockedUrl(url)) {
-    return NextResponse.json({ error: "URL not allowed" }, { status: 400 });
+  const blockedReason = getBlockedUrlReason(url, traceTarget);
+  if (blockedReason) {
+    return NextResponse.json({ error: blockedReason }, { status: 400 });
   }
 
   // Strip blocked headers from caller-supplied headers
@@ -76,7 +90,7 @@ export async function POST(req: NextRequest) {
     }
     const target = traceTarget as Partial<LiveTraceIngressEvent>;
     if (
-      (target.cloud !== "gcp" && target.cloud !== "aws") ||
+      (target.cloud !== "gcp" && target.cloud !== "aws" && target.cloud !== "kubernetes") ||
       (target.kind !== "cloudrun" && target.kind !== "vm" && target.kind !== "gke") ||
       !target.projectId ||
       !target.resourceName
