@@ -5388,7 +5388,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                   height: NODE_H,
                 }}
                 animate={{
-                  opacity: inPath ? 1 : (url.trim() ? 0 : 0.3),
+                  opacity: inPath ? 1 : (url.trim() ? 0 : 0.58),
                   scale: status === "active" ? 1.04 : isBeingDragged ? 1.06 : isSelected ? 1.01 : 1,
                 }}
                 transition={{ duration: isSelected ? 0.3 : 0.15, ease: "easeOut" }}
@@ -5405,7 +5405,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                 {/* Icon */}
                 <div className={cn(
                   "shrink-0 p-1.5 border",
-                  status === "idle" ? "border-slate-800 text-slate-600" :
+                  status === "idle" ? "border-slate-700 text-slate-400" :
                   status === "active" ? `${meta.border} ${meta.text}` :
                   status === "done" ? `${meta.border} ${meta.text} opacity-80` :
                   "border-red-800 text-red-400"
@@ -5425,7 +5425,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                 <div className="min-w-0">
                   <div className={cn(
                     "text-[10px] font-bold tracking-wide truncate",
-                    status === "idle" ? "text-slate-500" :
+                    status === "idle" ? "text-slate-300" :
                     status === "active" ? "text-white" :
                     status === "done" ? meta.text :
                     "text-red-400"
@@ -5433,7 +5433,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                     {node.label}
                   </div>
                   <div className="flex items-center gap-1 mt-0.5">
-                    <span className="text-[9px] text-slate-600 truncate">{node.sublabel}</span>
+                    <span className="text-[9px] text-slate-400 truncate">{node.sublabel}</span>
                     {istioNodes.has(node.id) && (
                       <span className="shrink-0 flex items-center gap-0.5 text-[7px] text-violet-400 border border-violet-800/60 px-0.5 rounded" title="Istio service mesh · mTLS enabled">
                         <Shield size={6} />mTLS
