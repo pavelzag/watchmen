@@ -19,11 +19,11 @@ export async function GET(req: NextRequest) {
   let events;
   if (cluster && after) {
     events = await sql`
-      SELECT e.id, e.agent_id, e.provider, e.project_id, e.event, e.received_at, h.metadata->>'clusterName' AS cluster_name
+      SELECT e.id, e.agent_id, e.provider, e.project_id, e.event, e.received_at, COALESCE(e.cluster_name, h.metadata->>'clusterName') AS cluster_name
       FROM agent_events e
       JOIN agent_hosts h ON h.id = e.agent_id
       WHERE h.provider = 'k8s'
-        AND h.metadata->>'clusterName' = ${cluster}
+        AND COALESCE(e.cluster_name, h.metadata->>'clusterName') = ${cluster}
         AND e.received_at > ${after}::timestamptz
         AND (h.user_email = ${email} OR h.user_email = 'system')
       ORDER BY e.received_at DESC
@@ -31,18 +31,18 @@ export async function GET(req: NextRequest) {
     `;
   } else if (cluster) {
     events = await sql`
-      SELECT e.id, e.agent_id, e.provider, e.project_id, e.event, e.received_at, h.metadata->>'clusterName' AS cluster_name
+      SELECT e.id, e.agent_id, e.provider, e.project_id, e.event, e.received_at, COALESCE(e.cluster_name, h.metadata->>'clusterName') AS cluster_name
       FROM agent_events e
       JOIN agent_hosts h ON h.id = e.agent_id
       WHERE h.provider = 'k8s'
-        AND h.metadata->>'clusterName' = ${cluster}
+        AND COALESCE(e.cluster_name, h.metadata->>'clusterName') = ${cluster}
         AND (h.user_email = ${email} OR h.user_email = 'system')
       ORDER BY e.received_at DESC
       LIMIT ${limit} OFFSET ${offset}
     `;
   } else if (after) {
     events = await sql`
-      SELECT e.id, e.agent_id, e.provider, e.project_id, e.event, e.received_at, h.metadata->>'clusterName' AS cluster_name
+      SELECT e.id, e.agent_id, e.provider, e.project_id, e.event, e.received_at, COALESCE(e.cluster_name, h.metadata->>'clusterName') AS cluster_name
       FROM agent_events e
       JOIN agent_hosts h ON h.id = e.agent_id
       WHERE e.received_at > ${after}::timestamptz
@@ -52,7 +52,7 @@ export async function GET(req: NextRequest) {
     `;
   } else {
     events = await sql`
-      SELECT e.id, e.agent_id, e.provider, e.project_id, e.event, e.received_at, h.metadata->>'clusterName' AS cluster_name
+      SELECT e.id, e.agent_id, e.provider, e.project_id, e.event, e.received_at, COALESCE(e.cluster_name, h.metadata->>'clusterName') AS cluster_name
       FROM agent_events e
       JOIN agent_hosts h ON h.id = e.agent_id
       WHERE h.user_email = ${email}

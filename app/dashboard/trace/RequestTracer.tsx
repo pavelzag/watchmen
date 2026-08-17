@@ -2426,7 +2426,15 @@ function NodeDetail({
         const res = await fetch(`/api/agents/events/query?${params}`, { cache: "no-store" });
         const d = await res.json();
         if (d.error) { setLogsError(d.error); return; }
-        setLogs(((d.events ?? []) as AgentEventRow[]).map(agentEventToLogEntry));
+        let events = (d.events ?? []) as AgentEventRow[];
+        if (events.length === 0 && cluster) {
+          const fallbackParams = new URLSearchParams({ limit: String(LOG_DRAWER_LIMIT) });
+          const fallbackRes = await fetch(`/api/agents/events/query?${fallbackParams}`, { cache: "no-store" });
+          const fallbackData = await fallbackRes.json();
+          if (fallbackData.error) { setLogsError(fallbackData.error); return; }
+          events = (fallbackData.events ?? []) as AgentEventRow[];
+        }
+        setLogs(events.map(agentEventToLogEntry));
       } catch (e) {
         setLogsError(e instanceof Error ? e.message : "Failed to fetch agent events.");
       } finally {

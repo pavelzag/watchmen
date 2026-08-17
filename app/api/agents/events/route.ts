@@ -1,6 +1,6 @@
 import { createHash } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { ensureAgentInstallTables, sql } from "@/lib/db";
+import { sql } from "@/lib/db";
 
 export async function POST(req: NextRequest) {
   const agentId = req.headers.get("x-watchmen-agent-id") ?? "";
@@ -10,7 +10,6 @@ export async function POST(req: NextRequest) {
   }
 
   const secretHash = createHash("sha256").update(agentSecret).digest("hex");
-  await ensureAgentInstallTables();
 
   const host = await sql`
     SELECT id, provider, project_id, metadata->>'clusterName' AS cluster_name FROM agent_hosts
