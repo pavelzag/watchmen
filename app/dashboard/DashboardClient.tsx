@@ -134,7 +134,9 @@ export default function DashboardClient({
   const [gcpCredsRequired, setGcpCredsRequired] = useState(false);
   const [cloudConnections, setCloudConnections] = useState<CloudConnections | null>(null);
   const [activeView, setActiveView] = useState<DashboardView>(initialView);
-  const [demoSnapshot, setDemoSnapshot] = useState<object | null>(() => getDemoGcpSnapshot());
+  const [demoSnapshot, setDemoSnapshot] = useState<object | null>(() =>
+    demoMode || Boolean(getDemoCredentials().gcp) ? getDemoGcpSnapshot() : null
+  );
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [syncLog, setSyncLog] = useState<string[]>([]);
   const [syncLogOpen, setSyncLogOpen] = useState(true);
@@ -204,6 +206,7 @@ export default function DashboardClient({
 
     const demoCreds = getDemoCredentials();
     if (demoCreds.gcp || demoCreds.aws) {
+      setDemoSnapshot(demoCreds.gcp ? getDemoGcpSnapshot() : null);
       setCloudConnections({ gcp: Boolean(demoCreds.gcp), aws: Boolean(demoCreds.aws) });
       if (!demoCreds.gcp && demoCreds.aws) {
         setActiveView("aws");
@@ -246,7 +249,7 @@ export default function DashboardClient({
     let hasGcpServiceAccount = false;
     console.info("[gcp-dashboard] loading cached GCP snapshot");
     appendSyncLog("[gcp-dashboard] checking GCP credentials");
-    fetch("/api/settings/credentials")
+    fetch("/api/settings/credentials", { cache: "no-store" })
       .then((r) => r.json())
       .then((data: { credentials?: { provider: string }[] }) => {
         const providers = data.credentials ?? [];
@@ -259,7 +262,7 @@ export default function DashboardClient({
           serviceAccountConfigured: hasGcpServiceAccount,
           googleSessionFallback: false,
         });
-        return fetch("/api/scan");
+        return fetch("/api/scan", { cache: "no-store" });
       })
       .then((r) => r.json())
       .then((data) => {
@@ -317,7 +320,7 @@ export default function DashboardClient({
     setScanning(false);
 
     if (task.status === "completed" && task.kind === "gcp_scan") {
-      if (task.result?.snapshot) {
+      if (demoMode && task.result?.snapshot) {
         setDemoGcpSnapshot(task.result.snapshot);
         setDemoSnapshot(task.result.snapshot);
       }
@@ -425,7 +428,7 @@ export default function DashboardClient({
           scanVersion={scanVersion}
           onSyncRequest={() => triggerScan("manual")}
           isSyncing={scanning}
-          overrideSnapshot={demoSnapshot}
+          overrideSnapshot={demoMode || Boolean(getDemoCredentials().gcp) ? demoSnapshot : null}
           syncDisabled={gcpCredsRequired}
           syncDisabledReason="Add GCP credentials in Settings before syncing GCP."
         />

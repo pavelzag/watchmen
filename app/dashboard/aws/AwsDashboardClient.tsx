@@ -32,7 +32,9 @@ export default function AwsDashboardClient({
   const [scanVersion, setScanVersion] = useState(0);
   const [scanning, setScanning] = useState(false);
   const [awsCredsRequired, setAwsCredsRequired] = useState(false);
-  const [demoSnapshot, setDemoSnapshot] = useState<AwsSnapshot | null>(() => getDemoAwsSnapshot() as AwsSnapshot | null);
+  const [demoSnapshot, setDemoSnapshot] = useState<AwsSnapshot | null>(() =>
+    demoMode || Boolean(getDemoCredentials().aws) ? getDemoAwsSnapshot() as AwsSnapshot | null : null
+  );
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [syncLog, setSyncLog] = useState<string[]>([]);
   const [syncLogOpen, setSyncLogOpen] = useState(true);
@@ -103,7 +105,9 @@ export default function AwsDashboardClient({
       return;
     }
 
-    if (getDemoCredentials().aws) {
+    const demoCreds = getDemoCredentials();
+    if (demoCreds.aws) {
+      setDemoSnapshot(getDemoAwsSnapshot() as AwsSnapshot | null);
       setAwsCredsRequired(false);
       triggerScan("initial_demo_credentials");
       return;
@@ -111,13 +115,13 @@ export default function AwsDashboardClient({
     let hasAwsCredentials = false;
     console.info("[aws-dashboard] loading cached AWS snapshot");
     appendSyncLog("[aws-dashboard] checking AWS credentials");
-    fetch("/api/settings/credentials")
+    fetch("/api/settings/credentials", { cache: "no-store" })
       .then((r) => r.json())
       .then((data: { credentials?: { provider: string }[] }) => {
         hasAwsCredentials = (data.credentials ?? []).some((credential) => credential.provider === "aws");
         setAwsCredsRequired(!hasAwsCredentials);
         appendSyncLog("[aws-dashboard] AWS credential state", { configured: hasAwsCredentials });
-        return fetch("/api/aws/scan");
+        return fetch("/api/aws/scan", { cache: "no-store" });
       })
       .then((r) => r.json())
       .then((data) => {
@@ -172,7 +176,7 @@ export default function AwsDashboardClient({
     setScanning(false);
 
     if (task.status === "completed" && task.kind === "aws_scan") {
-      if (task.result?.snapshot) {
+      if (demoMode && task.result?.snapshot) {
         setDemoAwsSnapshot(task.result.snapshot as AwsSnapshot);
         setDemoSnapshot(task.result.snapshot as AwsSnapshot);
       }
@@ -216,7 +220,7 @@ export default function AwsDashboardClient({
           scanVersion={scanVersion}
           onSyncRequest={() => triggerScan("manual")}
           isSyncing={scanning}
-          overrideSnapshot={demoSnapshot}
+          overrideSnapshot={demoMode || Boolean(getDemoCredentials().aws) ? demoSnapshot : null}
           syncDisabled={awsCredsRequired}
           syncDisabledReason="Add AWS credentials in Settings before syncing AWS."
         />

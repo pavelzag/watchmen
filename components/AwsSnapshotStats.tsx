@@ -40,7 +40,7 @@ export default function AwsSnapshotStats({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/aws/scan");
+      const res = await fetch("/api/aws/scan", { cache: "no-store" });
       if (res.status === 404) { setSnap(null); return; }
       if (!res.ok) throw new Error("Failed to load AWS data");
       const data = await res.json();

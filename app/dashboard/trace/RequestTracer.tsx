@@ -925,6 +925,14 @@ const DEFAULT_HIDDEN_GKE_HEALTH_PATHS = new Set([
   "/healthz",
 ]);
 
+const WATCHMEN_GKE_DEMO_CONTAINERS = [
+  "frontend",
+  "catalog",
+  "cart",
+  "checkout",
+  "payments",
+];
+
 const EXPECTED_REQUEST_USER_AGENT_RE = /\b(GoogleHC|kube-probe|ELB-HealthChecker|HealthChecker)\b/i;
 const WATCHMEN_TRACE_POLLER_USER_AGENT_RE = /\bwatchmen-trace-poller\b/i;
 
@@ -3773,17 +3781,22 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                     pathIds: pathNodeIds,
                   };
                 }
-                const containers = nodeContainers[node.id] ?? [];
-                const container = SIDECAR_ORDER.find(c => containers.includes(c)) ?? containers[0];
-                if (!container) return null;
-                return {
+                const containers = nodeContainers[node.id]?.length
+                  ? nodeContainers[node.id]
+                  : WATCHMEN_GKE_DEMO_CONTAINERS;
+                const orderedContainers = [
+                  ...SIDECAR_ORDER.filter(c => containers.includes(c)),
+                  ...containers.filter(c => !SIDECAR_ORDER.includes(c)),
+                ];
+                orderedContainers.forEach(container => addTarget({
                   cloud: (node.cloud ?? "gcp") as EndpointCloud,
                   kind: "gke" as const,
                   projectId: node.projectId!,
                   container,
                   resourceName: node.resourceName,
                   pathIds: pathNodeIds,
-                };
+                }));
+                return null;
               })()
             : node.type === "cloudrun"
               ? {
@@ -3804,7 +3817,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                   resourceName: node.resourceName,
                   pathIds: pathNodeIds,
                 };
-        addTarget(target);
+        if (target) addTarget(target);
       }
     });
 
@@ -4217,7 +4230,9 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       setLiveEvents([]);
       return;
     }
-    const shouldWatchAllTargets = liveScope === "all" || !hasFocusedLiveTarget;
+    const shouldWatchAllTargets = liveScope === "all"
+      || !hasFocusedLiveTarget
+      || (endpointCloud === "gcp" && gcpEndpointFilter === "gke");
     const allTargets = shouldWatchAllTargets
       ? allLiveMonitorTargets
       : (liveMonitorTarget ? [liveMonitorTarget] : []);

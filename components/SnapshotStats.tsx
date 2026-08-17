@@ -59,7 +59,7 @@ export default function SnapshotStats({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/gcp/snapshot");
+      const res = await fetch("/api/gcp/snapshot", { cache: "no-store" });
       if (res.status === 404) { setStats(null); return; }
       if (!res.ok) throw new Error("Failed to load GCP data");
       const data = await res.json();

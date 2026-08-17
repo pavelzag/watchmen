@@ -95,20 +95,31 @@ export async function GET(req: Request) {
     healthyCount: number;
     lastSeenAt: string | null;
   }>();
+  const statusByClusterName = new Map<string, {
+    nodeCount: number;
+    healthyCount: number;
+    lastSeenAt: string | null;
+  }>();
 
   for (const row of hostResult.rows) {
-    const key = `${row.project_id}/${row.location}/${row.cluster_name}`;
-    statusByCluster.set(key, {
+    const status = {
       nodeCount: Number(row.node_count ?? 0),
       healthyCount: Number(row.healthy_count ?? 0),
       lastSeenAt: row.last_seen_at ? new Date(row.last_seen_at).toISOString() : null,
-    });
+    };
+    const key = `${row.project_id}/${row.location}/${row.cluster_name}`;
+    statusByCluster.set(key, status);
+    if (!statusByClusterName.has(row.cluster_name) || status.healthyCount > 0) {
+      statusByClusterName.set(row.cluster_name, status);
+    }
   }
 
   const origin = process.env.WATCHMEN_BASE_URL ?? new URL(req.url).origin;
   const clusterStatuses = clusters.map((cluster) => {
     const key = `${cluster.projectId}/${cluster.location}/${cluster.name}`;
-    const status = statusByCluster.get(key) ?? { nodeCount: 0, healthyCount: 0, lastSeenAt: null };
+    const status = statusByCluster.get(key)
+      ?? statusByClusterName.get(cluster.name)
+      ?? { nodeCount: 0, healthyCount: 0, lastSeenAt: null };
     return {
       clusterName: cluster.name,
       projectId: cluster.projectId,

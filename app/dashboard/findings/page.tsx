@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo, useRef, type MouseEvent } from "react";
+import { useEffect, useState, useMemo, useRef, type KeyboardEvent, type MouseEvent } from "react";
 import Link from "next/link";
 import { ArrowLeft, ShieldAlert, ShieldCheck, RefreshCw, Loader2, ChevronDown, ChevronUp, AlertCircle, GitPullRequest, Search, X, Download, Star, FileSearch, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -54,6 +54,12 @@ type CloudFinding = SecurityFinding & {
   cloud: "gcp" | "aws";
   region?: string;
 };
+
+function toggleOnEnterOrSpace(event: KeyboardEvent<HTMLElement>, toggle: () => void) {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
+  toggle();
+}
 
 function awsFindingToCloudFinding(finding: AwsSecurityFinding): CloudFinding {
   return {
@@ -652,9 +658,11 @@ function FindingCard({
 
         {investigation.text && (
           <div className="px-4 pb-4 border-t border-slate-700/30">
-            <button
-              type="button"
+            <div
+              role="button"
+              tabIndex={0}
               onClick={() => setInvestigationOpen((o) => !o)}
+              onKeyDown={(event) => toggleOnEnterOrSpace(event, () => setInvestigationOpen((o) => !o))}
               className="mt-3 flex w-full items-center justify-between gap-2 rounded-md px-1 py-1 text-left hover:bg-emerald-500/5 transition-colors"
               aria-expanded={investigationOpen}
             >
@@ -673,7 +681,7 @@ function FindingCard({
                   {investigationOpen ? "Minimize" : "Maximize"}
                 </span>
               </div>
-            </button>
+            </div>
             {investigationOpen && (
               <>
                 <div
@@ -688,9 +696,11 @@ function FindingCard({
 
         {plan.text && (
           <div className="px-4 pb-4 border-t border-slate-700/30">
-            <button
-              type="button"
+            <div
+              role="button"
+              tabIndex={0}
               onClick={() => setPlanOpen((o) => !o)}
+              onKeyDown={(event) => toggleOnEnterOrSpace(event, () => setPlanOpen((o) => !o))}
               className="mt-3 flex w-full items-center justify-between gap-2 rounded-md px-1 py-1 text-left hover:bg-cyan-500/5 transition-colors"
               aria-expanded={planOpen}
             >
@@ -709,7 +719,7 @@ function FindingCard({
                   {planOpen ? "Minimize" : "Maximize"}
                 </span>
               </div>
-            </button>
+            </div>
             {planOpen && (
               <>
                 <div
@@ -760,9 +770,11 @@ function FindingCard({
 
         {verification.text && (
           <div className="px-4 pb-4 border-t border-slate-700/30">
-            <button
-              type="button"
+            <div
+              role="button"
+              tabIndex={0}
               onClick={() => setVerificationOpen((o) => !o)}
+              onKeyDown={(event) => toggleOnEnterOrSpace(event, () => setVerificationOpen((o) => !o))}
               className="mt-3 flex w-full items-center justify-between gap-2 rounded-md px-1 py-1 text-left hover:bg-cyan-500/5 transition-colors"
               aria-expanded={verificationOpen}
             >
@@ -781,7 +793,7 @@ function FindingCard({
                   {verificationOpen ? "Minimize" : "Maximize"}
                 </span>
               </div>
-            </button>
+            </div>
             {verificationOpen && (
               <div
                 onClick={copySuggestedCommand}

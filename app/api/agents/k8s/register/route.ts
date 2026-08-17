@@ -35,9 +35,19 @@ export async function POST(req: NextRequest) {
     INSERT INTO agent_hosts (id, user_email, provider, project_id, zone, instance_id, instance_name, hostname, agent_version, kernel_version, status, secret_hash, metadata)
     VALUES (${agentId}, 'system', 'k8s', ${body.projectId ?? ""}, ${body.location ?? ""}, ${body.nodeName}, ${body.nodeName}, ${body.nodeName}, ${body.agentVersion ?? ""}, ${body.kernelVersion ?? ""}, 'registered', ${secretHash}, ${JSON.stringify({ clusterName: body.clusterName })}::jsonb)
     ON CONFLICT (id) DO UPDATE
-    SET secret_hash = ${secretHash}, status = 'registered', last_seen_at = NOW(),
-        agent_version = ${body.agentVersion ?? ""}, kernel_version = ${body.kernelVersion ?? ""},
-        hostname = ${body.nodeName}
+    SET user_email = 'system',
+        provider = 'k8s',
+        project_id = ${body.projectId ?? ""},
+        zone = ${body.location ?? ""},
+        instance_id = ${body.nodeName},
+        instance_name = ${body.nodeName},
+        hostname = ${body.nodeName},
+        agent_version = ${body.agentVersion ?? ""},
+        kernel_version = ${body.kernelVersion ?? ""},
+        status = 'registered',
+        secret_hash = ${secretHash},
+        metadata = ${JSON.stringify({ clusterName: body.clusterName })}::jsonb,
+        last_seen_at = NOW()
   `;
 
   return NextResponse.json({ ok: true, agentId });
