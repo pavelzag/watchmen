@@ -9,8 +9,7 @@ if [ ! -r /sys/kernel/btf/vmlinux ]; then
 fi
 
 bpftool btf dump file /sys/kernel/btf/vmlinux format c > bpf/vmlinux.h
-go generate ./...
-go build -trimpath -o watchmen-ebpf-agent .
+WATCHMEN_AGENT_ARCH="${WATCHMEN_AGENT_ARCH:-$(go env GOARCH)}" go generate ./...
+GOARCH="${WATCHMEN_AGENT_ARCH:-$(go env GOARCH)}" go build -trimpath -o watchmen-ebpf-agent .
 
 echo "built $(pwd)/watchmen-ebpf-agent"
-

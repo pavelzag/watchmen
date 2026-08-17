@@ -39,9 +39,12 @@ sudo ./watchmen-ebpf-agent \
 
 The endpoint receives one JSON object per POST. Keep it simple for the first collector; batching can be added once the backend shape is stable.
 
-## GitHub Release Binary
+## GitHub Release Binaries
 
-The release workflow builds `watchmen-ebpf-agent-linux-amd64` and attaches it to a GitHub Release.
+The release workflow builds these Linux binaries and attaches them to a GitHub Release:
+
+- `watchmen-ebpf-agent-linux-amd64`
+- `watchmen-ebpf-agent-linux-arm64`
 
 Create a release from a tag:
 
@@ -59,6 +62,15 @@ WATCHMEN_AGENT_BINARY_URL=https://github.com/OWNER/REPO/releases/download/agent-
 WATCHMEN_AGENT_VERSION=0.1.0
 ```
 
+For Kubernetes DaemonSet installs, prefer setting a base release URL and let the init container select the binary by node architecture:
+
+```sh
+WATCHMEN_AGENT_BINARY_BASE_URL=https://github.com/OWNER/REPO/releases/download/agent-v0.1.0
+WATCHMEN_AGENT_VERSION=0.1.0
+```
+
+The generated manifest maps `x86_64`/`amd64` nodes to `watchmen-ebpf-agent-linux-amd64` and `aarch64`/`arm64` nodes to `watchmen-ebpf-agent-linux-arm64`.
+
 For a private repository, use a release host that the VM installer can access without interactive auth, or extend the installer to request a short-lived signed download URL.
 
 ## Install as systemd
@@ -74,5 +86,6 @@ sudo journalctl -u watchmen-ebpf-agent -f
 ## Notes
 
 - Build on the target VM first. The script generates `bpf/vmlinux.h` from that VM's kernel BTF.
+- To force an architecture during local/release builds, set `WATCHMEN_AGENT_ARCH=amd64` or `WATCHMEN_AGENT_ARCH=arm64`.
 - The agent currently runs as root. For production, reduce privileges after the probe set is finalized.
 - If `bpftool feature probe kernel` reports missing ring buffer, BTF, or tracepoint support, use a newer Ubuntu/GCP image or change the probe strategy.

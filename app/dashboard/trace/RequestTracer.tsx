@@ -45,7 +45,7 @@ const LOG_DRAWER_LIMIT = 200;
 type NodeType = "internet" | "lb" | "gke" | "cloudrun" | "cloudsql" | "vm" | "sidecar";
 type NodeStatus = "idle" | "active" | "done" | "error";
 type LiveScope = "active" | "all";
-type EndpointCloud = "gcp" | "aws";
+type EndpointCloud = "gcp" | "aws" | "kubernetes";
 type GcpEndpointFilter = "all" | "cloudrun" | "vm" | "gke";
 type AwsEndpointFilter = "all" | "lambda" | "vm" | "eks";
 type LiveMonitorTarget =
@@ -55,6 +55,9 @@ type LiveMonitorTarget =
       projectId: string;
       container: string;
       resourceName?: string;
+      namespace?: string;
+      pod?: string;
+      deployment?: string;
       pathIds: Set<string>;
     }
   | {
@@ -126,6 +129,55 @@ interface GraphNode {
   resourceName?: string; // Exact service/instance name for log lookups
   container?: string; // sidecar: k8s container name
   parentId?: string;  // sidecar: parent GKE node id
+  namespace?: string;
+  k8sKind?: "cluster" | "namespace" | "deployment" | "daemonset" | "statefulset" | "pod" | "service";
+  serviceType?: string;
+  accessHint?: string;
+  containers?: string[];
+}
+
+interface LocalKubernetesServicePort {
+  name: string;
+  protocol: string;
+  port: number;
+  targetPort: string | number | null;
+  nodePort: number | null;
+}
+
+interface LocalKubernetesResource {
+  id: string;
+  provider: "local_kubernetes";
+  kind: "cluster" | "namespace" | "deployment" | "daemonset" | "statefulset" | "pod" | "service";
+  name: string;
+  namespace?: string;
+  clusterName: string;
+  labels: Record<string, string>;
+  selectors?: Record<string, string>;
+  ports?: LocalKubernetesServicePort[];
+  serviceType?: string;
+  podIP?: string;
+  nodeName?: string;
+  phase?: string;
+  containers?: string[];
+  accessHint?: string;
+}
+
+interface LocalKubernetesStatusSummary {
+  ok: boolean;
+  enabled: boolean;
+  clusterName: string;
+  serverUrl: string;
+  kubernetesVersion: string;
+  nodeCount: number;
+  namespaceCount: number;
+  namespace: string;
+  error?: string;
+}
+
+interface LocalKubernetesResourcesResponse {
+  provider: "local_kubernetes";
+  cluster: LocalKubernetesStatusSummary;
+  resources: LocalKubernetesResource[];
 }
 
 interface GraphEdge {
@@ -193,6 +245,7 @@ function shouldPollLiveTarget(
   target: LiveMonitorTarget,
   traceSourceConfig: GcpTraceSourceConfigSummary | null,
 ): boolean {
+  if (target.cloud === "kubernetes") return true;
   if (target.cloud === "aws") return target.kind === "cloudrun";
   return sourceForKind(target.kind, traceSourceConfig) === "cloud_logging";
 }
@@ -226,7 +279,7 @@ function estimateRateFromTimestamps(timestamps: number[], nowMs: number, windowM
   return recent.length * (1000 / spanMs);
 }
 
-function getProxyUrlValidationError(rawUrl: string): string | null {
+function getProxyUrlValidationError(rawUrl: string, endpointCloud: EndpointCloud = "gcp"): string | null {
   let parsed: URL;
   try {
     parsed = new URL(rawUrl);
@@ -234,7 +287,8 @@ function getProxyUrlValidationError(rawUrl: string): string | null {
     return "Enter a valid absolute URL.";
   }
 
-  if (parsed.protocol !== "https:") {
+  const allowsLocalKubernetes = endpointCloud === "kubernetes";
+  if (parsed.protocol !== "https:" && !(allowsLocalKubernetes && parsed.protocol === "http:")) {
     return "Only HTTPS URLs are allowed by the trace proxy.";
   }
 
@@ -242,10 +296,10 @@ function getProxyUrlValidationError(rawUrl: string): string | null {
   if (host === "169.254.169.254" || host === "metadata.google.internal" || host === "metadata.internal") {
     return "Metadata endpoints are blocked by the trace proxy.";
   }
-  if (host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "0.0.0.0") {
+  if (!allowsLocalKubernetes && (host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "0.0.0.0")) {
     return "Localhost targets are blocked by the trace proxy.";
   }
-  if (/^10\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host) || /^192\.168\./.test(host)) {
+  if (!allowsLocalKubernetes && (/^10\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host) || /^192\.168\./.test(host))) {
     return "Private-network targets are blocked by the trace proxy.";
   }
 
@@ -610,6 +664,129 @@ function buildTopology(
   return { nodes, edges };
 }
 
+function selectorMatches(labels: Record<string, string> | undefined, selector: Record<string, string> | undefined): boolean {
+  const entries = Object.entries(selector ?? {});
+  if (entries.length === 0) return false;
+  return entries.every(([key, value]) => labels?.[key] === value);
+}
+
+function buildLocalKubernetesTopology(local: LocalKubernetesResourcesResponse | null): { nodes: GraphNode[]; edges: GraphEdge[] } {
+  const nodes: GraphNode[] = [
+    { id: "internet", type: "internet", col: 0, label: "INTERNET", sublabel: "Entry point", cloud: "kubernetes" },
+  ];
+  const edges: GraphEdge[] = [];
+
+  if (!local?.cluster.ok) {
+    nodes.push({
+      id: "k8s-ph",
+      type: "gke",
+      col: 1,
+      label: "LOCAL K8S",
+      sublabel: local?.cluster.error ?? "Enable in Settings",
+      cloud: "kubernetes",
+      projectId: "local-kubernetes",
+      resourceName: "local-kubernetes",
+    });
+    edges.push({ from: "internet", to: "k8s-ph" });
+    return { nodes, edges };
+  }
+
+  const clusterName = local.cluster.clusterName || "local-kubernetes";
+  const clusterId = `k8s-cluster-${clusterName}`;
+  nodes.push({
+    id: clusterId,
+    type: "gke",
+    col: 1,
+    label: clusterName.slice(0, 22).toUpperCase(),
+    sublabel: `K8s · ${local.cluster.kubernetesVersion || "unknown"}`,
+    cloud: "kubernetes",
+    projectId: clusterName,
+    resourceName: clusterName,
+    k8sKind: "cluster",
+  });
+  edges.push({ from: "internet", to: clusterId });
+
+  const services = local.resources.filter((resource) => resource.kind === "service");
+  const workloads = local.resources.filter((resource) => resource.kind === "deployment" || resource.kind === "daemonset" || resource.kind === "statefulset");
+  const pods = local.resources.filter((resource) => resource.kind === "pod");
+
+  services.forEach((service, index) => {
+    const id = `k8s-service-${index}`;
+    const firstPort = service.ports?.[0]?.port ?? 80;
+    const localUrl = service.serviceType === "NodePort" ? `http://127.0.0.1:18080` : undefined;
+    nodes.push({
+      id,
+      type: "lb",
+      col: 2,
+      label: service.name.slice(0, 22).toUpperCase(),
+      sublabel: `${service.serviceType ?? "Service"} · ${service.namespace ?? "default"}`,
+      cloud: "kubernetes",
+      projectId: clusterName,
+      namespace: service.namespace,
+      resourceName: service.name,
+      matchUrl: localUrl,
+      k8sKind: "service",
+      serviceType: service.serviceType,
+      accessHint: service.accessHint ?? `kubectl -n ${service.namespace ?? "default"} port-forward service/${service.name} 18080:${firstPort}`,
+    });
+    edges.push({ from: clusterId, to: id });
+  });
+
+  workloads.forEach((workload, index) => {
+    const id = `k8s-workload-${index}`;
+    nodes.push({
+      id,
+      type: "gke",
+      col: 3,
+      label: workload.name.slice(0, 22).toUpperCase(),
+      sublabel: `${workload.kind.toUpperCase()} · ${workload.namespace ?? "default"}`,
+      cloud: "kubernetes",
+      projectId: clusterName,
+      namespace: workload.namespace,
+      resourceName: workload.name,
+      k8sKind: workload.kind,
+      containers: workload.containers,
+    });
+
+    const parentServices = services
+      .map((service, serviceIndex) => ({ service, id: `k8s-service-${serviceIndex}` }))
+      .filter(({ service }) => service.namespace === workload.namespace && selectorMatches(workload.labels, service.selectors));
+    if (parentServices.length > 0) {
+      parentServices.forEach(({ id: serviceId }) => edges.push({ from: serviceId, to: id }));
+    } else {
+      edges.push({ from: clusterId, to: id });
+    }
+  });
+
+  pods.forEach((pod, index) => {
+    const id = `k8s-pod-${index}`;
+    const parentWorkload = workloads
+      .map((workload, workloadIndex) => ({ workload, id: `k8s-workload-${workloadIndex}` }))
+      .find(({ workload }) => workload.namespace === pod.namespace && selectorMatches(pod.labels, workload.selectors));
+    const parentService = services
+      .map((service, serviceIndex) => ({ service, id: `k8s-service-${serviceIndex}` }))
+      .find(({ service }) => service.namespace === pod.namespace && selectorMatches(pod.labels, service.selectors));
+    nodes.push({
+      id,
+      type: "sidecar",
+      col: 4,
+      label: pod.name.slice(0, 22).toUpperCase(),
+      sublabel: `${pod.phase ?? "Pod"} · ${pod.namespace ?? "default"}`,
+      cloud: "kubernetes",
+      projectId: clusterName,
+      namespace: pod.namespace,
+      resourceName: pod.name,
+      container: pod.containers?.[0],
+      parentId: parentWorkload?.id,
+      k8sKind: "pod",
+      containers: pod.containers,
+    });
+    edges.push({ from: parentWorkload?.id ?? parentService?.id ?? clusterId, to: id });
+  });
+
+  return { nodes, edges };
+}
+
 // ─── Path inference ───────────────────────────────────────────────────────────
 
 function inferActivePath(url: string, nodes: GraphNode[], edges: GraphEdge[]): Set<string> {
@@ -673,7 +850,12 @@ function buildLiveLogParams(target: LiveMonitorTarget, after: string): URLSearch
     after,
     limit: String(LIVE_LOG_FETCH_LIMIT),
   });
-  if (target.cloud === "aws") {
+  if (target.cloud === "kubernetes") {
+    if (target.namespace) params.set("namespace", target.namespace);
+    if (target.pod) params.set("pod", target.pod);
+    if (target.deployment) params.set("deployment", target.deployment);
+    if (target.container) params.set("container", target.container);
+  } else if (target.cloud === "aws") {
     params.set("accountId", target.projectId);
     if (target.kind === "cloudrun") {
       params.set("functionName", target.service);
@@ -699,6 +881,11 @@ function buildLiveLogParams(target: LiveMonitorTarget, after: string): URLSearch
 }
 
 function liveTargetLabel(target: LiveMonitorTarget): string {
+  if (target.cloud === "kubernetes") {
+    if (target.pod) return `Pod · ${target.pod}`;
+    if (target.deployment) return `K8s · ${target.deployment}`;
+    return `K8s · ${target.resourceName ?? target.container}`;
+  }
   if (target.cloud === "aws") {
     if (target.kind === "gke") return `EKS · ${target.resourceName ?? target.container}`;
     if (target.kind === "cloudrun") return `Lambda · ${target.service}`;
@@ -716,6 +903,9 @@ function serializeLiveTraceTarget(target: LiveMonitorTarget | null) {
     kind: target.kind,
     projectId: target.projectId,
     region: target.kind === "gke" ? undefined : target.region,
+    namespace: target.kind === "gke" ? target.namespace : undefined,
+    pod: target.kind === "gke" ? target.pod : undefined,
+    deployment: target.kind === "gke" ? target.deployment : undefined,
     resourceName: target.kind === "cloudrun"
       ? target.service
       : target.kind === "vm"
@@ -1424,6 +1614,15 @@ const NODE_ROLE_DESC: Record<NodeType, string> = {
 };
 
 function nodeTypeLabel(node: GraphNode): string {
+  if (node.cloud === "kubernetes") {
+    if (node.k8sKind === "service") return "Kubernetes Service";
+    if (node.k8sKind === "pod") return "Kubernetes Pod";
+    if (node.k8sKind === "deployment") return "Kubernetes Deployment";
+    if (node.k8sKind === "daemonset") return "Kubernetes DaemonSet";
+    if (node.k8sKind === "statefulset") return "Kubernetes StatefulSet";
+    if (node.k8sKind === "cluster") return "Local Kubernetes Cluster";
+    return "Local Kubernetes";
+  }
   if (node.cloud === "aws") {
     if (node.type === "gke") return "EKS Cluster";
     if (node.type === "cloudrun") return "Lambda Function";
@@ -1434,6 +1633,12 @@ function nodeTypeLabel(node: GraphNode): string {
 }
 
 function nodeRoleDescription(node: GraphNode): string {
+  if (node.cloud === "kubernetes") {
+    if (node.k8sKind === "service") return "Kubernetes Service discovered from the local kubeconfig.";
+    if (node.k8sKind === "pod") return "Kubernetes Pod; logs are read directly with the Kubernetes API.";
+    if (node.k8sKind === "deployment" || node.k8sKind === "daemonset" || node.k8sKind === "statefulset") return "Kubernetes workload controller discovered from the local cluster.";
+    return "Local Kubernetes cluster read from kubeconfig.";
+  }
   if (node.cloud === "aws") {
     if (node.type === "gke") return "AWS EKS cluster API or workloads relevant to trace routing.";
     if (node.type === "cloudrun") return "AWS Lambda function; directly traceable only when a Function URL exists.";
@@ -3225,7 +3430,9 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   // Snapshot + topology
   const [snapshot, setSnapshot] = useState<GcpSnapshot | null>(null);
   const [awsSnapshot, setAwsSnapshot] = useState<AwsSnapshot | null>(null);
+  const [localKubernetesResources, setLocalKubernetesResources] = useState<LocalKubernetesResourcesResponse | null>(null);
   const [loadingSnapshot, setLoadingSnapshot] = useState(true);
+  const [loadingLocalKubernetes, setLoadingLocalKubernetes] = useState(false);
   const [entryPoints, setEntryPoints] = useState<GkeEntryPoint[]>([]);
   const [loadingEntryPoints, setLoadingEntryPoints] = useState(true);
   const [traceSourceConfig, setTraceSourceConfig] = useState<GcpTraceSourceConfigSummary | null>(null);
@@ -3234,12 +3441,14 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
   // Topology derived from the selected cloud snapshot — auto-updates when either changes.
   const { nodes: baseNodes, edges: baseEdges } = useMemo(
-    () => buildTopology(
-      endpointCloud === "gcp" ? snapshot : null,
-      endpointCloud === "aws" ? awsSnapshot : null,
-      endpointCloud === "gcp" ? entryPoints : [],
-    ),
-    [awsSnapshot, endpointCloud, entryPoints, snapshot],
+    () => endpointCloud === "kubernetes"
+      ? buildLocalKubernetesTopology(localKubernetesResources)
+      : buildTopology(
+          endpointCloud === "gcp" ? snapshot : null,
+          endpointCloud === "aws" ? awsSnapshot : null,
+          endpointCloud === "gcp" ? entryPoints : [],
+        ),
+    [awsSnapshot, endpointCloud, entryPoints, localKubernetesResources, snapshot],
   );
 
   // Containers discovered per GKE node (used to build sidecar nodes)
@@ -3397,7 +3606,11 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const [requestActivityIntensity, setRequestActivityIntensity] = useState(0);
   const traceScanTask = traceScanTaskId ? tasks.find(task => task.id === traceScanTaskId) : null;
   const traceScanRunning = traceScanTask?.status === "queued" || traceScanTask?.status === "running";
-  const selectedCloudHasSnapshot = endpointCloud === "aws" ? Boolean(awsSnapshot) : Boolean(snapshot);
+  const selectedCloudHasSnapshot = endpointCloud === "kubernetes"
+    ? Boolean(localKubernetesResources?.cluster.ok)
+    : endpointCloud === "aws"
+      ? Boolean(awsSnapshot)
+      : Boolean(snapshot);
 
   useEffect(() => {
     setSelectedNode(null);
@@ -3491,6 +3704,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const fetchSnapshot = useCallback(async () => {
     setLoadingSnapshot(true);
     setLoadingEntryPoints(true);
+    setLoadingLocalKubernetes(true);
     try {
       const cachedDemoGcp = getDemoGcpSnapshot() as GcpSnapshot | null;
       if (cachedDemoGcp) setSnapshot(cachedDemoGcp);
@@ -3516,15 +3730,25 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
         setAwsSnapshot(data as AwsSnapshot);
       }).catch(() => {});
 
-      await Promise.all([snapPromise, epPromise, awsPromise]);
+      const localKubernetesPromise = fetch("/api/kubernetes/local/resources", { cache: "no-store" }).then(async r => {
+        const data = await r.json();
+        setLocalKubernetesResources(data as LocalKubernetesResourcesResponse);
+      }).catch(() => {}).finally(() => setLoadingLocalKubernetes(false));
+
+      await Promise.all([snapPromise, epPromise, awsPromise, localKubernetesPromise]);
     } catch { /* ignore */ }
     finally {
       setLoadingSnapshot(false);
       setLoadingEntryPoints(false);
+      setLoadingLocalKubernetes(false);
     }
   }, []);
 
   const triggerTraceScan = useCallback(() => {
+    if (endpointCloud === "kubernetes") {
+      void fetchSnapshot();
+      return;
+    }
     const demoCreds = getDemoCredentials();
     const taskId = endpointCloud === "aws"
       ? startAwsScan(demoCreds.aws ? { demoCredentials: { aws: demoCreds.aws } } : {})
@@ -3635,6 +3859,34 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
   const liveMonitorTarget = useMemo<LiveMonitorTarget | null>(() => {
     const buildGkeTarget = (pathNodeIds: Set<string>) => {
+      if (endpointCloud === "kubernetes") {
+        const podNode = nodes.find(n => pathNodeIds.has(n.id) && n.cloud === "kubernetes" && n.k8sKind === "pod" && n.projectId && n.resourceName);
+        if (podNode) {
+          return {
+            cloud: "kubernetes" as const,
+            kind: "gke" as const,
+            projectId: podNode.projectId!,
+            container: podNode.container ?? podNode.containers?.[0] ?? "",
+            namespace: podNode.namespace,
+            pod: podNode.resourceName,
+            resourceName: podNode.resourceName,
+            pathIds: pathNodeIds,
+          };
+        }
+        const workloadNode = nodes.find(n => pathNodeIds.has(n.id) && n.cloud === "kubernetes" && (n.k8sKind === "deployment" || n.k8sKind === "daemonset" || n.k8sKind === "statefulset") && n.projectId && n.resourceName);
+        if (workloadNode) {
+          return {
+            cloud: "kubernetes" as const,
+            kind: "gke" as const,
+            projectId: workloadNode.projectId!,
+            container: workloadNode.containers?.[0] ?? "",
+            namespace: workloadNode.namespace,
+            deployment: workloadNode.resourceName,
+            resourceName: workloadNode.resourceName,
+            pathIds: pathNodeIds,
+          };
+        }
+      }
       const gkeNode = nodes.find(n => pathNodeIds.has(n.id) && n.type === "gke" && n.projectId);
       if (!gkeNode) return null;
       if (gkeNode.cloud === "aws") {
@@ -3724,7 +3976,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     }
 
     return null;
-  }, [activePath, edges, nodeContainers, nodes, traceSourceConfig?.gkeSource]);
+  }, [activePath, edges, endpointCloud, nodeContainers, nodes, traceSourceConfig?.gkeSource]);
   const hasFocusedLiveTarget = Boolean(url.trim() && activePath.size > 1 && liveMonitorTarget);
 
   const responseRouteNodes = useMemo(() => {
@@ -3825,6 +4077,23 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     };
 
     nodes.forEach(node => {
+      if (node.cloud === "kubernetes") {
+        if (node.k8sKind !== "pod" && node.k8sKind !== "deployment" && node.k8sKind !== "daemonset" && node.k8sKind !== "statefulset") return;
+        if (!node.projectId || !node.resourceName) return;
+        const pathNodeIds = buildPathForNode(node.id, edges);
+        addTarget({
+          cloud: "kubernetes" as const,
+          kind: "gke" as const,
+          projectId: node.projectId,
+          container: node.container ?? node.containers?.[0] ?? "",
+          namespace: node.namespace,
+          pod: node.k8sKind === "pod" ? node.resourceName : undefined,
+          deployment: node.k8sKind !== "pod" ? node.resourceName : undefined,
+          resourceName: node.resourceName,
+          pathIds: pathNodeIds,
+        });
+        return;
+      }
       if (
         (node.type === "gke" && node.projectId) ||
         (node.type === "cloudrun" && node.projectId && node.resourceName) ||
@@ -4366,7 +4635,11 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
               const key = liveTargetKey(target);
               const after = liveLastTsByTarget.current[key] ?? startTs;
               const params = buildLiveLogParams(target, after);
-              const logsEndpoint = target.cloud === "aws" ? "/api/aws/logs" : "/api/gcp/logs";
+              const logsEndpoint = target.cloud === "aws"
+                ? "/api/aws/logs"
+                : target.cloud === "kubernetes"
+                  ? "/api/kubernetes/local/logs"
+                  : "/api/gcp/logs";
               console.info("[trace/live] polling target logs", {
                 endpointCloud,
                 logsEndpoint,

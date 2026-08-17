@@ -15,9 +15,17 @@ permissions:
   contents: write
 
 jobs:
-  release-agent:
-    name: Build and publish Linux agent
-    runs-on: ubuntu-24.04
+  build-agent:
+    name: Build Linux ${{ matrix.arch }} agent
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
 
     defaults:
       run:
@@ -64,39 +72,60 @@ jobs:
           make -C /tmp/bpftool/src -j$(nproc)
           sudo cp /tmp/bpftool/src/bpftool /usr/local/bin/
 
-      - name: Generate BTF header
-        working-directory: services/ebpf-agent
-        run: |
-          set -euo pipefail
-          test -r /sys/kernel/btf/vmlinux
-          bpftool btf dump file /sys/kernel/btf/vmlinux format c > bpf/vmlinux.h
-
-      - name: Generate eBPF bindings
-        working-directory: services/ebpf-agent
-        run: |
-          set -euo pipefail
-          go mod tidy
-          go generate ./...
-
       - name: Build agent
         working-directory: services/ebpf-agent
         env:
-          CGO_ENABLED: "0"
-          GOOS: linux
-          GOARCH: amd64
+          WATCHMEN_AGENT_VERSION: ${{ steps.version.outputs.version }}
+          WATCHMEN_AGENT_OUTPUT_DIR: ../../dist
         run: |
           set -euo pipefail
-          mkdir -p ../../dist
-          go build \
-            -trimpath \
-            -ldflags "-s -w -X main.version=${{ steps.version.outputs.version }}" \
-            -o ../../dist/watchmen-ebpf-agent-linux-amd64 .
+          go mod tidy
+          ./scripts/build-release.sh "${{ matrix.arch }}"
 
       - name: Package checksums
         working-directory: dist
         run: |
           set -euo pipefail
-          sha256sum watchmen-ebpf-agent-linux-amd64 > watchmen-ebpf-agent-linux-amd64.sha256
+          sha256sum "watchmen-ebpf-agent-linux-${{ matrix.arch }}" > "watchmen-ebpf-agent-linux-${{ matrix.arch }}.sha256"
+
+      - name: Upload agent artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: watchmen-ebpf-agent-linux-${{ matrix.arch }}
+          path: |
+            dist/watchmen-ebpf-agent-linux-${{ matrix.arch }}
+            dist/watchmen-ebpf-agent-linux-${{ matrix.arch }}.sha256
+          if-no-files-found: error
+
+  release-agent:
+    name: Publish Linux agent release
+    runs-on: ubuntu-24.04
+    needs: build-agent
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Resolve version
+        id: version
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            version="${{ inputs.version }}"
+            tag="agent-v${version#v}"
+          else
+            tag="${GITHUB_REF_NAME}"
+            version="${tag#agent-v}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Download agent artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
 
       - name: Publish GitHub release
         env:
@@ -106,10 +135,19 @@ jobs:
         run: |
           set -euo pipefail
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/watchmen-ebpf-agent-linux-amd64 dist/watchmen-ebpf-agent-linux-amd64.sha256 --clobber
+            gh release upload "$TAG" \
+              dist/watchmen-ebpf-agent-linux-amd64 \
+              dist/watchmen-ebpf-agent-linux-amd64.sha256 \
+              dist/watchmen-ebpf-agent-linux-arm64 \
+              dist/watchmen-ebpf-agent-linux-arm64.sha256 \
+              --clobber
           else
-            gh release create "$TAG" dist/watchmen-ebpf-agent-linux-amd64 dist/watchmen-ebpf-agent-linux-amd64.sha256 \
+            gh release create "$TAG" \
+              dist/watchmen-ebpf-agent-linux-amd64 \
+              dist/watchmen-ebpf-agent-linux-amd64.sha256 \
+              dist/watchmen-ebpf-agent-linux-arm64 \
+              dist/watchmen-ebpf-agent-linux-arm64.sha256 \
               --title "Watchmen Agent ${VERSION}" \
-              --notes "Linux amd64 Watchmen eBPF agent release ${VERSION}." \
+              --notes "Linux amd64 and arm64 Watchmen eBPF agent release ${VERSION}." \
               --draft=false
           fi

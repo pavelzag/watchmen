@@ -84,20 +84,33 @@ static __always_inline int submit_http_event(const char *data, int len)
 SEC("raw_tracepoint/sys_enter")
 int trace_http_write(struct bpf_raw_tracepoint_args *ctx)
 {
-#if !defined(__TARGET_ARCH_x86)
-	return 0;
-#else
 	struct pt_regs *regs = (struct pt_regs *)ctx->args[0];
 	long id = (long)ctx->args[1];
 	__u32 key = 0;
 	char *data = bpf_map_lookup_elem(&scratch, &key);
 	int read_len = 0;
+
+#if defined(__TARGET_ARCH_x86)
 	unsigned long arg1 = BPF_CORE_READ(regs, si);
 	unsigned long arg2 = BPF_CORE_READ(regs, dx);
+	const long syscall_write = 1;
+	const long syscall_sendto = 44;
+	const long syscall_writev = 20;
+	const long syscall_sendmsg = 46;
+#elif defined(__TARGET_ARCH_arm64)
+	unsigned long arg1 = BPF_CORE_READ(regs, regs[1]);
+	unsigned long arg2 = BPF_CORE_READ(regs, regs[2]);
+	const long syscall_write = 64;
+	const long syscall_sendto = 206;
+	const long syscall_writev = 66;
+	const long syscall_sendmsg = 211;
+#else
+	return 0;
+#endif
 
 	if (!data) return 0;
 
-	if (id == 1 || id == 44) {
+	if (id == syscall_write || id == syscall_sendto) {
 		const void *buf = (const void *)arg1;
 		unsigned long count = arg2;
 		if (count < 3 || count > 65536 || !buf) return 0;
@@ -106,7 +119,7 @@ int trace_http_write(struct bpf_raw_tracepoint_args *ctx)
 		return submit_http_event(data, read_len);
 	}
 
-	if (id == 20) {
+	if (id == syscall_writev) {
 		unsigned long iov_ptr = arg1;
 		int iovcnt = (int)arg2;
 		if (!iov_ptr || iovcnt <= 0) return 0;
@@ -124,7 +137,7 @@ int trace_http_write(struct bpf_raw_tracepoint_args *ctx)
 		return submit_http_event(data, read_len);
 	}
 
-	if (id == 46) {
+	if (id == syscall_sendmsg) {
 		unsigned long msg_ptr = arg1;
 		if (!msg_ptr) return 0;
 
@@ -146,7 +159,6 @@ int trace_http_write(struct bpf_raw_tracepoint_args *ctx)
 	}
 
 	return 0;
-#endif
 }
 
 char LICENSE[] SEC("license") = "Dual MIT/GPL";

@@ -5,7 +5,8 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { ensureAgentInstallTables, sql } from "@/lib/db";
 
-const BINARY_URL = process.env.WATCHMEN_AGENT_BINARY_URL ?? "https://github.com/pavelzag/watchmen/releases/download/agent-v0.3.19/watchmen-ebpf-agent-linux-amd64";
+const BINARY_BASE_URL = process.env.WATCHMEN_AGENT_BINARY_BASE_URL ?? "https://github.com/pavelzag/watchmen/releases/download/agent-v0.3.19";
+const BINARY_URL = process.env.WATCHMEN_AGENT_BINARY_URL ?? "";
 const AGENT_VERSION = process.env.WATCHMEN_AGENT_VERSION ?? "dev";
 
 function generateManifest(clusterName: string, projectId: string, location: string, origin: string) {
@@ -67,7 +68,20 @@ spec:
             - |
               set -eu
 
-              wget -qO /opt/watchmen/watchmen-ebpf-agent "$WATCHMEN_AGENT_BINARY_URL"
+              ARCH="$(uname -m)"
+              case "$ARCH" in
+                x86_64 | amd64) WATCHMEN_AGENT_ARCH="amd64" ;;
+                aarch64 | arm64) WATCHMEN_AGENT_ARCH="arm64" ;;
+                *) echo "unsupported node architecture: $ARCH" >&2; exit 1 ;;
+              esac
+              export WATCHMEN_AGENT_ARCH
+              if [ -n "$WATCHMEN_AGENT_BINARY_URL" ]; then
+                DOWNLOAD_URL="$WATCHMEN_AGENT_BINARY_URL"
+              else
+                DOWNLOAD_URL="\${WATCHMEN_AGENT_BINARY_BASE_URL%/}/watchmen-ebpf-agent-linux-$WATCHMEN_AGENT_ARCH"
+              fi
+
+              wget -qO /opt/watchmen/watchmen-ebpf-agent "$DOWNLOAD_URL"
               chmod 0755 /opt/watchmen/watchmen-ebpf-agent
 
               KERNEL="$(uname -r 2>/dev/null || echo '')"
@@ -78,6 +92,8 @@ spec:
           env:
             - name: WATCHMEN_AGENT_BINARY_URL
               value: "${BINARY_URL}"
+            - name: WATCHMEN_AGENT_BINARY_BASE_URL
+              value: "${BINARY_BASE_URL}"
             - name: NODE_NAME
               valueFrom:
                 fieldRef:
