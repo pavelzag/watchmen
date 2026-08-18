@@ -79,8 +79,14 @@ func main() {
 }
 
 func run(ctx context.Context, endpoint string, verbose bool) error {
-	if err := rlimit.RemoveMemlock(); err != nil {
-		return fmt.Errorf("remove memlock limit: %w", err)
+	if getenv("WATCHMEN_SKIP_MEMLOCK", "") == "1" {
+		log.Print("skip memlock limit setup because WATCHMEN_SKIP_MEMLOCK=1")
+	} else if err := rlimit.RemoveMemlock(); err != nil {
+		if isUnsupportedMemlockDetection(err) {
+			log.Printf("continue after unsupported memlock limit setup: %v", err)
+		} else {
+			return fmt.Errorf("remove memlock limit: %w", err)
+		}
 	}
 
 	var objs http_traceObjects
@@ -144,6 +150,12 @@ func run(ctx context.Context, endpoint string, verbose bool) error {
 			log.Printf("send event: %v", err)
 		}
 	}
+}
+
+func isUnsupportedMemlockDetection(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "function not implemented") ||
+		strings.Contains(msg, "operation not supported")
 }
 
 func decodeEvent(raw []byte, hostname string) (httpEvent, error) {
