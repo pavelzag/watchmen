@@ -6,6 +6,7 @@ import NavbarCloudTabs from "./NavbarCloudTabs";
 
 const NAV_ITEMS = [
     { href: "/dashboard", label: "DASHBOARD" },
+    { href: "/dashboard/self-managed", label: "SELF-MANAGED" },
     { href: "/dashboard/trace", label: "TRACE" },
     { href: "/dashboard/findings", label: "FINDINGS" },
     { href: "/dashboard/attack-paths", label: "ATTACK PATHS" },

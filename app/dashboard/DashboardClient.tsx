@@ -23,12 +23,12 @@ const GCP_SUGGESTED_QUERIES = [
   "Show all firewall rules open to the internet",
 ];
 
-type CloudConnections = { gcp: boolean; aws: boolean };
-type DashboardView = "gcp" | "aws";
+type CloudConnections = { gcp: boolean; aws: boolean; selfManaged: boolean };
+type DashboardView = "gcp" | "aws" | "self-managed";
 
 function CloudConnectionCards({ connections }: { connections: CloudConnections }) {
   return (
-    <section className="grid gap-3 md:grid-cols-2">
+    <section className="grid gap-3 md:grid-cols-3">
       <div className="border p-4 space-y-3" style={{ borderColor: "rgba(59, 130, 246, 0.28)", background: "rgba(59, 130, 246, 0.06)" }}>
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -66,6 +66,27 @@ function CloudConnectionCards({ connections }: { connections: CloudConnections }
           Connect access keys
         </Link>
       </div>
+      <div className="border p-4 space-y-3" style={{ borderColor: "rgba(16, 185, 129, 0.28)", background: "rgba(16, 185, 129, 0.06)" }}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center bg-emerald-600 text-sm font-bold text-white">S</div>
+            <div>
+              <p className="text-sm font-bold text-emerald-400">Self-Managed</p>
+              <p className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>k3s · k0s · microk8s · kind · minikube · on-prem</p>
+            </div>
+          </div>
+          {connections.selfManaged ? <Check className="h-4 w-4 text-emerald-400" /> : <ShieldCheck className="h-4 w-4 text-emerald-300/60" />}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Link href="/dashboard/settings" className="inline-flex items-center gap-2 px-3 py-2 text-xs font-bold" style={{ background: "#10b981", color: "#000" }}>
+            <ShieldCheck className="h-3.5 w-3.5" />
+            Upload kubeconfig
+          </Link>
+          <Link href="/dashboard/self-managed" className="inline-flex items-center px-3 py-2 text-xs font-mono" style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}>
+            View clusters →
+          </Link>
+        </div>
+      </div>
     </section>
   );
 }
@@ -84,6 +105,7 @@ function DashboardViewSwitch({
   const items: { view: DashboardView; label: string; connected: boolean }[] = [
     { view: "gcp", label: "GCP", connected: connections.gcp },
     { view: "aws", label: "AWS", connected: connections.aws },
+    { view: "self-managed", label: "SELF-MANAGED", connected: connections.selfManaged },
   ];
 
   return (
@@ -93,27 +115,38 @@ function DashboardViewSwitch({
           // Dashboard view
         </p>
         <p className="mt-1 text-xs font-mono" style={{ color: "var(--text-muted)" }}>
-          Switch between GCP and AWS without leaving the main dashboard.
+          Switch between GCP, AWS and Self-Managed without leaving the dashboard.
         </p>
       </div>
       <div className="flex gap-2">
-        {items.map((item) => (
-          <button
-            key={item.view}
-            type="button"
-            onClick={() => item.connected ? onChange(item.view) : onConnect()}
-            className="px-3 py-2 text-xs font-bold tracking-widest transition-opacity hover:opacity-90"
-            style={{
-              border: "1px solid var(--border-dim)",
-              background: activeView === item.view ? "var(--green)" : "transparent",
-              color: activeView === item.view ? "var(--bg)" : item.connected ? "var(--text-muted)" : "var(--amber)",
-              opacity: item.connected ? 1 : 0.75,
-            }}
-            title={item.connected ? `Show ${item.label}` : `Connect ${item.label} in Settings`}
-          >
-            {item.label}
-          </button>
-        ))}
+        {items.map((item) => {
+          const isSelfManaged = item.view === "self-managed";
+          const handleClick = () => {
+            if (isSelfManaged) {
+              onChange(item.view);
+              return;
+            }
+            if (item.connected) onChange(item.view);
+            else onConnect();
+          };
+          return (
+            <button
+              key={item.view}
+              type="button"
+              onClick={handleClick}
+              className="px-3 py-2 text-xs font-bold tracking-widest transition-opacity hover:opacity-90"
+              style={{
+                border: "1px solid var(--border-dim)",
+                background: activeView === item.view ? "var(--green)" : "transparent",
+                color: activeView === item.view ? "var(--bg)" : item.connected || isSelfManaged ? "var(--text-muted)" : "var(--amber)",
+                opacity: item.connected || isSelfManaged ? 1 : 0.75,
+              }}
+              title={isSelfManaged ? "Show Self-Managed" : item.connected ? `Show ${item.label}` : `Connect ${item.label} in Settings`}
+            >
+              {item.label}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -149,7 +182,8 @@ export default function DashboardClient({
 
   const handleViewChange = useCallback((view: DashboardView) => {
     setActiveView(view);
-    router.replace(view === "aws" ? "/dashboard?cloud=aws" : "/dashboard?cloud=gcp", { scroll: false });
+    const qs = view === "aws" ? "?cloud=aws" : view === "self-managed" ? "?cloud=self-managed" : "?cloud=gcp";
+    router.replace(`/dashboard${qs}`, { scroll: false });
   }, [router]);
 
   const handleCloudConnect = useCallback(() => {
@@ -207,7 +241,7 @@ export default function DashboardClient({
     const demoCreds = getDemoCredentials();
     if (demoCreds.gcp || demoCreds.aws) {
       setDemoSnapshot(demoCreds.gcp ? getDemoGcpSnapshot() : null);
-      setCloudConnections({ gcp: Boolean(demoCreds.gcp), aws: Boolean(demoCreds.aws) });
+      setCloudConnections({ gcp: Boolean(demoCreds.gcp), aws: Boolean(demoCreds.aws), selfManaged: false });
       if (!demoCreds.gcp && demoCreds.aws) {
         setActiveView("aws");
         return;
@@ -215,7 +249,7 @@ export default function DashboardClient({
     }
 
     if (demoMode) {
-      setCloudConnections({ gcp: true, aws: true });
+      setCloudConnections({ gcp: true, aws: true, selfManaged: true });
       setGcpCredsRequired(false);
       console.info("[gcp-dashboard] loading demo GCP snapshot");
       appendSyncLog("[gcp-dashboard] loading demo GCP data");
@@ -251,12 +285,30 @@ export default function DashboardClient({
     appendSyncLog("[gcp-dashboard] checking GCP credentials");
     fetch("/api/settings/credentials", { cache: "no-store" })
       .then((r) => r.json())
-      .then((data: { credentials?: { provider: string }[] }) => {
+      .then(async (data: { credentials?: { provider: string }[] }) => {
         const providers = data.credentials ?? [];
         hasGcpServiceAccount = providers.some((credential) => credential.provider === "gcp");
+        // Check Self-Managed kubeconfig status (multi-cluster + legacy single)
+        let hasSelfManaged = false;
+        try {
+          const smClusters = await fetch("/api/kubernetes/clusters", { cache: "no-store" }).then((r) => r.json());
+          if (Array.isArray(smClusters.clusters) && smClusters.clusters.length > 0) {
+            hasSelfManaged = smClusters.clusters.some((c: { hasKubeconfig?: boolean; enabled?: boolean }) => c.hasKubeconfig || c.enabled);
+            // also consider legacy single if no cluster has kubeconfig
+            if (!hasSelfManaged) {
+              const sm = await fetch("/api/kubernetes/local/status", { cache: "no-store" }).then((r) => r.json());
+              hasSelfManaged = Boolean(sm.status?.hasKubeconfig || sm.hasKubeconfig);
+            }
+          } else {
+            const sm = await fetch("/api/kubernetes/local/status", { cache: "no-store" }).then((r) => r.json());
+            hasSelfManaged = Boolean(sm.status?.hasKubeconfig || sm.hasKubeconfig) && Boolean(sm.status?.enabled || sm.config?.enabled);
+            if (!hasSelfManaged && (sm.status?.hasKubeconfig || sm.hasKubeconfig)) hasSelfManaged = true;
+          }
+        } catch {}
         setCloudConnections({
           gcp: hasGcpServiceAccount,
           aws: providers.some((credential) => credential.provider === "aws"),
+          selfManaged: hasSelfManaged,
         });
         appendSyncLog("[gcp-dashboard] GCP credential state", {
           serviceAccountConfigured: hasGcpServiceAccount,
@@ -286,7 +338,7 @@ export default function DashboardClient({
         appendSyncLog("[gcp-dashboard] failed to load GCP snapshot", {
           error: error instanceof Error ? error.message : String(error),
         });
-        setCloudConnections((current) => current ?? { gcp: false, aws: false });
+        setCloudConnections((current) => current ?? { gcp: false, aws: false, selfManaged: false });
       });
   }, [appendSyncLog, demoMode, triggerScan]);
 
@@ -362,17 +414,21 @@ export default function DashboardClient({
     }
   }
 
-  const effectiveConnections = cloudConnections ?? { gcp: false, aws: false };
-  const hasAnyConnection = effectiveConnections.gcp || effectiveConnections.aws;
+  const effectiveConnections = cloudConnections ?? { gcp: false, aws: false, selfManaged: false };
+  const hasAnyConnection = effectiveConnections.gcp || effectiveConnections.aws || effectiveConnections.selfManaged;
 
   useEffect(() => {
     if (!cloudConnections) return;
-    if (!cloudConnections.gcp && cloudConnections.aws) {
+    if (!cloudConnections.gcp && cloudConnections.aws && !cloudConnections.selfManaged) {
       setActiveView("aws");
-    } else if (cloudConnections.gcp && !cloudConnections.aws) {
+    } else if (cloudConnections.gcp && !cloudConnections.aws && !cloudConnections.selfManaged) {
       setActiveView("gcp");
+    } else if (cloudConnections.selfManaged && !cloudConnections.gcp && !cloudConnections.aws) {
+      setActiveView("self-managed");
+    } else if (initialView === "self-managed" && cloudConnections.selfManaged) {
+      setActiveView("self-managed");
     }
-  }, [cloudConnections]);
+  }, [cloudConnections, initialView]);
 
   if (!cloudConnections) {
     return (
@@ -400,10 +456,38 @@ export default function DashboardClient({
               // Connect a cloud provider
             </p>
             <p className="mt-2 text-sm font-mono" style={{ color: "var(--text-muted)" }}>
-              Connect AWS or GCP before the dashboard shows cloud inventory, findings, compliance, and AI query tools.
+              Connect AWS, GCP, or Self-Managed Kubernetes before the dashboard shows inventory, findings, compliance, and AI query tools.
             </p>
           </div>
           <CloudConnectionCards connections={effectiveConnections} />
+        </div>
+      </div>
+    );
+  }
+
+  if (activeView === "self-managed") {
+    return (
+      <div className="min-h-screen p-4 flex flex-col" style={{ background: "#090909" }}>
+        <div className="max-w-4xl mx-auto w-full space-y-4 flex-1">
+          <DashboardViewSwitch activeView={activeView} connections={effectiveConnections} onChange={handleViewChange} onConnect={handleCloudConnect} />
+          <div className="border p-4 space-y-3" style={{ borderColor: "rgba(16,185,129,0.28)", background: "rgba(16,185,129,0.06)" }}>
+            <p className="text-[10px] uppercase tracking-widest font-mono" style={{ color: "#10b981" }}>// SELF-MANAGED KUBERNETES</p>
+            <p className="text-sm font-bold text-emerald-400">Local, k3s, k0s, microk8s, kind, minikube, talos, RKE2, bare-metal or any self-hosted cluster via kubeconfig</p>
+            <p className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>Upload a kubeconfig in <Link href="/dashboard/settings" style={{ color: "#10b981", textDecoration: "underline" }}>Settings → Self-Managed</Link> and manage it here. Scan, trace and fetch pod logs without GCP/AWS.</p>
+            <div className="flex flex-wrap gap-2 pt-1">
+              <Link href="/dashboard/self-managed" className="px-3 py-2 text-xs font-bold" style={{ background: "#10b981", color: "#000" }}>OPEN SELF-MANAGED →</Link>
+              <Link href="/dashboard/trace" className="px-3 py-2 text-xs font-mono" style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}>LIVE TRACE</Link>
+              <Link href="/dashboard/settings" className="px-3 py-2 text-xs font-mono" style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}>UPLOAD KUBECONFIG</Link>
+            </div>
+          </div>
+          <div className="border p-3 grid gap-2 md:grid-cols-3 text-xs font-mono" style={{ borderColor: "var(--border-dim)", background: "#050505" }}>
+            <Link href="/dashboard/self-managed" className="p-3 border hover:border-emerald-500/40" style={{ borderColor: "var(--border-dim)" }}><span style={{ color: "#10b981" }}>→ clusters & nodes</span><br/><span style={{ color: "var(--text-muted)" }}>discovered via kubeconfig</span></Link>
+            <Link href="/dashboard/trace" className="p-3 border hover:border-emerald-500/40" style={{ borderColor: "var(--border-dim)" }}><span style={{ color: "#10b981" }}>→ services & pods</span><br/><span style={{ color: "var(--text-muted)" }}>with port-forward hints</span></Link>
+            <Link href="/dashboard/container-scan" className="p-3 border hover:border-emerald-500/40" style={{ borderColor: "var(--border-dim)" }}><span style={{ color: "#10b981" }}>→ container scan</span><br/><span style={{ color: "var(--text-muted)" }}>same pipeline as GKE</span></Link>
+          </div>
+          {!effectiveConnections.selfManaged && (
+            <div className="px-3 py-2 text-xs font-mono" style={{ border: "1px solid #5c3b00", background: "#0d0905", color: "#ffb020" }}>// No kubeconfig yet — <Link href="/dashboard/settings" style={{ color: "#ffb020", textDecoration: "underline" }}>[UPLOAD IN SETTINGS]</Link></div>
+          )}
         </div>
       </div>
     );

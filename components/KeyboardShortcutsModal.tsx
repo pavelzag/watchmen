@@ -9,7 +9,7 @@ export const ROUTE_SHORTCUTS = [
     { key: "R", href: "/dashboard/trace", label: "Trace menu" },
     { key: "F", href: "/dashboard/findings", label: "Findings" },
     { key: "P", href: "/dashboard/attack-paths", label: "Attack Paths" },
-    { key: "I", href: "/dashboard/iac-drift", label: "IaC Drift" },
+    // { key: "I", href: "/dashboard/iac-drift", label: "IaC Drift" }, // hidden temporarily
     { key: "D", href: "/dashboard/container-scan", label: "Containers" },
     { key: "C", href: "/dashboard/compliance", label: "Compliance" },
     { key: "H", href: "/dashboard/history", label: "History" },

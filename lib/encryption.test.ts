@@ -26,8 +26,8 @@ describe('Encryption Utilities', () => {
         // Ensure the encrypted text is not the same as the plaintext
         expect(encrypted).not.toBe(plaintext);
 
-        // Ensure it follows the iv:authTag:ciphertext format
-        expect(encrypted.split(':').length).toBe(3);
+        // Ensure it follows the salt:iv:authTag:ciphertext format (4 parts, legacy is 3)
+        expect([3, 4]).toContain(encrypted.split(':').length);
 
         const decrypted = decrypt(encrypted);
         expect(decrypted).toBe(plaintext);

@@ -1,5 +1,5 @@
 import { auth, signOut } from "@/lib/auth";
-import { ShieldAlert, Clock, ClipboardCheck, Settings, LogOut, IterationCw, Network, Swords, Container, GitBranch } from "lucide-react";
+import { ShieldAlert, Clock, ClipboardCheck, Settings, LogOut, IterationCw, Network, Swords, Container, GitBranch, Server } from "lucide-react";
 import Link from "next/link";
 import NavbarAskButton from "./NavbarAskButton";
 import NavbarSubNav from "./NavbarSubNav";
@@ -73,10 +73,12 @@ export default async function Navbar() {
       </div>
 
       <NavbarSubNav>
+        <NavbarLink href="/dashboard/self-managed" icon={<Server className="w-3 h-3" />} label="SELF-MANAGED" />
         <NavbarLink href="/dashboard/trace" icon={<IterationCw className="w-3 h-3" />} label="TRACE" />
         <NavbarLink href="/dashboard/findings" icon={<ShieldAlert className="w-3 h-3" />} label="FINDINGS" danger />
         <NavbarLink href="/dashboard/attack-paths" icon={<Swords className="w-3 h-3" />} label="ATTACK PATHS" />
-        <NavbarLink href="/dashboard/iac-drift" icon={<GitBranch className="w-3 h-3" />} label="IAC DRIFT" />
+        {/* IAC DRIFT hidden temporarily — re-enable by uncommenting next line */}
+        {/* <NavbarLink href="/dashboard/iac-drift" icon={<GitBranch className="w-3 h-3" />} label="IAC DRIFT" /> */}
         <NavbarLink href="/dashboard/container-scan" icon={<Container className="w-3 h-3" />} label="CONTAINERS" />
         <NavbarLink href="/dashboard/tasks" icon={<IterationCw className="w-3 h-3" />} label="TASKS" />
         <NavbarLink href="/dashboard/history" icon={<Clock className="w-3 h-3" />} label="HISTORY" />

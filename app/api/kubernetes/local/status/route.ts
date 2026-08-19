@@ -10,5 +10,12 @@ export async function GET() {
 
   const config = await getUserLocalKubernetesConfig(session.user.email);
   const status = await getLocalKubernetesStatus(config);
-  return NextResponse.json({ config, status });
+  // Never leak kubeconfig content to the client; only metadata.
+  const safeConfig = { ...config, kubeconfigContent: undefined };
+  return NextResponse.json({
+    config: safeConfig,
+    status,
+    hasKubeconfig: status.hasKubeconfig ?? Boolean(config.kubeconfigContent?.trim()),
+    kubeconfigFilename: status.kubeconfigFilename ?? config.kubeconfigFilename,
+  });
 }

@@ -8,5 +8,6 @@ export default async function DashboardPage({
 }) {
   const session = await auth();
   const { cloud } = await searchParams;
-  return <DashboardClient initialView={cloud === "aws" ? "aws" : "gcp"} demoMode={Boolean(session?.isDemoUser)} />;
+  const initialView = cloud === "aws" ? "aws" : cloud === "self-managed" || cloud === "self" ? "self-managed" : "gcp";
+  return <DashboardClient initialView={initialView as "gcp" | "aws" | "self-managed"} demoMode={Boolean(session?.isDemoUser)} />;
 }

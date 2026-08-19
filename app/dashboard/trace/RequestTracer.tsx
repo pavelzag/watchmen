@@ -2641,7 +2641,17 @@ function NodeDetail({
       }
 
       try {
-        const res = await fetch(`/api/kubernetes/local/logs?${params}`, { cache: "no-store" });
+        // Resolve cluster id for kubernetes logs - try selected picker, then lookup by clusterName (node.projectId)
+        let clusterId: string | null = null;
+        try {
+          const cr = await fetch("/api/kubernetes/clusters", { cache: "no-store" }).then(r => r.json()).catch(() => ({ clusters: [] }));
+          const list: Array<{ id: string; name: string }> = Array.isArray(cr.clusters) ? cr.clusters : [];
+          // node.projectId holds clusterName for kubernetes nodes
+          const byName = list.find((c: { id: string; name: string }) => c.name === node.projectId);
+          clusterId = byName?.id ?? list[0]?.id ?? null;
+        } catch {}
+        const url = clusterId ? `/api/kubernetes/clusters/${clusterId}/logs?${params}` : `/api/kubernetes/local/logs?${params}`;
+        const res = await fetch(url, { cache: "no-store" });
         const d = await res.json();
         if (d.error) { setLogsError(d.error); return; }
         setLogs(d.entries ?? []);
@@ -3480,6 +3490,8 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const [localKubernetesResources, setLocalKubernetesResources] = useState<LocalKubernetesResourcesResponse | null>(null);
   const [loadingSnapshot, setLoadingSnapshot] = useState(true);
   const [loadingLocalKubernetes, setLoadingLocalKubernetes] = useState(false);
+  const [k8sClusters, setK8sClusters] = useState<Array<{ id: string; name: string }>>([]);
+  const [selectedK8sClusterId, setSelectedK8sClusterId] = useState<string | null>(null);
   const [entryPoints, setEntryPoints] = useState<GkeEntryPoint[]>([]);
   const [loadingEntryPoints, setLoadingEntryPoints] = useState(true);
   const [traceSourceConfig, setTraceSourceConfig] = useState<GcpTraceSourceConfigSummary | null>(null);
@@ -3747,6 +3759,31 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
   const resetView = useCallback(() => { setZoom(1); setPan({ x: 0, y: 0 }); }, []);
 
+  // Fetch clusters list for kubernetes picker
+  useEffect(() => {
+    if (demoMode) return;
+    fetch("/api/kubernetes/clusters", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => {
+        const list: Array<{ id: string; name: string }> = Array.isArray(d.clusters) ? d.clusters : [];
+        setK8sClusters(list);
+        if (list.length > 0 && !selectedK8sClusterId) setSelectedK8sClusterId(list[0].id);
+      })
+      .catch(() => {});
+  }, [demoMode]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const fetchLocalKubernetes = useCallback(async (clusterId: string | null) => {
+    setLoadingLocalKubernetes(true);
+    try {
+      const url = clusterId ? `/api/kubernetes/clusters/${clusterId}/resources` : "/api/kubernetes/local/resources";
+      const r = await fetch(url, { cache: "no-store" });
+      const data = await r.json();
+      if (r.ok) setLocalKubernetesResources(data as LocalKubernetesResourcesResponse);
+      else setLocalKubernetesResources(data as LocalKubernetesResourcesResponse);
+    } catch {}
+    finally { setLoadingLocalKubernetes(false); }
+  }, []);
+
   // ── Fetch snapshot ──────────────────────────────────────────────────────────
   const fetchSnapshot = useCallback(async () => {
     setLoadingSnapshot(true);
@@ -3777,10 +3814,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
         setAwsSnapshot(data as AwsSnapshot);
       }).catch(() => {});
 
-      const localKubernetesPromise = fetch("/api/kubernetes/local/resources", { cache: "no-store" }).then(async r => {
-        const data = await r.json();
-        setLocalKubernetesResources(data as LocalKubernetesResourcesResponse);
-      }).catch(() => {}).finally(() => setLoadingLocalKubernetes(false));
+      const localKubernetesPromise = fetchLocalKubernetes(selectedK8sClusterId);
 
       await Promise.all([snapPromise, epPromise, awsPromise, localKubernetesPromise]);
     } catch { /* ignore */ }
@@ -3789,7 +3823,14 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       setLoadingEntryPoints(false);
       setLoadingLocalKubernetes(false);
     }
-  }, []);
+  }, [fetchLocalKubernetes, selectedK8sClusterId]);
+
+  // Refetch k8s resources when selected cluster changes (while on kubernetes tab)
+  useEffect(() => {
+    if (endpointCloud !== "kubernetes") return;
+    if (demoMode) return;
+    void fetchLocalKubernetes(selectedK8sClusterId);
+  }, [selectedK8sClusterId, endpointCloud, demoMode, fetchLocalKubernetes]);
 
   const triggerTraceScan = useCallback(() => {
     if (endpointCloud === "kubernetes") {
@@ -5142,6 +5183,34 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                   </button>
                   ))}
                 </div>
+                {endpointCloud === "kubernetes" && (
+                  <div className="flex items-center gap-1 flex-wrap px-1 py-1 border border-slate-800/50 bg-[#0a0a0a]/40">
+                    <span className="text-[9px] uppercase tracking-widest text-slate-500 mr-1">Cluster:</span>
+                    {loadingLocalKubernetes && k8sClusters.length === 0 ? (
+                      <span className="text-[10px] text-slate-600 flex items-center gap-1"><Loader2 size={9} className="animate-spin" /> Loading…</span>
+                    ) : k8sClusters.length === 0 ? (
+                      <span className="text-[10px] text-slate-600">No self-hosted clusters — add in Settings</span>
+                    ) : (
+                      k8sClusters.map((c) => (
+                        <button
+                          key={c.id}
+                          onClick={() => setSelectedK8sClusterId(c.id)}
+                          className={cn(
+                            "px-2 py-1 text-[10px] font-mono border transition-colors",
+                            selectedK8sClusterId === c.id
+                              ? "bg-emerald-500 text-black border-emerald-500"
+                              : "bg-slate-800 text-slate-300 border-slate-700 hover:border-slate-600"
+                          )}
+                        >
+                          {c.name}
+                        </button>
+                      ))
+                    )}
+                    {k8sClusters.length > 0 && (
+                      <a href="/dashboard/settings" className="ml-auto text-[9px] font-mono underline text-slate-500 hover:text-slate-300">Manage →</a>
+                    )}
+                  </div>
+                )}
               </div>
 
               {endpointCloud === "gcp" && loadingEntryPoints ? (
