@@ -31,6 +31,7 @@ bpftool btf dump file /sys/kernel/btf/vmlinux format c > bpf/vmlinux.h
 WATCHMEN_AGENT_ARCH="$goarch" GOARCH="$goarch" go generate ./...
 
 CGO_ENABLED=0 GOOS=linux GOARCH="$goarch" go build \
+  -buildvcs=false \
   -trimpath \
   -ldflags "-s -w -X main.version=${version}" \
   -o "$output_dir/watchmen-ebpf-agent-linux-$goarch" .

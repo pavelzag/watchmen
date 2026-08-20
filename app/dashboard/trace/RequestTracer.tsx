@@ -37,6 +37,7 @@ const LIVE_STREAM_PULSE_MS = 520;
 const LIVE_EVENT_FRESHNESS_MS = 120_000;
 const LIVE_EVENT_RETENTION_MS = 120_000;
 const LIVE_EVENT_LIMIT = 100;
+const LIVE_AGENT_INITIAL_LOOKBACK_MS = 120_000;
 const LOG_AUTO_REFRESH_MS = 5_000;
 const LOG_DRAWER_LIMIT = 200;
 
@@ -250,8 +251,11 @@ function shouldPollLiveTarget(
   return sourceForKind(target.kind, traceSourceConfig) === "cloud_logging";
 }
 
-function shouldUseAgentEvents(traceSourceConfig: GcpTraceSourceConfigSummary | null): boolean {
-  return traceSourceConfig?.gkeSource === "ebpf_agent";
+function shouldUseAgentEvents(
+  endpointCloud: EndpointCloud,
+  traceSourceConfig: GcpTraceSourceConfigSummary | null,
+): boolean {
+  return endpointCloud === "kubernetes" || traceSourceConfig?.gkeSource === "ebpf_agent";
 }
 
 function clamp01(value: number): number {
@@ -1049,6 +1053,12 @@ function toLiveEventFromIngress(event: LiveTraceIngressEvent, nodes: GraphNode[]
 }
 
 function resolveAgentEventNodeId(event: AgentEventRow, nodes: GraphNode[]): string | undefined {
+  if (event.provider === "k8s" || event.cluster_name) {
+    const clusterName = event.cluster_name ?? event.project_id;
+    return nodes.find(
+      n => n.cloud === "kubernetes" && n.type === "gke" && (!clusterName || n.projectId === clusterName)
+    )?.id ?? nodes.find(n => n.cloud === "kubernetes" && n.type === "gke")?.id;
+  }
   return nodes.find(
     n => n.type === "gke" && (!event.project_id || n.projectId === event.project_id)
   )?.id ?? nodes.find(n => n.type === "gke")?.id;
@@ -1062,7 +1072,7 @@ function buildPathForAgentEvent(
 ): Set<string> | null {
   if (
     activeTarget?.kind === "gke"
-    && (!event.project_id || activeTarget.projectId === event.project_id)
+    && (!event.project_id || activeTarget.projectId === event.project_id || activeTarget.projectId === event.cluster_name)
   ) {
     return new Set(activeTarget.pathIds);
   }
@@ -1077,10 +1087,10 @@ function toLiveEventFromAgentEvent(event: AgentEventRow, nodes: GraphNode[]): Li
     id: `agent:${event.id}`,
     ts: event.received_at,
     label: event.cluster_name
-      ? `GKE · ${event.cluster_name}`
+      ? `K8S · ${event.cluster_name}`
       : `GKE · ${ev.hostname ?? event.agent_id}`,
     kind: "gke",
-    projectId: event.project_id ?? "",
+    projectId: event.cluster_name ?? event.project_id ?? "",
     focusNodeId,
     method: ev.method,
     path: ev.path,
@@ -4555,6 +4565,96 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     };
   }, [allLiveMonitorTargets, demoMode, edges, emitLivePulseBurst, endpointCloud, hasFocusedLiveTarget, liveMode, liveMonitorTarget, liveScope, nodes, traceSourceConfig]);
 
+  // ── Local Kubernetes log polling -> synthesize live events for non-proxied port-forward traffic ──
+  const seenK8sTraceIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (endpointCloud !== "kubernetes" || !liveMode) return;
+    if (demoMode) return;
+    const clusterId = selectedK8sClusterId ?? k8sClusters[0]?.id ?? null;
+    if (!clusterId) return;
+    let cancelled = false;
+    let consecutiveTimeouts = 0;
+    const poll = async () => {
+      try {
+        const params = new URLSearchParams({ limit: "100", deployment: "watchmen-shop-frontend" });
+        const url = `/api/kubernetes/clusters/${clusterId}/logs?${params}`;
+        const controller = new AbortController();
+        const t = setTimeout(() => controller.abort(), 12000);
+        const res = await fetch(url, { cache: "no-store", signal: controller.signal });
+        clearTimeout(t);
+        if (!res.ok && res.status === 504) {
+          consecutiveTimeouts++;
+          if (consecutiveTimeouts >= 2) await new Promise(r => setTimeout(r, 5000));
+          return;
+        }
+        consecutiveTimeouts = 0;
+        const data = await res.json().catch(() => ({}));
+        if (data.error && /timeout/i.test(data.error)) {
+          // treat as transient, don't surface to UI
+          return;
+        }
+        const entries: Array<{ message: string; timestamp: string }> = Array.isArray(data.entries) ? data.entries : [];
+        const newEvents: typeof liveEvents = [];
+        for (const e of entries) {
+          const msg: string = e.message ?? "";
+          // nginx log contains trace_id like wm-minikube-test-... or X-Watchmen-Trace-Id
+          const m = msg.match(/(wm-[^\s"']+|X-Watchmen-Trace-Id[:\s]+([^\s"']+))/i);
+          const traceId = m ? (m[2] ?? m[1]) : null;
+          if (!traceId) continue;
+          if (seenK8sTraceIdsRef.current.has(traceId)) continue;
+          seenK8sTraceIdsRef.current.add(traceId);
+          // keep set bounded
+          if (seenK8sTraceIdsRef.current.size > 500) {
+            const first = seenK8sTraceIdsRef.current.values().next().value;
+            if (first) seenK8sTraceIdsRef.current.delete(first);
+          }
+          // Parse method/path/status from nginx log: "GET /api/products?demo_trace_id=... HTTP/1.1" 200
+          let method: string | undefined;
+          let path: string | undefined;
+          let status: number | undefined;
+          const mp = msg.match(/"([A-Z]+)\s+([^"\s?]+)[^"]*"\s+(\d{3})/);
+          if (mp) {
+            method = mp[1];
+            path = mp[2];
+            status = Number(mp[3]);
+          }
+          const clusterName = localKubernetesResources?.cluster.clusterName ?? k8sClusters.find(c => c.id === clusterId)?.name ?? "local-kubernetes";
+          const uiEvent = {
+            id: `k8s-log:${traceId}`,
+            ts: e.timestamp ?? new Date().toISOString(),
+            label: `${method ?? "GET"} ${path ?? "/"}`,
+            kind: "gke" as const,
+            projectId: clusterName,
+            focusNodeId: undefined as string | undefined,
+            method,
+            path,
+            status,
+            count: 1,
+          };
+          newEvents.push(uiEvent);
+          if (liveAnimEnabledRef.current) {
+            const pathIds = buildPathForIngressEvent({ cloud: "kubernetes", kind: "gke", projectId: clusterName, resourceName: "watchmen-shop-frontend", method, path, status } as unknown as LiveTraceIngressEvent, nodes, edges, liveMonitorTarget);
+            if (pathIds) emitLivePulseBurst(pathIds);
+          }
+        }
+        if (newEvents.length > 0 && !cancelled) {
+          const nowMs = Date.now();
+          liveTimestamps.current.push(...newEvents.map(() => nowMs));
+          liveTimestamps.current = liveTimestamps.current.filter(t => nowMs - t < 60_000);
+          setLiveRps(estimateRateFromTimestamps(liveTimestamps.current, nowMs, LIVE_RPS_WINDOW_MS));
+          setLiveEvents(prev => {
+            const retained = prev.filter(ev => nowMs - eventTimestampMs(ev.ts) < LIVE_EVENT_RETENTION_MS);
+            const merged = [...retained, ...newEvents];
+            return merged.slice(-LIVE_EVENT_LIMIT);
+          });
+        }
+      } catch {}
+    };
+    poll();
+    const id = window.setInterval(poll, 4000);
+    return () => { cancelled = true; window.clearInterval(id); };
+  }, [endpointCloud, liveMode, demoMode, selectedK8sClusterId, k8sClusters, localKubernetesResources, nodes, edges, liveMonitorTarget, emitLivePulseBurst]);
+
   // ── Demo simulation: auto-animate traffic through topology ──────────────────
   useEffect(() => {
     if (!demoMode || nodes.length < 2 || loadingSnapshot) return;
@@ -4689,7 +4789,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       }
     });
     if (!liveLastAgentEventAtRef.current) {
-      liveLastAgentEventAtRef.current = startTs;
+      liveLastAgentEventAtRef.current = new Date(Date.now() - LIVE_AGENT_INITIAL_LOOKBACK_MS).toISOString();
     }
     let busy = false;
 
@@ -4701,13 +4801,18 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       liveTimestamps.current = liveTimestamps.current.filter(t => pollNowMs - t < 60_000);
       setLiveRps(estimateRateFromTimestamps(liveTimestamps.current, pollNowMs, LIVE_RPS_WINDOW_MS));
       const includeExpectedRequests = shouldWatchAllTargets;
-      const agentEventsPromise = shouldUseAgentEvents(traceSourceConfig)
-        ? fetch(
-            `/api/agents/events/query?${new URLSearchParams({
-              after: liveLastAgentEventAtRef.current,
-              limit: "20",
-            })}`
-          )
+      const agentEventParams = new URLSearchParams({
+        after: liveLastAgentEventAtRef.current,
+        limit: "20",
+      });
+      if (endpointCloud === "kubernetes") {
+        const clusterName = localKubernetesResources?.cluster.clusterName
+          ?? k8sClusters.find(c => c.id === selectedK8sClusterId)?.name
+          ?? "";
+        if (clusterName) agentEventParams.set("cluster", clusterName);
+      }
+      const agentEventsPromise = shouldUseAgentEvents(endpointCloud, traceSourceConfig)
+        ? fetch(`/api/agents/events/query?${agentEventParams}`)
             .then(async (res) => {
               if (!res.ok) return [] as AgentEventRow[];
               const data = await res.json().catch(() => ({}));
@@ -4892,7 +4997,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     const id = setInterval(poll, pollIntervalMs);
     poll(); // immediate first check
     return () => { clearInterval(id); };
-  }, [allLiveMonitorTargets, demoMode, endpointCloud, liveMode, liveMonitorTarget, liveScope, nodes, runBfsAnimation, traceSourceConfig]);
+  }, [allLiveMonitorTargets, demoMode, endpointCloud, k8sClusters, liveMode, liveMonitorTarget, liveScope, localKubernetesResources?.cluster.clusterName, nodes, runBfsAnimation, selectedK8sClusterId, traceSourceConfig]);
 
   useEffect(() => {
     if (!demoMode || !liveMode || demoLiveTargets.length === 0) return;
@@ -6126,7 +6231,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
               response={response}
               url={url}
               method={method}
-              usesAgentEvents={shouldUseAgentEvents(traceSourceConfig)}
+              usesAgentEvents={shouldUseAgentEvents(endpointCloud, traceSourceConfig)}
               onClose={() => { setSelectedNode(null); setShowResponse(true); }}
               onIstioDetected={handleIstioDetected}
             />

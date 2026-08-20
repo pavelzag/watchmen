@@ -219,7 +219,7 @@ export default function SelfManagedPage() {
               )}
             </div>
           ))}
-          <Link href="/dashboard/settings" className="ml-auto text-xs font-mono underline" style={{ color: "var(--text-muted)" }}>Manage clusters →</Link>
+          <Link href="/dashboard/settings?tab=self-managed" className="ml-auto text-xs font-mono underline" style={{ color: "var(--text-muted)" }}>Manage clusters →</Link>
         </div>
       )}
 
@@ -232,7 +232,7 @@ export default function SelfManagedPage() {
             <p className="text-sm font-bold" style={{ color: "var(--text-strong)" }}>No kubeconfig connected</p>
             <p className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>Upload a kubeconfig for k3s, k0s, microk8s, kind, minikube, talos, RKE2 or any self-hosted cluster. Encrypted at rest.</p>
             <div className="flex gap-2">
-              <Link href="/dashboard/settings" className="px-3 py-2 text-xs font-bold" style={{ background: "#10b981", color: "#000" }}>UPLOAD KUBECONFIG →</Link>
+              <Link href="/dashboard/settings?tab=self-managed" className="px-3 py-2 text-xs font-bold" style={{ background: "#10b981", color: "#000" }}>UPLOAD KUBECONFIG →</Link>
               <Link href="/dashboard?cloud=self-managed" className="px-3 py-2 text-xs font-mono" style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}>DASHBOARD</Link>
             </div>
           </div>
@@ -240,7 +240,7 @@ export default function SelfManagedPage() {
           <div className="space-y-2">
             <div className="flex items-center gap-2"><AlertCircle className="w-4 h-4 text-amber-400" /><span className="text-sm font-bold text-amber-400">{status?.code === "disabled" ? "Disabled" : "Connection error"}</span><span className="px-2 py-0.5 text-[10px] uppercase tracking-widest border bg-slate-800" style={{ borderColor: "var(--border-dim)", color: "var(--text-muted)" }}>{distribution}</span></div>
             <p className="text-xs font-mono text-amber-300/80 break-all">{status?.error ?? error ?? "Enable in Settings and test the connection."}</p>
-            <div className="flex gap-2"><Link href="/dashboard/settings" className="px-3 py-2 text-xs font-bold" style={{ background: "#f59e0b", color: "#000" }}>GO TO SETTINGS →</Link><button onClick={load} className="px-3 py-2 text-xs font-mono" style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}>RETRY</button></div>
+            <div className="flex gap-2"><Link href="/dashboard/settings?tab=self-managed" className="px-3 py-2 text-xs font-bold" style={{ background: "#f59e0b", color: "#000" }}>GO TO SETTINGS →</Link><button onClick={load} className="px-3 py-2 text-xs font-mono" style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}>RETRY</button></div>
           </div>
         ) : (
           <div className="flex flex-wrap gap-3 items-center justify-between">
@@ -260,7 +260,7 @@ export default function SelfManagedPage() {
         {status?.ok && (
           <div className="flex flex-wrap gap-2 mt-3">
             <Link href="/dashboard/trace" className="px-3 py-1.5 text-xs font-mono inline-flex items-center gap-1" style={{ border: "1px solid #10b981", color: "#10b981" }}><Network className="w-3 h-3" /> LIVE TRACE</Link>
-            <Link href="/dashboard/settings" className="px-3 py-1.5 text-xs font-mono" style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}>CHANGE KUBECONFIG</Link>
+            <Link href="/dashboard/settings?tab=self-managed" className="px-3 py-1.5 text-xs font-mono" style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}>CHANGE KUBECONFIG</Link>
             <button onClick={load} className="px-3 py-1.5 text-xs font-mono inline-flex items-center gap-1" style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}><Terminal className="w-3 h-3" /> REFRESH</button>
             <button onClick={handleDelete} disabled={deleting || !selectedId} className="px-3 py-1.5 text-xs font-mono inline-flex items-center gap-1 bg-red-900/20 hover:bg-red-900/40 border border-red-800/50 text-red-400 disabled:opacity-50" title="Delete this connected cluster">
               {deleting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />} DELETE CLUSTER

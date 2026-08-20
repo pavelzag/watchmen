@@ -132,6 +132,12 @@ spec:
                   key: agent_secret
             - name: WATCHMEN_VERBOSE
               value: "1"
+            - name: WATCHMEN_DROP_COMM_PREFIXES
+              value: "watchmen-ebpf,dockerd,containerd,kubelet"
+            - name: WATCHMEN_DROP_PATH_PREFIXES
+              value: "/api/agents/events,/api/agents/k8s/register,/v1.,/_ping,/health,/readyz"
+            - name: WATCHMEN_SEND_RESPONSES
+              value: "0"
           securityContext:
             privileged: true
           volumeMounts:

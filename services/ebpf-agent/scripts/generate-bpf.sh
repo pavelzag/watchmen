@@ -18,5 +18,5 @@ esac
 
 exec go run github.com/cilium/ebpf/cmd/bpf2go \
   -cc clang \
-  -cflags "-O2 -g -Wall -Werror -D__TARGET_ARCH_${target_arch}" \
+  -cflags "-O2 -g -Wall -Werror -Wno-missing-declarations -D__TARGET_ARCH_${target_arch}" \
   http_trace bpf/http_trace.bpf.c -- -I./bpf

@@ -35,3 +35,9 @@ http://localhost:3000/api/auth/callback/google
 Open a test file, set a breakpoint, then run **Jest: Debug Current File**.
 
 The config runs Jest with `--inspect-brk`, `--runTestsByPath`, and `--runInBand`, which keeps execution in a single process so breakpoints are predictable.
+
+## Debug the eBPF Agent
+
+The eBPF agent needs a Linux kernel and cannot attach real probes on macOS. Use a Linux VM with VS Code Remote SSH for source-level debugging.
+
+See [eBPF Agent VM Debugging Guide](ebpf-agent-vm-debugging.md).

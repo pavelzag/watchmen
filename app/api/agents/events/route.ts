@@ -1,6 +1,51 @@
 import { createHash } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
+import { publishLiveTraceEvent, type LiveTraceIngressEvent } from "@/lib/live-trace-bus";
+
+function parseStatus(value: unknown): number | null {
+  if (typeof value === "string" && /^\d{3}$/.test(value)) return Number(value);
+  if (typeof value === "number") return value;
+  return null;
+}
+
+function toLiveTraceEvent(input: {
+  agentId: string;
+  userEmail: string;
+  provider: string;
+  projectId: string;
+  clusterName: string | null;
+  event: any;
+  status: number | null;
+}): LiveTraceIngressEvent | null {
+  const method = typeof input.event?.method === "string" ? input.event.method : undefined;
+  const path = typeof input.event?.path === "string" ? input.event.path : undefined;
+  if (!method && !path && input.status === null) return null;
+
+  const clusterName = input.clusterName || input.projectId || "kubernetes";
+  const timestamp = typeof input.event?.timestamp === "string" ? input.event.timestamp : new Date().toISOString();
+  const traceId = typeof input.event?.traceId === "string"
+    ? input.event.traceId
+    : typeof input.event?.trace_id === "string"
+      ? input.event.trace_id
+      : `${input.agentId}:${timestamp}:${method ?? "HTTP"}:${path ?? "/"}`;
+
+  return {
+    id: `agent:${traceId}`,
+    cloud: input.provider === "k8s" ? "kubernetes" : "gcp",
+    kind: "gke",
+    projectId: clusterName,
+    resourceName: clusterName,
+    timestamp,
+    method,
+    path,
+    status: input.status ?? undefined,
+    latency: typeof input.event?.latency === "string" ? input.event.latency : undefined,
+    remoteIp: typeof input.event?.remoteIp === "string" ? input.event.remoteIp : undefined,
+    userAgent: typeof input.event?.userAgent === "string" ? input.event.userAgent : undefined,
+    count: 1,
+  };
+}
 
 export async function POST(req: NextRequest) {
   const agentId = req.headers.get("x-watchmen-agent-id") ?? "";
@@ -11,39 +56,72 @@ export async function POST(req: NextRequest) {
 
   const secretHash = createHash("sha256").update(agentSecret).digest("hex");
 
-  const host = await sql`
-    SELECT id, provider, project_id, metadata->>'clusterName' AS cluster_name FROM agent_hosts
-    WHERE id = ${agentId} AND secret_hash = ${secretHash}
-    LIMIT 1
-  `;
+  let host;
+  try {
+    host = await sql<{
+      id: string;
+      user_email: string;
+      provider: string;
+      project_id: string;
+      cluster_name: string | null;
+    }>`
+      SELECT id, user_email, provider, project_id, metadata->>'clusterName' AS cluster_name FROM agent_hosts
+      WHERE id = ${agentId} AND secret_hash = ${secretHash}
+      LIMIT 1
+    `;
+  } catch (error) {
+    console.warn("[api/agents/events] failed to authenticate agent", {
+      agentId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return NextResponse.json({ error: "Agent registry temporarily unavailable." }, { status: 503 });
+  }
   if (host.rows.length === 0) {
     return NextResponse.json({ error: "Invalid agent credentials." }, { status: 403 });
   }
 
   const event = await req.json();
-  const status = typeof event?.status === "string" && /^\d{3}$/.test(event.status)
-    ? Number(event.status)
-    : typeof event?.status === "number"
-      ? event.status
-      : null;
-  await sql`
-    INSERT INTO agent_events (agent_id, provider, project_id, event, event_type, http_status, http_method, http_path, cluster_name)
-    VALUES (
-      ${agentId},
-      ${host.rows[0].provider},
-      ${host.rows[0].project_id},
-      ${JSON.stringify(event)}::jsonb,
-      ${event?.type ?? null},
-      ${status},
-      ${event?.method ?? null},
-      ${event?.path ?? null},
-      ${host.rows[0].cluster_name ?? null}
-    )
-  `;
-  await sql`
-    UPDATE agent_hosts SET last_seen_at = NOW(), status = 'healthy'
-    WHERE id = ${agentId}
-  `;
+  const hostRow = host.rows[0];
+  const status = parseStatus(event?.status);
+  const liveEvent = toLiveTraceEvent({
+    agentId,
+    userEmail: hostRow.user_email,
+    provider: hostRow.provider,
+    projectId: hostRow.project_id,
+    clusterName: hostRow.cluster_name,
+    event,
+    status,
+  });
+  if (liveEvent) publishLiveTraceEvent(hostRow.user_email || "system", liveEvent);
 
-  return NextResponse.json({ ok: true });
+  let durable = true;
+  try {
+    await sql`
+      INSERT INTO agent_events (agent_id, provider, project_id, event, event_type, http_status, http_method, http_path, cluster_name)
+      VALUES (
+        ${agentId},
+        ${hostRow.provider},
+        ${hostRow.project_id},
+        ${JSON.stringify(event)}::jsonb,
+        ${event?.type ?? null},
+        ${status},
+        ${event?.method ?? null},
+        ${event?.path ?? null},
+        ${hostRow.cluster_name ?? null}
+      )
+    `;
+    await sql`
+      UPDATE agent_hosts SET last_seen_at = NOW(), status = 'healthy'
+      WHERE id = ${agentId}
+    `;
+  } catch (error) {
+    durable = false;
+    console.warn("[api/agents/events] durable event write failed", {
+      agentId,
+      clusterName: hostRow.cluster_name,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  return NextResponse.json({ ok: true, durable });
 }

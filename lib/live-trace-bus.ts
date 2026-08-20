@@ -25,14 +25,21 @@ const recentEventsByUser = new Map<string, LiveTraceIngressEvent[]>();
 const MAX_RECENT_EVENTS = 64;
 
 export function publishLiveTraceEvent(userEmail: string, event: LiveTraceIngressEvent) {
-  const recent = recentEventsByUser.get(userEmail) ?? [];
-  recent.push(event);
-  while (recent.length > MAX_RECENT_EVENTS) recent.shift();
-  recentEventsByUser.set(userEmail, recent);
-
-  const listeners = listenersByUser.get(userEmail);
-  if (!listeners) return;
-  listeners.forEach((listener) => listener(event));
+  const push = (key: string) => {
+    const recent = recentEventsByUser.get(key) ?? [];
+    recent.push(event);
+    while (recent.length > MAX_RECENT_EVENTS) recent.shift();
+    recentEventsByUser.set(key, recent);
+    const listeners = listenersByUser.get(key);
+    if (listeners) listeners.forEach((l) => l(event));
+  };
+  push(userEmail);
+  // Fan-out to global so anonymous port-forward traffic (published as "anonymous") is visible to logged-in users
+  if (userEmail !== "global") push("global");
+  if (userEmail !== "anonymous" && userEmail !== "global") {
+    // also ensure anonymous listeners see it
+    push("anonymous");
+  }
 }
 
 export function subscribeLiveTraceEvents(userEmail: string, listener: Listener): () => void {
@@ -51,5 +58,17 @@ export function subscribeLiveTraceEvents(userEmail: string, listener: Listener):
 }
 
 export function getRecentLiveTraceEvents(userEmail: string): LiveTraceIngressEvent[] {
-  return [...(recentEventsByUser.get(userEmail) ?? [])];
+  const own = recentEventsByUser.get(userEmail) ?? [];
+  const global = recentEventsByUser.get("global") ?? [];
+  const anon = userEmail !== "anonymous" && userEmail !== "global" ? (recentEventsByUser.get("anonymous") ?? []) : [];
+  // Merge and dedupe by id, keep chronological
+  const merged = [...global, ...anon, ...own];
+  const seen = new Set<string>();
+  const deduped = merged.filter((e) => {
+    if (seen.has(e.id)) return false;
+    seen.add(e.id);
+    return true;
+  });
+  // Return last MAX_RECENT_EVENTS
+  return deduped.slice(-MAX_RECENT_EVENTS);
 }

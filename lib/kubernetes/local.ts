@@ -556,7 +556,7 @@ export async function getLocalKubernetesStatus(config: LocalKubernetesConfig): P
       );
     const [version, nodes, namespaces] = (await Promise.race([
       Promise.all([versionApi.getCode(), core.listNode(), core.listNamespace()]),
-      timeout(5000),
+      timeout(15000),
     ])) as [any, any, any];
 
     const kubernetesVersion = version.gitVersion ?? "";

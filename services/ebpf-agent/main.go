@@ -25,9 +25,11 @@ import (
 //go:generate ./scripts/generate-bpf.sh
 
 const (
-	eventTypeHTTPReq  = "http_request"
-	eventTypeHTTPResp = "http_response"
-	eventDataLen      = 1024
+	eventTypeHTTPReq        = "http_request"
+	eventTypeHTTPResp       = "http_response"
+	eventDataLen            = 1024
+	defaultDropPathPrefixes = "/api/agents/events,/api/agents/k8s/register,/v1.,/_ping,/health,/readyz"
+	defaultDropCommPrefixes = "watchmen-ebpf,dockerd,containerd,kubelet"
 )
 
 var version = "dev"
@@ -54,10 +56,13 @@ type httpEvent struct {
 }
 
 type sender struct {
-	client      *http.Client
-	url         string
-	agentID     string
-	agentSecret string
+	client           *http.Client
+	url              string
+	agentID          string
+	agentSecret      string
+	dropPathPrefixes []string
+	dropCommPrefixes []string
+	sendResponses    bool
 }
 
 func main() {
@@ -121,10 +126,13 @@ func run(ctx context.Context, endpoint string, verbose bool) error {
 	}
 
 	out := sender{
-		client:      &http.Client{Timeout: 15 * time.Second},
-		url:         endpoint,
-		agentID:     getenv("WATCHMEN_AGENT_ID", ""),
-		agentSecret: getenv("WATCHMEN_AGENT_SECRET", ""),
+		client:           &http.Client{Timeout: 15 * time.Second},
+		url:              endpoint,
+		agentID:          getenv("WATCHMEN_AGENT_ID", ""),
+		agentSecret:      getenv("WATCHMEN_AGENT_SECRET", ""),
+		dropPathPrefixes: splitList(getenv("WATCHMEN_DROP_PATH_PREFIXES", defaultDropPathPrefixes)),
+		dropCommPrefixes: splitList(getenv("WATCHMEN_DROP_COMM_PREFIXES", defaultDropCommPrefixes)),
+		sendResponses:    getenv("WATCHMEN_SEND_RESPONSES", "") == "1",
 	}
 
 	log.Printf("watchmen HTTP trace agent started version=%s host=%s endpoint=%q", version, host, endpoint)
@@ -142,6 +150,12 @@ func run(ctx context.Context, endpoint string, verbose bool) error {
 		if err != nil {
 			if verbose {
 				log.Printf("drop malformed event: %v", err)
+			}
+			continue
+		}
+		if out.shouldDrop(event) {
+			if verbose {
+				log.Printf("drop self/noisy event comm=%q method=%q path=%q status=%q", event.Comm, event.Method, event.Path, event.Status)
 			}
 			continue
 		}
@@ -199,6 +213,23 @@ func decodeEvent(raw []byte, hostname string) (httpEvent, error) {
 	return h, nil
 }
 
+func (s sender) shouldDrop(event httpEvent) bool {
+	if event.Type == eventTypeHTTPResp && !s.sendResponses {
+		return true
+	}
+	for _, prefix := range s.dropCommPrefixes {
+		if strings.HasPrefix(event.Comm, prefix) {
+			return true
+		}
+	}
+	for _, prefix := range s.dropPathPrefixes {
+		if strings.HasPrefix(event.Path, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s sender) send(ctx context.Context, event httpEvent) error {
 	payload, err := json.Marshal(event)
 	if err != nil {
@@ -247,4 +278,16 @@ func getenv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func splitList(value string) []string {
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }

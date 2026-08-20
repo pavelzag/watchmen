@@ -10,10 +10,7 @@ const STREAM_RECYCLE_MS = 25_000;
 export async function GET(req: NextRequest) {
   const streamId = crypto.randomUUID().slice(0, 8);
   const session = await auth();
-  const email = session?.user?.email;
-  if (!email) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const email = session?.user?.email ?? "anonymous";
 
   const encoder = new TextEncoder();
 
@@ -42,6 +39,30 @@ export async function GET(req: NextRequest) {
         send("trace", event);
       });
 
+      // Subscribe to own email plus global/anonymous fan-out so non-authorized port-forward traffic appears
+      const unsubGlobal = subscribeLiveTraceEvents("global", (event) => {
+        console.info(`[api/trace/live:${streamId}] send trace (global)`, {
+          eventId: event.id,
+          cloud: event.cloud,
+          kind: event.kind,
+          projectId: event.projectId,
+          resourceName: event.resourceName,
+          status: event.status,
+        });
+        send("trace", event);
+      });
+      const unsubAnon = email !== "anonymous" ? subscribeLiveTraceEvents("anonymous", (event) => {
+        console.info(`[api/trace/live:${streamId}] send trace (anonymous)`, {
+          eventId: event.id,
+          cloud: event.cloud,
+          kind: event.kind,
+          projectId: event.projectId,
+          resourceName: event.resourceName,
+          status: event.status,
+        });
+        send("trace", event);
+      }) : () => {};
+
       const unsubscribe = subscribeLiveTraceEvents(email, (event) => {
         console.info(`[api/trace/live:${streamId}] send trace`, {
           eventId: event.id,
@@ -66,6 +87,8 @@ export async function GET(req: NextRequest) {
         clearInterval(heartbeat);
         clearTimeout(recycle);
         unsubscribe();
+        unsubGlobal();
+        unsubAnon();
         try {
           controller.close();
         } catch {}

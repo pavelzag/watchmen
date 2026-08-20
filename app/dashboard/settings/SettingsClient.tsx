@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { ArrowLeft, Eye, EyeOff, Trash2, Check, Loader2, AlertCircle, CheckCircle2, Star, Plus, X, ShieldCheck, Bell, Send, Wifi, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AIProvider, AIKeyRecord } from "@/lib/ai/client";
@@ -219,7 +220,12 @@ interface LocalKubernetesStatusRecord {
   code?: string;
 }
 
+type SettingsTab = "ai" | "self-managed" | "integrations" | "alerts" | "diagnostics";
+
+const SETTINGS_TABS: SettingsTab[] = ["ai", "self-managed", "integrations", "alerts", "diagnostics"];
+
 export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) {
+  const searchParams = useSearchParams();
   const [keys, setKeys] = useState<AIKeyRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [inputs, setInputs] = useState<Record<AIProvider, string>>({ google: "", openai: "", anthropic: "" });
@@ -228,7 +234,10 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
   const [deleting, setDeleting] = useState<Record<AIProvider, boolean>>({ google: false, openai: false, anthropic: false });
   const [activating, setActivating] = useState<AIProvider | null>(null);
   const [errorLog, setErrorLog] = useState<ErrorEntry[]>([]);
-  const [activeTab, setActiveTab] = useState<"ai" | "integrations" | "alerts" | "diagnostics">("ai");
+  const [activeTab, setActiveTab] = useState<SettingsTab>(() => {
+    const tab = searchParams.get("tab");
+    return SETTINGS_TABS.includes(tab as SettingsTab) ? (tab as SettingsTab) : "ai";
+  });
 
   // Server-backed cloud credentials state (non-demo users)
   const [cloudCreds, setCloudCreds] = useState<CloudCredRecord[]>([]);
@@ -1310,7 +1319,7 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
 
       {/* Tab Navigation */}
       <div className="flex gap-6 border-b" style={{ borderColor: "var(--border-dim)" }}>
-        {(["ai", "integrations", "alerts", "diagnostics"] as const).map((tab) => (
+        {SETTINGS_TABS.map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -1321,6 +1330,7 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
             style={activeTab === tab ? { color: "var(--green)" } : {}}
           >
             {tab === "ai" && "AI Models"}
+            {tab === "self-managed" && "Self Managed"}
             {tab === "integrations" && "Integrations"}
             {tab === "alerts" && "Alerts"}
             {tab === "diagnostics" && "Diagnostics"}
@@ -1480,7 +1490,12 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
           </div>
         )}
       </div>
-      <div className="space-y-4">
+        </div>
+      )}
+
+      {/* Self Managed Block */}
+      {activeTab === "self-managed" && (
+      <div className="space-y-4 mt-6">
         <div>
           <div className="flex items-center gap-2">
             <h2 className="text-xs font-bold uppercase tracking-widest" style={{ color: "var(--border-dim)" }}>Local & Self-Hosted Kubernetes</h2>
@@ -1719,9 +1734,7 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
             </p>
           </div>
         )}
-
-      {/* Integrations Block */}      </div>
-        </div>
+      </div>
       )}
 
       {/* Integrations Block */}

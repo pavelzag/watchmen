@@ -492,7 +492,7 @@ export async function getClusterStatus(cluster: KubernetesClusterRecord): Promis
       );
     const [version, nodes, namespaces] = await Promise.race([
       Promise.all([versionApi.getCode(), core.listNode(), core.listNamespace()]),
-      timeout(5000),
+      timeout(15000),
     ]) as [Awaited<ReturnType<typeof versionApi.getCode>>, Awaited<ReturnType<typeof core.listNode>>, Awaited<ReturnType<typeof core.listNamespace>>];
     const kubernetesVersion = version.gitVersion ?? "";
     const serverUrl = kc.getCurrentCluster()?.server ?? "";

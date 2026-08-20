@@ -79,6 +79,12 @@ Then keep `Trace -> K8S -> LIVE` enabled. Watchmen polls `/api/kubernetes/local/
 
 Logs support `namespace`, `pod`, `deployment`, `app`, `container`, `after`, `search`, and `limit`.
 
+## eBPF Agent Development
+
+The local Kubernetes demo can run the Watchmen eBPF agent as a DaemonSet, but source-level debugging is easier in a dedicated Linux VM.
+
+See [eBPF Agent VM Debugging Guide](ebpf-agent-vm-debugging.md) for the full VM, VS Code Remote SSH, build, debug, and Watchmen ingestion setup.
+
 ## Troubleshooting
 
 - Missing kubeconfig: check the path after `~` expansion or set `WATCHMEN_KUBECONFIG`.

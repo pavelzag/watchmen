@@ -37,10 +37,8 @@ function getBlockedUrlReason(rawUrl: string, traceTarget: unknown): string | nul
 export async function POST(req: NextRequest) {
   const requestId = crypto.randomUUID().slice(0, 8);
   const session = await auth();
-  const email = session?.user?.email;
-  if (!session?.user || !email) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  // Allow anonymous (non-logged-in) requests to be traced as well - fan-out via global bus
+  const email = session?.user?.email ?? "anonymous";
 
   const { url, method = "GET", headers: reqHeaders, body, traceTarget } = await req.json();
   if (!url || typeof url !== "string") {
