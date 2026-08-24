@@ -173,3 +173,57 @@ CREATE TABLE IF NOT EXISTS agent_steps (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_steps_run_order
   ON agent_steps (run_id, step_index);
+
+CREATE TABLE IF NOT EXISTS runtime_security_rules (
+  user_email       TEXT NOT NULL,
+  id               TEXT NOT NULL,
+  name             TEXT NOT NULL,
+  enabled          BOOLEAN NOT NULL DEFAULT TRUE,
+  action           TEXT NOT NULL,
+  condition_kind   TEXT NOT NULL,
+  condition_value  TEXT NOT NULL,
+  severity         TEXT NOT NULL,
+  description      TEXT NOT NULL DEFAULT '',
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_email, id)
+);
+
+CREATE TABLE IF NOT EXISTS runtime_request_events (
+  user_email              TEXT NOT NULL,
+  id                      TEXT NOT NULL,
+  ts                      TIMESTAMPTZ NOT NULL,
+  source_ip               TEXT,
+  source_port             INT,
+  source_ip_class         TEXT,
+  source_geo_lat          DOUBLE PRECISION,
+  source_geo_lon          DOUBLE PRECISION,
+  source_geo_region       TEXT,
+  source_geo_city         TEXT,
+  source_geo_country      TEXT,
+  method                  TEXT,
+  path                    TEXT,
+  content_type            TEXT,
+  body_size               INT,
+  body_sample             TEXT,
+  status_code             INT,
+  destination_service     TEXT,
+  destination_namespace   TEXT,
+  destination_pod         TEXT,
+  destination_workload    TEXT,
+  decision                TEXT NOT NULL,
+  matched_rule_ids        JSONB NOT NULL DEFAULT '[]',
+  reasons                 JSONB NOT NULL DEFAULT '[]',
+  highest_severity        TEXT,
+  created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_email, id)
+);
+
+ALTER TABLE runtime_request_events ADD COLUMN IF NOT EXISTS source_geo_lat DOUBLE PRECISION;
+ALTER TABLE runtime_request_events ADD COLUMN IF NOT EXISTS source_geo_lon DOUBLE PRECISION;
+ALTER TABLE runtime_request_events ADD COLUMN IF NOT EXISTS source_geo_region TEXT;
+ALTER TABLE runtime_request_events ADD COLUMN IF NOT EXISTS source_geo_city TEXT;
+ALTER TABLE runtime_request_events ADD COLUMN IF NOT EXISTS source_geo_country TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_runtime_request_events_lookup
+  ON runtime_request_events (user_email, ts DESC);

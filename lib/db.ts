@@ -62,6 +62,7 @@ export async function sql<O extends QueryResultRow>(
 let backgroundTasksTableReady: Promise<void> | null = null;
 let agentRunsTableReady: Promise<void> | null = null;
 let agentInstallTablesReady: Promise<void> | null = null;
+let runtimeSecurityTablesReady: Promise<void> | null = null;
 
 export async function retryOnce<T>(work: () => Promise<T>): Promise<T> {
   try {
@@ -280,6 +281,77 @@ export async function ensureTraceSourceConfigsTable(): Promise<void> {
       PRIMARY KEY (user_email, cloud)
     )
   `;
+}
+
+/**
+ * Ensures tables for v0.9 runtime request security rules and request decisions.
+ */
+export async function ensureRuntimeSecurityTables(): Promise<void> {
+  if (!runtimeSecurityTablesReady) {
+    runtimeSecurityTablesReady = retryOnce(async () => {
+      await sql`
+        CREATE TABLE IF NOT EXISTS runtime_security_rules (
+          user_email       TEXT NOT NULL,
+          id               TEXT NOT NULL,
+          name             TEXT NOT NULL,
+          enabled          BOOLEAN NOT NULL DEFAULT TRUE,
+          action           TEXT NOT NULL,
+          condition_kind   TEXT NOT NULL,
+          condition_value  TEXT NOT NULL,
+          severity         TEXT NOT NULL,
+          description      TEXT NOT NULL DEFAULT '',
+          created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (user_email, id)
+        )
+      `;
+      await sql`
+        CREATE TABLE IF NOT EXISTS runtime_request_events (
+          user_email              TEXT NOT NULL,
+          id                      TEXT NOT NULL,
+          ts                      TIMESTAMPTZ NOT NULL,
+          source_ip               TEXT,
+          source_port             INT,
+          source_ip_class         TEXT,
+          source_geo_lat          DOUBLE PRECISION,
+          source_geo_lon          DOUBLE PRECISION,
+          source_geo_region       TEXT,
+          source_geo_city         TEXT,
+          source_geo_country      TEXT,
+          method                  TEXT,
+          path                    TEXT,
+          content_type            TEXT,
+          body_size               INT,
+          body_sample             TEXT,
+          status_code             INT,
+          destination_service     TEXT,
+          destination_namespace   TEXT,
+          destination_pod         TEXT,
+          destination_workload    TEXT,
+          decision                TEXT NOT NULL,
+          matched_rule_ids        JSONB NOT NULL DEFAULT '[]',
+          reasons                 JSONB NOT NULL DEFAULT '[]',
+          highest_severity        TEXT,
+          created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (user_email, id)
+        )
+      `;
+      await sql`ALTER TABLE runtime_request_events ADD COLUMN IF NOT EXISTS source_geo_lat DOUBLE PRECISION`;
+      await sql`ALTER TABLE runtime_request_events ADD COLUMN IF NOT EXISTS source_geo_lon DOUBLE PRECISION`;
+      await sql`ALTER TABLE runtime_request_events ADD COLUMN IF NOT EXISTS source_geo_region TEXT`;
+      await sql`ALTER TABLE runtime_request_events ADD COLUMN IF NOT EXISTS source_geo_city TEXT`;
+      await sql`ALTER TABLE runtime_request_events ADD COLUMN IF NOT EXISTS source_geo_country TEXT`;
+      await sql`
+        CREATE INDEX IF NOT EXISTS idx_runtime_request_events_lookup
+          ON runtime_request_events (user_email, ts DESC)
+      `;
+    }).catch((error) => {
+      runtimeSecurityTablesReady = null;
+      throw error;
+    });
+  }
+
+  await runtimeSecurityTablesReady;
 }
 
 /**

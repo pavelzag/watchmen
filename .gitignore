@@ -46,3 +46,6 @@ istio-*/
 .vscode/
 .claude/
 .env*.local
+
+# Local learning sandboxes
+learning/

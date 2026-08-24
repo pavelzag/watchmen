@@ -2,6 +2,8 @@ import { createHash } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { publishLiveTraceEvent, type LiveTraceIngressEvent } from "@/lib/live-trace-bus";
+import { getRuntimeSecurityRules, saveRuntimeRequestEvent } from "@/lib/runtime-security-store";
+import { normalizeAgentEventRow } from "@/lib/runtime-security";
 
 function parseStatus(value: unknown): number | null {
   if (typeof value === "string" && /^\d{3}$/.test(value)) return Number(value);
@@ -96,7 +98,7 @@ export async function POST(req: NextRequest) {
 
   let durable = true;
   try {
-    await sql`
+    const inserted = await sql<{ id: number; received_at: Date }>`
       INSERT INTO agent_events (agent_id, provider, project_id, event, event_type, http_status, http_method, http_path, cluster_name)
       VALUES (
         ${agentId},
@@ -109,11 +111,29 @@ export async function POST(req: NextRequest) {
         ${event?.path ?? null},
         ${hostRow.cluster_name ?? null}
       )
+      RETURNING id, received_at
     `;
     await sql`
       UPDATE agent_hosts SET last_seen_at = NOW(), status = 'healthy'
       WHERE id = ${agentId}
     `;
+
+    try {
+      const rules = await getRuntimeSecurityRules(hostRow.user_email);
+      const runtimeEvent = normalizeAgentEventRow({
+        id: inserted.rows[0]?.id ?? crypto.randomUUID(),
+        event,
+        received_at: inserted.rows[0]?.received_at ?? new Date(),
+        cluster_name: hostRow.cluster_name,
+      }, rules);
+      await saveRuntimeRequestEvent(hostRow.user_email, runtimeEvent);
+    } catch (error) {
+      console.warn("[api/agents/events] runtime security write failed", {
+        agentId,
+        clusterName: hostRow.cluster_name,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   } catch (error) {
     durable = false;
     console.warn("[api/agents/events] durable event write failed", {

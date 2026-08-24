@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { applyRuntimeDecision } from "@/lib/runtime-security";
+import { getRuntimeSecurityRules, saveRuntimeRequestEvent } from "@/lib/runtime-security-store";
 
 export async function POST(req: NextRequest) {
     const session = await auth();
@@ -10,6 +12,10 @@ export async function POST(req: NextRequest) {
     try {
         const body = await req.json();
         const { data: payloadData, id: requestId } = body;
+        const sourceIp = getSourceIp(req);
+        const bodySample = shouldStoreBodySample()
+            ? JSON.stringify(body).slice(0, 512)
+            : undefined;
 
         // Only use the server-configured PROCESSOR_URL — never a client-supplied URL.
         const finalTargetUrl = process.env['PROCESSOR_URL'];
@@ -28,6 +34,16 @@ export async function POST(req: NextRequest) {
 
                 if (resp.ok) {
                     const result = await resp.json();
+                    await saveTraceRuntimeEvent({
+                        userEmail: session.user.email,
+                        requestId,
+                        sourceIp,
+                        statusCode: resp.status,
+                        targetUrl: endpoint,
+                        contentType: req.headers.get("content-type") ?? undefined,
+                        bodySize: Number(req.headers.get("content-length")) || JSON.stringify(body).length,
+                        bodySample,
+                    });
                     return NextResponse.json({
                         ...result,
                         source: finalTargetUrl,
@@ -65,6 +81,17 @@ export async function POST(req: NextRequest) {
 
         await new Promise(r => setTimeout(r, 800));
 
+        await saveTraceRuntimeEvent({
+            userEmail: session.user.email,
+            requestId,
+            sourceIp,
+            statusCode: 200,
+            targetUrl: "Mock",
+            contentType: req.headers.get("content-type") ?? undefined,
+            bodySize: Number(req.headers.get("content-length")) || JSON.stringify(body).length,
+            bodySample,
+        });
+
         return NextResponse.json({
             request_id: requestId,
             original_data: data,
@@ -76,4 +103,47 @@ export async function POST(req: NextRequest) {
     } catch (error) {
         return NextResponse.json({ error: "Invalid request payload" }, { status: 400 });
     }
+}
+
+async function saveTraceRuntimeEvent(input: {
+    userEmail?: string | null;
+    requestId?: string;
+    sourceIp?: string;
+    statusCode: number;
+    targetUrl: string;
+    contentType?: string;
+    bodySize?: number;
+    bodySample?: string;
+}) {
+    if (!input.userEmail) return;
+
+    try {
+        const rules = await getRuntimeSecurityRules(input.userEmail);
+        const event = applyRuntimeDecision({
+            id: input.requestId || `trace-${crypto.randomUUID()}`,
+            ts: new Date().toISOString(),
+            sourceIp: input.sourceIp,
+            method: "POST",
+            path: "/process",
+            contentType: input.contentType,
+            bodySize: input.bodySize,
+            bodySample: input.bodySample,
+            statusCode: input.statusCode,
+            destinationService: input.targetUrl,
+        }, rules);
+        await saveRuntimeRequestEvent(input.userEmail, event);
+    } catch (error) {
+        console.warn("[api/trace] runtime security event write failed", {
+            error: error instanceof Error ? error.message : String(error),
+        });
+    }
+}
+
+function getSourceIp(req: NextRequest): string | undefined {
+    const forwarded = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+    return forwarded || req.headers.get("x-real-ip") || undefined;
+}
+
+function shouldStoreBodySample(): boolean {
+    return process.env.DEMO_MODE === "true" || process.env.NODE_ENV === "development";
 }

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Toaster } from "sonner";
+import "maplibre-gl/dist/maplibre-gl.css";
 import "./globals.css";
 import CommandPalette from "@/components/CommandPalette";
 import GlobalKeyNav from "@/components/GlobalKeyNav";

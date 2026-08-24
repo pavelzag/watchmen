@@ -39,6 +39,7 @@
     "framer-motion": "^12.35.0",
     "googleapis": "^144.0.0",
     "lucide-react": "^0.475.0",
+    "maplibre-gl": "^6.6.0",
     "next": "^15.1.6",
     "next-auth": "^5.0.0-beta.25",
     "openai": "^6.25.0",
