@@ -48,12 +48,35 @@ type GlobeCluster = {
 };
 type RuntimeMapMarker = {
   remove: () => void;
+  element: HTMLElement;
+  visual: HTMLElement;
+  cluster: GlobeCluster;
 };
 type RuntimeMapInstance = {
   remove: () => void;
   resize: () => void;
   fitBounds: (bounds: [[number, number], [number, number]], options?: Record<string, unknown>) => unknown;
   flyTo: (options: Record<string, unknown>) => unknown;
+  getCenter: () => { lat: number; lng: number };
+  getContainer: () => HTMLElement;
+  getZoom: () => number;
+  on: (event: string, layerOrHandler: string | ((event?: unknown) => void), handler?: (event?: unknown) => void) => unknown;
+  off: (event: string, layerOrHandler: string | ((event?: unknown) => void), handler?: (event?: unknown) => void) => unknown;
+};
+type ThreeGlobeClusterDatum = GlobeCluster & {
+  label: string;
+};
+type ThreeGlobeDebugState = {
+  status: "initializing" | "loading-three" | "checking-webgl" | "creating-scene" | "rendering" | "failed";
+  error?: string;
+  width: number;
+  height: number;
+  frameCount: number;
+  markerCount: number;
+  visibleMarkerCount: number;
+  webgl: "unknown" | "available" | "unavailable";
+  countries: number;
+  cities: number;
 };
 
 const CONDITION_LABELS: Record<RuntimeSecurityRuleCondition["kind"], string> = {
@@ -69,6 +92,44 @@ const MAP_WINDOWS: Array<{ value: RuntimeMapWindow; label: string; ms: number | 
   { value: "15m", label: "15m", ms: 15 * 60_000 },
   { value: "1h", label: "1h", ms: 60 * 60_000 },
   { value: "all", label: "All", ms: null },
+];
+const GLOBE_CITY_LABELS = [
+  { name: "New York", lat: 40.7128, lng: -74.006 },
+  { name: "San Francisco", lat: 37.7749, lng: -122.4194 },
+  { name: "London", lat: 51.5074, lng: -0.1278 },
+  { name: "Paris", lat: 48.8566, lng: 2.3522 },
+  { name: "Frankfurt", lat: 50.1109, lng: 8.6821 },
+  { name: "Tel Aviv", lat: 32.0853, lng: 34.7818 },
+  { name: "Petach Tikva", lat: 32.084, lng: 34.8878 },
+  { name: "Dubai", lat: 25.2048, lng: 55.2708 },
+  { name: "Mumbai", lat: 19.076, lng: 72.8777 },
+  { name: "Singapore", lat: 1.3521, lng: 103.8198 },
+  { name: "Tokyo", lat: 35.6762, lng: 139.6503 },
+  { name: "Sydney", lat: -33.8688, lng: 151.2093 },
+  { name: "Sao Paulo", lat: -23.5558, lng: -46.6396 },
+  { name: "Lagos", lat: 6.5244, lng: 3.3792 },
+  { name: "Johannesburg", lat: -26.2041, lng: 28.0473 },
+  { name: "Toronto", lat: 43.6532, lng: -79.3832 },
+];
+const GLOBE_COUNTRY_LABELS = [
+  { name: "United States", lat: 39.5, lng: -98.35, kind: "country" },
+  { name: "Canada", lat: 57.5, lng: -106.3, kind: "country" },
+  { name: "Brazil", lat: -10.8, lng: -52.9, kind: "country" },
+  { name: "United Kingdom", lat: 54.2, lng: -2.6, kind: "country" },
+  { name: "France", lat: 46.2, lng: 2.2, kind: "country" },
+  { name: "Germany", lat: 51.1, lng: 10.4, kind: "country" },
+  { name: "Israel", lat: 31.4, lng: 35.0, kind: "country" },
+  { name: "India", lat: 22.7, lng: 78.9, kind: "country" },
+  { name: "China", lat: 35.9, lng: 104.2, kind: "country" },
+  { name: "Japan", lat: 37.5, lng: 137.8, kind: "country" },
+  { name: "Australia", lat: -25.3, lng: 133.8, kind: "country" },
+  { name: "South Africa", lat: -30.6, lng: 22.9, kind: "country" },
+  { name: "Nigeria", lat: 9.1, lng: 8.7, kind: "country" },
+  { name: "Russia", lat: 61.5, lng: 105.3, kind: "country" },
+];
+const GLOBE_LABELS = [
+  ...GLOBE_COUNTRY_LABELS,
+  ...GLOBE_CITY_LABELS.map((city) => ({ ...city, kind: "city" })),
 ];
 
 function decisionClass(decision: RuntimeRequestEvent["decision"]) {
@@ -246,7 +307,7 @@ export default function RuntimeSecurityPanel() {
     try {
       const [rulesRes, eventsRes] = await Promise.all([
         fetch("/api/runtime-security/rules", { cache: "no-store" }),
-        fetch("/api/runtime-security/events?limit=80", { cache: "no-store" }),
+        fetch("/api/runtime-security/events?limit=1200", { cache: "no-store" }),
       ]);
 
       if (!rulesRes.ok || !eventsRes.ok) {
@@ -281,7 +342,6 @@ export default function RuntimeSecurityPanel() {
     () => events
       .slice()
       .sort((a, b) => eventTimestampMs(b) - eventTimestampMs(a))
-      .slice(0, 48)
       .map(globePointFromEvent),
     [events],
   );
@@ -593,18 +653,6 @@ function RuntimeRequestGlobe({
   const suspiciousCount = visiblePoints.filter((point) => point.event.decision !== "allow").length;
   const latest = visiblePoints[0]?.event;
   const clusters = useMemo(() => clusterGlobePoints(visiblePoints), [visiblePoints]);
-  const [mapInitFailed, setMapInitFailed] = useState(false);
-  const handleMapInitError = useCallback(() => setMapInitFailed(true), []);
-  const mapTileUrl = process.env.NEXT_PUBLIC_MAP_TILE_URL;
-  const mapTileUrls = useMemo(() => {
-    const configuredUrls = process.env.NEXT_PUBLIC_MAP_TILE_URLS
-      ?.split(",")
-      .map((url) => url.trim())
-      .filter(Boolean);
-    return configuredUrls?.length ? configuredUrls : mapTileUrl ? [mapTileUrl] : [];
-  }, [mapTileUrl]);
-  const mapAttribution = process.env.NEXT_PUBLIC_MAP_ATTRIBUTION || "© OpenStreetMap contributors";
-  const useMapLibre = Boolean(mapTileUrls.length > 0 && !mapInitFailed);
   const globe = (
     <div className={cn(
       "relative overflow-hidden border border-sky-900/60 bg-[#020713]",
@@ -613,20 +661,24 @@ function RuntimeRequestGlobe({
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_48%,rgba(56,189,248,0.18),rgba(14,116,144,0.08)_28%,rgba(0,0,0,0.92)_78%)]" />
       <div className="absolute inset-0 opacity-[0.14] bg-[radial-gradient(circle_at_18%_24%,#ffffff_0_1px,transparent_1.4px),radial-gradient(circle_at_72%_34%,#ffffff_0_1px,transparent_1.3px),radial-gradient(circle_at_42%_72%,#ffffff_0_1px,transparent_1.2px)] bg-[length:130px_90px,170px_120px,210px_150px]" />
 
-      {useMapLibre && mapTileUrls.length > 0 && (
+      <ThreeRequestGlobe
+        clusters={clusters}
+        expanded={expanded}
+        onSelectCluster={setSelectedCluster}
+      />
+
+      {false && (
+        <>
         <MapLibreRequestMap
           clusters={clusters}
           expanded={expanded}
           viewKey={mapWindow}
-          tileUrls={mapTileUrls}
-          attribution={mapAttribution}
+          tileUrls={[]}
+          attribution=""
           onSelectCluster={setSelectedCluster}
-          onMapInitError={handleMapInitError}
+          onMapInitError={() => undefined}
         />
-      )}
 
-      {!useMapLibre && (
-      <>
       <svg className="absolute inset-0 h-full w-full" viewBox="0 0 1000 520" preserveAspectRatio="none" aria-hidden="true">
         <defs>
           <filter id="runtime-glow">
@@ -721,18 +773,34 @@ function RuntimeRequestGlobe({
           >
             <span
               className={cn(
-                "block border shadow-[0_0_18px_rgba(16,185,129,0.55)]",
+                "runtime-map-marker-vibe block border shadow-[0_0_18px_rgba(16,185,129,0.55)]",
                 hot ? "border-red-200 bg-red-400" : flagged ? "border-amber-100 bg-amber-300" : "border-emerald-100 bg-emerald-300",
-                fresh && "animate-ping",
               )}
-              style={{ width: size + 10 - Math.min(index, 8), height: size + 10 - Math.min(index, 8) }}
+              style={{
+                width: size + 10 - Math.min(index, 8),
+                height: size + 10 - Math.min(index, 8),
+                animationDelay: `${(index % 6) * 120}ms`,
+                borderRadius: "9999px",
+              }}
             />
             <span
               className={cn(
                 "absolute left-1/2 top-1/2 block -translate-x-1/2 -translate-y-1/2 border",
                 hot ? "border-red-100 bg-red-400" : flagged ? "border-amber-100 bg-amber-300" : "border-emerald-100 bg-emerald-300",
               )}
-              style={{ width: size, height: size }}
+              style={{ width: size, height: size, borderRadius: "9999px" }}
+            />
+            <span
+              className={cn(
+                "runtime-map-beacon absolute left-1/2 top-1/2 block -translate-x-1/2 -translate-y-1/2 border",
+                hot ? "border-red-300/80" : flagged ? "border-amber-300/75" : "border-emerald-300/70",
+              )}
+              style={{
+                width: size + 24,
+                height: size + 24,
+                borderRadius: "9999px",
+                animationDelay: `${(index % 5) * 140}ms`,
+              }}
             />
             {cluster.count > 1 && (
               <span className="absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2 font-mono text-[10px] font-bold text-black">
@@ -750,7 +818,7 @@ function RuntimeRequestGlobe({
         <div>
           <div className="text-[10px] font-bold uppercase tracking-widest text-emerald-300">Request Source Globe</div>
           <div className="text-[9px] uppercase tracking-widest text-slate-500">
-            {visiblePoints.length} requests · {clusters.length} clusters · {suspiciousCount} matched · {useMapLibre ? "MapLibre/OSM" : mapTileUrls.length ? "map unavailable" : "local earth"}
+            {visiblePoints.length} requests · {clusters.length} clusters · {suspiciousCount} matched · 3D earth
           </div>
         </div>
       </div>
@@ -833,6 +901,427 @@ function RuntimeRequestGlobe({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function drawRuntimeEarthTexture(canvas: HTMLCanvasElement) {
+  canvas.width = 2048;
+  canvas.height = 1024;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  const land = "rgba(63, 132, 82, 0.96)";
+  const desert = "rgba(174, 151, 91, 0.82)";
+  const ice = "rgba(226, 232, 240, 0.92)";
+  const line = "rgba(186, 230, 253, 0.1)";
+  const x = (lon: number) => ((lon + 180) / 360) * canvas.width;
+  const y = (lat: number) => ((90 - lat) / 180) * canvas.height;
+  const blob = (points: Array<[number, number]>, fill: string) => {
+    ctx.beginPath();
+    points.forEach(([lon, lat], index) => {
+      const px = x(lon);
+      const py = y(lat);
+      if (index === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    });
+    ctx.closePath();
+    ctx.fillStyle = fill;
+    ctx.fill();
+  };
+
+  ctx.fillStyle = "#0b4f6f";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  blob([[-168, 72], [-132, 72], [-105, 56], [-82, 50], [-60, 48], [-54, 26], [-82, 8], [-105, 18], [-124, 32], [-150, 48]], land);
+  blob([[-82, 12], [-52, 6], [-35, -18], [-48, -54], [-67, -55], [-80, -22]], land);
+  blob([[-18, 36], [15, 37], [36, 31], [50, 12], [42, -34], [20, -35], [7, 5], [-10, 12]], land);
+  blob([[-10, 35], [28, 60], [72, 56], [104, 45], [138, 50], [160, 34], [146, 6], [108, 1], [80, 18], [42, 24], [18, 35]], land);
+  blob([[72, 8], [92, 22], [106, 6], [96, -10], [78, -4]], land);
+  blob([[112, -10], [154, -12], [154, -44], [116, -39]], land);
+  blob([[-18, 32], [40, 28], [56, 16], [34, 6], [2, 14]], desert);
+  blob([[36, 28], [72, 36], [86, 24], [58, 14]], desert);
+  blob([[-180, 90], [180, 90], [180, 74], [-180, 74]], ice);
+  blob([[-180, -70], [180, -70], [180, -90], [-180, -90]], ice);
+
+  ctx.strokeStyle = line;
+  ctx.lineWidth = 1;
+  for (let lon = -150; lon <= 180; lon += 30) {
+    ctx.beginPath();
+    ctx.moveTo(x(lon), y(75));
+    ctx.lineTo(x(lon), y(-75));
+    ctx.stroke();
+  }
+  for (let lat = -60; lat <= 60; lat += 30) {
+    ctx.beginPath();
+    ctx.moveTo(x(-180), y(lat));
+    ctx.lineTo(x(180), y(lat));
+    ctx.stroke();
+  }
+
+  const cloud = "rgba(248, 250, 252, 0.22)";
+  ctx.strokeStyle = cloud;
+  ctx.lineWidth = 18;
+  ctx.lineCap = "round";
+  [
+    [[-160, 50], [-116, 54], [-76, 48]],
+    [[-20, 58], [34, 63], [92, 54]],
+    [[72, 4], [118, 7], [160, -2]],
+    [[-94, -28], [-42, -34], [2, -24]],
+  ].forEach((path) => {
+    ctx.beginPath();
+    path.forEach(([lon, lat], index) => {
+      if (index === 0) ctx.moveTo(x(lon), y(lat));
+      else ctx.lineTo(x(lon), y(lat));
+    });
+    ctx.stroke();
+  });
+}
+
+function latLonToVector3(lat: number, lon: number, radius: number, THREE: any) {
+  const phi = degreesToRadians(90 - lat);
+  const theta = degreesToRadians(lon + 180);
+  return new THREE.Vector3(
+    -radius * Math.sin(phi) * Math.cos(theta),
+    radius * Math.cos(phi),
+    radius * Math.sin(phi) * Math.sin(theta),
+  );
+}
+
+function ThreeRequestGlobe({
+  clusters,
+  expanded,
+  onSelectCluster,
+}: {
+  clusters: GlobeCluster[];
+  expanded: boolean;
+  onSelectCluster: (cluster: GlobeCluster) => void;
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const clustersRef = useRef<GlobeCluster[]>(clusters);
+  const globeRef = useRef<any>(null);
+  const lastServerDebugRef = useRef<string>("");
+  const showClientDebug = process.env.NEXT_PUBLIC_WATCHMEN_DEBUG === "true";
+  const [debug, setDebug] = useState<ThreeGlobeDebugState>({
+    status: "initializing",
+    width: 0,
+    height: 0,
+    frameCount: 0,
+    markerCount: clusters.length,
+    visibleMarkerCount: 0,
+    webgl: "unknown",
+    countries: 0,
+    cities: GLOBE_CITY_LABELS.length,
+  });
+
+  useEffect(() => {
+    clustersRef.current = clusters;
+    const globe = globeRef.current;
+    if (globe) {
+      const clusterData: ThreeGlobeClusterDatum[] = clusters.map((cluster) => ({
+        ...cluster,
+        label: cluster.count > 99 ? "99+" : String(cluster.count),
+      }));
+      globe.pointsData(clusterData);
+      globe.htmlElementsData(clusterData);
+      globe.labelsData(GLOBE_LABELS);
+    }
+    setDebug((prev) => ({ ...prev, markerCount: clusters.length }));
+  }, [clusters]);
+
+  useEffect(() => {
+    const shouldReport = debug.status === "failed"
+      || debug.frameCount <= 3
+      || debug.frameCount % 120 === 0;
+    const key = `${debug.status}:${debug.webgl}:${debug.width}:${debug.height}:${debug.frameCount}:${debug.markerCount}:${debug.visibleMarkerCount}:${debug.countries}:${debug.cities}:${debug.error ?? ""}`;
+    if (!shouldReport || lastServerDebugRef.current === key) return;
+    lastServerDebugRef.current = key;
+
+    fetch("/api/runtime-security/globe-debug", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(debug),
+      keepalive: true,
+    }).catch((error) => {
+      console.warn("[runtime-security] failed to report globe debug", error);
+    });
+  }, [debug]);
+
+  useEffect(() => {
+    let disposed = false;
+    let animationId = 0;
+    let renderer: any;
+    let labelRenderer: any;
+    let controls: any;
+    let resizeObserver: ResizeObserver | null = null;
+
+    async function start() {
+      const container = containerRef.current;
+      if (!container) {
+        setDebug((prev) => ({ ...prev, status: "failed", error: "Three globe container ref was not mounted" }));
+        return;
+      }
+
+      try {
+        setDebug((prev) => ({
+          ...prev,
+          status: "loading-three",
+          width: container.clientWidth || 0,
+          height: container.clientHeight || 0,
+        }));
+        const THREE = await import("three");
+        const [{ OrbitControls }, { CSS2DRenderer }, threeGlobeModule, topojson, countriesTopology] = await Promise.all([
+          import("three/examples/jsm/controls/OrbitControls.js"),
+          import("three/examples/jsm/renderers/CSS2DRenderer.js"),
+          import("three-globe"),
+          import("topojson-client"),
+          import("world-atlas/countries-110m.json"),
+        ]);
+        if (disposed || !containerRef.current) return;
+
+        setDebug((prev) => ({ ...prev, status: "checking-webgl" }));
+        const probe = document.createElement("canvas");
+        const gl = probe.getContext("webgl2") ?? probe.getContext("webgl");
+        if (!gl) {
+          setDebug((prev) => ({
+            ...prev,
+            status: "failed",
+            webgl: "unavailable",
+            error: "WebGL is unavailable in this browser context",
+          }));
+          return;
+        }
+        setDebug((prev) => ({ ...prev, status: "creating-scene", webgl: "available" }));
+
+        const countries = (topojson.feature(
+          countriesTopology.default as any,
+          (countriesTopology.default as any).objects.countries,
+        ) as any).features ?? [];
+
+        const clusterData: ThreeGlobeClusterDatum[] = clustersRef.current.map((cluster) => ({
+          ...cluster,
+          label: cluster.count > 99 ? "99+" : String(cluster.count),
+        }));
+        const clusterColor = (cluster: ThreeGlobeClusterDatum) => {
+          if (cluster.decision === "would_block") return "rgba(248,113,113,0.95)";
+          if (cluster.decision === "flagged") return "rgba(251,191,36,0.95)";
+          return "rgba(52,211,153,0.95)";
+        };
+        const clusterElement = (cluster: ThreeGlobeClusterDatum) => {
+          const hot = cluster.decision === "would_block";
+          const flagged = cluster.decision === "flagged";
+          const size = Math.min(34, (hot ? 18 : flagged ? 15 : 12) + Math.floor(Math.log2(cluster.count) * 4));
+          const element = document.createElement("button");
+          element.type = "button";
+          element.className = "runtime-map-marker-vibe";
+          element.textContent = cluster.count > 1 ? cluster.label : "";
+          element.style.width = `${size}px`;
+          element.style.height = `${size}px`;
+          element.style.borderRadius = "9999px";
+          element.style.border = hot ? "1px solid #fecaca" : flagged ? "1px solid #fde68a" : "1px solid #bbf7d0";
+          element.style.background = hot ? "#f87171" : flagged ? "#fbbf24" : "#34d399";
+          element.style.boxShadow = hot
+            ? "0 0 0 5px rgba(248,113,113,0.16), 0 0 28px rgba(248,113,113,0.72)"
+            : flagged
+              ? "0 0 0 5px rgba(251,191,36,0.16), 0 0 24px rgba(251,191,36,0.62)"
+              : "0 0 0 5px rgba(52,211,153,0.14), 0 0 20px rgba(52,211,153,0.55)";
+          element.style.color = "#020617";
+          element.style.cursor = "pointer";
+          element.style.display = "flex";
+          element.style.alignItems = "center";
+          element.style.justifyContent = "center";
+          element.style.fontFamily = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+          element.style.fontSize = cluster.count > 99 ? "9px" : "10px";
+          element.style.fontWeight = "800";
+          element.style.pointerEvents = "auto";
+          element.style.transition = "opacity 180ms ease, transform 180ms ease";
+          element.setAttribute("aria-label", `${cluster.count} requests from ${cluster.region}`);
+          element.title = `${cluster.count} requests from ${cluster.region}`;
+          element.addEventListener("click", (event) => {
+            event.stopPropagation();
+            onSelectCluster(cluster);
+          });
+          element.addEventListener("mouseenter", () => {
+            element.style.transform = "scale(1.14)";
+          });
+          element.addEventListener("mouseleave", () => {
+            element.style.transform = "scale(1)";
+          });
+          return element;
+        };
+        const ThreeGlobe = (threeGlobeModule as any).default ?? threeGlobeModule;
+        const globe = new ThreeGlobe()
+          .showAtmosphere(true)
+          .atmosphereColor("#7dd3fc")
+          .atmosphereAltitude(0.16)
+          .globeMaterial(new THREE.MeshPhongMaterial({
+            color: 0x0b4f6f,
+            emissive: 0x062536,
+            emissiveIntensity: 0.28,
+            shininess: 8,
+          }))
+          .polygonsData(countries)
+          .polygonCapColor(() => "rgba(43, 119, 77, 0.82)")
+          .polygonSideColor(() => "rgba(18, 83, 105, 0.55)")
+          .polygonStrokeColor(() => "rgba(186, 230, 253, 0.38)")
+          .polygonAltitude(0.006)
+          .pointsData(clusterData)
+          .pointLat((cluster: any) => cluster.lat)
+          .pointLng((cluster: any) => cluster.lon)
+          .pointAltitude(0.026)
+          .pointRadius((cluster: any) => Math.min(1.8, 0.65 + Math.log2(Math.max(1, cluster.count)) * 0.18))
+          .pointColor(clusterColor)
+          .pointsMerge(false)
+          .htmlElementsData(clusterData)
+          .htmlLat((cluster: any) => cluster.lat)
+          .htmlLng((cluster: any) => cluster.lon)
+          .htmlAltitude(0.055)
+          .htmlElement(clusterElement)
+          .htmlElementVisibilityModifier((element: HTMLElement, isVisible: boolean) => {
+            element.style.opacity = isVisible ? "1" : "0";
+            element.style.pointerEvents = isVisible ? "auto" : "none";
+          })
+          .labelsData(GLOBE_LABELS)
+          .labelLat((city: any) => city.lat)
+          .labelLng((city: any) => city.lng)
+          .labelText((city: any) => city.name)
+          .labelColor((item: any) => item.kind === "country" ? "rgba(186, 230, 253, 0.78)" : "rgba(226, 232, 240, 0.84)")
+          .labelSize((item: any) => item.kind === "country" ? 0.52 : 0.34)
+          .labelDotRadius((item: any) => item.kind === "country" ? 0 : 0.08)
+          .labelAltitude((item: any) => item.kind === "country" ? 0.014 : 0.02)
+          .labelResolution(2);
+        globeRef.current = globe;
+
+        setDebug((prev) => ({
+          ...prev,
+          countries: countries.length,
+          cities: GLOBE_CITY_LABELS.length,
+        }));
+
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 1000);
+        camera.position.set(0, 0, expanded ? 430 : 470);
+
+        scene.add(globe);
+
+        const light = new THREE.DirectionalLight(0xffffff, 1.45);
+        light.position.set(-180, 140, 260);
+        scene.add(light);
+        scene.add(new THREE.AmbientLight(0x7dd3fc, 0.82));
+
+        renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+        renderer.setClearColor(0x000000, 0);
+        renderer.domElement.style.display = "block";
+        renderer.domElement.style.width = "100%";
+        renderer.domElement.style.height = "100%";
+        container.appendChild(renderer.domElement);
+
+        labelRenderer = new CSS2DRenderer();
+        labelRenderer.domElement.style.position = "absolute";
+        labelRenderer.domElement.style.inset = "0";
+        labelRenderer.domElement.style.pointerEvents = "none";
+        container.appendChild(labelRenderer.domElement);
+
+        controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.08;
+        controls.enablePan = false;
+        controls.rotateSpeed = 0.55;
+        controls.zoomSpeed = 0.75;
+        controls.minDistance = 128;
+        controls.maxDistance = 620;
+        controls.target.set(0, 0, 0);
+
+      const setSize = () => {
+          const width = container.clientWidth || 1;
+          const height = container.clientHeight || 1;
+          camera.aspect = width / height;
+          camera.updateProjectionMatrix();
+          renderer.setSize(width, height);
+          labelRenderer.setSize(width, height);
+          setDebug((prev) => ({ ...prev, width, height }));
+        };
+        setSize();
+        resizeObserver = new ResizeObserver(setSize);
+        resizeObserver.observe(container);
+
+        let frameCount = 0;
+        const render = () => {
+          if (disposed || !containerRef.current) return;
+          controls.update();
+          globe.setPointOfView(camera);
+          renderer.render(scene, camera);
+          labelRenderer.render(scene, camera);
+
+          const width = container.clientWidth || 1;
+          const height = container.clientHeight || 1;
+          frameCount += 1;
+          if (frameCount <= 3 || frameCount % 30 === 0) {
+            setDebug((prev) => ({
+              ...prev,
+              status: "rendering",
+              frameCount,
+              markerCount: clustersRef.current.length,
+              visibleMarkerCount: clustersRef.current.length,
+              width,
+              height,
+            }));
+          }
+          animationId = window.requestAnimationFrame(render);
+        };
+        render();
+      } catch (error) {
+        console.error("[runtime-security] Three globe failed", error);
+        setDebug((prev) => ({
+          ...prev,
+          status: "failed",
+          error: error instanceof Error ? error.message : String(error),
+        }));
+      }
+    }
+
+    start();
+
+    return () => {
+      disposed = true;
+      window.cancelAnimationFrame(animationId);
+      resizeObserver?.disconnect();
+      controls?.dispose?.();
+      renderer?.dispose?.();
+      renderer?.domElement?.remove?.();
+      labelRenderer?.domElement?.remove?.();
+    };
+  }, [expanded]);
+
+  return (
+    <div className="absolute inset-0">
+      <div
+        ref={containerRef}
+        className={cn(
+          "absolute inset-x-0 top-0 cursor-grab active:cursor-grabbing",
+          expanded ? "bottom-24" : "bottom-20",
+        )}
+      />
+      <div className="pointer-events-none absolute inset-x-0 top-0 bottom-20 bg-[radial-gradient(circle_at_50%_48%,transparent_0,transparent_42%,rgba(2,6,23,0.1)_58%,rgba(2,6,23,0.66)_100%)]" />
+      {(showClientDebug || debug.status === "failed") && (
+      <div className={cn(
+        "pointer-events-none absolute right-3 top-14 z-20 max-w-[360px] border px-3 py-2 font-mono text-[10px] backdrop-blur-sm",
+        debug.status === "failed"
+          ? "border-red-500/60 bg-red-950/45 text-red-200"
+          : "border-sky-800/70 bg-black/55 text-sky-200",
+      )}>
+        <div className="mb-1 font-bold uppercase tracking-widest">3D Globe Debug</div>
+        <div>status: {debug.status}</div>
+        <div>webgl: {debug.webgl}</div>
+        <div>canvas: {debug.width}x{debug.height}</div>
+        <div>frames: {debug.frameCount}</div>
+        <div>countries: {debug.countries}</div>
+        <div>cities: {debug.cities}</div>
+        <div>clusters: {debug.markerCount} / visible {debug.visibleMarkerCount}</div>
+        {debug.error && <div className="mt-1 whitespace-pre-wrap text-red-200">error: {debug.error}</div>}
+      </div>
+      )}
     </div>
   );
 }
@@ -931,7 +1420,7 @@ function MapLibreRequestMap({
           }
         });
 
-        mapRef.current = map;
+        mapRef.current = map as unknown as RuntimeMapInstance;
       } catch (error) {
         console.warn("[runtime-security] MapLibre globe failed, using SVG fallback", {
           error: error instanceof Error ? error.message : String(error),
@@ -964,8 +1453,25 @@ function MapLibreRequestMap({
 
   useEffect(() => {
     const map = mapRef.current;
+    if (!map || readyTick === 0) return;
+
+    const updateVisibility = () => updateRuntimeMarkerVisibility(map, markersRef.current);
+    map.on("move", updateVisibility);
+    map.on("zoom", updateVisibility);
+    map.on("resize", updateVisibility);
+    updateVisibility();
+
+    return () => {
+      map.off("move", updateVisibility);
+      map.off("zoom", updateVisibility);
+      map.off("resize", updateVisibility);
+    };
+  }, [readyTick]);
+
+  useEffect(() => {
+    const map = mapRef.current;
     const maplibregl = maplibreRef.current;
-    if (!map || !maplibregl) return;
+    if (!map || !maplibregl || readyTick === 0) return;
 
     markersRef.current.forEach((marker) => marker.remove());
     markersRef.current = clusters.map((cluster) => {
@@ -974,51 +1480,112 @@ function MapLibreRequestMap({
       const flagged = cluster.decision === "flagged";
       const size = Math.min(34, (hot ? 18 : flagged ? 15 : 12) + Math.floor(Math.log2(cluster.count) * 4));
       element.type = "button";
-      element.title = `${cluster.count} request${cluster.count === 1 ? "" : "s"} from ${cluster.region} · latest ${summarizeEvent(cluster.event)}`;
-      element.style.width = `${size}px`;
-      element.style.height = `${size}px`;
-      element.style.border = hot ? "1px solid #fecaca" : flagged ? "1px solid #fde68a" : "1px solid #bbf7d0";
-      element.style.background = hot ? "#f87171" : flagged ? "#fbbf24" : "#34d399";
-      element.style.boxShadow = hot
-        ? "0 0 0 5px rgba(248,113,113,0.16), 0 0 28px rgba(248,113,113,0.72)"
-        : flagged
-          ? "0 0 0 5px rgba(251,191,36,0.16), 0 0 24px rgba(251,191,36,0.62)"
-          : "0 0 0 5px rgba(52,211,153,0.14), 0 0 20px rgba(52,211,153,0.55)";
+      element.style.width = `${size + 34}px`;
+      element.style.height = `${size + 34}px`;
+      element.style.border = "0";
+      element.style.background = "transparent";
+      element.style.outline = "0";
       element.style.cursor = "pointer";
       element.style.padding = "0";
       element.style.position = "relative";
       element.style.display = "flex";
       element.style.alignItems = "center";
       element.style.justifyContent = "center";
-      element.style.color = "#020617";
-      element.style.fontFamily = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
-      element.style.fontSize = cluster.count > 99 ? "9px" : "10px";
-      element.style.fontWeight = "800";
-      element.textContent = cluster.count > 1 ? (cluster.count > 99 ? "99+" : String(cluster.count)) : "";
-      element.setAttribute("aria-label", `Open latest request from ${cluster.count} request cluster`);
+      element.style.transition = "opacity 120ms linear, visibility 120ms linear";
+      element.setAttribute(
+        "aria-label",
+        `${cluster.count} request${cluster.count === 1 ? "" : "s"} from ${cluster.region}, latest ${summarizeEvent(cluster.event)}`,
+      );
       element.addEventListener("click", (event) => {
         event.stopPropagation();
         onSelectCluster(cluster);
       });
 
+      const visual = document.createElement("span");
+      visual.style.position = "absolute";
+      visual.style.inset = "0";
+      visual.style.display = "flex";
+      visual.style.alignItems = "center";
+      visual.style.justifyContent = "center";
+      visual.style.transition = "opacity 90ms linear, transform 90ms linear";
+      visual.style.willChange = "opacity, transform";
+      element.appendChild(visual);
+
+      const dot = document.createElement("span");
+      dot.className = "runtime-map-marker-vibe";
+      dot.style.width = `${size}px`;
+      dot.style.height = `${size}px`;
+      dot.style.borderRadius = "9999px";
+      dot.style.border = hot ? "1px solid #fecaca" : flagged ? "1px solid #fde68a" : "1px solid #bbf7d0";
+      dot.style.background = hot ? "#f87171" : flagged ? "#fbbf24" : "#34d399";
+      dot.style.boxShadow = hot
+        ? "0 0 0 5px rgba(248,113,113,0.16), 0 0 28px rgba(248,113,113,0.72)"
+        : flagged
+          ? "0 0 0 5px rgba(251,191,36,0.16), 0 0 24px rgba(251,191,36,0.62)"
+          : "0 0 0 5px rgba(52,211,153,0.14), 0 0 20px rgba(52,211,153,0.55)";
+      dot.style.display = "flex";
+      dot.style.alignItems = "center";
+      dot.style.justifyContent = "center";
+      dot.style.color = "#020617";
+      dot.style.fontFamily = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+      dot.style.fontSize = cluster.count > 99 ? "9px" : "10px";
+      dot.style.fontWeight = "800";
+      dot.style.animationDelay = `${(cluster.id.length % 7) * 110}ms`;
+      dot.textContent = cluster.count > 1 ? (cluster.count > 99 ? "99+" : String(cluster.count)) : "";
+      visual.appendChild(dot);
+
       const pulse = document.createElement("span");
       pulse.style.position = "absolute";
-      pulse.style.inset = "-8px";
+      pulse.style.left = "50%";
+      pulse.style.top = "50%";
+      pulse.style.width = `${size + 16}px`;
+      pulse.style.height = `${size + 16}px`;
+      pulse.style.marginLeft = `${-(size + 16) / 2}px`;
+      pulse.style.marginTop = `${-(size + 16) / 2}px`;
+      pulse.style.borderRadius = "9999px";
       pulse.style.border = `1px solid ${hot ? "rgba(248,113,113,0.45)" : flagged ? "rgba(251,191,36,0.45)" : "rgba(52,211,153,0.4)"}`;
       pulse.style.opacity = "0.7";
       pulse.style.animation = "runtime-map-pulse 1.8s ease-out infinite";
-      element.appendChild(pulse);
+      visual.appendChild(pulse);
 
-      return new maplibregl.Marker({ element, anchor: "center" })
+      const beacon = document.createElement("span");
+      beacon.className = "runtime-map-beacon";
+      beacon.style.position = "absolute";
+      beacon.style.left = "50%";
+      beacon.style.top = "50%";
+      beacon.style.width = `${size + 28}px`;
+      beacon.style.height = `${size + 28}px`;
+      beacon.style.marginLeft = `${-(size + 28) / 2}px`;
+      beacon.style.marginTop = `${-(size + 28) / 2}px`;
+      beacon.style.borderRadius = "9999px";
+      beacon.style.border = `1px solid ${hot ? "rgba(252,165,165,0.8)" : flagged ? "rgba(252,211,77,0.75)" : "rgba(110,231,183,0.7)"}`;
+      beacon.style.animationDelay = `${(cluster.id.length % 5) * 140}ms`;
+      visual.appendChild(beacon);
+
+      const marker = new maplibregl.Marker({
+        element,
+        anchor: "center",
+        opacity: "1",
+        opacityWhenCovered: "0.02",
+        subpixelPositioning: true,
+      })
         .setLngLat([cluster.lon, cluster.lat])
         .addTo(map);
+
+      return {
+        remove: () => marker.remove(),
+        element,
+        visual,
+        cluster,
+      };
     });
+    updateRuntimeMarkerVisibility(map, markersRef.current);
 
     return () => {
       markersRef.current.forEach((marker) => marker.remove());
       markersRef.current = [];
     };
-  }, [clusters, expanded, onSelectCluster, readyTick]);
+  }, [clusters, onSelectCluster, readyTick]);
 
   return (
     <div className="absolute inset-0">
@@ -1057,6 +1624,47 @@ function fitRuntimeMapToPoints(map: RuntimeMapInstance, points: Array<{ lat: num
     maxZoom: expanded ? 2.6 : 1.45,
     essential: true,
   });
+}
+
+function degreesToRadians(value: number) {
+  return value * (Math.PI / 180);
+}
+
+function angularDistanceDegrees(a: { lat: number; lon: number }, b: { lat: number; lon: number }) {
+  const lat1 = degreesToRadians(a.lat);
+  const lat2 = degreesToRadians(b.lat);
+  const deltaLat = degreesToRadians(b.lat - a.lat);
+  const deltaLon = degreesToRadians(b.lon - a.lon);
+  const sinLat = Math.sin(deltaLat / 2);
+  const sinLon = Math.sin(deltaLon / 2);
+  const h = sinLat * sinLat + Math.cos(lat1) * Math.cos(lat2) * sinLon * sinLon;
+  return (2 * Math.atan2(Math.sqrt(h), Math.sqrt(Math.max(0, 1 - h)))) * (180 / Math.PI);
+}
+
+function updateRuntimeMarkerVisibility(map: RuntimeMapInstance, markers: RuntimeMapMarker[]) {
+  const center = map.getCenter();
+  const zoom = map.getZoom();
+
+  for (const marker of markers) {
+    const distance = angularDistanceDegrees(
+      { lat: center.lat, lon: center.lng },
+      { lat: marker.cluster.lat, lon: marker.cluster.lon },
+    );
+    const opacity = distance <= 58
+      ? 1
+      : distance <= 66
+        ? Math.max(0.08, 1 - ((distance - 58) / 8) * 0.92)
+        : 0;
+    const scale = zoom < 0.8 ? 0.52 : zoom < 1.15 ? 0.68 : zoom < 1.65 ? 0.84 : 1;
+    const visible = opacity > 0.01;
+
+    marker.element.style.display = "flex";
+    marker.element.style.opacity = String(opacity);
+    marker.visual.style.opacity = String(opacity);
+    marker.visual.style.transform = `scale(${scale})`;
+    marker.element.style.pointerEvents = opacity > 0.12 ? "auto" : "none";
+    marker.element.style.visibility = visible ? "visible" : "hidden";
+  }
 }
 
 function Metric({ label, value }: { label: string; value: number }) {

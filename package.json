@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev -p 3000",
     "dev:debug": "WATCHMEN_DEBUG=true NEXT_PUBLIC_WATCHMEN_DEBUG=true next dev -p 3000",
+    "seed:runtime-geo": "node scripts/seed-runtime-geo-events.mjs",
     "build": "next build",
     "start": "node .next/standalone/server.js",
     "lint": "next lint",
@@ -34,6 +35,8 @@
     "@google/generative-ai": "^0.21.0",
     "@kubernetes/client-node": "^2.0.0",
     "@types/pg": "^8.20.0",
+    "@types/three": "^0.185.4",
+    "@types/topojson-client": "^3.1.5",
     "@vercel/postgres": "^0.10.0",
     "clsx": "^2.1.1",
     "framer-motion": "^12.35.0",
@@ -48,7 +51,11 @@
     "react-dom": "^19.0.0",
     "sonner": "^2.0.1",
     "tailwind-merge": "^2.6.0",
-    "workflow": "^4.5.0"
+    "three": "^0.185.1",
+    "three-globe": "^2.45.2",
+    "topojson-client": "^3.1.0",
+    "workflow": "^4.5.0",
+    "world-atlas": "^2.0.2"
   },
   "devDependencies": {
     "@testing-library/dom": "^10.4.1",

@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const limit = Math.min(Number(req.nextUrl.searchParams.get("limit")) || 100, 200);
+  const limit = Math.min(Number(req.nextUrl.searchParams.get("limit")) || 500, 2000);
   const events = await listRuntimeRequestEvents(session.user.email, limit);
 
   return NextResponse.json({

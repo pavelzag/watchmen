@@ -1,4 +1,5 @@
 import { ensureAgentInstallTables, ensureRuntimeSecurityTables, sql } from "@/lib/db";
+import { enrichRuntimeEventGeo } from "@/lib/ip-geolocation";
 import {
   DEFAULT_RUNTIME_SECURITY_RULES,
   normalizeAgentEventRow,
@@ -149,6 +150,7 @@ export async function deleteRuntimeSecurityRule(userEmail: string, id: string): 
 
 export async function saveRuntimeRequestEvent(userEmail: string, event: RuntimeRequestEvent): Promise<void> {
   await ensureRuntimeSecurityTables();
+  const enrichedEvent = await enrichRuntimeEventGeo(event);
   await sql`
     INSERT INTO runtime_request_events (
       user_email,
@@ -179,30 +181,30 @@ export async function saveRuntimeRequestEvent(userEmail: string, event: RuntimeR
     )
     VALUES (
       ${userEmail},
-      ${event.id},
-      ${event.ts},
-      ${event.sourceIp ?? null},
-      ${event.sourcePort ?? null},
-      ${event.sourceIpClass ?? null},
-      ${event.sourceGeo?.lat ?? null},
-      ${event.sourceGeo?.lon ?? null},
-      ${event.sourceGeo?.region ?? null},
-      ${event.sourceGeo?.city ?? null},
-      ${event.sourceGeo?.country ?? null},
-      ${event.method ?? null},
-      ${event.path ?? null},
-      ${event.contentType ?? null},
-      ${event.bodySize ?? null},
-      ${event.bodySample ?? null},
-      ${event.statusCode ?? null},
-      ${event.destinationService ?? null},
-      ${event.destinationNamespace ?? null},
-      ${event.destinationPod ?? null},
-      ${event.destinationWorkload ?? null},
-      ${event.decision},
-      ${JSON.stringify(event.matchedRuleIds)}::jsonb,
-      ${JSON.stringify(event.reasons ?? [])}::jsonb,
-      ${event.highestSeverity ?? null}
+      ${enrichedEvent.id},
+      ${enrichedEvent.ts},
+      ${enrichedEvent.sourceIp ?? null},
+      ${enrichedEvent.sourcePort ?? null},
+      ${enrichedEvent.sourceIpClass ?? null},
+      ${enrichedEvent.sourceGeo?.lat ?? null},
+      ${enrichedEvent.sourceGeo?.lon ?? null},
+      ${enrichedEvent.sourceGeo?.region ?? null},
+      ${enrichedEvent.sourceGeo?.city ?? null},
+      ${enrichedEvent.sourceGeo?.country ?? null},
+      ${enrichedEvent.method ?? null},
+      ${enrichedEvent.path ?? null},
+      ${enrichedEvent.contentType ?? null},
+      ${enrichedEvent.bodySize ?? null},
+      ${enrichedEvent.bodySample ?? null},
+      ${enrichedEvent.statusCode ?? null},
+      ${enrichedEvent.destinationService ?? null},
+      ${enrichedEvent.destinationNamespace ?? null},
+      ${enrichedEvent.destinationPod ?? null},
+      ${enrichedEvent.destinationWorkload ?? null},
+      ${enrichedEvent.decision},
+      ${JSON.stringify(enrichedEvent.matchedRuleIds)}::jsonb,
+      ${JSON.stringify(enrichedEvent.reasons ?? [])}::jsonb,
+      ${enrichedEvent.highestSeverity ?? null}
     )
     ON CONFLICT (user_email, id) DO UPDATE SET
       ts = EXCLUDED.ts,

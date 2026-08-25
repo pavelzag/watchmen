@@ -87,18 +87,89 @@
 @layer utilities {
   @keyframes runtime-map-pulse {
     0% {
-      opacity: 0.72;
-      transform: scale(0.62);
+      opacity: 0.95;
+      transform: scale(0.48);
+      box-shadow: 0 0 10px rgba(248, 113, 113, 0.58);
     }
 
-    70% {
-      opacity: 0;
-      transform: scale(1.55);
+    58% {
+      opacity: 0.34;
+      transform: scale(1.75);
+      box-shadow: 0 0 28px rgba(248, 113, 113, 0.42), 0 0 16px rgba(34, 211, 238, 0.22);
     }
 
     100% {
       opacity: 0;
-      transform: scale(1.7);
+      transform: scale(2.35);
+      box-shadow: 0 0 4px rgba(248, 113, 113, 0);
+    }
+  }
+
+  @keyframes runtime-map-marker-vibe {
+    0% {
+      filter: brightness(1) saturate(1);
+      box-shadow: 0 0 0 4px rgba(248, 113, 113, 0.16), 0 0 14px rgba(52, 211, 153, 0.45);
+    }
+
+    18% {
+      filter: brightness(1.95) saturate(1.85) drop-shadow(0 0 14px rgba(248, 113, 113, 0.95)) drop-shadow(0 0 20px rgba(34, 211, 238, 0.42));
+      box-shadow: 0 0 0 8px rgba(248, 113, 113, 0.22), 0 0 28px rgba(248, 113, 113, 0.95), 0 0 42px rgba(34, 211, 238, 0.36);
+    }
+
+    38% {
+      filter: brightness(1.18) saturate(1.22) drop-shadow(0 0 8px rgba(251, 191, 36, 0.7));
+      box-shadow: 0 0 0 5px rgba(251, 191, 36, 0.18), 0 0 18px rgba(251, 191, 36, 0.7);
+    }
+
+    58% {
+      filter: brightness(1.68) saturate(1.55) drop-shadow(0 0 16px rgba(248, 113, 113, 0.82));
+      box-shadow: 0 0 0 7px rgba(248, 113, 113, 0.2), 0 0 24px rgba(248, 113, 113, 0.86), 0 0 30px rgba(52, 211, 153, 0.24);
+    }
+
+    100% {
+      filter: brightness(1) saturate(1);
+      box-shadow: 0 0 0 4px rgba(248, 113, 113, 0.16), 0 0 14px rgba(52, 211, 153, 0.45);
+    }
+  }
+
+  .runtime-map-marker-vibe {
+    animation: runtime-map-marker-vibe 1.05s ease-in-out infinite;
+    will-change: filter, box-shadow;
+    border-radius: 9999px !important;
+  }
+
+  @keyframes runtime-map-beacon {
+    0% {
+      opacity: 0.95;
+      transform: scale(0.45);
+      box-shadow: 0 0 14px rgba(248, 113, 113, 0.78);
+    }
+
+    48% {
+      opacity: 0.38;
+      transform: scale(1.25);
+      box-shadow: 0 0 30px rgba(248, 113, 113, 0.58), 0 0 22px rgba(34, 211, 238, 0.3);
+    }
+
+    100% {
+      opacity: 0;
+      transform: scale(2.05);
+      box-shadow: 0 0 4px rgba(248, 113, 113, 0);
+    }
+  }
+
+  .runtime-map-beacon {
+    pointer-events: none;
+    animation: runtime-map-beacon 1.25s ease-out infinite;
+    transform-origin: center;
+    will-change: opacity, transform, box-shadow;
+    border-radius: 9999px !important;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .runtime-map-marker-vibe,
+    .runtime-map-beacon {
+      animation: none;
     }
   }
 
