@@ -15,6 +15,7 @@ export interface LiveTraceIngressEvent {
   latency?: string;
   remoteIp?: string;
   userAgent?: string;
+  rawData?: string;
   count: number;
 }
 

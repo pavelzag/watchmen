@@ -1,5 +1,6 @@
 import fs from "fs";
 import * as k8s from "@kubernetes/client-node";
+import { KubernetesObjectApi, PatchStrategy } from "@kubernetes/client-node";
 import { sql } from "@/lib/db";
 import {
   detectKubernetesDistribution,
@@ -54,6 +55,14 @@ export interface KubernetesClusterResourcesResponse {
   provider: "local_kubernetes";
   cluster: KubernetesClusterStatus;
   resources: LocalKubernetesResource[];
+}
+
+export interface KubernetesTestTrafficStatus {
+  deployment: string;
+  namespace: string;
+  replicas: number;
+  readyReplicas: number;
+  running: boolean;
 }
 
 let clustersTableReady: Promise<void> | null = null;
@@ -657,6 +666,64 @@ export async function getClusterResources(cluster: KubernetesClusterRecord): Pro
       ...pods.map((i) => normalizeKubernetesPod(i, status.clusterName)),
     ],
   };
+}
+
+const TEST_TRAFFIC_GENERATOR_DEPLOYMENT = "watchmen-trace-generator";
+
+function testTrafficDeploymentSpec(namespace: string) {
+  return {
+    apiVersion: "apps/v1",
+    kind: "Deployment",
+    metadata: {
+      name: TEST_TRAFFIC_GENERATOR_DEPLOYMENT,
+      namespace,
+    },
+  };
+}
+
+export async function getClusterTestTrafficStatus(cluster: KubernetesClusterRecord): Promise<KubernetesTestTrafficStatus> {
+  if (!cluster.enabled) {
+    throw Object.assign(new Error("Cluster is disabled."), { code: "disabled" });
+  }
+  const namespace = cluster.namespace || "watchmen";
+  const kc = loadClusterKubeConfig(cluster);
+  const objectApi = KubernetesObjectApi.makeApiClient(kc);
+  const deployment = await objectApi.read(testTrafficDeploymentSpec(namespace)) as {
+    spec?: { replicas?: number };
+    status?: { readyReplicas?: number };
+  };
+  const replicas = Number(deployment.spec?.replicas ?? 0);
+  const readyReplicas = Number(deployment.status?.readyReplicas ?? 0);
+  return {
+    deployment: TEST_TRAFFIC_GENERATOR_DEPLOYMENT,
+    namespace,
+    replicas,
+    readyReplicas,
+    running: replicas > 0,
+  };
+}
+
+export async function setClusterTestTrafficRunning(cluster: KubernetesClusterRecord, running: boolean): Promise<KubernetesTestTrafficStatus> {
+  if (!cluster.enabled) {
+    throw Object.assign(new Error("Cluster is disabled."), { code: "disabled" });
+  }
+  const namespace = cluster.namespace || "watchmen";
+  const kc = loadClusterKubeConfig(cluster);
+  const objectApi = KubernetesObjectApi.makeApiClient(kc);
+  await objectApi.patch(
+    {
+      ...testTrafficDeploymentSpec(namespace),
+      spec: {
+        replicas: running ? 1 : 0,
+      },
+    },
+    undefined,
+    undefined,
+    "watchmen-ui",
+    undefined,
+    PatchStrategy.MergePatch,
+  );
+  return getClusterTestTrafficStatus(cluster);
 }
 
 export function parseKubernetesLogLine(line: string): { timestamp: string; message: string } {

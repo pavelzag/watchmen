@@ -46,6 +46,8 @@ const LOG_DRAWER_LIMIT = 200;
 type NodeType = "internet" | "lb" | "gke" | "cloudrun" | "cloudsql" | "vm" | "sidecar";
 type NodeStatus = "idle" | "active" | "done" | "error";
 type LiveScope = "active" | "all";
+type TrafficScope = "all" | "external" | "internal";
+type TrafficOrigin = "external" | "internal" | "unknown";
 type EndpointCloud = "gcp" | "aws" | "kubernetes";
 type GcpEndpointFilter = "all" | "cloudrun" | "vm" | "gke";
 type AwsEndpointFilter = "all" | "lambda" | "vm" | "eks";
@@ -92,6 +94,7 @@ interface LiveEvent {
   status?: number;
   latency?: string;
   count: number;
+  trafficOrigin?: TrafficOrigin;
 }
 
 interface AgentEventRow {
@@ -115,6 +118,14 @@ interface AgentEventRow {
 interface LivePulseBurst {
   id: string;
   pathIds: Set<string>;
+}
+
+interface TestTrafficStatus {
+  deployment: string;
+  namespace: string;
+  replicas: number;
+  readyReplicas: number;
+  running: boolean;
 }
 
 interface GraphNode {
@@ -1049,6 +1060,7 @@ function toLiveEventFromIngress(event: LiveTraceIngressEvent, nodes: GraphNode[]
     status: event.status,
     latency: event.latency,
     count: event.count,
+    trafficOrigin: getIngressTrafficOrigin(event),
   };
 }
 
@@ -1096,6 +1108,7 @@ function toLiveEventFromAgentEvent(event: AgentEventRow, nodes: GraphNode[]): Li
     path: ev.path,
     status: ev.status,
     count: 1,
+    trafficOrigin: getAgentEventTrafficOrigin(event),
   };
 }
 
@@ -1159,6 +1172,111 @@ function extractHeaderValue(raw: unknown, headerName: string): string | undefine
   if (typeof raw !== "string") return undefined;
   const headerRe = new RegExp(`^${headerName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:\\s*(.+)$`, "im");
   return raw.match(headerRe)?.[1]?.trim();
+}
+
+function firstForwardedIp(value: string | undefined): string | undefined {
+  return value?.split(",").map(part => part.trim()).find(Boolean);
+}
+
+function decodeTraceToken(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function extractTraceIdFromText(raw: string): string | null {
+  const queryMatch = raw.match(/\b(?:demo_trace_id|watchmen_trace_probe)=([^&\s"']+)/i);
+  if (queryMatch?.[1]) return decodeTraceToken(queryMatch[1]);
+
+  const headerMatch = raw.match(/^X-Watchmen-Trace-Id\s*:\s*([^\s"']+)/im);
+  if (headerMatch?.[1]) return headerMatch[1];
+
+  const tokenMatch = raw.match(/\b((?:wm|geo)-[a-z0-9][a-z0-9_.:-]*)/i);
+  return tokenMatch?.[1] ?? null;
+}
+
+function classifyIpTrafficOrigin(ip: string | undefined): TrafficOrigin {
+  const cleaned = firstForwardedIp(ip)?.replace(/^\[|\]$/g, "");
+  if (!cleaned) return "unknown";
+  if (cleaned === "::1") return "internal";
+  if (/^(fc|fd)[0-9a-f]{2}:/i.test(cleaned)) return "internal";
+  if (/^fe80:/i.test(cleaned)) return "internal";
+
+  const parts = cleaned.split(".");
+  if (parts.length !== 4) return "unknown";
+  const octets = parts.map(part => Number(part));
+  if (octets.some(octet => !Number.isInteger(octet) || octet < 0 || octet > 255)) return "unknown";
+  const [a, b] = octets;
+  if (a === 10) return "internal";
+  if (a === 172 && b >= 16 && b <= 31) return "internal";
+  if (a === 192 && b === 168) return "internal";
+  if (a === 127) return "internal";
+  if (a === 169 && b === 254) return "internal";
+  if (a === 100 && b >= 64 && b <= 127) return "internal";
+  return "external";
+}
+
+function extractQuotedLogField(raw: string | undefined, name: string): string | undefined {
+  if (!raw) return undefined;
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = raw.match(new RegExp(`${escaped}="([^"]*)"`, "i"));
+  return match?.[1]?.trim() || undefined;
+}
+
+function hasSyntheticExternalGeoMarker(raw: string | undefined): boolean {
+  return Boolean(raw && (/\bsource=geo-(?:curl|k8s)\b/i.test(raw) || /\bdemo_trace_id=(?:wm-)?geo-/i.test(raw)));
+}
+
+function trafficOriginMatchesFilter(origin: TrafficOrigin | undefined, scope: TrafficScope): boolean {
+  if (scope === "all") return true;
+  if (scope === "external") return origin === "external";
+  return origin === "internal" || origin === "unknown";
+}
+
+function getAgentEventTrafficOrigin(event: AgentEventRow): TrafficOrigin {
+  const ev = event.event ?? {};
+  const rawData = typeof ev.data === "string" ? ev.data : "";
+  const explicitSourceIp = extractHeaderValue(rawData, "X-Watchmen-Source-IP");
+  const forwardedFor = extractHeaderValue(rawData, "X-Forwarded-For");
+  const realIp = extractHeaderValue(rawData, "X-Real-IP");
+  const origin = classifyIpTrafficOrigin(explicitSourceIp ?? forwardedFor ?? realIp);
+  if (origin !== "unknown") return origin;
+  if (hasSyntheticExternalGeoMarker(rawData) || hasSyntheticExternalGeoMarker(ev.path)) return "external";
+  return "unknown";
+}
+
+function getLogEntryTrafficOrigin(entry: LogEntry): TrafficOrigin {
+  const details = parseCapturedHttpDetails(entry.message);
+  const headers = details?.headers;
+  const explicitSourceIp = headerValue(headers, "X-Watchmen-Source-IP")
+    ?? extractQuotedLogField(entry.message, "source_ip");
+  const forwardedFor = headerValue(headers, "X-Forwarded-For")
+    ?? extractQuotedLogField(entry.message, "xff");
+  const realIp = headerValue(headers, "X-Real-IP")
+    ?? extractQuotedLogField(entry.message, "real_ip");
+
+  const headerOrigin = classifyIpTrafficOrigin(explicitSourceIp ?? forwardedFor ?? realIp);
+  if (headerOrigin !== "unknown") return headerOrigin;
+  if (hasSyntheticExternalGeoMarker(entry.message) || hasSyntheticExternalGeoMarker(entry.httpRequest?.url)) return "external";
+
+  const parsed = !entry.httpRequest
+    ? parseReqLog(entry.message) ?? parseStructuredRequestLog(entry.message) ?? parseNginxLog(entry.message) ?? parseEnvoyLog(entry.message) ?? parseTraceAppLog(entry.message)
+    : null;
+
+  return classifyIpTrafficOrigin(
+    entry.httpRequest?.remoteIp
+      ?? (parsed && "remoteIp" in parsed ? parsed.remoteIp : undefined)
+      ?? (parsed && "ip" in parsed ? parsed.ip : undefined),
+  );
+}
+
+function getIngressTrafficOrigin(event: LiveTraceIngressEvent): TrafficOrigin {
+  if (hasSyntheticExternalGeoMarker(event.path) || hasSyntheticExternalGeoMarker(event.rawData)) return "external";
+  const origin = classifyIpTrafficOrigin(event.remoteIp);
+  if (origin !== "unknown") return origin;
+  return "unknown";
 }
 
 function isExpectedAgentLiveEvent(event: AgentEventRow): boolean {
@@ -1240,6 +1358,7 @@ function toLiveEvents(
     status: request.status,
     latency: request.latency,
     count: 1,
+    trafficOrigin: getLogEntryTrafficOrigin(request.entry),
   }));
 }
 
@@ -1262,6 +1381,7 @@ function toDemoLiveEvent(target: LiveMonitorTarget, ts: string, count: number, n
     status,
     latency: `${latencyMs}ms`,
     count,
+    trafficOrigin: "external",
   };
 }
 
@@ -1602,6 +1722,12 @@ const AWS_ENDPOINT_FILTERS: { id: AwsEndpointFilter; label: string }[] = [
   { id: "lambda", label: "Lambda" },
   { id: "vm", label: "VM" },
   { id: "eks", label: "EKS" },
+];
+
+const TRAFFIC_SCOPE_FILTERS: { id: TrafficScope; label: string; title: string }[] = [
+  { id: "all", label: "All", title: "Show external, internal, and unknown traffic" },
+  { id: "external", label: "Outside", title: "Show requests with public client or forwarded source IPs" },
+  { id: "internal", label: "Inside", title: "Show cluster-local, pod, service, private, and unknown-source traffic" },
 ];
 
 // ─── Node type labels ─────────────────────────────────────────────────────────
@@ -2152,6 +2278,18 @@ function agentEventToLogEntry(row: AgentEventRow): LogEntry {
   };
 }
 
+function dedupeLogEntries(entries: LogEntry[]): LogEntry[] {
+  const seen = new Set<string>();
+  const deduped: LogEntry[] = [];
+  for (const entry of entries) {
+    const key = `${entry.timestamp}:${entry.pod ?? ""}:${entry.container ?? ""}:${entry.message}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(entry);
+  }
+  return deduped.sort((a, b) => (b.timestamp ?? "").localeCompare(a.timestamp ?? ""));
+}
+
 interface LogEntryDetails {
   title: string;
   timestamp: string;
@@ -2557,10 +2695,11 @@ function LogEntryModal({
 }
 
 function NodeDetail({
-  node, status, inPath, response, url, method, usesAgentEvents, onClose, onIstioDetected,
+  node, status, inPath, response, url, method, usesAgentEvents, trafficScope, onTrafficScopeChange, onClose, onIstioDetected,
 }: {
   node: GraphNode; status: NodeStatus; inPath: boolean;
-  response: ProxyResponse | null; url: string; method: string; usesAgentEvents?: boolean; onClose: () => void;
+  response: ProxyResponse | null; url: string; method: string; usesAgentEvents?: boolean; trafficScope: TrafficScope;
+  onTrafficScopeChange: (scope: TrafficScope) => void; onClose: () => void;
   onIstioDetected?: (nodeId: string) => void;
 }) {
   const meta = node.type === "sidecar" && node.container
@@ -2664,7 +2803,7 @@ function NodeDetail({
         const res = await fetch(url, { cache: "no-store" });
         const d = await res.json();
         if (d.error) { setLogsError(d.error); return; }
-        setLogs(d.entries ?? []);
+        setLogs(dedupeLogEntries(d.entries ?? []).slice(0, LOG_DRAWER_LIMIT));
       } catch (e) {
         setLogsError(e instanceof Error ? e.message : "Failed to fetch Kubernetes logs.");
       } finally {
@@ -2691,7 +2830,28 @@ function NodeDetail({
           if (fallbackData.error) { setLogsError(fallbackData.error); return; }
           events = (fallbackData.events ?? []) as AgentEventRow[];
         }
-        setLogs(events.map(agentEventToLogEntry));
+        let mergedLogs = events.map(agentEventToLogEntry);
+        if (trafficScope === "external") {
+          try {
+            const cr = await fetch("/api/kubernetes/clusters", { cache: "no-store" }).then(r => r.json()).catch(() => ({ clusters: [] }));
+            const list: Array<{ id: string; name: string }> = Array.isArray(cr.clusters) ? cr.clusters : [];
+            const clusterId = list.find(c => c.name === node.projectId || c.name === node.resourceName || c.name === node.label)?.id ?? null;
+            if (clusterId) {
+              const k8sParams = new URLSearchParams({
+                limit: String(LOG_DRAWER_LIMIT),
+                deployment: "watchmen-shop-frontend",
+              });
+              const k8sRes = await fetch(`/api/kubernetes/clusters/${clusterId}/logs?${k8sParams}`, { cache: "no-store" });
+              const k8sData = await k8sRes.json().catch(() => ({}));
+              if (Array.isArray(k8sData.entries)) {
+                mergedLogs = [...k8sData.entries, ...mergedLogs];
+              }
+            }
+          } catch {
+            // Agent logs are still useful if the local Kubernetes log fallback is unavailable.
+          }
+        }
+        setLogs(dedupeLogEntries(mergedLogs).slice(0, LOG_DRAWER_LIMIT));
       } catch (e) {
         setLogsError(e instanceof Error ? e.message : "Failed to fetch agent events.");
       } finally {
@@ -2731,13 +2891,13 @@ function NodeDetail({
       const res = await fetch(`${endpoint}?${params}`);
       const d = await res.json();
       if (d.error) { setLogsError(d.error); return; }
-      setLogs(d.entries ?? []);
+      setLogs(dedupeLogEntries(d.entries ?? []).slice(0, LOG_DRAWER_LIMIT));
     } catch (e) {
       setLogsError(e instanceof Error ? e.message : "Failed to fetch logs.");
     } finally {
       if (showLoading) setLoadingLogs(false);
     }
-  }, [node.cloud, node.projectId, node.type, node.resourceName, node.label, node.region, node.container, node.namespace, node.k8sKind, selectedContainer, usesAgentEvents]);
+  }, [node.cloud, node.projectId, node.type, node.resourceName, node.label, node.region, node.container, node.namespace, node.k8sKind, selectedContainer, trafficScope, usesAgentEvents]);
 
   // Fetch logs when tab or container selection changes, then keep them fresh while visible.
   useEffect(() => {
@@ -2773,6 +2933,7 @@ function NodeDetail({
       const parsed = !l.httpRequest ? (parseReqLog(l.message) ?? parseStructuredRequestLog(l.message) ?? parseNginxLog(l.message) ?? parseEnvoyLog(l.message) ?? parseTraceAppLog(l.message)) : null;
       const status = l.httpRequest?.status ?? parsed?.status;
       const method = (l.httpRequest?.method ?? parsed?.method ?? "").toUpperCase();
+      const trafficOrigin = getLogEntryTrafficOrigin(l);
       const searchable = l.httpRequest
         ? `${l.httpRequest.method} ${l.httpRequest.url} ${l.httpRequest.remoteIp} ${l.httpRequest.userAgent}`
         : parsed
@@ -2786,6 +2947,7 @@ function NodeDetail({
         if (r && (status < r[0] || status > r[1])) return false;
       }
       if (logMethodFilter !== "all" && method !== logMethodFilter) return false;
+      if (!trafficOriginMatchesFilter(trafficOrigin, trafficScope)) return false;
       if (logSearch.trim()) {
         if (!searchable.toLowerCase().includes(logSearch.toLowerCase())) return false;
       }
@@ -2805,7 +2967,7 @@ function NodeDetail({
       if (prio !== 0) return prio;
       return (b.timestamp ?? "").localeCompare(a.timestamp ?? "");
     });
-  }, [canHideGkeHealthLogs, hideGkeHealthLogs, logs, logMethodFilter, logSearch, logStatusFilter]);
+  }, [canHideGkeHealthLogs, hideGkeHealthLogs, logs, logMethodFilter, logSearch, logStatusFilter, trafficScope]);
 
   // Copy logs to clipboard
   const handleCopyLogs = useCallback(() => {
@@ -3014,12 +3176,12 @@ function NodeDetail({
             {/* Header row */}
             <div className="flex items-center gap-1.5">
               <span className="text-[9px] uppercase tracking-widest text-slate-600 flex-1 truncate">
-                {usesAgentEvents && (node.type === "gke" || node.type === "sidecar")
-                  ? "eBPF Agent Events"
-                  : node.cloud === "aws"
+                {node.cloud === "kubernetes"
+                  ? "Kubernetes Pod Logs"
+                  : usesAgentEvents && (node.type === "gke" || node.type === "sidecar")
+                    ? trafficScope === "external" ? "eBPF Agent + Kubernetes Logs" : "eBPF Agent Events"
+                    : node.cloud === "aws"
                     ? "CloudWatch Logs"
-                    : node.cloud === "kubernetes"
-                      ? "Kubernetes Pod Logs"
                       : "Cloud Logging"} · {node.projectId}
               </span>
               <button
@@ -3078,6 +3240,26 @@ function NodeDetail({
 
             {/* Status filter pills */}
             <div className="flex gap-1 flex-wrap">
+              {TRAFFIC_SCOPE_FILTERS.map(f => (
+                <button
+                  key={f.id}
+                  onClick={() => onTrafficScopeChange(f.id)}
+                  title={f.title}
+                  className={cn(
+                    "text-[8px] px-1.5 py-0.5 border transition-colors",
+                    trafficScope === f.id
+                      ? f.id === "external"
+                        ? "border-sky-700 text-sky-300 bg-sky-950/30"
+                        : f.id === "internal"
+                          ? "border-emerald-700 text-emerald-300 bg-emerald-950/30"
+                          : "border-slate-500 text-slate-300 bg-slate-800"
+                      : "border-slate-800 text-slate-600 hover:text-slate-400 hover:border-slate-700"
+                  )}
+                >
+                  {f.label.toUpperCase()}
+                </button>
+              ))}
+              <span className="self-center text-slate-800">|</span>
               {(["all", "2xx", "3xx", "4xx", "5xx"] as const).map(f => (
                 <button
                   key={f}
@@ -3107,7 +3289,7 @@ function NodeDetail({
                 {hideGkeHealthLogs ? "HEALTH HIDDEN" : "HEALTH SHOWN"}
               </button>
               )}
-              {(logSearch || logStatusFilter !== "all" || logMethodFilter !== "all" || (canHideGkeHealthLogs && hideGkeHealthLogs && hiddenGkeHealthLogCount > 0)) && (
+              {(logSearch || trafficScope !== "all" || logStatusFilter !== "all" || logMethodFilter !== "all" || (canHideGkeHealthLogs && hideGkeHealthLogs && hiddenGkeHealthLogCount > 0)) && (
                 <span className="text-[8px] text-slate-600 self-center ml-1">{filteredLogs.length}/{logs.length}</span>
               )}
             </div>
@@ -3502,6 +3684,9 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const [loadingLocalKubernetes, setLoadingLocalKubernetes] = useState(false);
   const [k8sClusters, setK8sClusters] = useState<Array<{ id: string; name: string }>>([]);
   const [selectedK8sClusterId, setSelectedK8sClusterId] = useState<string | null>(null);
+  const [testTrafficStatus, setTestTrafficStatus] = useState<TestTrafficStatus | null>(null);
+  const [loadingTestTraffic, setLoadingTestTraffic] = useState(false);
+  const [testTrafficError, setTestTrafficError] = useState<string | null>(null);
   const [entryPoints, setEntryPoints] = useState<GkeEntryPoint[]>([]);
   const [loadingEntryPoints, setLoadingEntryPoints] = useState(true);
   const [traceSourceConfig, setTraceSourceConfig] = useState<GcpTraceSourceConfigSummary | null>(null);
@@ -3637,6 +3822,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   // Live monitoring
   const [liveMode, setLiveMode] = useState(true);
   const [liveScope, setLiveScope] = useState<LiveScope>("active");
+  const [trafficScope, setTrafficScope] = useState<TrafficScope>("all");
   const [liveIntensityEnabled, setLiveIntensityEnabled] = useState(false);
   const liveAnimEnabledRef = useRef(true);
   const liveIntensityEnabledRef = useRef(true);
@@ -4333,19 +4519,23 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     return targets;
   }, [demoMode, edges, nodes]);
 
+  const filteredLiveEvents = useMemo(
+    () => liveEvents.filter(event => trafficOriginMatchesFilter(event.trafficOrigin, trafficScope)),
+    [liveEvents, trafficScope]
+  );
   const liveEventsOrdered = useMemo(
-    () => [...liveEvents].sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime()),
-    [liveEvents]
+    () => [...filteredLiveEvents].sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime()),
+    [filteredLiveEvents]
   );
   const liveEventsFeatured = useMemo(
-    () => [...liveEvents]
+    () => [...filteredLiveEvents]
       .sort((a, b) => {
         const prio = requestPriority(a.method, a.path) - requestPriority(b.method, b.path);
         if (prio !== 0) return prio;
         return new Date(b.ts).getTime() - new Date(a.ts).getTime();
       })
       .slice(0, 6),
-    [liveEvents]
+    [filteredLiveEvents]
   );
 
   useEffect(() => {
@@ -4426,6 +4616,60 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       livePulseTimeoutsRef.current.clear();
     };
   }, []);
+
+  const refreshTestTrafficStatus = useCallback(async ({ showLoading = false }: { showLoading?: boolean } = {}) => {
+    if (endpointCloud !== "kubernetes" || !selectedK8sClusterId) {
+      setTestTrafficStatus(null);
+      setTestTrafficError(null);
+      return;
+    }
+    if (showLoading) setLoadingTestTraffic(true);
+    setTestTrafficError(null);
+    try {
+      const res = await fetch(`/api/kubernetes/clusters/${selectedK8sClusterId}/test-traffic`, { cache: "no-store" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) throw new Error(data.error ?? "Failed to read test traffic status.");
+      setTestTrafficStatus(data.status ?? null);
+    } catch (error) {
+      setTestTrafficStatus(null);
+      setTestTrafficError(error instanceof Error ? error.message : "Failed to read test traffic status.");
+    } finally {
+      if (showLoading) setLoadingTestTraffic(false);
+    }
+  }, [endpointCloud, selectedK8sClusterId]);
+
+  const setInternalTestTraffic = useCallback(async (running: boolean) => {
+    if (!selectedK8sClusterId) return;
+    setLoadingTestTraffic(true);
+    setTestTrafficError(null);
+    try {
+      const res = await fetch(`/api/kubernetes/clusters/${selectedK8sClusterId}/test-traffic`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ running }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) throw new Error(data.error ?? "Failed to update test traffic.");
+      setTestTrafficStatus(data.status ?? null);
+    } catch (error) {
+      setTestTrafficError(error instanceof Error ? error.message : "Failed to update test traffic.");
+    } finally {
+      setLoadingTestTraffic(false);
+    }
+  }, [selectedK8sClusterId]);
+
+  useEffect(() => {
+    if (endpointCloud !== "kubernetes" || !selectedK8sClusterId || demoMode) {
+      setTestTrafficStatus(null);
+      setTestTrafficError(null);
+      return;
+    }
+    void refreshTestTrafficStatus({ showLoading: true });
+    const intervalId = window.setInterval(() => {
+      void refreshTestTrafficStatus();
+    }, 8_000);
+    return () => window.clearInterval(intervalId);
+  }, [demoMode, endpointCloud, refreshTestTrafficStatus, selectedK8sClusterId]);
 
   useEffect(() => {
     const useStreamingLive = endpointCloud === "aws" || shouldUseStreamingLive(demoMode, traceSourceConfig);
@@ -4597,9 +4841,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
         const newEvents: typeof liveEvents = [];
         for (const e of entries) {
           const msg: string = e.message ?? "";
-          // nginx log contains trace_id like wm-minikube-test-... or X-Watchmen-Trace-Id
-          const m = msg.match(/(wm-[^\s"']+|X-Watchmen-Trace-Id[:\s]+([^\s"']+))/i);
-          const traceId = m ? (m[2] ?? m[1]) : null;
+          const traceId = extractTraceIdFromText(msg);
           if (!traceId) continue;
           if (seenK8sTraceIdsRef.current.has(traceId)) continue;
           seenK8sTraceIdsRef.current.add(traceId);
@@ -4630,6 +4872,11 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
             path,
             status,
             count: 1,
+            trafficOrigin: getLogEntryTrafficOrigin({
+              timestamp: e.timestamp ?? new Date().toISOString(),
+              severity: "INFO",
+              message: msg,
+            }),
           };
           newEvents.push(uiEvent);
           if (liveAnimEnabledRef.current) {
@@ -4902,7 +5149,8 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
           ...result,
           entries: result.entries.filter(entry => {
             const parsed = parseLiveRequestLog(entry);
-            return parsed && (includeExpectedRequests || !isExpectedLiveRequest(parsed));
+            return parsed
+              && (includeExpectedRequests || !isExpectedLiveRequest(parsed));
           }),
         }));
         const allEntries = filteredResults.flatMap(result => result.entries);
@@ -5044,15 +5292,15 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
   useEffect(() => {
     if (!selectedLiveEvent) return;
-    const updated = liveEvents.find(event => event.id === selectedLiveEvent.id);
+    const updated = filteredLiveEvents.find(event => event.id === selectedLiveEvent.id);
     if (updated) {
       setSelectedLiveEvent(updated);
       return;
     }
-    if (!liveEvents.some(event => event.id === selectedLiveEvent.id)) {
+    if (!filteredLiveEvents.some(event => event.id === selectedLiveEvent.id)) {
       setSelectedLiveEvent(null);
     }
-  }, [liveEvents, selectedLiveEvent]);
+  }, [filteredLiveEvents, selectedLiveEvent]);
 
   // ── Send request ────────────────────────────────────────────────────────────
   const handleSend = useCallback(async () => {
@@ -5827,7 +6075,62 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                     ALL
                   </button>
                 )}
+                <div className="flex items-center gap-0.5 border border-slate-800 bg-black/20 p-0.5">
+                  {TRAFFIC_SCOPE_FILTERS.map(filter => (
+                    <button
+                      key={filter.id}
+                      type="button"
+                      onClick={() => setTrafficScope(filter.id)}
+                      title={filter.title}
+                      className={cn(
+                        "h-5 px-1.5 text-[8px] font-bold uppercase tracking-widest transition-colors",
+                        trafficScope === filter.id
+                          ? filter.id === "external"
+                            ? "bg-sky-400 text-black"
+                            : filter.id === "internal"
+                              ? "bg-emerald-400 text-black"
+                              : "bg-slate-500 text-black"
+                          : "text-slate-600 hover:bg-slate-900/80 hover:text-slate-300"
+                      )}
+                    >
+                      {filter.label}
+                    </button>
+                  ))}
+                </div>
                 {/* Adaptive intensity styling is currently hidden from the UI. */}
+                <div className="w-px h-3 bg-slate-800 mx-0.5" />
+              </>
+            )}
+            {endpointCloud === "kubernetes" && selectedK8sClusterId && !demoMode && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setInternalTestTraffic(!(testTrafficStatus?.running ?? false))}
+                  disabled={loadingTestTraffic}
+                  title={testTrafficError ?? (testTrafficStatus?.running ? "Stop internal minikube test traffic" : "Start internal minikube test traffic")}
+                  className={cn(
+                    "flex h-6 items-center gap-1 border px-1.5 text-[8px] font-bold uppercase tracking-widest transition-colors",
+                    testTrafficStatus?.running
+                      ? "border-amber-600 bg-amber-950/30 text-amber-300"
+                      : "border-slate-700 text-slate-500 hover:border-emerald-700 hover:text-emerald-300",
+                    loadingTestTraffic && "cursor-not-allowed opacity-60",
+                    testTrafficError && "border-red-800 text-red-400"
+                  )}
+                >
+                  {loadingTestTraffic ? (
+                    <Loader2 size={8} className="animate-spin" />
+                  ) : testTrafficStatus?.running ? (
+                    <X size={8} />
+                  ) : (
+                    <Play size={8} />
+                  )}
+                  <span>{testTrafficStatus?.running ? "Stop Test" : "Start Test"}</span>
+                  {testTrafficStatus && (
+                    <span className="font-mono text-current/80">
+                      {testTrafficStatus.readyReplicas}/{testTrafficStatus.replicas}
+                    </span>
+                  )}
+                </button>
                 <div className="w-px h-3 bg-slate-800 mx-0.5" />
               </>
             )}
@@ -6232,6 +6535,8 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
               url={url}
               method={method}
               usesAgentEvents={shouldUseAgentEvents(endpointCloud, traceSourceConfig)}
+              trafficScope={trafficScope}
+              onTrafficScopeChange={setTrafficScope}
               onClose={() => { setSelectedNode(null); setShowResponse(true); }}
               onIstioDetected={handleIstioDetected}
             />

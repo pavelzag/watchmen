@@ -273,10 +273,10 @@ function summarizeEvent(event: RuntimeRequestEvent) {
   return `${event.method ?? "HTTP"} ${event.path ?? "/"} ${event.statusCode ?? ""}`.trim();
 }
 
-function filterPointsByWindow(points: GlobePoint[], windowValue: RuntimeMapWindow): GlobePoint[] {
+function filterPointsByWindow(points: GlobePoint[], windowValue: RuntimeMapWindow, nowMs = Date.now()): GlobePoint[] {
   const windowConfig = MAP_WINDOWS.find((windowOption) => windowOption.value === windowValue);
   if (!windowConfig?.ms) return points;
-  const cutoff = Date.now() - windowConfig.ms;
+  const cutoff = nowMs - windowConfig.ms;
   return points.filter((point) => eventTimestampMs(point.event) >= cutoff);
 }
 
@@ -649,10 +649,25 @@ function RuntimeRequestGlobe({
 }) {
   const [mapWindow, setMapWindow] = useState<RuntimeMapWindow>("5m");
   const [selectedCluster, setSelectedCluster] = useState<GlobeCluster | null>(null);
-  const visiblePoints = useMemo(() => filterPointsByWindow(points, mapWindow), [mapWindow, points]);
+  const [windowNowMs, setWindowNowMs] = useState(() => Date.now());
+  const visiblePoints = useMemo(() => filterPointsByWindow(points, mapWindow, windowNowMs), [mapWindow, points, windowNowMs]);
   const suspiciousCount = visiblePoints.filter((point) => point.event.decision !== "allow").length;
   const latest = visiblePoints[0]?.event;
   const clusters = useMemo(() => clusterGlobePoints(visiblePoints), [visiblePoints]);
+  const expandedRequestPoints = useMemo(() => visiblePoints.slice(0, 80), [visiblePoints]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setWindowNowMs(Date.now()), 5000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    setSelectedCluster((current) => {
+      if (!current) return current;
+      return clusters.find((cluster) => cluster.id === current.id) ?? null;
+    });
+  }, [clusters]);
+
   const globe = (
     <div className={cn(
       "relative overflow-hidden border border-sky-900/60 bg-[#020713]",
@@ -883,8 +898,17 @@ function RuntimeRequestGlobe({
   return (
     <div className="fixed inset-4 z-[120] bg-black/80 p-3 backdrop-blur-md">
       {globe}
-      <div className="mt-3 max-h-40 overflow-y-auto border border-slate-800 bg-black/75">
-        {visiblePoints.slice(0, 12).map((point) => {
+      <div className="mt-3 overflow-hidden border border-slate-800 bg-black/75">
+        <div className="flex items-center justify-between border-b border-slate-900 px-3 py-2">
+          <div className="text-[9px] font-bold uppercase tracking-widest text-slate-600">
+            Requests in {windowLabel(mapWindow)}
+          </div>
+          <div className="font-mono text-[10px] text-slate-500">
+            showing {expandedRequestPoints.length} of {visiblePoints.length}
+          </div>
+        </div>
+        <div className="max-h-40 overflow-y-auto">
+        {expandedRequestPoints.map((point) => {
           const rule = point.event.matchedRuleIds[0] ? rules.get(point.event.matchedRuleIds[0]) : null;
           return (
             <button
@@ -900,6 +924,12 @@ function RuntimeRequestGlobe({
             </button>
           );
         })}
+        {expandedRequestPoints.length === 0 && (
+          <div className="px-3 py-6 text-center text-[11px] uppercase tracking-widest text-slate-600">
+            No requests in {windowLabel(mapWindow)}
+          </div>
+        )}
+        </div>
       </div>
     </div>
   );
@@ -1022,7 +1052,7 @@ function ThreeRequestGlobe({
         ...cluster,
         label: cluster.count > 99 ? "99+" : String(cluster.count),
       }));
-      globe.pointsData(clusterData);
+      globe.pointsData([]);
       globe.htmlElementsData(clusterData);
       globe.labelsData(GLOBE_LABELS);
     }
@@ -1031,8 +1061,9 @@ function ThreeRequestGlobe({
 
   useEffect(() => {
     const shouldReport = debug.status === "failed"
+      || debug.status !== "rendering"
       || debug.frameCount <= 3
-      || debug.frameCount % 120 === 0;
+      || Boolean(debug.error);
     const key = `${debug.status}:${debug.webgl}:${debug.width}:${debug.height}:${debug.frameCount}:${debug.markerCount}:${debug.visibleMarkerCount}:${debug.countries}:${debug.cities}:${debug.error ?? ""}`;
     if (!shouldReport || lastServerDebugRef.current === key) return;
     lastServerDebugRef.current = key;
@@ -1102,11 +1133,6 @@ function ThreeRequestGlobe({
           ...cluster,
           label: cluster.count > 99 ? "99+" : String(cluster.count),
         }));
-        const clusterColor = (cluster: ThreeGlobeClusterDatum) => {
-          if (cluster.decision === "would_block") return "rgba(248,113,113,0.95)";
-          if (cluster.decision === "flagged") return "rgba(251,191,36,0.95)";
-          return "rgba(52,211,153,0.95)";
-        };
         const clusterElement = (cluster: ThreeGlobeClusterDatum) => {
           const hot = cluster.decision === "would_block";
           const flagged = cluster.decision === "flagged";
@@ -1165,13 +1191,7 @@ function ThreeRequestGlobe({
           .polygonSideColor(() => "rgba(18, 83, 105, 0.55)")
           .polygonStrokeColor(() => "rgba(186, 230, 253, 0.38)")
           .polygonAltitude(0.006)
-          .pointsData(clusterData)
-          .pointLat((cluster: any) => cluster.lat)
-          .pointLng((cluster: any) => cluster.lon)
-          .pointAltitude(0.026)
-          .pointRadius((cluster: any) => Math.min(1.8, 0.65 + Math.log2(Math.max(1, cluster.count)) * 0.18))
-          .pointColor(clusterColor)
-          .pointsMerge(false)
+          .pointsData([])
           .htmlElementsData(clusterData)
           .htmlLat((cluster: any) => cluster.lat)
           .htmlLng((cluster: any) => cluster.lon)

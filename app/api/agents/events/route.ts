@@ -11,6 +11,12 @@ function parseStatus(value: unknown): number | null {
   return null;
 }
 
+function extractHeaderValue(raw: unknown, headerName: string): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const headerRe = new RegExp(`^${headerName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:\\s*(.+)$`, "im");
+  return raw.match(headerRe)?.[1]?.trim();
+}
+
 function toLiveTraceEvent(input: {
   agentId: string;
   userEmail: string;
@@ -31,6 +37,10 @@ function toLiveTraceEvent(input: {
     : typeof input.event?.trace_id === "string"
       ? input.event.trace_id
       : `${input.agentId}:${timestamp}:${method ?? "HTTP"}:${path ?? "/"}`;
+  const rawData = typeof input.event?.data === "string" ? input.event.data : undefined;
+  const forwardedSourceIp = extractHeaderValue(rawData, "X-Watchmen-Source-IP")
+    ?? extractHeaderValue(rawData, "X-Forwarded-For")
+    ?? extractHeaderValue(rawData, "X-Real-IP");
 
   return {
     id: `agent:${traceId}`,
@@ -43,8 +53,9 @@ function toLiveTraceEvent(input: {
     path,
     status: input.status ?? undefined,
     latency: typeof input.event?.latency === "string" ? input.event.latency : undefined,
-    remoteIp: typeof input.event?.remoteIp === "string" ? input.event.remoteIp : undefined,
-    userAgent: typeof input.event?.userAgent === "string" ? input.event.userAgent : undefined,
+    remoteIp: forwardedSourceIp ?? (typeof input.event?.remoteIp === "string" ? input.event.remoteIp : undefined),
+    userAgent: typeof input.event?.userAgent === "string" ? input.event.userAgent : extractHeaderValue(rawData, "User-Agent"),
+    rawData,
     count: 1,
   };
 }
