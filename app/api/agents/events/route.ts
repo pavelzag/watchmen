@@ -2,7 +2,7 @@ import { createHash } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { publishLiveTraceEvent, type LiveTraceIngressEvent } from "@/lib/live-trace-bus";
-import { getRuntimeSecurityRules, saveRuntimeRequestEvent } from "@/lib/runtime-security-store";
+import { getRuntimeSecurityRulesForEvaluation, saveRuntimeRequestEvent } from "@/lib/runtime-security-store";
 import { normalizeAgentEventRow } from "@/lib/runtime-security";
 
 function parseStatus(value: unknown): number | null {
@@ -130,7 +130,7 @@ export async function POST(req: NextRequest) {
     `;
 
     try {
-      const rules = await getRuntimeSecurityRules(hostRow.user_email);
+      const rules = await getRuntimeSecurityRulesForEvaluation(hostRow.user_email);
       const runtimeEvent = normalizeAgentEventRow({
         id: inserted.rows[0]?.id ?? crypto.randomUUID(),
         event,

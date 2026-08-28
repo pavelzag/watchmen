@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { applyRuntimeDecision } from "@/lib/runtime-security";
-import { getRuntimeSecurityRules, saveRuntimeRequestEvent } from "@/lib/runtime-security-store";
+import { getRuntimeSecurityRulesForEvaluation, saveRuntimeRequestEvent } from "@/lib/runtime-security-store";
 
 export async function POST(req: NextRequest) {
     const session = await auth();
@@ -118,7 +118,7 @@ async function saveTraceRuntimeEvent(input: {
     if (!input.userEmail) return;
 
     try {
-        const rules = await getRuntimeSecurityRules(input.userEmail);
+        const rules = await getRuntimeSecurityRulesForEvaluation(input.userEmail);
         const event = applyRuntimeDecision({
             id: input.requestId || `trace-${crypto.randomUUID()}`,
             ts: new Date().toISOString(),

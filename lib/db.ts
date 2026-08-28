@@ -345,6 +345,10 @@ export async function ensureRuntimeSecurityTables(): Promise<void> {
         CREATE INDEX IF NOT EXISTS idx_runtime_request_events_lookup
           ON runtime_request_events (user_email, ts DESC)
       `;
+      await sql`
+        CREATE INDEX IF NOT EXISTS idx_runtime_request_events_matched_rules
+          ON runtime_request_events USING GIN (matched_rule_ids)
+      `;
     }).catch((error) => {
       runtimeSecurityTablesReady = null;
       throw error;

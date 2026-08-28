@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
+  ChevronDown,
   Globe2,
   MessageSquare,
   Maximize2,
@@ -305,23 +306,17 @@ export default function RuntimeSecurityPanel() {
     conditionValue: "",
   });
 
-  const load = useCallback(async () => {
+  const loadEvents = useCallback(async () => {
     setError(null);
     try {
-      const [rulesRes, eventsRes] = await Promise.all([
-        fetch("/api/runtime-security/rules", { cache: "no-store" }),
-        fetch("/api/runtime-security/events?limit=1200", { cache: "no-store" }),
-      ]);
-
-      if (!rulesRes.ok || !eventsRes.ok) {
-        const body = await (rulesRes.ok ? eventsRes : rulesRes).json().catch(() => ({}));
+      const eventsRes = await fetch("/api/runtime-security/events?limit=1200", { cache: "no-store" });
+      if (!eventsRes.ok) {
+        const body = await eventsRes.json().catch(() => ({}));
         setError(body.error ?? "Runtime security data unavailable");
         return;
       }
 
-      const rulesBody = await rulesRes.json();
       const eventsBody = await eventsRes.json();
-      setRules(rulesBody.rules ?? []);
       setEvents(eventsBody.events ?? []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Runtime security data unavailable");
@@ -330,11 +325,37 @@ export default function RuntimeSecurityPanel() {
     }
   }, []);
 
+  const loadRules = useCallback(async () => {
+    setError(null);
+    try {
+      const rulesRes = await fetch("/api/runtime-security/rules", { cache: "no-store" });
+      if (!rulesRes.ok) {
+        const body = await rulesRes.json().catch(() => ({}));
+        setError(body.error ?? "Runtime security rules unavailable");
+        return;
+      }
+
+      const rulesBody = await rulesRes.json();
+      setRules(rulesBody.rules ?? []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Runtime security rules unavailable");
+    }
+  }, []);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    await Promise.all([loadRules(), loadEvents()]);
+  }, [loadEvents, loadRules]);
+
   useEffect(() => {
     load();
-    const interval = window.setInterval(load, 5000);
-    return () => window.clearInterval(interval);
-  }, [load]);
+    const eventsInterval = window.setInterval(loadEvents, 5000);
+    const rulesInterval = window.setInterval(loadRules, 30000);
+    return () => {
+      window.clearInterval(eventsInterval);
+      window.clearInterval(rulesInterval);
+    };
+  }, [load, loadEvents, loadRules]);
 
   const matchedEvents = useMemo(
     () => events.filter((event) => event.decision !== "allow"),
@@ -358,7 +379,7 @@ export default function RuntimeSecurityPanel() {
         body: JSON.stringify({ enabled: !rule.enabled }),
       });
       if (!res.ok) throw new Error("Failed to update rule");
-      await load();
+      await Promise.all([loadRules(), loadEvents()]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update rule");
     } finally {
@@ -373,7 +394,7 @@ export default function RuntimeSecurityPanel() {
         method: "DELETE",
       });
       if (!res.ok) throw new Error("Failed to delete rule");
-      await load();
+      await Promise.all([loadRules(), loadEvents()]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete rule");
     } finally {
@@ -404,7 +425,7 @@ export default function RuntimeSecurityPanel() {
       });
       if (!res.ok) throw new Error("Failed to create rule");
       setNewRule((prev) => ({ ...prev, name: "", conditionValue: "" }));
-      await load();
+      await Promise.all([loadRules(), loadEvents()]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create rule");
     } finally {
@@ -1706,6 +1727,56 @@ function Metric({ label, value }: { label: string; value: number }) {
   );
 }
 
+function PageSizeDropdown({
+  value,
+  onChange,
+}: {
+  value: (typeof RUNTIME_PAGE_SIZES)[number];
+  onChange: (value: (typeof RUNTIME_PAGE_SIZES)[number]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div
+      className="relative"
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) {
+          setOpen(false);
+        }
+      }}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className="flex h-7 min-w-16 items-center justify-between gap-2 border border-slate-800 bg-black/30 px-2 text-[10px] font-bold text-slate-300 outline-none transition-colors hover:border-slate-700 hover:text-emerald-300 focus:border-emerald-800"
+      >
+        <span>{value}</span>
+        <ChevronDown size={12} className={cn("text-slate-500 transition-transform", open && "rotate-180 text-emerald-300")} />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-10 mt-1 w-20 border border-slate-800 bg-[#050805] shadow-xl shadow-black">
+          {RUNTIME_PAGE_SIZES.map((size) => (
+            <button
+              key={size}
+              type="button"
+              onClick={() => {
+                onChange(size);
+                setOpen(false);
+              }}
+              className={cn(
+                "block h-7 w-full px-2 text-left text-[10px] font-bold text-slate-400 transition-colors hover:bg-slate-900/70 hover:text-emerald-300",
+                value === size && "bg-emerald-950/30 text-emerald-300",
+              )}
+            >
+              {size}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RuntimeEventDetailModal({
   event,
   rules,
@@ -1804,7 +1875,74 @@ function RuntimeClusterRequestsModal({
   onClose: () => void;
   onSelectEvent: (event: RuntimeRequestEvent) => void;
 }) {
-  const sortedEvents = [...cluster.events].sort((a, b) => eventTimestampMs(b) - eventTimestampMs(a));
+  const [pageSize, setPageSize] = useState<(typeof RUNTIME_PAGE_SIZES)[number]>(25);
+  const [page, setPage] = useState(1);
+  const [sortKey, setSortKey] = useState<RuntimeEventSortKey>("time");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+
+  useEffect(() => {
+    setPage(1);
+  }, [cluster.id, pageSize, sortKey, sortDirection]);
+
+  const sortedEvents = useMemo(() => {
+    const ruleName = (event: RuntimeRequestEvent) => {
+      const firstRule = event.matchedRuleIds[0] ? rules.get(event.matchedRuleIds[0]) : null;
+      return firstRule?.name ?? event.matchedRuleIds[0] ?? "";
+    };
+    const valueFor = (event: RuntimeRequestEvent): string | number => {
+      switch (sortKey) {
+        case "time": return eventTimestampMs(event);
+        case "source": return event.sourceIp ?? "";
+        case "method": return event.method ?? "";
+        case "path": return event.path ?? "";
+        case "status": return event.statusCode ?? -1;
+        case "decision": return decisionRank(event.decision);
+        case "rule": return ruleName(event);
+      }
+    };
+
+    return cluster.events.slice().sort((a, b) => {
+      const av = valueFor(a);
+      const bv = valueFor(b);
+      const result = typeof av === "number" && typeof bv === "number"
+        ? av - bv
+        : String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: "base" });
+      return sortDirection === "asc" ? result : -result;
+    });
+  }, [cluster.events, rules, sortDirection, sortKey]);
+
+  const totalPages = Math.max(1, Math.ceil(sortedEvents.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const start = (currentPage - 1) * pageSize;
+  const pageEvents = sortedEvents.slice(start, start + pageSize);
+
+  useEffect(() => {
+    setPage((value) => Math.min(value, totalPages));
+  }, [totalPages]);
+
+  const setSort = (key: RuntimeEventSortKey) => {
+    if (sortKey === key) {
+      setSortDirection((direction) => direction === "asc" ? "desc" : "asc");
+      return;
+    }
+    setSortKey(key);
+    setSortDirection(key === "time" ? "desc" : "asc");
+  };
+
+  const header = (key: RuntimeEventSortKey, label: string) => (
+    <button
+      type="button"
+      onClick={() => setSort(key)}
+      className={cn(
+        "flex items-center gap-1 text-left uppercase tracking-widest transition-colors hover:text-slate-300",
+        sortKey === key ? "text-emerald-300" : "text-slate-600",
+      )}
+    >
+      <span>{label}</span>
+      {sortKey === key && <span className="text-[8px]">{sortDirection === "asc" ? "ASC" : "DESC"}</span>}
+    </button>
+  );
+
   return (
     <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
       <div className="flex max-h-[82vh] w-full max-w-4xl flex-col border border-slate-700 bg-[#050805] shadow-2xl shadow-black">
@@ -1830,27 +1968,65 @@ function RuntimeClusterRequestsModal({
 
         <div className="overflow-y-auto p-4">
           <div className="overflow-hidden border border-slate-800/70">
-            <div className="grid grid-cols-[82px_120px_76px_minmax(180px,1fr)_118px_160px] gap-2 border-b border-slate-800/70 px-3 py-2 text-[9px] uppercase tracking-widest text-slate-600">
-              <span>Time</span>
-              <span>Source</span>
-              <span>Method</span>
-              <span>Path</span>
-              <span>Decision</span>
-              <span>Matched Rule</span>
+            <div className="flex flex-wrap items-center gap-2 border-b border-slate-800/70 px-3 py-2">
+              <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-slate-600">
+                <span>Rows</span>
+                <PageSizeDropdown
+                  value={pageSize}
+                  onChange={setPageSize}
+                />
+                <button
+                  type="button"
+                  onClick={() => setSortDirection((direction) => direction === "asc" ? "desc" : "asc")}
+                  className="h-7 border border-slate-800 bg-black/30 px-2 text-[10px] font-bold text-slate-300 transition-colors hover:text-emerald-300"
+                >
+                  {sortDirection === "asc" ? "ASC" : "DESC"}
+                </button>
+              </div>
+              <div className="ml-auto flex items-center gap-2 text-[10px] uppercase tracking-widest text-slate-600">
+                <span>{sortedEvents.length === 0 ? "0" : `${start + 1}-${Math.min(start + pageSize, sortedEvents.length)}`} / {sortedEvents.length}</span>
+                <button
+                  type="button"
+                  onClick={() => setPage((value) => Math.max(1, value - 1))}
+                  disabled={currentPage <= 1}
+                  className="h-7 border border-slate-800 bg-black/30 px-2 font-bold text-slate-300 transition-colors hover:text-emerald-300 disabled:cursor-not-allowed disabled:text-slate-700"
+                >
+                  Prev
+                </button>
+                <span className="font-mono text-slate-500">{currentPage}/{totalPages}</span>
+                <button
+                  type="button"
+                  onClick={() => setPage((value) => Math.min(totalPages, value + 1))}
+                  disabled={currentPage >= totalPages}
+                  className="h-7 border border-slate-800 bg-black/30 px-2 font-bold text-slate-300 transition-colors hover:text-emerald-300 disabled:cursor-not-allowed disabled:text-slate-700"
+                >
+                  Next
+                </button>
+              </div>
             </div>
-            {sortedEvents.map((event) => {
+            <div className="grid grid-cols-[82px_110px_76px_minmax(160px,1fr)_88px_118px_160px] gap-2 border-b border-slate-800/70 px-3 py-2 text-[9px]">
+              {header("time", "Time")}
+              {header("source", "Source")}
+              {header("method", "Method")}
+              {header("path", "Path")}
+              {header("status", "Status")}
+              {header("decision", "Decision")}
+              {header("rule", "Matched Rule")}
+            </div>
+            {pageEvents.map((event) => {
               const firstRule = event.matchedRuleIds[0] ? rules.get(event.matchedRuleIds[0]) : null;
               return (
                 <button
                   key={`cluster-${cluster.id}-${event.id}`}
                   type="button"
                   onClick={() => onSelectEvent(event)}
-                  className="grid w-full grid-cols-[82px_120px_76px_minmax(180px,1fr)_118px_160px] items-center gap-2 border-b border-slate-900 px-3 py-2 text-left text-[11px] transition-colors last:border-b-0 hover:bg-slate-900/45"
+                  className="grid w-full grid-cols-[82px_110px_76px_minmax(160px,1fr)_88px_118px_160px] items-center gap-2 border-b border-slate-900 px-3 py-2 text-left text-[11px] transition-colors last:border-b-0 hover:bg-slate-900/45"
                 >
                   <span className="font-mono text-slate-500">{formatTime(event.ts)}</span>
                   <span className="truncate font-mono text-slate-400">{event.sourceIp ?? "-"}</span>
                   <span className="font-mono font-bold text-emerald-300">{event.method ?? "HTTP"}</span>
                   <span className="truncate font-mono text-slate-300">{event.path ?? "/"}</span>
+                  <span className="font-mono text-slate-400">{event.statusCode ?? "-"}</span>
                   <span className={cn("w-fit border px-2 py-1 text-[9px] font-bold uppercase tracking-widest", decisionClass(event.decision))}>
                     {event.decision.replace("_", " ")}
                   </span>
@@ -1948,29 +2124,10 @@ function RuntimeEventTable({
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-800/70 px-3 py-2">
         <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-slate-600">
           <span>Rows</span>
-          <select
+          <PageSizeDropdown
             value={pageSize}
-            onChange={(event) => setPageSize(Number(event.target.value) as (typeof RUNTIME_PAGE_SIZES)[number])}
-            className="h-7 border border-slate-800 bg-black/30 px-2 text-[10px] font-bold text-slate-300 outline-none focus:border-emerald-800"
-          >
-            {RUNTIME_PAGE_SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
-          </select>
-        </div>
-        <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-slate-600">
-          <span>Sort</span>
-          <select
-            value={sortKey}
-            onChange={(event) => setSort(event.target.value as RuntimeEventSortKey)}
-            className="h-7 border border-slate-800 bg-black/30 px-2 text-[10px] font-bold text-slate-300 outline-none focus:border-emerald-800"
-          >
-            <option value="time">Time</option>
-            <option value="source">Source</option>
-            <option value="method">Method</option>
-            <option value="path">Path</option>
-            <option value="status">Status</option>
-            <option value="decision">Decision</option>
-            <option value="rule">Matched Rule</option>
-          </select>
+            onChange={setPageSize}
+          />
           <button
             type="button"
             onClick={() => setSortDirection((direction) => direction === "asc" ? "desc" : "asc")}

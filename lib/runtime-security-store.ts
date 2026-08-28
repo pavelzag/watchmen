@@ -80,6 +80,32 @@ export async function getRuntimeSecurityRules(userEmail: string): Promise<Runtim
   return result.rows.map(ruleFromRow);
 }
 
+export async function getRuntimeSecurityRulesForEvaluation(userEmail: string): Promise<RuntimeSecurityRule[]> {
+  await ensureRuntimeSecurityTables();
+  await seedDefaultRuntimeSecurityRules(userEmail);
+
+  const result = await sql<RuntimeRuleRow>`
+    SELECT
+      id,
+      name,
+      enabled,
+      action,
+      condition_kind,
+      condition_value,
+      severity,
+      description,
+      created_at,
+      updated_at,
+      0::int AS match_count,
+      NULL::timestamptz AS last_matched_at
+    FROM runtime_security_rules
+    WHERE user_email = ${userEmail}
+    ORDER BY created_at ASC
+  `;
+
+  return result.rows.map(ruleFromRow);
+}
+
 export async function createRuntimeSecurityRule(
   userEmail: string,
   rule: Omit<RuntimeSecurityRule, "id"> & { id?: string },
@@ -235,7 +261,7 @@ export async function saveRuntimeRequestEvent(userEmail: string, event: RuntimeR
 
 export async function listRuntimeRequestEvents(userEmail: string, limit = 100): Promise<RuntimeRequestEvent[]> {
   await ensureRuntimeSecurityTables();
-  const rules = await getRuntimeSecurityRules(userEmail);
+  const rules = await getRuntimeSecurityRulesForEvaluation(userEmail);
 
   const persisted = await sql<RuntimeEventRow>`
     SELECT
