@@ -2,6 +2,7 @@ import {
   applyRuntimeDecision,
   classifySourceIp,
   evaluateRuntimeRules,
+  normalizeAgentEventRow,
   type RuntimeRequestEvent,
   type RuntimeSecurityRule,
 } from "./runtime-security";
@@ -121,5 +122,21 @@ describe("runtime security rule engine", () => {
     expect(event.decision).toBe("flagged");
     expect(event.sourceIpClass).toBe("public");
     expect(event.matchedRuleIds).toEqual(expect.arrayContaining(["audio", "public"]));
+  });
+
+  it("extracts forwarded source IP headers from agent payloads", () => {
+    const event = normalizeAgentEventRow({
+      id: 42,
+      received_at: "2026-08-24T00:00:00.000Z",
+      event: {
+        method: "GET",
+        path: "/api/products",
+        data: "GET /api/products HTTP/1.1\r\nX-Watchmen-Source-IP: 203.0.113.42\r\n",
+      },
+    }, rules);
+
+    expect(event.sourceIp).toBe("203.0.113.42");
+    expect(event.sourceIpClass).toBe("public");
+    expect(event.matchedRuleIds).toContain("public");
   });
 });

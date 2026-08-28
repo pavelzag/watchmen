@@ -56,9 +56,11 @@ static __always_inline int is_http_resp(const char *data, int len)
 	return data[0] == 'H' && data[1] == 'T' && data[2] == 'T' && data[3] == 'P' && data[4] == '/';
 }
 
-static __always_inline int submit_http_event(const char *data, int len)
+static __always_inline int submit_http_event(const char *data, int len, __u32 event_type)
 {
-	if (!is_http_req(data, len) && !is_http_resp(data, len))
+	if (event_type == EVENT_HTTP_REQ && !is_http_req(data, len))
+		return 0;
+	if (event_type == EVENT_HTTP_RESP && !is_http_resp(data, len))
 		return 0;
 
 	char comm[TASK_COMM_LEN];
@@ -75,7 +77,7 @@ static __always_inline int submit_http_event(const char *data, int len)
 	event->pid = bpf_get_current_pid_tgid() >> 32;
 	event->uid = bpf_get_current_uid_gid();
 	__builtin_memcpy(event->comm, comm, sizeof(event->comm));
-	event->type = is_http_req(data, len) ? EVENT_HTTP_REQ : EVENT_HTTP_RESP;
+	event->type = event_type;
 	__builtin_memcpy(event->data, data, DATA_LEN);
 	bpf_ringbuf_submit(event, 0);
 	return 0;
@@ -93,22 +95,39 @@ int trace_http_write(struct bpf_raw_tracepoint_args *ctx)
 #if defined(__TARGET_ARCH_x86)
 	unsigned long arg1 = BPF_CORE_READ(regs, si);
 	unsigned long arg2 = BPF_CORE_READ(regs, dx);
+	const long syscall_read = 0;
 	const long syscall_write = 1;
+	const long syscall_readv = 19;
 	const long syscall_sendto = 44;
+	const long syscall_recvfrom = 45;
 	const long syscall_writev = 20;
 	const long syscall_sendmsg = 46;
+	const long syscall_recvmsg = 47;
 #elif defined(__TARGET_ARCH_arm64)
 	unsigned long arg1 = BPF_CORE_READ(regs, regs[1]);
 	unsigned long arg2 = BPF_CORE_READ(regs, regs[2]);
+	const long syscall_read = 63;
 	const long syscall_write = 64;
+	const long syscall_readv = 65;
 	const long syscall_sendto = 206;
 	const long syscall_writev = 66;
+	const long syscall_recvfrom = 207;
 	const long syscall_sendmsg = 211;
+	const long syscall_recvmsg = 212;
 #else
 	return 0;
 #endif
 
 	if (!data) return 0;
+
+	if (id == syscall_read || id == syscall_recvfrom) {
+		const void *buf = (const void *)arg1;
+		unsigned long count = arg2;
+		if (count < 3 || count > 65536 || !buf) return 0;
+		read_len = count < DATA_LEN ? (int)count : DATA_LEN;
+		bpf_probe_read_user(data, read_len, buf);
+		return submit_http_event(data, read_len, EVENT_HTTP_REQ);
+	}
 
 	if (id == syscall_write || id == syscall_sendto) {
 		const void *buf = (const void *)arg1;
@@ -116,10 +135,10 @@ int trace_http_write(struct bpf_raw_tracepoint_args *ctx)
 		if (count < 3 || count > 65536 || !buf) return 0;
 		read_len = count < DATA_LEN ? (int)count : DATA_LEN;
 		bpf_probe_read_user(data, read_len, buf);
-		return submit_http_event(data, read_len);
+		return submit_http_event(data, read_len, is_http_req(data, read_len) ? EVENT_HTTP_REQ : EVENT_HTTP_RESP);
 	}
 
-	if (id == syscall_writev) {
+	if (id == syscall_readv || id == syscall_writev) {
 		unsigned long iov_ptr = arg1;
 		int iovcnt = (int)arg2;
 		if (!iov_ptr || iovcnt <= 0) return 0;
@@ -134,10 +153,12 @@ int trace_http_write(struct bpf_raw_tracepoint_args *ctx)
 
 		read_len = iov_len < DATA_LEN ? (int)iov_len : DATA_LEN;
 		bpf_probe_read_user(data, read_len, (const void *)base);
-		return submit_http_event(data, read_len);
+		if (id == syscall_readv)
+			return submit_http_event(data, read_len, EVENT_HTTP_REQ);
+		return submit_http_event(data, read_len, is_http_req(data, read_len) ? EVENT_HTTP_REQ : EVENT_HTTP_RESP);
 	}
 
-	if (id == syscall_sendmsg) {
+	if (id == syscall_recvmsg || id == syscall_sendmsg) {
 		unsigned long msg_ptr = arg1;
 		if (!msg_ptr) return 0;
 
@@ -155,7 +176,9 @@ int trace_http_write(struct bpf_raw_tracepoint_args *ctx)
 
 		read_len = iov_len < DATA_LEN ? (int)iov_len : DATA_LEN;
 		bpf_probe_read_user(data, read_len, (const void *)base);
-		return submit_http_event(data, read_len);
+		if (id == syscall_recvmsg)
+			return submit_http_event(data, read_len, EVENT_HTTP_REQ);
+		return submit_http_event(data, read_len, is_http_req(data, read_len) ? EVENT_HTTP_REQ : EVENT_HTTP_RESP);
 	}
 
 	return 0;

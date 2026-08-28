@@ -221,7 +221,10 @@ export function normalizeAgentEventRow(
   const sourceIp = stringValue(event.remoteIp)
     ?? stringValue(event.sourceIp)
     ?? stringValue(event.clientIp)
-    ?? stringValue(event["x-forwarded-for"])?.split(",")[0]?.trim();
+    ?? stringValue(event["x-forwarded-for"])?.split(",")[0]?.trim()
+    ?? headerValue(stringValue(event.data), "X-Watchmen-Source-IP")
+    ?? headerValue(stringValue(event.data), "X-Forwarded-For")
+    ?? headerValue(stringValue(event.data), "X-Real-IP");
 
   return applyRuntimeDecision({
     id: `agent-${row.id}`,
@@ -289,6 +292,13 @@ function normalizeContentType(contentType: string | undefined): string | undefin
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function headerValue(raw: string | undefined, name: string): string | undefined {
+  if (!raw) return undefined;
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = raw.match(new RegExp(`^${escapedName}\\s*:\\s*(.+)$`, "im"));
+  return match?.[1]?.split(",")[0]?.trim() || undefined;
 }
 
 function numberValue(value: unknown): number | undefined {
