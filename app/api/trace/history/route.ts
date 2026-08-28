@@ -4,6 +4,12 @@ import { ensureAgentInstallTables, sql } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
+const DEFAULT_MAX_AGE_MS = 120_000;
+
+function eventTimeMs(item: any): number {
+    return new Date(item?.received_at || item?.timestamp || item?.trace?.[0]?.time || 0).getTime();
+}
+
 export async function GET(req: NextRequest) {
     const session = await auth();
     if (!session?.user) {
@@ -12,13 +18,17 @@ export async function GET(req: NextRequest) {
 
     try {
         await ensureAgentInstallTables();
+        const maxAgeMsRaw = Number(req.nextUrl.searchParams.get("maxAgeMs") ?? DEFAULT_MAX_AGE_MS);
+        const maxAgeMs = Number.isFinite(maxAgeMsRaw) && maxAgeMsRaw > 0 ? maxAgeMsRaw : DEFAULT_MAX_AGE_MS;
+        const cutoffIso = new Date(Date.now() - maxAgeMs).toISOString();
 
         const agentEvents = await sql`
             SELECT e.id, e.agent_id, e.event, e.received_at, h.metadata->>'clusterName' AS cluster_name
             FROM agent_events e
             JOIN agent_hosts h ON h.id = e.agent_id
-            WHERE h.user_email = ${session.user.email}
-               OR h.user_email = 'system'
+            WHERE (h.user_email = ${session.user.email}
+               OR h.user_email = 'system')
+              AND e.received_at > ${cutoffIso}::timestamptz
             ORDER BY e.received_at DESC
             LIMIT 100
         `;
@@ -68,10 +78,12 @@ export async function GET(req: NextRequest) {
             const data = await resp.json();
             const processorHistory = Array.isArray(data) ? data : (data?.history || []);
             const merged = [...normalizedAgentHistory, ...processorHistory]
+                .filter((item: any) => {
+                    const ts = eventTimeMs(item);
+                    return Number.isFinite(ts) && Date.now() - ts <= maxAgeMs;
+                })
                 .sort((a: any, b: any) => {
-                    const at = new Date(a.received_at || a.timestamp || a.trace?.[0]?.time || 0).getTime();
-                    const bt = new Date(b.received_at || b.timestamp || b.trace?.[0]?.time || 0).getTime();
-                    return bt - at;
+                    return eventTimeMs(b) - eventTimeMs(a);
                 });
             return NextResponse.json(merged);
         }
@@ -87,8 +99,9 @@ export async function GET(req: NextRequest) {
                 SELECT e.id, e.agent_id, e.event, e.received_at, h.metadata->>'clusterName' AS cluster_name
                 FROM agent_events e
                 JOIN agent_hosts h ON h.id = e.agent_id
-                WHERE h.user_email = ${session.user.email}
-                   OR h.user_email = 'system'
+                WHERE (h.user_email = ${session.user.email}
+                   OR h.user_email = 'system')
+                  AND e.received_at > ${new Date(Date.now() - DEFAULT_MAX_AGE_MS).toISOString()}::timestamptz
                 ORDER BY e.received_at DESC
                 LIMIT 100
             `;

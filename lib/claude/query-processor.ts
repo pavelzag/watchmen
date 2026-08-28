@@ -31,6 +31,7 @@ export interface QueryIntent {
   | "compliance"
   | "auth_logs"
   | "request_logs"
+  | "runtime_security"
   | "connected_projects"
   | "data_sources"
   | "unknown";
@@ -83,7 +84,7 @@ Query: "${query}"
 
 Return JSON matching this exact schema:
 {
-  "queryType": "user_access" | "resource_owners" | "specific_resource_access" | "list_users" | "list_resources" | "security_findings" | "container_vulnerabilities" | "principal_overview" | "compliance" | "auth_logs" | "request_logs" | "connected_projects" | "data_sources" | "unknown",
+  "queryType": "user_access" | "resource_owners" | "specific_resource_access" | "list_users" | "list_resources" | "security_findings" | "container_vulnerabilities" | "principal_overview" | "compliance" | "auth_logs" | "request_logs" | "runtime_security" | "connected_projects" | "data_sources" | "unknown",
   "user": "<email or null>",
   "resourceType": "bucket" | "gke_cluster" | "project" | "service_account" | "vm" | "cloud_run" | "cloud_sql" | "bigquery" | "pubsub" | "secret" | "firewall" | "s3_bucket" | "ec2_instance" | "rds_instance" | "eks_cluster" | "lambda_function" | "load_balancer" | "container_image" | null,
   "resourceName": "<name or null>",
@@ -95,6 +96,7 @@ Return JSON matching this exact schema:
 queryType rules:
 - Use "auth_logs" for questions about authentication failures, login failures, access denied errors, permission denied events, or unauthorized access attempts. Set logHours to the number of hours to look back (default 2 if unspecified).
 - Use "request_logs" for questions about HTTP requests, responses, request traces, application traffic, paths, status codes, failed/error/erroneous requests, or logs for requests received since the system started.
+- Use "runtime_security" for questions about Runtime Security events, runtime request decisions, detect-only rules, matched rules, alerts, flagged requests, would-block requests, suspicious paths, suspicious source IPs, or policy engine decisions.
 - Use "connected_projects" for questions about the state of connected cloud projects, accounts, clusters, endpoints, agents, or discovered infrastructure inventory.
 - Use "data_sources" for questions about where information is stored, where Ask AI searches, which database tables/APIs are used, or data retention/coverage.
 - Use "security_findings" for general security posture questions (firewalls, public buckets).
@@ -130,6 +132,7 @@ export async function generateAnswer(
 
   const isAuthLogs = intent.queryType === "auth_logs";
   const isRequestLogs = intent.queryType === "request_logs";
+  const isRuntimeSecurity = intent.queryType === "runtime_security";
   const isDataSources = intent.queryType === "data_sources";
   const hasGkeEndpointAnalysis = Boolean((snapshot as any).gkeEntryPoints);
   const prompt = `You are a Cloud Security analyst assistant. Answer the user's question using ONLY the provided GCP/AWS data below.
@@ -140,6 +143,7 @@ Be specific and factual. Format your answer clearly:
 - Mention the Cloud Provider (GCP or AWS) and the Project/Account ID
 ${isAuthLogs ? "- Group failures by principal, show counts, highlight any suspicious patterns (repeated failures, unknown principals, unusual IPs)\n- Show the time window and total count prominently at the top" : ""}
 ${isRequestLogs ? "- Summarize request volume, methods, paths, response status classes, clusters/hosts, and the oldest/newest timestamps covered\n- Distinguish durable agent event logs from the request processor's in-memory recent history\n- If only sampled detail is present, say so explicitly and use aggregate totals for the full log set" : ""}
+${isRuntimeSecurity ? "- Summarize runtime request decisions, matched rules, top source IPs, methods, paths, services, status classes, and the oldest/newest timestamps covered\n- Highlight flagged and would-block activity first, including rule names, severities, and reasons when available\n- Treat the policy engine as detect-only unless the provided context says otherwise\n- If only sampled detail is present, say so explicitly and use aggregate totals for the full event set" : ""}
 ${isDataSources ? "- Explain where each data category is stored or fetched from, and call out any retention or coverage limits in the provided metadata" : ""}
 ${hasGkeEndpointAnalysis ? "- For GKE endpoint questions, list each public entry point with cluster name, type, IP/name, Kubernetes service, and whether it is public. Also state if live endpoint discovery failed or was skipped." : ""}
 - If scanWarnings include grantCommands or enableApiCommand relevant to the question, include those exact commands in a fenced bash block.
@@ -172,6 +176,12 @@ function buildContext(intent: QueryIntent, snapshot: CombinedSnapshot): unknown 
     return context;
   }
 
+  if (intent.queryType === "runtime_security") {
+    context.runtimeSecurity = (snapshot as any).runtimeSecurity ?? { available: false };
+    context.sourceInventory = (snapshot as any).sourceInventory;
+    return context;
+  }
+
   if (intent.queryType === "connected_projects") {
     context.connectedProjects = buildConnectedProjectsContext(snapshot);
     context.sourceInventory = (snapshot as any).sourceInventory;
@@ -183,6 +193,7 @@ function buildContext(intent: QueryIntent, snapshot: CombinedSnapshot): unknown 
     context.sourceInventory = (snapshot as any).sourceInventory;
     context.connectedProjects = buildConnectedProjectsContext(snapshot);
     context.requestLogs = (snapshot as any).requestLogs ?? { available: false };
+    context.runtimeSecurity = (snapshot as any).runtimeSecurity ?? { available: false };
     if ((snapshot as any).gkeEntryPoints) context.gkeEndpointAnalysis = (snapshot as any).gkeEntryPoints;
     return context;
   }

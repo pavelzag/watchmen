@@ -15,6 +15,7 @@ import { useTaskCenter } from "@/components/TaskCenterProvider";
 import type { GcpSnapshot, GkeEntryPoint } from "@/lib/gcp/types";
 import type { AwsSnapshot } from "@/lib/aws/types";
 import type { LiveTraceIngressEvent } from "@/lib/live-trace-bus";
+import { debugLog, debugWarn } from "@/lib/debug";
 import CopyAiResponseButton from "@/components/CopyAiResponseButton";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -980,6 +981,26 @@ function ingressEventMatchesLiveTarget(event: LiveTraceIngressEvent, target: Liv
 
 function resolveLiveTargetNodeId(target: LiveMonitorTarget, nodes: GraphNode[]): string | undefined {
   if (target.kind === "gke") {
+    if (target.cloud === "kubernetes") {
+      if (target.pod) {
+        return nodes.find(
+          n => target.pathIds.has(n.id)
+            && n.cloud === "kubernetes"
+            && n.k8sKind === "pod"
+            && n.projectId === target.projectId
+            && n.resourceName === target.pod
+        )?.id;
+      }
+      if (target.deployment) {
+        return nodes.find(
+          n => target.pathIds.has(n.id)
+            && n.cloud === "kubernetes"
+            && (n.k8sKind === "deployment" || n.k8sKind === "daemonset" || n.k8sKind === "statefulset")
+            && n.projectId === target.projectId
+            && n.resourceName === target.deployment
+        )?.id;
+      }
+    }
     return nodes.find(
       n => target.pathIds.has(n.id) && (n.cloud ?? "gcp") === (target.cloud ?? "gcp") && n.type === "sidecar" && n.projectId === target.projectId && n.container === target.container
     )?.id ?? nodes.find(
@@ -1006,6 +1027,14 @@ function resolveLiveEventNodeIdFromIngress(event: LiveTraceIngressEvent, nodes: 
   if (target.kind === "vm") {
     return nodes.find(
       n => (n.cloud ?? "gcp") === event.cloud && n.type === "vm" && n.projectId === target.projectId && n.resourceName === target.instance
+    )?.id;
+  }
+  if (event.cloud === "kubernetes") {
+    return nodes.find(
+      n => n.cloud === "kubernetes"
+        && n.projectId === target.projectId
+        && (n.k8sKind === "deployment" || n.k8sKind === "daemonset" || n.k8sKind === "statefulset" || n.k8sKind === "pod")
+        && n.resourceName === event.resourceName
     )?.id;
   }
   return nodes.find(
@@ -1222,7 +1251,13 @@ function extractQuotedLogField(raw: string | undefined, name: string): string | 
   if (!raw) return undefined;
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const match = raw.match(new RegExp(`${escaped}="([^"]*)"`, "i"));
-  return match?.[1]?.trim() || undefined;
+  return normalizeLogField(match?.[1]);
+}
+
+function normalizeLogField(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed || trimmed === "-" || trimmed.toLowerCase() === "unknown") return undefined;
+  return trimmed;
 }
 
 function hasSyntheticExternalGeoMarker(raw: string | undefined): boolean {
@@ -1238,9 +1273,9 @@ function trafficOriginMatchesFilter(origin: TrafficOrigin | undefined, scope: Tr
 function getAgentEventTrafficOrigin(event: AgentEventRow): TrafficOrigin {
   const ev = event.event ?? {};
   const rawData = typeof ev.data === "string" ? ev.data : "";
-  const explicitSourceIp = extractHeaderValue(rawData, "X-Watchmen-Source-IP");
-  const forwardedFor = extractHeaderValue(rawData, "X-Forwarded-For");
-  const realIp = extractHeaderValue(rawData, "X-Real-IP");
+  const explicitSourceIp = normalizeLogField(extractHeaderValue(rawData, "X-Watchmen-Source-IP"));
+  const forwardedFor = normalizeLogField(extractHeaderValue(rawData, "X-Forwarded-For"));
+  const realIp = normalizeLogField(extractHeaderValue(rawData, "X-Real-IP"));
   const origin = classifyIpTrafficOrigin(explicitSourceIp ?? forwardedFor ?? realIp);
   if (origin !== "unknown") return origin;
   if (hasSyntheticExternalGeoMarker(rawData) || hasSyntheticExternalGeoMarker(ev.path)) return "external";
@@ -1250,11 +1285,11 @@ function getAgentEventTrafficOrigin(event: AgentEventRow): TrafficOrigin {
 function getLogEntryTrafficOrigin(entry: LogEntry): TrafficOrigin {
   const details = parseCapturedHttpDetails(entry.message);
   const headers = details?.headers;
-  const explicitSourceIp = headerValue(headers, "X-Watchmen-Source-IP")
+  const explicitSourceIp = normalizeLogField(headerValue(headers, "X-Watchmen-Source-IP"))
     ?? extractQuotedLogField(entry.message, "source_ip");
-  const forwardedFor = headerValue(headers, "X-Forwarded-For")
+  const forwardedFor = normalizeLogField(headerValue(headers, "X-Forwarded-For"))
     ?? extractQuotedLogField(entry.message, "xff");
-  const realIp = headerValue(headers, "X-Real-IP")
+  const realIp = normalizeLogField(headerValue(headers, "X-Real-IP"))
     ?? extractQuotedLogField(entry.message, "real_ip");
 
   const headerOrigin = classifyIpTrafficOrigin(explicitSourceIp ?? forwardedFor ?? realIp);
@@ -1286,6 +1321,35 @@ function isExpectedAgentLiveEvent(event: AgentEventRow): boolean {
     path: ev.path,
     userAgent: extractHeaderValue(ev.data, "User-Agent"),
   });
+}
+
+// Node/control-plane processes the eBPF agent observes on every host regardless of
+// app activity (kubelet health probes, etcd/coredns self-checks, the container
+// runtime polling its own API). This is real traffic, but it isn't traffic to the
+// user's application — surfacing it as "live" makes a quiet app look perpetually
+// busy. Unlike isExpectedAgentLiveEvent, this is never let back in by the "ALL"
+// scope toggle: there's no view of "watch all app traffic" where etcd's own
+// heartbeat belongs.
+const SYSTEM_AGENT_PROCESS_COMMS = new Set([
+  "kubelet",
+  "etcd",
+  "coredns",
+  "dockerd",
+  "containerd",
+  "cri-dockerd",
+  "containerd-shim",
+  "kube-apiserver",
+  "kube-controller-manager",
+  "kube-scheduler",
+  "kube-proxy",
+  "kindnetd",
+  "local-path-provisioner",
+  "storage-provisioner",
+]);
+
+function isSystemProcessAgentEvent(event: AgentEventRow): boolean {
+  const comm = event.event?.comm;
+  return Boolean(comm && SYSTEM_AGENT_PROCESS_COMMS.has(comm));
 }
 
 function parseLiveRequestLog(entry: LogEntry): ParsedLiveRequestLog | null {
@@ -2969,6 +3033,15 @@ function NodeDetail({
     });
   }, [canHideGkeHealthLogs, hideGkeHealthLogs, logs, logMethodFilter, logSearch, logStatusFilter, trafficScope]);
 
+  const emptyLogMessage = useMemo(() => {
+    if (logs.length === 0) return "No recent logs found.";
+    if (node.cloud === "kubernetes" && trafficScope === "external") {
+      return "No outside logs for this node. Port-forward geo traffic usually appears on the frontend pod; switch to ALL to see internal pod traffic.";
+    }
+    if (trafficScope === "internal") return "No inside logs match the current filters.";
+    return "No logs match the current filter.";
+  }, [logs.length, node.cloud, trafficScope]);
+
   // Copy logs to clipboard
   const handleCopyLogs = useCallback(() => {
     const text = filteredLogs.map(l => {
@@ -3322,7 +3395,7 @@ function NodeDetail({
               <div className="border border-red-900/40 bg-red-900/10 p-2 text-red-400 text-[10px]">{logsError}</div>
             )}
             {!loadingLogs && !logsError && filteredLogs.length === 0 && (
-              <p className="text-[10px] text-slate-600">{logs.length === 0 ? "No recent logs found." : "No logs match the current filter."}</p>
+              <p className="text-[10px] text-slate-600">{emptyLogMessage}</p>
             )}
             {filteredLogs.map((l, i) => {
               const ts = l.timestamp ? new Date(l.timestamp).toLocaleTimeString() : "";
@@ -3836,6 +3909,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const [liveEvents, setLiveEvents] = useState<LiveEvent[]>([]);
   const [livePulseBursts, setLivePulseBursts] = useState<LivePulseBurst[]>([]);
   const [selectedLiveEvent, setSelectedLiveEvent] = useState<LiveEvent | null>(null);
+  const seenLiveEventIdsRef = useRef<Set<string>>(new Set());
   const livePulseTimeoutsRef = useRef<Map<string, number>>(new Map());
   const liveStreamingLastEventAtRef = useRef(0);
   const lastAppliedScanTaskIdRef = useRef<string | null>(null);
@@ -4092,11 +4166,22 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { setGraphFullscreen(false); setSelectedNode(null); setShowResponse(true); }
+      if (e.key !== "Escape") return;
+      if (selectedNode) {
+        e.preventDefault();
+        setSelectedNode(null);
+        setShowResponse(true);
+        return;
+      }
+      if (graphFullscreen) {
+        e.preventDefault();
+        setGraphFullscreen(false);
+        setShowResponse(true);
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, []);
+  }, [graphFullscreen, selectedNode]);
 
   // Clear hover when leaving fullscreen
   useEffect(() => { if (!graphFullscreen) setHoveredNode(null); }, [graphFullscreen]);
@@ -4248,6 +4333,11 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       if (matchedTarget) return matchedTarget;
     }
 
+    if (selectedNode) {
+      const selectedTarget = pickTarget(buildPathForNode(selectedNode.id, edges));
+      if (selectedTarget) return selectedTarget;
+    }
+
     for (const node of nodes) {
       if (
         (node.type === "gke" && node.projectId) ||
@@ -4260,8 +4350,18 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     }
 
     return null;
-  }, [activePath, edges, endpointCloud, nodeContainers, nodes, traceSourceConfig?.gkeSource]);
-  const hasFocusedLiveTarget = Boolean(url.trim() && activePath.size > 1 && liveMonitorTarget);
+  }, [activePath, edges, endpointCloud, nodeContainers, nodes, selectedNode, traceSourceConfig?.gkeSource]);
+  const hasFocusedLiveTarget = Boolean(((url.trim() && activePath.size > 1) || selectedNode) && liveMonitorTarget);
+
+  useEffect(() => {
+    liveLastTsByTarget.current = {};
+    liveLastAgentEventAtRef.current = "";
+    livePollCursorRef.current = 0;
+    liveTimestamps.current = [];
+    seenLiveEventIdsRef.current.clear();
+    setLiveEvents([]);
+    setLiveRps(null);
+  }, [liveMonitorTarget ? liveTargetKey(liveMonitorTarget) : "", liveScope]);
 
   const responseRouteNodes = useMemo(() => {
     const targetNode = activeTargetNodeFromPath(activePath, nodes);
@@ -4463,7 +4563,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   }, [edges, nodeContainers, nodes, traceSourceConfig?.gkeSource]);
 
   useEffect(() => {
-    console.info("[trace/live] target inventory", {
+    debugLog("trace/live", "target inventory", {
       endpointCloud,
       nodeCount: nodes.length,
       edgeCount: edges.length,
@@ -4673,7 +4773,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
   useEffect(() => {
     const useStreamingLive = endpointCloud === "aws" || shouldUseStreamingLive(demoMode, traceSourceConfig);
-    console.info("[trace/live] streaming effect evaluated", {
+    debugLog("trace/live", "streaming effect evaluated", {
       endpointCloud,
       liveMode,
       useStreamingLive,
@@ -4684,36 +4784,36 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     });
     if (!useStreamingLive || !liveMode) return;
 
-    console.info("[trace/live] opening event source", {
+    debugLog("trace/live", "opening event source", {
       endpointCloud,
       liveScope,
       target: liveMonitorTarget ? serializeLiveTraceTarget(liveMonitorTarget) : null,
     });
     const eventSource = new EventSource("/api/trace/live");
     eventSource.addEventListener("open", () => {
-      console.info("[trace/live] event source open", { endpointCloud, liveScope });
+      debugLog("trace/live", "event source open", { endpointCloud, liveScope });
     });
     eventSource.addEventListener("ready", (rawEvent) => {
-      console.info("[trace/live] event source ready", {
+      debugLog("trace/live", "event source ready", {
         endpointCloud,
         data: (rawEvent as MessageEvent).data,
       });
     });
     eventSource.addEventListener("reconnect", (rawEvent) => {
-      console.info("[trace/live] event source reconnect requested", {
+      debugLog("trace/live", "event source reconnect requested", {
         endpointCloud,
         data: (rawEvent as MessageEvent).data,
       });
     });
     eventSource.addEventListener("error", (event) => {
       if (eventSource.readyState === EventSource.CONNECTING) {
-        console.info("[trace/live] event source reconnecting", {
+        debugLog("trace/live", "event source reconnecting", {
           endpointCloud,
           readyState: eventSource.readyState,
         });
         return;
       }
-      console.error("[trace/live] event source error", {
+      debugWarn("trace/live", "event source error", {
         endpointCloud,
         readyState: eventSource.readyState,
         event,
@@ -4721,7 +4821,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     });
     eventSource.addEventListener("trace", (rawEvent) => {
       const parsed = JSON.parse((rawEvent as MessageEvent).data) as LiveTraceIngressEvent;
-      console.info("[trace/live] trace event received", {
+      debugLog("trace/live", "trace event received", {
         eventId: parsed.id,
         cloud: parsed.cloud,
         kind: parsed.kind,
@@ -4734,7 +4834,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       });
       liveStreamingLastEventAtRef.current = Date.now();
       if (parsed.cloud === "aws" && endpointCloud !== "aws") {
-        console.info("[trace/live] trace event filtered", {
+        debugLog("trace/live", "trace event filtered", {
           reason: "aws_event_while_not_in_aws_view",
           eventCloud: parsed.cloud,
           endpointCloud,
@@ -4742,7 +4842,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
         return;
       }
       if (parsed.cloud === "gcp" && sourceForKind(parsed.kind, traceSourceConfig) !== "pubsub") {
-        console.info("[trace/live] trace event filtered", {
+        debugLog("trace/live", "trace event filtered", {
           reason: "gcp_event_not_pubsub_source",
           eventCloud: parsed.cloud,
           source: sourceForKind(parsed.kind, traceSourceConfig),
@@ -4752,12 +4852,30 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
       const uiEvent = toLiveEventFromIngress(parsed, nodes);
       const nowMs = eventTimestampMs(uiEvent.ts) || Date.now();
+
+      if (Date.now() - nowMs > LIVE_EVENT_RETENTION_MS) {
+        debugLog("trace/live", "trace event filtered", {
+          reason: "stale_replayed_event",
+          eventId: parsed.id,
+          ageMs: Date.now() - nowMs,
+        });
+        return;
+      }
+      if (seenLiveEventIdsRef.current.has(uiEvent.id)) {
+        debugLog("trace/live", "trace event filtered", {
+          reason: "duplicate_event",
+          eventId: uiEvent.id,
+        });
+        return;
+      }
+      seenLiveEventIdsRef.current.add(uiEvent.id);
+
       liveTimestamps.current.push(nowMs);
       liveTimestamps.current = liveTimestamps.current.filter(t => nowMs - t < 60_000);
       setLiveRps(estimateRateFromTimestamps(liveTimestamps.current, nowMs, LIVE_RPS_WINDOW_MS));
 
       if (liveScope !== "all" && isExpectedLiveRequest({ path: parsed.path, userAgent: parsed.userAgent })) {
-        console.info("[trace/live] trace event filtered", {
+        debugLog("trace/live", "trace event filtered", {
           reason: "expected_request_hidden_in_active_scope",
           path: parsed.path,
           userAgent: parsed.userAgent,
@@ -4768,7 +4886,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
       if (liveScope === "active" && hasFocusedLiveTarget && liveMonitorTarget) {
         if (!ingressEventMatchesLiveTarget(parsed, liveMonitorTarget)) {
-          console.info("[trace/live] trace event filtered", {
+          debugLog("trace/live", "trace event filtered", {
             reason: "does_not_match_active_target",
             eventKey: liveTargetKeyFromIngressEvent(parsed),
             activeTargetKey: liveTargetKey(liveMonitorTarget),
@@ -4786,7 +4904,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       if (liveAnimEnabledRef.current) {
         const pathIds = buildPathForIngressEvent(parsed, nodes, edges, liveMonitorTarget);
         if (!pathIds) {
-          console.info("[trace/live] trace event has no graph path", {
+          debugLog("trace/live", "trace event has no graph path", {
             eventId: parsed.id,
             cloud: parsed.cloud,
             kind: parsed.kind,
@@ -4795,7 +4913,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
           });
           return;
         }
-        console.info("[trace/live] emitting pulse", {
+        debugLog("trace/live", "emitting pulse", {
           eventId: parsed.id,
           pathIds: [...pathIds],
         });
@@ -4804,7 +4922,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     });
 
     return () => {
-      console.info("[trace/live] closing event source", { endpointCloud, liveScope });
+      debugLog("trace/live", "closing event source", { endpointCloud, liveScope });
       eventSource.close();
     };
   }, [allLiveMonitorTargets, demoMode, edges, emitLivePulseBurst, endpointCloud, hasFocusedLiveTarget, liveMode, liveMonitorTarget, liveScope, nodes, traceSourceConfig]);
@@ -4816,11 +4934,22 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     if (demoMode) return;
     const clusterId = selectedK8sClusterId ?? k8sClusters[0]?.id ?? null;
     if (!clusterId) return;
+    const startTs = new Date().toISOString();
     let cancelled = false;
     let consecutiveTimeouts = 0;
     const poll = async () => {
       try {
-        const params = new URLSearchParams({ limit: "100", deployment: "watchmen-shop-frontend" });
+        const params = new URLSearchParams({ limit: "100" });
+        if (liveMonitorTarget?.cloud === "kubernetes" && liveMonitorTarget.kind === "gke") {
+          if (liveMonitorTarget.namespace) params.set("namespace", liveMonitorTarget.namespace);
+          if (liveMonitorTarget.pod) params.set("pod", liveMonitorTarget.pod);
+          else if (liveMonitorTarget.deployment) params.set("deployment", liveMonitorTarget.deployment);
+          else params.set("deployment", liveMonitorTarget.resourceName ?? liveMonitorTarget.container ?? "watchmen-shop-frontend");
+          if (liveMonitorTarget.container) params.set("container", liveMonitorTarget.container);
+        } else {
+          params.set("deployment", "watchmen-shop-frontend");
+        }
+        params.set("after", startTs);
         const url = `/api/kubernetes/clusters/${clusterId}/logs?${params}`;
         const controller = new AbortController();
         const t = setTimeout(() => controller.abort(), 12000);
@@ -4843,13 +4972,12 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
           const msg: string = e.message ?? "";
           const traceId = extractTraceIdFromText(msg);
           if (!traceId) continue;
-          if (seenK8sTraceIdsRef.current.has(traceId)) continue;
-          seenK8sTraceIdsRef.current.add(traceId);
-          // keep set bounded
-          if (seenK8sTraceIdsRef.current.size > 500) {
-            const first = seenK8sTraceIdsRef.current.values().next().value;
-            if (first) seenK8sTraceIdsRef.current.delete(first);
-          }
+          // The backend returns the pod's log tail with no "since" cursor, so on the
+          // first poll after (re)enabling LIVE it can include lines from well before
+          // now (e.g. the last requests a test-traffic generator sent before it was
+          // scaled down). Those are real but stale — don't surface them as live traffic.
+          const entryTsMs = e.timestamp ? Date.parse(e.timestamp) : NaN;
+          if (Number.isFinite(entryTsMs) && Date.now() - entryTsMs > LIVE_EVENT_RETENTION_MS) continue;
           // Parse method/path/status from nginx log: "GET /api/products?demo_trace_id=... HTTP/1.1" 200
           let method: string | undefined;
           let path: string | undefined;
@@ -4861,6 +4989,18 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
             status = Number(mp[3]);
           }
           const clusterName = localKubernetesResources?.cluster.clusterName ?? k8sClusters.find(c => c.id === clusterId)?.name ?? "local-kubernetes";
+          const trafficOrigin = getLogEntryTrafficOrigin({
+            timestamp: e.timestamp ?? new Date().toISOString(),
+            severity: "INFO",
+            message: msg,
+          });
+          if (seenK8sTraceIdsRef.current.has(traceId)) continue;
+          seenK8sTraceIdsRef.current.add(traceId);
+          // keep set bounded
+          if (seenK8sTraceIdsRef.current.size > 500) {
+            const first = seenK8sTraceIdsRef.current.values().next().value;
+            if (first) seenK8sTraceIdsRef.current.delete(first);
+          }
           const uiEvent = {
             id: `k8s-log:${traceId}`,
             ts: e.timestamp ?? new Date().toISOString(),
@@ -4872,15 +5012,14 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
             path,
             status,
             count: 1,
-            trafficOrigin: getLogEntryTrafficOrigin({
-              timestamp: e.timestamp ?? new Date().toISOString(),
-              severity: "INFO",
-              message: msg,
-            }),
+            trafficOrigin,
           };
           newEvents.push(uiEvent);
-          if (liveAnimEnabledRef.current) {
-            const pathIds = buildPathForIngressEvent({ cloud: "kubernetes", kind: "gke", projectId: clusterName, resourceName: "watchmen-shop-frontend", method, path, status } as unknown as LiveTraceIngressEvent, nodes, edges, liveMonitorTarget);
+          if (liveAnimEnabledRef.current && trafficOriginMatchesFilter(trafficOrigin, trafficScope)) {
+            const resourceName = liveMonitorTarget?.cloud === "kubernetes" && liveMonitorTarget.kind === "gke"
+              ? liveMonitorTarget.resourceName ?? liveMonitorTarget.deployment ?? liveMonitorTarget.pod ?? "watchmen-shop-frontend"
+              : "watchmen-shop-frontend";
+            const pathIds = buildPathForIngressEvent({ cloud: "kubernetes", kind: "gke", projectId: clusterName, resourceName, method, path, status } as unknown as LiveTraceIngressEvent, nodes, edges, liveMonitorTarget);
             if (pathIds) emitLivePulseBurst(pathIds);
           }
         }
@@ -4900,7 +5039,23 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     poll();
     const id = window.setInterval(poll, 4000);
     return () => { cancelled = true; window.clearInterval(id); };
-  }, [endpointCloud, liveMode, demoMode, selectedK8sClusterId, k8sClusters, localKubernetesResources, nodes, edges, liveMonitorTarget, emitLivePulseBurst]);
+  }, [endpointCloud, liveMode, demoMode, selectedK8sClusterId, k8sClusters, localKubernetesResources, nodes, edges, liveMonitorTarget, emitLivePulseBurst, trafficScope]);
+
+  // ── Age out live events on a timer, independent of whether new traffic arrives ──
+  // (each ingestion path above already filters new events by age, but without this,
+  // events already in state only get pruned as a *side effect* of a new event coming
+  // in — so once a source goes quiet, whatever it last reported keeps showing forever.)
+  useEffect(() => {
+    if (!liveMode) return;
+    const id = window.setInterval(() => {
+      const nowMs = Date.now();
+      setLiveEvents(prev => {
+        const retained = prev.filter(event => nowMs - eventTimestampMs(event.ts) < LIVE_EVENT_RETENTION_MS);
+        return retained.length === prev.length ? prev : retained;
+      });
+    }, 5000);
+    return () => window.clearInterval(id);
+  }, [liveMode]);
 
   // ── Demo simulation: auto-animate traffic through topology ──────────────────
   useEffect(() => {
@@ -5015,6 +5170,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       livePollCursorRef.current = 0;
       liveCooldownUntilRef.current = 0;
       liveTimestamps.current = [];
+      seenLiveEventIdsRef.current.clear();
       setLiveRps(null);
       setLiveEvents([]);
       return;
@@ -5092,7 +5248,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                 : target.cloud === "kubernetes"
                   ? "/api/kubernetes/local/logs"
                   : "/api/gcp/logs";
-              console.info("[trace/live] polling target logs", {
+              debugLog("trace/live", "polling target logs", {
                 endpointCloud,
                 logsEndpoint,
                 target: serializeLiveTraceTarget(target),
@@ -5106,7 +5262,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                 return { target, entries: [] as LogEntry[], rateLimited: true };
               }
               if (!res.ok) {
-                console.warn("[trace/live] target log poll failed", {
+                debugWarn("trace/live", "target log poll failed", {
                   endpointCloud,
                   logsEndpoint,
                   target: serializeLiveTraceTarget(target),
@@ -5116,7 +5272,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                 return { target, entries: [] as LogEntry[], rateLimited: false };
               }
               const entries: LogEntry[] = data.entries ?? [];
-              console.info("[trace/live] target log poll complete", {
+              debugLog("trace/live", "target log poll complete", {
                 endpointCloud,
                 logsEndpoint,
                 target: serializeLiveTraceTarget(target),
@@ -5141,6 +5297,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
         const rawEntries = results.flatMap(result => result.entries);
         const rawAgentEvents = agentEvents.filter(event => {
+          if (isSystemProcessAgentEvent(event)) return false;
           const tsMs = eventTimestampMs(event.received_at);
           return tsMs > 0 && pollNowMs - tsMs <= LIVE_EVENT_FRESHNESS_MS;
         });
@@ -5155,6 +5312,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
         }));
         const allEntries = filteredResults.flatMap(result => result.entries);
         const freshAgentEvents = agentEvents.filter(event => {
+          if (isSystemProcessAgentEvent(event)) return false;
           const tsMs = eventTimestampMs(event.received_at);
           return tsMs > 0
             && pollNowMs - tsMs <= LIVE_EVENT_FRESHNESS_MS
@@ -5188,11 +5346,19 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
             .map(event => toLiveEventFromAgentEvent(event, nodes))
             .filter(event => event.focusNodeId);
           const mergedNewEvents = [...newEvents, ...agentLiveEvents]
+            .filter(event => trafficOriginMatchesFilter(event.trafficOrigin, trafficScope))
             .sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
-          if (mergedNewEvents.length > 0) {
+          const unseenEvents = mergedNewEvents.filter(event => !seenLiveEventIdsRef.current.has(event.id));
+          unseenEvents.forEach(event => seenLiveEventIdsRef.current.add(event.id));
+          while (seenLiveEventIdsRef.current.size > 1000) {
+            const first = seenLiveEventIdsRef.current.values().next().value;
+            if (!first) break;
+            seenLiveEventIdsRef.current.delete(first);
+          }
+          if (unseenEvents.length > 0) {
             setLiveEvents(prev => {
               const retainedPrev = prev.filter(event => pollNowMs - eventTimestampMs(event.ts) < LIVE_EVENT_RETENTION_MS);
-              const merged = [...mergedNewEvents, ...retainedPrev];
+              const merged = [...unseenEvents, ...retainedPrev];
               const deduped: LiveEvent[] = [];
               const seen = new Set<string>();
               for (const event of merged) {
@@ -5204,36 +5370,24 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
               return deduped;
             });
           }
-          if (liveAnimEnabledRef.current) {
+          if (liveAnimEnabledRef.current && unseenEvents.length > 0) {
             busy = true;
-            const targetsWithHits = filteredResults.filter(result => result.entries.length > 0);
-            if (targets.length === 1) {
-              const [{ target, entries }] = targetsWithHits;
-              if (target) {
-                const pulses = Math.min(Math.max(1, Math.ceil(entries.length / 2)), 8);
-                for (let p = 0; p < pulses; p++) {
-                  if (!liveModeRef.current) break;
-                  if (p > 0) await sleep(180);
-                  await runBfsAnimation(target.pathIds, { colDelay: 110, resetAfterMs: 450 });
-                }
-              }
-            } else {
-              const animatedTargets = targetsWithHits
-                .sort((a, b) => b.entries.length - a.entries.length)
-                .slice(0, 8);
-              for (let i = 0; i < animatedTargets.length; i++) {
-                if (!liveModeRef.current) break;
-                if (i > 0) await sleep(140);
-                await runBfsAnimation(animatedTargets[i].target.pathIds, { colDelay: 110, resetAfterMs: 420 });
-              }
-            }
-            const animatedAgentEvents = freshAgentEvents.slice(0, 8);
-            for (let i = 0; i < animatedAgentEvents.length; i++) {
+            const animatedPaths: Set<string>[] = [];
+            const animatedPathKeys = new Set<string>();
+            unseenEvents.forEach(event => {
+              const pathIds = event.focusNodeId
+                ? buildPathForNode(event.focusNodeId, edges)
+                : null;
+              if (!pathIds) return;
+              const key = [...pathIds].sort().join("|");
+              if (animatedPathKeys.has(key)) return;
+              animatedPathKeys.add(key);
+              animatedPaths.push(pathIds);
+            });
+            for (let i = 0; i < Math.min(animatedPaths.length, 8); i++) {
               if (!liveModeRef.current) break;
-              const pathIds = buildPathForAgentEvent(animatedAgentEvents[i], nodes, edges, liveMonitorTarget);
-              if (!pathIds) continue;
               if (i > 0) await sleep(140);
-              await runBfsAnimation(pathIds, { colDelay: 110, resetAfterMs: 420 });
+              await runBfsAnimation(animatedPaths[i], { colDelay: 110, resetAfterMs: 420 });
             }
             busy = false;
           }
@@ -5245,7 +5399,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     const id = setInterval(poll, pollIntervalMs);
     poll(); // immediate first check
     return () => { clearInterval(id); };
-  }, [allLiveMonitorTargets, demoMode, endpointCloud, k8sClusters, liveMode, liveMonitorTarget, liveScope, localKubernetesResources?.cluster.clusterName, nodes, runBfsAnimation, selectedK8sClusterId, traceSourceConfig]);
+  }, [allLiveMonitorTargets, demoMode, edges, endpointCloud, k8sClusters, liveMode, liveMonitorTarget, liveScope, localKubernetesResources?.cluster.clusterName, nodes, runBfsAnimation, selectedK8sClusterId, traceSourceConfig, trafficScope]);
 
   useEffect(() => {
     if (!demoMode || !liveMode || demoLiveTargets.length === 0) return;
@@ -5306,7 +5460,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   const handleSend = useCallback(async () => {
     const targetUrls = [selectedEndpointUrl ?? url.trim()].filter(Boolean);
     if (sending || targetUrls.length === 0) {
-      console.info("[trace/send] skipped", {
+      debugLog("trace/send", "skipped", {
         sending,
         targetUrlCount: targetUrls.length,
         endpointCloud,
@@ -5319,7 +5473,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     const invalidUrl = targetUrls.find(targetUrl => getProxyUrlValidationError(targetUrl, endpointCloud));
     const validationError = invalidUrl ? getProxyUrlValidationError(invalidUrl, endpointCloud) : null;
     if (validationError) {
-      console.warn("[trace/send] validation failed", {
+      debugWarn("trace/send", "validation failed", {
         endpointCloud,
         invalidUrl,
         validationError,
@@ -5352,7 +5506,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
       "X-Demo-Trace-Id": traceId,
     };
     const requestUrls = targetUrls.map((targetUrl) => withDemoTraceId(targetUrl, traceId));
-    console.info("[trace/send] proxy request prepared", {
+    debugLog("trace/send", "proxy request prepared", {
       endpointCloud,
       method,
       targetUrls: requestUrls,
@@ -5398,7 +5552,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     // Wait for HTTP response
     try {
       const result = await httpPromise;
-      console.info("[trace/send] proxy response", {
+      debugLog("trace/send", "proxy response", {
         endpointCloud,
         ok: result.ok,
         status: result.status,
@@ -5417,7 +5571,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
         }
       }
     } catch (err: any) {
-      console.error("[trace/send] proxy request failed", {
+      debugWarn("trace/send", "proxy request failed", {
         endpointCloud,
         error: err?.message ?? String(err),
       });

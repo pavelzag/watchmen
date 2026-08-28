@@ -10,6 +10,19 @@ REQUESTS="40"
 PAUSE="0.2"
 METHOD="GET"
 PATHS=("/" "/healthz" "/api/products" "/api/cart" "/api/checkout")
+SOURCE_IP=""
+EXTERNAL=0
+
+# A small pool of real, publicly-routable IPs (public DNS resolvers / anycast
+# services) used to tag requests as coming from "outside" when --external is
+# passed without a specific --source-ip. Rotated per request for variety.
+EXTERNAL_IP_POOL=(
+  "8.8.8.8"       # Google DNS, US
+  "1.1.1.1"       # Cloudflare, global anycast
+  "9.9.9.9"       # Quad9, Switzerland
+  "208.67.222.222" # OpenDNS, US
+  "203.0.113.42"  # TEST-NET-3 documentation range, used here as a generic "external" stand-in
+)
 
 usage() {
   cat <<'USAGE'
@@ -28,12 +41,19 @@ Options:
   --pause=SECONDS      Delay between requests. Default: 0.2.
   --method=METHOD      HTTP method. Default: GET.
   --path=PATH          Path to request. Can be repeated. Overrides defaults.
-  -h, --help           Show this help.
+  --external           Tag requests as coming from outside the cluster, rotating
+                        through a small pool of real public IPs (X-Watchmen-Source-IP,
+                        X-Forwarded-For, X-Real-IP). Shows up under the "Outside"
+                        traffic filter in the Trace view instead of "Inside".
+  --source-ip=IP        Like --external, but tags every request with this exact IP.
+  -h, --help            Show this help.
 
 Examples:
   scripts/poll-minikube-watchmen-demo.sh
   scripts/poll-minikube-watchmen-demo.sh --requests=100 --pause=0.1
   scripts/poll-minikube-watchmen-demo.sh --context=watchmen-minikube --path=/ --path=/api/products
+  scripts/poll-minikube-watchmen-demo.sh --external --requests=30
+  scripts/poll-minikube-watchmen-demo.sh --source-ip=203.0.113.7 --path=/api/checkout
 USAGE
 }
 
@@ -81,6 +101,9 @@ while [[ "$#" -gt 0 ]]; do
       fi
       PATHS+=("$1")
       ;;
+    --external) EXTERNAL=1 ;;
+    --source-ip=*) SOURCE_IP="${arg#*=}" ;;
+    --source-ip) shift; [[ "$#" -gt 0 ]] || die "--source-ip requires a value"; SOURCE_IP="$1" ;;
     -h|--help)
       usage
       exit 0
@@ -177,7 +200,14 @@ if ! curl -fsS --max-time 2 "$BASE_URL/" >/dev/null 2>&1; then
   die "service did not respond on $BASE_URL"
 fi
 
+if [[ -n "$SOURCE_IP" ]]; then
+  EXTERNAL=1
+fi
+
 echo "sending $REQUESTS request(s)..."
+if [[ "$EXTERNAL" == "1" ]]; then
+  echo "tagging requests as external (source-ip: ${SOURCE_IP:-rotating pool})"
+fi
 
 for i in $(seq 1 "$REQUESTS"); do
   path="${PATHS[$(((i - 1) % ${#PATHS[@]}))]}"
@@ -186,6 +216,16 @@ for i in $(seq 1 "$REQUESTS"); do
   [[ "$path" == *"?"* ]] && separator="&"
   url="${BASE_URL}${path}${separator}demo_trace_id=${trace_id}&watchmen_trace_probe=${trace_id}"
 
+  external_headers=()
+  if [[ "$EXTERNAL" == "1" ]]; then
+    req_ip="${SOURCE_IP:-${EXTERNAL_IP_POOL[$(((i - 1) % ${#EXTERNAL_IP_POOL[@]}))]}}"
+    external_headers=(
+      -H "X-Watchmen-Source-IP: ${req_ip}"
+      -H "X-Forwarded-For: ${req_ip}"
+      -H "X-Real-IP: ${req_ip}"
+    )
+  fi
+
   status="$(
     curl -sS -o /dev/null -w "%{http_code}" --max-time 5 \
       -X "$METHOD" \
@@ -193,10 +233,11 @@ for i in $(seq 1 "$REQUESTS"); do
       -H "X-Watchmen-Trace-Id: ${trace_id}" \
       -H "X-Demo-Trace-Id: ${trace_id}" \
       -H "X-Watchmen-Trace-Source: local-kubernetes" \
+      "${external_headers[@]}" \
       "$url" || true
   )"
 
-  printf "%03d %s %s -> %s trace=%s\n" "$i" "$METHOD" "$path" "$status" "$trace_id"
+  printf "%03d %s %s -> %s trace=%s%s\n" "$i" "$METHOD" "$path" "$status" "$trace_id" "${req_ip:+ src=$req_ip}"
   sleep "$PAUSE"
 done
 

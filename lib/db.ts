@@ -284,7 +284,7 @@ export async function ensureTraceSourceConfigsTable(): Promise<void> {
 }
 
 /**
- * Ensures tables for v0.9 runtime request security rules and request decisions.
+ * Ensures tables for v0.8 runtime request security rules and request decisions.
  */
 export async function ensureRuntimeSecurityTables(): Promise<void> {
   if (!runtimeSecurityTablesReady) {

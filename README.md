@@ -1,6 +1,6 @@
 # Watchmen
 
-Current version: **v0.7.0**
+Current version: **v0.8.0**
 
 Cloud security posture management, compliance, and live request tracing — for AWS and GCP — in a single dashboard.
 

@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
-  ChevronDown,
   Globe2,
+  MessageSquare,
   Maximize2,
   Plus,
   RefreshCw,
@@ -21,9 +21,13 @@ import type {
   RuntimeSecurityRuleCondition,
   RuntimeSecuritySeverity,
 } from "@/lib/runtime-security";
+import { openCommandPalette } from "@/components/CommandPalette";
 
 type RuntimeTab = "requests" | "alerts" | "rules";
 type RuntimeMapWindow = "1m" | "5m" | "15m" | "1h" | "all";
+type RuntimeEventSortKey = "time" | "source" | "method" | "path" | "status" | "decision" | "rule";
+type SortDirection = "asc" | "desc";
+const RUNTIME_PAGE_SIZES = [25, 50, 100] as const;
 type GlobePoint = {
   event: RuntimeRequestEvent;
   x: number;
@@ -286,7 +290,6 @@ function windowLabel(windowValue: RuntimeMapWindow) {
 
 export default function RuntimeSecurityPanel() {
   const [tab, setTab] = useState<RuntimeTab>("requests");
-  const [collapsed, setCollapsed] = useState(true);
   const [globeExpanded, setGlobeExpanded] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<RuntimeRequestEvent | null>(null);
   const [rules, setRules] = useState<RuntimeSecurityRule[]>([]);
@@ -411,35 +414,29 @@ export default function RuntimeSecurityPanel() {
 
   return (
     <div className="mb-5 border border-slate-800/70 bg-[#050805]">
-      <button
-        type="button"
-        onClick={() => setCollapsed((value) => !value)}
-        className={cn(
-          "flex w-full flex-wrap items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-slate-900/30",
-          !collapsed && "border-b border-slate-800/70",
-        )}
-      >
+      <div className="flex w-full flex-wrap items-center gap-3 border-b border-slate-800/70 px-4 py-3 text-left">
         <div className="flex min-w-0 items-center gap-2">
           <ShieldAlert size={16} className="text-amber-300" />
           <div>
             <div className="text-xs font-bold uppercase tracking-widest text-slate-100">Runtime Security</div>
-            <div className="text-[10px] uppercase tracking-widest text-slate-600">v0.9 detect-only policy engine</div>
+            <div className="text-[10px] uppercase tracking-widest text-slate-600">v0.8 detect-only policy engine</div>
           </div>
         </div>
-
-        <div className="ml-auto flex items-center gap-2">
-          <span className="text-[10px] font-bold uppercase tracking-widest text-slate-600">
-            {collapsed ? "Show" : "Hide"}
-          </span>
-          <ChevronDown
-            size={14}
-            className={cn("text-slate-500 transition-transform", !collapsed && "rotate-180")}
-          />
+        <div className="ml-auto flex items-center gap-3">
+          <div className="text-[10px] uppercase tracking-widest text-slate-600">
+            {events.length.toLocaleString()} events · {matchedEvents.length.toLocaleString()} alerts
+          </div>
+          <button
+            type="button"
+            onClick={() => openCommandPalette("Summarize the latest Runtime Security events, matched rules, suspicious sources, and would-block decisions.")}
+            className="inline-flex items-center gap-1.5 border border-violet-800/70 bg-violet-950/20 px-2 py-1 text-[10px] font-bold uppercase tracking-widest text-violet-300 transition-colors hover:border-violet-600 hover:text-violet-100"
+          >
+            <MessageSquare size={11} />
+            Ask AI
+          </button>
         </div>
-      </button>
+      </div>
 
-      {!collapsed && (
-        <>
       <div className="border-b border-slate-800/70 px-4 py-3">
         <RuntimeRequestGlobe
           points={globePoints}
@@ -620,8 +617,6 @@ export default function RuntimeSecurityPanel() {
           </div>
         )}
       </div>
-        </>
-      )}
 
       {selectedEvent && (
         <RuntimeEventDetailModal
@@ -1061,7 +1056,7 @@ function ThreeRequestGlobe({
 
   useEffect(() => {
     const shouldReport = debug.status === "failed"
-      || debug.status !== "rendering"
+      || (debug.status !== "rendering" && debug.status !== "loading-three")
       || debug.frameCount <= 3
       || Boolean(debug.error);
     const key = `${debug.status}:${debug.webgl}:${debug.width}:${debug.height}:${debug.frameCount}:${debug.markerCount}:${debug.visibleMarkerCount}:${debug.countries}:${debug.cities}:${debug.error ?? ""}`;
@@ -1085,6 +1080,8 @@ function ThreeRequestGlobe({
     let labelRenderer: any;
     let controls: any;
     let resizeObserver: ResizeObserver | null = null;
+    let moduleLoadTimeout = 0;
+    let moduleLoadTimedOut = false;
 
     async function start() {
       const container = containerRef.current;
@@ -1100,6 +1097,14 @@ function ThreeRequestGlobe({
           width: container.clientWidth || 0,
           height: container.clientHeight || 0,
         }));
+        moduleLoadTimeout = window.setTimeout(() => {
+          moduleLoadTimedOut = true;
+          setDebug((prev) => ({
+            ...prev,
+            status: "failed",
+            error: "Timed out loading Three.js globe modules",
+          }));
+        }, 10000);
         const THREE = await import("three");
         const [{ OrbitControls }, { CSS2DRenderer }, threeGlobeModule, topojson, countriesTopology] = await Promise.all([
           import("three/examples/jsm/controls/OrbitControls.js"),
@@ -1108,7 +1113,8 @@ function ThreeRequestGlobe({
           import("topojson-client"),
           import("world-atlas/countries-110m.json"),
         ]);
-        if (disposed || !containerRef.current) return;
+        window.clearTimeout(moduleLoadTimeout);
+        if (disposed || moduleLoadTimedOut || !containerRef.current) return;
 
         setDebug((prev) => ({ ...prev, status: "checking-webgl" }));
         const probe = document.createElement("canvas");
@@ -1292,7 +1298,10 @@ function ThreeRequestGlobe({
         };
         render();
       } catch (error) {
-        console.error("[runtime-security] Three globe failed", error);
+        window.clearTimeout(moduleLoadTimeout);
+        console.warn("[runtime-security] Three globe failed, keeping fallback diagnostics visible", {
+          error: error instanceof Error ? error.message : String(error),
+        });
         setDebug((prev) => ({
           ...prev,
           status: "failed",
@@ -1305,6 +1314,7 @@ function ThreeRequestGlobe({
 
     return () => {
       disposed = true;
+      window.clearTimeout(moduleLoadTimeout);
       window.cancelAnimationFrame(animationId);
       resizeObserver?.disconnect();
       controls?.dispose?.();
@@ -1866,18 +1876,140 @@ function RuntimeEventTable({
   emptyLabel: string;
   onSelectEvent: (event: RuntimeRequestEvent) => void;
 }) {
+  const [pageSize, setPageSize] = useState<(typeof RUNTIME_PAGE_SIZES)[number]>(25);
+  const [page, setPage] = useState(1);
+  const [sortKey, setSortKey] = useState<RuntimeEventSortKey>("time");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+
+  useEffect(() => {
+    setPage(1);
+  }, [pageSize, sortKey, sortDirection]);
+
+  const sortedEvents = useMemo(() => {
+    const ruleName = (event: RuntimeRequestEvent) => {
+      const firstRule = event.matchedRuleIds[0] ? rules.get(event.matchedRuleIds[0]) : null;
+      return firstRule?.name ?? event.matchedRuleIds[0] ?? "";
+    };
+    const valueFor = (event: RuntimeRequestEvent): string | number => {
+      switch (sortKey) {
+        case "time": return eventTimestampMs(event);
+        case "source": return event.sourceIp ?? "";
+        case "method": return event.method ?? "";
+        case "path": return event.path ?? "";
+        case "status": return event.statusCode ?? -1;
+        case "decision": return decisionRank(event.decision);
+        case "rule": return ruleName(event);
+      }
+    };
+    return events.slice().sort((a, b) => {
+      const av = valueFor(a);
+      const bv = valueFor(b);
+      const result = typeof av === "number" && typeof bv === "number"
+        ? av - bv
+        : String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: "base" });
+      return sortDirection === "asc" ? result : -result;
+    });
+  }, [events, rules, sortDirection, sortKey]);
+
+  const totalPages = Math.max(1, Math.ceil(sortedEvents.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const start = (currentPage - 1) * pageSize;
+  const pageEvents = sortedEvents.slice(start, start + pageSize);
+
+  useEffect(() => {
+    setPage((value) => Math.min(value, totalPages));
+  }, [totalPages]);
+
+  const setSort = (key: RuntimeEventSortKey) => {
+    if (sortKey === key) {
+      setSortDirection((direction) => direction === "asc" ? "desc" : "asc");
+      return;
+    }
+    setSortKey(key);
+    setSortDirection(key === "time" ? "desc" : "asc");
+  };
+
+  const header = (key: RuntimeEventSortKey, label: string) => (
+    <button
+      type="button"
+      onClick={() => setSort(key)}
+      className={cn(
+        "flex items-center gap-1 text-left uppercase tracking-widest transition-colors hover:text-slate-300",
+        sortKey === key ? "text-emerald-300" : "text-slate-600",
+      )}
+    >
+      <span>{label}</span>
+      {sortKey === key && <span className="text-[8px]">{sortDirection === "asc" ? "ASC" : "DESC"}</span>}
+    </button>
+  );
+
   return (
     <div className="overflow-hidden border border-slate-800/70">
-      <div className="grid grid-cols-[82px_110px_76px_minmax(160px,1fr)_110px_118px_160px] gap-2 border-b border-slate-800/70 px-3 py-2 text-[9px] uppercase tracking-widest text-slate-600">
-        <span>Time</span>
-        <span>Source</span>
-        <span>Method</span>
-        <span>Path</span>
-        <span>Status</span>
-        <span>Decision</span>
-        <span>Matched Rule</span>
+      <div className="flex flex-wrap items-center gap-2 border-b border-slate-800/70 px-3 py-2">
+        <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-slate-600">
+          <span>Rows</span>
+          <select
+            value={pageSize}
+            onChange={(event) => setPageSize(Number(event.target.value) as (typeof RUNTIME_PAGE_SIZES)[number])}
+            className="h-7 border border-slate-800 bg-black/30 px-2 text-[10px] font-bold text-slate-300 outline-none focus:border-emerald-800"
+          >
+            {RUNTIME_PAGE_SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
+          </select>
+        </div>
+        <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-slate-600">
+          <span>Sort</span>
+          <select
+            value={sortKey}
+            onChange={(event) => setSort(event.target.value as RuntimeEventSortKey)}
+            className="h-7 border border-slate-800 bg-black/30 px-2 text-[10px] font-bold text-slate-300 outline-none focus:border-emerald-800"
+          >
+            <option value="time">Time</option>
+            <option value="source">Source</option>
+            <option value="method">Method</option>
+            <option value="path">Path</option>
+            <option value="status">Status</option>
+            <option value="decision">Decision</option>
+            <option value="rule">Matched Rule</option>
+          </select>
+          <button
+            type="button"
+            onClick={() => setSortDirection((direction) => direction === "asc" ? "desc" : "asc")}
+            className="h-7 border border-slate-800 bg-black/30 px-2 text-[10px] font-bold text-slate-300 transition-colors hover:text-emerald-300"
+          >
+            {sortDirection === "asc" ? "ASC" : "DESC"}
+          </button>
+        </div>
+        <div className="ml-auto flex items-center gap-2 text-[10px] uppercase tracking-widest text-slate-600">
+          <span>{events.length === 0 ? "0" : `${start + 1}-${Math.min(start + pageSize, sortedEvents.length)}`} / {sortedEvents.length}</span>
+          <button
+            type="button"
+            onClick={() => setPage((value) => Math.max(1, value - 1))}
+            disabled={currentPage <= 1}
+            className="h-7 border border-slate-800 bg-black/30 px-2 font-bold text-slate-300 transition-colors hover:text-emerald-300 disabled:cursor-not-allowed disabled:text-slate-700"
+          >
+            Prev
+          </button>
+          <span className="font-mono text-slate-500">{currentPage}/{totalPages}</span>
+          <button
+            type="button"
+            onClick={() => setPage((value) => Math.min(totalPages, value + 1))}
+            disabled={currentPage >= totalPages}
+            className="h-7 border border-slate-800 bg-black/30 px-2 font-bold text-slate-300 transition-colors hover:text-emerald-300 disabled:cursor-not-allowed disabled:text-slate-700"
+          >
+            Next
+          </button>
+        </div>
       </div>
-      {events.map((event) => {
+      <div className="grid grid-cols-[82px_110px_76px_minmax(160px,1fr)_110px_118px_160px] gap-2 border-b border-slate-800/70 px-3 py-2 text-[9px]">
+        {header("time", "Time")}
+        {header("source", "Source")}
+        {header("method", "Method")}
+        {header("path", "Path")}
+        {header("status", "Status")}
+        {header("decision", "Decision")}
+        {header("rule", "Matched Rule")}
+      </div>
+      {pageEvents.map((event) => {
         const firstRule = event.matchedRuleIds[0] ? rules.get(event.matchedRuleIds[0]) : null;
         return (
           <button

@@ -10,7 +10,7 @@ export default function NavbarTasksButton() {
 
   return (
     <Link
-      href="/dashboard/tasks"
+      href="/dashboard/settings?tab=tasks"
       className="flex items-center gap-1.5 px-3 py-1 text-xs uppercase tracking-widest"
       style={{
         border: "1px solid var(--border-dim)",

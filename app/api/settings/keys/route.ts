@@ -2,7 +2,24 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { sql } from "@/lib/db";
 import { encrypt } from "@/lib/encryption";
-import { listUserKeys, ensureApiKeysTable, callAI, type AIProvider } from "@/lib/ai/client";
+import { listUserKeys, ensureApiKeysTable, validateAIKey, type AIProvider } from "@/lib/ai/client";
+
+function formatKeyValidationError(provider: AIProvider, apiKey: string, error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const trimmed = apiKey.trim();
+
+  if (provider === "openai" && trimmed.startsWith("sk-ant-")) {
+    return "OpenAI rejected this key. It looks like an Anthropic Claude key; choose Anthropic or paste an OpenAI key from platform.openai.com.";
+  }
+  if (provider === "anthropic" && trimmed.startsWith("sk-proj-")) {
+    return "Anthropic rejected this key. It looks like an OpenAI project key; choose OpenAI or paste an Anthropic key.";
+  }
+  if (provider === "google" && !trimmed.startsWith("AIza")) {
+    return `Google rejected this key. Gemini API keys usually start with AIza. Provider said: ${message}`;
+  }
+
+  return message;
+}
 
 export async function GET() {
   const session = await auth();
@@ -37,10 +54,18 @@ export async function POST(req: NextRequest) {
 
   // Test the key before saving
   try {
-    await callAI(provider, apiKey.trim(), "Reply with exactly one word: OK");
+    await validateAIKey(provider, apiKey.trim());
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: `Key validation failed: ${msg}` }, { status: 422 });
+    const userMessage = formatKeyValidationError(provider, apiKey, err);
+    console.warn("[api/settings/keys] key validation failed", {
+      provider,
+      message: msg,
+      status: typeof err === "object" && err !== null && "status" in err ? (err as { status?: unknown }).status : undefined,
+      code: typeof err === "object" && err !== null && "code" in err ? (err as { code?: unknown }).code : undefined,
+      type: typeof err === "object" && err !== null && "type" in err ? (err as { type?: unknown }).type : undefined,
+    });
+    return NextResponse.json({ error: `Key validation failed: ${userMessage}` }, { status: 422 });
   }
 
   // If this is a dry run (browser-only storage), stop here

@@ -18,8 +18,11 @@ import { getAwsContainerVulnerabilities } from "@/lib/aws/ecr-scanning";
 import { getGhcrVulnerabilities } from "@/lib/github/ghcr-scanning";
 import { getDockerHubVulnerabilities } from "@/lib/dockerhub/dockerhub-scanning";
 import { getAwsRegions } from "@/lib/aws/client";
+import { getRuntimeSecurityRules, listRuntimeRequestEvents } from "@/lib/runtime-security-store";
+import type { RuntimeRequestEvent, RuntimeSecurityRule } from "@/lib/runtime-security";
 
 const REQUEST_LOG_SAMPLE_LIMIT = 50;
+const RUNTIME_SECURITY_SAMPLE_LIMIT = 120;
 
 type SnapshotRow = {
   snapshot: any;
@@ -137,6 +140,119 @@ function clearQueryWatchdogs(watchdogs: Array<ReturnType<typeof setTimeout>>) {
 function increment(map: Record<string, number>, key: unknown) {
   const normalized = String(key || "unknown");
   map[normalized] = (map[normalized] ?? 0) + 1;
+}
+
+function topEntries(map: Record<string, number>, limit = 10) {
+  return Object.entries(map)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, limit)
+    .map(([value, count]) => ({ value, count }));
+}
+
+function statusClassFromEvent(event: RuntimeRequestEvent): string {
+  return classifyStatus(event.statusCode);
+}
+
+function runtimeRuleLabel(rule: RuntimeSecurityRule): string {
+  return `${rule.name} (${rule.severity}, ${rule.action}, ${rule.enabled ? "enabled" : "disabled"})`;
+}
+
+async function buildRuntimeSecurityContext(userEmail: string, logger?: QueryLogger) {
+  logQueryStep(logger, "runtime security context start", { limit: RUNTIME_SECURITY_SAMPLE_LIMIT });
+  const [rules, events] = await Promise.all([
+    getRuntimeSecurityRules(userEmail),
+    listRuntimeRequestEvents(userEmail, RUNTIME_SECURITY_SAMPLE_LIMIT),
+  ]);
+  const ruleById = new Map(rules.map((rule) => [rule.id, rule]));
+  const totals = {
+    events: events.length,
+    allow: 0,
+    flagged: 0,
+    wouldBlock: 0,
+    matched: 0,
+  };
+  const bySource: Record<string, number> = {};
+  const byMethod: Record<string, number> = {};
+  const byPath: Record<string, number> = {};
+  const byStatusClass: Record<string, number> = {};
+  const byService: Record<string, number> = {};
+  const byRule: Record<string, number> = {};
+  const bySeverity: Record<string, number> = {};
+
+  for (const event of events) {
+    if (event.decision === "allow") totals.allow += 1;
+    if (event.decision === "flagged") totals.flagged += 1;
+    if (event.decision === "would_block") totals.wouldBlock += 1;
+    if (event.matchedRuleIds.length > 0) totals.matched += 1;
+    increment(bySource, event.sourceIp);
+    increment(byMethod, event.method);
+    increment(byPath, event.path);
+    increment(byStatusClass, statusClassFromEvent(event));
+    increment(byService, event.destinationService ?? event.destinationWorkload ?? event.destinationPod);
+    increment(bySeverity, event.highestSeverity);
+    for (const ruleId of event.matchedRuleIds) {
+      increment(byRule, ruleById.get(ruleId)?.name ?? ruleId);
+    }
+  }
+
+  const newest = events[0]?.ts ?? null;
+  const oldest = events.at(-1)?.ts ?? null;
+  const context = {
+    available: true,
+    source: "runtime_request_events plus normalized agent_events for the authenticated user",
+    retention: "Recent runtime event samples are read from Watchmen runtime security storage and bounded for AI context.",
+    sampleLimit: RUNTIME_SECURITY_SAMPLE_LIMIT,
+    detectOnly: true,
+    window: { oldest, newest },
+    totals,
+    topSources: topEntries(bySource),
+    topMethods: topEntries(byMethod),
+    topPaths: topEntries(byPath),
+    statusClasses: topEntries(byStatusClass),
+    topDestinations: topEntries(byService),
+    severities: topEntries(bySeverity),
+    matchedRules: topEntries(byRule),
+    rules: rules.map((rule) => ({
+      id: rule.id,
+      label: runtimeRuleLabel(rule),
+      name: rule.name,
+      enabled: rule.enabled,
+      action: rule.action,
+      severity: rule.severity,
+      condition: rule.condition,
+      description: rule.description,
+      matchCount: rule.matchCount ?? 0,
+      lastMatchedAt: rule.lastMatchedAt ?? null,
+    })),
+    recentEvents: events.slice(0, 50).map((event) => ({
+      id: event.id,
+      ts: event.ts,
+      sourceIp: event.sourceIp,
+      sourceIpClass: event.sourceIpClass,
+      sourceGeo: event.sourceGeo,
+      method: event.method,
+      path: event.path,
+      statusCode: event.statusCode,
+      destinationService: event.destinationService,
+      destinationNamespace: event.destinationNamespace,
+      destinationPod: event.destinationPod,
+      destinationWorkload: event.destinationWorkload,
+      decision: event.decision,
+      highestSeverity: event.highestSeverity,
+      matchedRules: event.matchedRuleIds.map((id) => ruleById.get(id)?.name ?? id),
+      reasons: event.reasons ?? [],
+      bodySize: event.bodySize,
+      contentType: event.contentType,
+    })),
+  };
+  logQueryStep(logger, "runtime security context complete", {
+    events: events.length,
+    rules: rules.length,
+    matched: totals.matched,
+    flagged: totals.flagged,
+    wouldBlock: totals.wouldBlock,
+  });
+  return context;
 }
 
 function inferSeverityFilter(query: string): "critical" | "high" | "medium" | "low" | undefined {
@@ -823,6 +939,12 @@ function buildSourceInventory(params: {
       requestProcessorHistory: "services/request-processor keeps a process-local in-memory history with maxHistory=10 and exposes it at PROCESSOR_URL/api/history.",
       traceHistoryApi: "/api/trace/history merges durable agent events with request processor history for the UI.",
     },
+    runtimeSecurity: {
+      events: "runtime_request_events stores runtime policy decisions, matched rule IDs, source IP/geo, method, path, status, destination workload, and reasons. The Runtime page also normalizes recent agent_events into the same shape.",
+      rules: "runtime_security_rules stores detect-only policy rules, enabled state, severity, action, conditions, match counts, and last match timestamp.",
+      page: "/dashboard/runtime",
+      retention: "Ask AI receives a bounded recent sample plus aggregate counts from the authenticated user's runtime security data.",
+    },
     liveOnDemandSources: {
       authFailures: "For auth log questions, /api/query calls GCP/AWS auth failure collectors on demand for the requested time window.",
       containerScans: "For container vulnerability questions, /api/query calls GCP Container Analysis, AWS ECR scanning, GHCR, and Docker Hub integrations when not in mock mode.",
@@ -840,6 +962,11 @@ function shouldFetchGkeEntryPoints(query: string, intent: Awaited<ReturnType<typ
 
 function inferFastIntent(query: string): QueryIntent | null {
   const q = query.toLowerCase();
+  const mentionsRuntimeSecurity = /\b(runtime security|runtime events?|runtime alerts?|runtime rules?|policy engine|detect-only|detect only|matched rules?|match rule|decisions?|would[-\s]?block|flagged|suspicious paths?|suspicious source|source ips?)\b/.test(q);
+  if (mentionsRuntimeSecurity) {
+    return { queryType: "runtime_security" };
+  }
+
   const mentionsRequests = /\b(requests?|responses?|traffic|http|status|4xx|5xx|errors?|erroneous|erroroneous|failed|failures?)\b/.test(q);
   const mentionsLogsOrEndpoints = /\b(logs?|gke|kubernetes|clusters?|endpoints?|ingress|load\s*balancer|sent|received)\b/.test(q);
   if (!mentionsRequests || !mentionsLogsOrEndpoints) return null;
@@ -1107,7 +1234,7 @@ export async function POST(req: NextRequest) {
     const isGcpMock = useMockData() || Boolean(session.isDemoUser);
     const isAwsMock = useMockAwsData() || Boolean(session.isDemoUser);
 
-    if (fastIntent?.queryType !== "request_logs") {
+    if (fastIntent?.queryType !== "request_logs" && fastIntent?.queryType !== "runtime_security") {
       // GCP Snapshot fetch
       if (isGcpMock) {
         gcpSnapshot = await fetchGcpSnapshot({ forceMock: true });
@@ -1169,7 +1296,7 @@ export async function POST(req: NextRequest) {
       projectId: intent.projectId,
       elapsedMs: Date.now() - startedAt,
     });
-    const canAnswerWithoutSnapshots = intent.queryType === "request_logs" || intent.queryType === "data_sources";
+    const canAnswerWithoutSnapshots = intent.queryType === "request_logs" || intent.queryType === "runtime_security" || intent.queryType === "data_sources";
     if (!gcpSnapshot && !awsSnapshot && !canAnswerWithoutSnapshots) {
       return done(NextResponse.json(
         { error: "No snapshots yet. Please wait for the initial scan." },
@@ -1256,6 +1383,10 @@ export async function POST(req: NextRequest) {
         erroneousResponses: combinedSnapshot.requestLogs?.durableAgentEvents?.erroneousResponses,
         clusterStatsRows: combinedSnapshot.requestLogs?.durableAgentEvents?.clusterStats?.length,
       });
+    }
+
+    if (intent.queryType === "runtime_security" || intent.queryType === "data_sources") {
+      combinedSnapshot.runtimeSecurity = await buildRuntimeSecurityContext(email, logger);
     }
 
     if (intent.queryType === "request_logs") {

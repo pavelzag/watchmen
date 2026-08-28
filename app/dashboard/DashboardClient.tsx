@@ -41,7 +41,7 @@ function CloudConnectionCards({ connections }: { connections: CloudConnections }
           {connections.gcp ? <Check className="h-4 w-4 text-emerald-400" /> : <Cloud className="h-4 w-4 text-blue-300" />}
         </div>
         <div className="flex flex-wrap gap-2">
-          <Link href="/dashboard/settings" className="inline-flex items-center gap-2 px-3 py-2 text-xs font-bold" style={{ background: "#3b82f6", color: "#fff" }}>
+          <Link href="/dashboard/settings?tab=integrations" className="inline-flex items-center gap-2 px-3 py-2 text-xs font-bold" style={{ background: "#3b82f6", color: "#fff" }}>
             <KeyRound className="h-3.5 w-3.5" />
             Connect service account
           </Link>
@@ -61,7 +61,7 @@ function CloudConnectionCards({ connections }: { connections: CloudConnections }
           </div>
           {connections.aws ? <Check className="h-4 w-4 text-emerald-400" /> : <ShieldCheck className="h-4 w-4 text-orange-300" />}
         </div>
-        <Link href="/dashboard/settings" className="inline-flex items-center gap-2 px-3 py-2 text-xs font-bold" style={{ background: "var(--green)", color: "var(--bg)" }}>
+        <Link href="/dashboard/settings?tab=integrations" className="inline-flex items-center gap-2 px-3 py-2 text-xs font-bold" style={{ background: "var(--green)", color: "var(--bg)" }}>
           <ShieldCheck className="h-3.5 w-3.5" />
           Connect access keys
         </Link>
@@ -187,7 +187,7 @@ export default function DashboardClient({
   }, [router]);
 
   const handleCloudConnect = useCallback(() => {
-    router.push("/dashboard/settings");
+    router.push("/dashboard/settings?tab=integrations");
   }, [router]);
 
   const appendSyncLog = useCallback((message: string, detail?: Record<string, unknown>) => {

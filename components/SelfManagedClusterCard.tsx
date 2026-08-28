@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, Loader2, Plus, Send, Trash2 } from "lucide-react";
+import { Check, Clipboard, Download, Loader2, Plus, Send, ShieldCheck, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type ClusterRecord = {
@@ -59,6 +59,9 @@ export default function SelfManagedClusterCard({
   const [enabledEdit, setEnabledEdit] = useState(cluster.enabled);
   const [pathEdit, setPathEdit] = useState(cluster.kubeconfigPath);
   const [deletingKube, setDeletingKube] = useState(false);
+  const [deployingAgent, setDeployingAgent] = useState(false);
+  const [agentMessage, setAgentMessage] = useState<string | null>(null);
+  const [agentError, setAgentError] = useState<string | null>(null);
 
   useEffect(() => {
     setCluster(initial);
@@ -354,7 +357,78 @@ export default function SelfManagedClusterCard({
     }
   }
 
+  function agentManifestFilename() {
+    const base = (status?.clusterName || cluster.name || "local-kubernetes")
+      .replace(/[^a-z0-9._-]+/gi, "-")
+      .replace(/^-+|-+$/g, "") || "local-kubernetes";
+    return `watchmen-agent-${base}.yaml`;
+  }
+
+  async function downloadAgentManifest() {
+    setAgentMessage(null);
+    setAgentError(null);
+    try {
+      const res = await fetch(`/api/kubernetes/clusters/${cluster.id}/agent-manifest`, { cache: "no-store" });
+      const yaml = await res.text();
+      if (!res.ok) {
+        const parsed = (() => { try { return JSON.parse(yaml) as { error?: string }; } catch { return {}; } })();
+        setAgentError(parsed.error ?? `Failed to download manifest (HTTP ${res.status}).`);
+        return;
+      }
+      const blob = new Blob([yaml], { type: "text/yaml" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = agentManifestFilename();
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setAgentMessage(`Downloaded ${agentManifestFilename()}. Apply it with kubectl if one-click deploy cannot reach this cluster.`);
+    } catch (e) {
+      setAgentError(e instanceof Error ? e.message : "Failed to download manifest.");
+    }
+  }
+
+  async function copyAgentApplyCommand() {
+    setAgentMessage(null);
+    setAgentError(null);
+    const context = contextEdit || cluster.context;
+    const namespace = namespaceEdit.trim() || cluster.namespace || "watchmen";
+    const command = [
+      context ? `kubectl --context ${JSON.stringify(context)} apply -f ${agentManifestFilename()}` : `kubectl apply -f ${agentManifestFilename()}`,
+      context ? `kubectl --context ${JSON.stringify(context)} -n ${JSON.stringify(namespace)} rollout status daemonset/watchmen-ebpf-agent` : `kubectl -n ${JSON.stringify(namespace)} rollout status daemonset/watchmen-ebpf-agent`,
+    ].join("\n");
+    try {
+      await navigator.clipboard.writeText(command);
+      setAgentMessage("Copied kubectl apply and rollout commands.");
+    } catch (e) {
+      setAgentError(e instanceof Error ? e.message : "Failed to copy command.");
+    }
+  }
+
+  async function deployAgent() {
+    if (!confirm(`Deploy the privileged Watchmen eBPF DaemonSet to "${status?.clusterName || cluster.name}"?`)) return;
+    setDeployingAgent(true);
+    setAgentMessage(null);
+    setAgentError(null);
+    try {
+      const res = await fetch(`/api/kubernetes/clusters/${cluster.id}/agent-deploy`, { method: "POST" });
+      const data = await res.json().catch(() => ({} as { error?: string; result?: { clusterName?: string; namespace?: string; applied?: string[] } }));
+      if (!res.ok || !data.result) {
+        setAgentError(data.error ?? `Failed to deploy agent (HTTP ${res.status}).`);
+        return;
+      }
+      setAgentMessage(`Applied ${data.result.applied?.join(", ") || "agent resources"} in namespace ${data.result.namespace}.`);
+    } catch (e) {
+      setAgentError(e instanceof Error ? e.message : "Failed to deploy agent.");
+    } finally {
+      setDeployingAgent(false);
+    }
+  }
+
   const hasKube = Boolean(status?.hasKubeconfig ?? cluster.hasKubeconfig);
+  const canManageAgent = hasKube && Boolean(status?.ok);
 
   return (
     <div className="border p-4 space-y-4" style={{ borderColor: hasKube ? "rgba(16,185,129,0.25)" : "var(--border-dim)", background: "rgba(2, 6, 23, 0.35)" }}>
@@ -488,6 +562,38 @@ export default function SelfManagedClusterCard({
         <div className="border p-2 space-y-1" style={{ borderColor: "rgba(16,185,129,0.3)", background: "rgba(16,185,129,0.08)" }}>
           <div className="flex items-center gap-2 text-xs font-bold" style={{ color: "#10b981" }}><Check className="w-3.5 h-3.5" /> Connected — {status.clusterName} · {status.kubernetesVersion}</div>
           <div className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>Nodes: <b style={{color:"#e5e7eb"}}>{status.nodeCount}</b> · Namespaces: <b style={{color:"#e5e7eb"}}>{status.namespaceCount}</b> · Server: <span className="break-all" style={{color:"#e5e7eb"}}>{status.serverUrl}</span></div>
+        </div>
+      )}
+
+      {hasKube && (
+        <div className="border p-3 space-y-2" style={{ borderColor: "rgba(20,184,166,0.25)", background: "rgba(15,23,42,0.28)" }}>
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div className="space-y-1 min-w-[220px] flex-1">
+              <div className="flex items-center gap-2 text-xs font-bold" style={{ color: "var(--text-primary)" }}>
+                <ShieldCheck className="w-3.5 h-3.5 text-teal-400" />
+                eBPF agent
+              </div>
+              <p className="text-[11px] font-mono" style={{ color: "var(--text-muted)" }}>
+                Deploys a privileged DaemonSet to capture HTTP events. WATCHMEN_BASE_URL must be reachable from inside the cluster.
+              </p>
+              <p className="text-[11px] font-mono" style={{ color: "var(--text-muted)" }}>
+                Target: {status?.clusterName || cluster.name} · namespace {namespaceEdit.trim() || cluster.namespace || "watchmen"}
+              </p>
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              <button onClick={downloadAgentManifest} disabled={!hasKube} className="terminal-btn text-xs px-3 py-1.5 inline-flex items-center gap-1 disabled:opacity-40">
+                <Download className="w-3.5 h-3.5" /> Manifest
+              </button>
+              <button onClick={copyAgentApplyCommand} disabled={!hasKube} className="terminal-btn text-xs px-3 py-1.5 inline-flex items-center gap-1 disabled:opacity-40">
+                <Clipboard className="w-3.5 h-3.5" /> Copy apply
+              </button>
+              <button onClick={deployAgent} disabled={!canManageAgent || deployingAgent} className={cn("text-xs px-3 py-1.5 inline-flex items-center gap-1 font-bold", canManageAgent ? "bg-teal-500 text-black" : "terminal-btn opacity-40")} title={!canManageAgent ? "Test and save the cluster first" : undefined}>
+                {deployingAgent ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />} Deploy
+              </button>
+            </div>
+          </div>
+          {agentMessage && <p className="text-[11px] font-mono text-emerald-400">{agentMessage}</p>}
+          {agentError && <p className="text-[11px] font-mono text-red-400 whitespace-pre-wrap">{agentError}</p>}
         </div>
       )}
 

@@ -9,9 +9,9 @@ import { Clock, Tag, ChevronDown, ChevronUp, ArrowRight, User, HardDrive, Server
 import Link from "next/link";
 
 // Simple cross-component event bus — no context provider needed
-export function openCommandPalette() {
+export function openCommandPalette(query?: string) {
     if (typeof window !== "undefined") {
-        window.dispatchEvent(new CustomEvent("cmd-palette:open"));
+        window.dispatchEvent(new CustomEvent("cmd-palette:open", { detail: { query } }));
     }
 }
 
@@ -112,8 +112,10 @@ export default function CommandPalette() {
 
     // Listen for global open event + "/" key
     useEffect(() => {
-        function handleOpen() {
+        function handleOpen(event: Event) {
+            const detail = (event as CustomEvent<{ query?: string }>).detail;
             setOpen(true);
+            if (detail?.query) setQuery(detail.query);
         }
         function handleKey(e: KeyboardEvent) {
             // "/" opens palette when not already in an input

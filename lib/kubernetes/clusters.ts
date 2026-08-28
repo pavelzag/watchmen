@@ -1,7 +1,9 @@
 import fs from "fs";
+import { randomBytes } from "crypto";
 import * as k8s from "@kubernetes/client-node";
 import { KubernetesObjectApi, PatchStrategy } from "@kubernetes/client-node";
 import { sql } from "@/lib/db";
+import { createWatchmenAgentObjects } from "@/lib/agents/k8s-manifest";
 import {
   detectKubernetesDistribution,
   parseKubeconfigContexts,
@@ -63,6 +65,12 @@ export interface KubernetesTestTrafficStatus {
   replicas: number;
   readyReplicas: number;
   running: boolean;
+}
+
+export interface KubernetesAgentDeployResult {
+  clusterName: string;
+  namespace: string;
+  applied: string[];
 }
 
 let clustersTableReady: Promise<void> | null = null;
@@ -724,6 +732,49 @@ export async function setClusterTestTrafficRunning(cluster: KubernetesClusterRec
     PatchStrategy.MergePatch,
   );
   return getClusterTestTrafficStatus(cluster);
+}
+
+export async function deployClusterWatchmenAgent(cluster: KubernetesClusterRecord, origin: string): Promise<KubernetesAgentDeployResult> {
+  if (!cluster.enabled) {
+    throw Object.assign(new Error("Cluster is disabled."), { code: "disabled" });
+  }
+  const status = await getClusterStatus(cluster);
+  if (!status.ok) {
+    throw Object.assign(new Error(status.error ?? "Cluster is not connected."), { code: status.code ?? "unknown" });
+  }
+
+  const namespace = cluster.namespace || "watchmen";
+  const kc = loadClusterKubeConfig(cluster);
+  const objectApi = KubernetesObjectApi.makeApiClient(kc);
+  const objects = createWatchmenAgentObjects({
+    clusterName: status.clusterName || cluster.name,
+    projectId: "self-managed",
+    location: cluster.context || status.context || "local",
+    namespace,
+    origin,
+    agentSecret: randomBytes(32).toString("hex"),
+    binaryUrl: "",
+    binaryBaseUrl: `${origin}/api/agents/k8s/binary`,
+  });
+
+  const applied: string[] = [];
+  for (const object of objects) {
+    await objectApi.patch(
+      object,
+      undefined,
+      undefined,
+      "watchmen-ui",
+      true,
+      PatchStrategy.ServerSideApply,
+    );
+    applied.push(`${object.kind ?? "Object"}/${object.metadata?.name ?? ""}`);
+  }
+
+  return {
+    clusterName: status.clusterName || cluster.name,
+    namespace,
+    applied,
+  };
 }
 
 export function parseKubernetesLogLine(line: string): { timestamp: string; message: string } {

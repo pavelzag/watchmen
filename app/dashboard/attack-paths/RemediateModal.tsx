@@ -822,7 +822,7 @@ export default function RemediateModal({ targets, onClose, autoCreatePr = false 
               </p>
               <p style={{ fontFamily: "monospace", fontSize: 10, color: "var(--green)" }}>
                 You can close this modal and continue from{" "}
-                <Link href="/dashboard/tasks" style={{ textDecoration: "underline", color: "var(--green)" }}>
+                <Link href="/dashboard/settings?tab=tasks" style={{ textDecoration: "underline", color: "var(--green)" }}>
                   Task Center
                 </Link>
                 .

@@ -15,6 +15,7 @@ import {
 } from "@/lib/demo-credentials";
 import { getBrowserAIKeys, setBrowserAIKey, removeBrowserAIKey, getActiveBrowserProvider, setActiveBrowserProvider, type BrowserAIKeys } from "@/lib/ai/browser-ai-keys";
 import SelfManagedClusterCard from "@/components/SelfManagedClusterCard";
+import TasksPanel from "@/components/TasksPanel";
 
 interface CloudCredRecord {
   provider: string;
@@ -162,14 +163,14 @@ const PROVIDERS: ProviderConfig[] = [
   {
     id: "openai",
     name: "OpenAI",
-    description: "GPT-4o-mini for fast, cost-effective AI responses",
+    description: "GPT-5 mini for fast, cost-effective AI responses",
     color: "text-emerald-400",
     bg: "bg-emerald-500/8",
     border: "border-emerald-500/25",
     accent: "bg-emerald-500",
     logo: "⊕",
-    models: "gpt-4o-mini",
-    placeholder: "sk-...",
+    models: "gpt-5-mini",
+    placeholder: "sk-proj-...",
   },
   {
     id: "anthropic",
@@ -220,9 +221,9 @@ interface LocalKubernetesStatusRecord {
   code?: string;
 }
 
-type SettingsTab = "ai" | "self-managed" | "integrations" | "alerts" | "diagnostics";
+type SettingsTab = "ai" | "self-managed" | "integrations" | "alerts" | "tasks" | "diagnostics";
 
-const SETTINGS_TABS: SettingsTab[] = ["ai", "self-managed", "integrations", "alerts", "diagnostics"];
+const SETTINGS_TABS: SettingsTab[] = ["ai", "self-managed", "integrations", "alerts", "tasks", "diagnostics"];
 
 export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) {
   const searchParams = useSearchParams();
@@ -233,6 +234,7 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
   const [saving, setSaving] = useState<Record<AIProvider, boolean>>({ google: false, openai: false, anthropic: false });
   const [deleting, setDeleting] = useState<Record<AIProvider, boolean>>({ google: false, openai: false, anthropic: false });
   const [activating, setActivating] = useState<AIProvider | null>(null);
+  const [keyErrors, setKeyErrors] = useState<Record<AIProvider, string>>({ google: "", openai: "", anthropic: "" });
   const [errorLog, setErrorLog] = useState<ErrorEntry[]>([]);
   const [activeTab, setActiveTab] = useState<SettingsTab>(() => {
     const tab = searchParams.get("tab");
@@ -1094,6 +1096,7 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
     const apiKey = inputs[provider].trim();
     if (!apiKey) return;
     setSaving((s) => ({ ...s, [provider]: true }));
+    setKeyErrors((errors) => ({ ...errors, [provider]: "" }));
 
     if (saveToBrowser[provider]) {
       // Save to browser storage
@@ -1105,14 +1108,19 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
         });
         const data = await res.json();
         if (!res.ok) {
-          addError(provider, data.error ?? "Key validation failed");
+          const message = data.error ?? "Key validation failed";
+          setKeyErrors((errors) => ({ ...errors, [provider]: message }));
+          addError(provider, message);
           return;
         }
         setBrowserAIKey(provider, apiKey);
         setBrowserKeys(getBrowserAIKeys());
         setInputs((i) => ({ ...i, [provider]: "" }));
+        setKeyErrors((errors) => ({ ...errors, [provider]: "" }));
       } catch (e) {
-        addError(provider, e instanceof Error ? e.message : "Network error during validation");
+        const message = e instanceof Error ? e.message : "Network error during validation";
+        setKeyErrors((errors) => ({ ...errors, [provider]: message }));
+        addError(provider, message);
       } finally {
         setSaving((s) => ({ ...s, [provider]: false }));
       }
@@ -1125,11 +1133,19 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
           body: JSON.stringify({ provider, apiKey }),
         });
         const data = await res.json();
-        if (!res.ok) { addError(provider, data.error ?? "Unknown error"); return; }
+        if (!res.ok) {
+          const message = data.error ?? "Unknown error";
+          setKeyErrors((errors) => ({ ...errors, [provider]: message }));
+          addError(provider, message);
+          return;
+        }
         setKeys(data.keys);
         setInputs((i) => ({ ...i, [provider]: "" }));
+        setKeyErrors((errors) => ({ ...errors, [provider]: "" }));
       } catch (e) {
-        addError(provider, e instanceof Error ? e.message : "Network error");
+        const message = e instanceof Error ? e.message : "Network error";
+        setKeyErrors((errors) => ({ ...errors, [provider]: message }));
+        addError(provider, message);
       } finally {
         setSaving((s) => ({ ...s, [provider]: false }));
       }
@@ -1143,6 +1159,7 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
       const data = await res.json();
       if (!res.ok) { addError(provider, data.error ?? "Delete failed"); return; }
       setKeys(data.keys);
+      setKeyErrors((errors) => ({ ...errors, [provider]: "" }));
     } catch (e) {
       addError(provider, e instanceof Error ? e.message : "Network error");
     } finally {
@@ -1333,6 +1350,7 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
             {tab === "self-managed" && "Self Managed"}
             {tab === "integrations" && "Integrations"}
             {tab === "alerts" && "Alerts"}
+            {tab === "tasks" && "Tasks"}
             {tab === "diagnostics" && "Diagnostics"}
             {activeTab === tab && (
               <div className="absolute bottom-[-1px] left-0 right-0 h-0.5" style={{ background: "var(--green)" }} />
@@ -1375,6 +1393,7 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
               const serverRecord = keys.find((k) => k.provider === prov.id);
               const browserKey = browserKeys[prov.id];
               const activeBrowserProv = getActiveBrowserProvider();
+              const keyError = keyErrors[prov.id];
 
               const isBrowserStored = !!browserKey;
               const isActive = isBrowserStored
@@ -1450,10 +1469,13 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
                         <input
                           type={showKey[prov.id] ? "text" : "password"}
                           value={inputs[prov.id]}
-                          onChange={(e) => setInputs((i) => ({ ...i, [prov.id]: e.target.value }))}
+                          onChange={(e) => {
+                            setInputs((i) => ({ ...i, [prov.id]: e.target.value }));
+                            if (keyError) setKeyErrors((errors) => ({ ...errors, [prov.id]: "" }));
+                          }}
                           placeholder={record ? `Update key (${prov.placeholder})` : `Paste API key (${prov.placeholder})`}
                           className="w-full pl-3 pr-9 py-2 bg-transparent border text-sm placeholder:opacity-30 outline-none font-mono text-xs"
-                          style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
+                          style={{ border: `1px solid ${keyError ? "rgba(239, 68, 68, 0.65)" : "var(--border-dim)"}`, color: "var(--text-primary)" }}
                           onKeyDown={(e) => e.key === "Enter" && saveKey(prov.id)}
                         />
                         <button
@@ -1479,6 +1501,14 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
                         {isSaving ? "Testing…" : record ? "Update" : "Add & Test"}
                       </button>
                     </div>
+                    {keyError && (
+                      <div
+                        className="min-w-0 overflow-hidden break-words border px-3 py-2 text-xs font-mono leading-relaxed"
+                        style={{ borderColor: "rgba(239, 68, 68, 0.35)", background: "rgba(127, 29, 29, 0.18)", color: "#fca5a5" }}
+                      >
+                        {keyError}
+                      </div>
+                    )}
 
                   </div>
                   <p className="text-[10px] uppercase tracking-wider" style={{ color: "var(--border-dim)" }}>
@@ -3176,6 +3206,13 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
               Alert notifications are disabled for demo accounts.
             </p>
           )}
+        </div>
+      )}
+
+      {/* Tasks Block */}
+      {activeTab === "tasks" && (
+        <div className="mt-6">
+          <TasksPanel />
         </div>
       )}
 

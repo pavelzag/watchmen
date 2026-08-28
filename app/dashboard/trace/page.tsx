@@ -1,5 +1,4 @@
 import RequestTracer from "./RequestTracer";
-import RuntimeSecurityPanel from "./RuntimeSecurityPanel";
 
 export default function TracePage() {
   const demoMode = process.env.DEMO_MODE === "true";
@@ -21,7 +20,6 @@ export default function TracePage() {
           </div>
         </div>
 
-        <RuntimeSecurityPanel />
         <RequestTracer demoMode={demoMode} />
       </div>
     </div>

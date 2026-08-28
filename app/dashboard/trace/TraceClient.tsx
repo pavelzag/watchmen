@@ -38,6 +38,8 @@ import type { GcpSnapshot } from "@/lib/gcp/types";
 import type { AwsSnapshot } from "@/lib/aws/types";
 import { getGcpLbScenario, getGcpRunScenario, getGcpVmScenario } from "@/lib/mock/scenarios";
 
+const LIVE_HISTORY_MAX_AGE_MS = 120_000;
+
 // Map icon names from strings to components
 const ICON_MAP: Record<string, any> = {
     ShieldCheck, Database, Cloud, Server, CheckCircle2, Globe, Layers,
@@ -448,18 +450,23 @@ export default function TraceClient() {
 
         const pollHistory = async () => {
             try {
-                const res = await fetch(`/api/trace/history?t=${Date.now()}`, {
+                const res = await fetch(`/api/trace/history?maxAgeMs=${LIVE_HISTORY_MAX_AGE_MS}&t=${Date.now()}`, {
                     cache: "no-store",
                 });
                 if (res.ok) {
                     const history = await res.json();
                     if (history && history.length > 0) {
+                        const now = Date.now();
+                        const freshHistory = history.filter((item: any) => {
+                            const ts = new Date(item.received_at || item.timestamp || item.trace?.[0]?.time || 0).getTime();
+                            return Number.isFinite(ts) && now - ts <= LIVE_HISTORY_MAX_AGE_MS;
+                        });
                         const selectedCluster = targetEndpoint?.type === "GKE"
                             ? targetEndpoint?.id?.replace("gke-cluster-", "")
                             : null;
                         const relevantHistory = selectedCluster
-                            ? history.filter((item: any) => item.cluster_name === selectedCluster)
-                            : history;
+                            ? freshHistory.filter((item: any) => item.cluster_name === selectedCluster)
+                            : freshHistory;
                         if (relevantHistory.length === 0) return;
 
                         const latest = relevantHistory[0];

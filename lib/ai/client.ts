@@ -53,6 +53,21 @@ export async function listUserKeys(userEmail: string): Promise<AIKeyRecord[]> {
   }));
 }
 
+/** Validates that an API key is structurally usable for its provider without depending on an app model choice. */
+export async function validateAIKey(provider: AIProvider, apiKey: string): Promise<void> {
+  const key = apiKey.trim();
+  if (!key) throw new Error("API key is required.");
+
+  if (provider === "openai") {
+    const { default: OpenAI } = await import("openai");
+    const openai = new OpenAI({ apiKey: key });
+    await openai.models.list();
+    return;
+  }
+
+  await callAI(provider, key, "Reply with exactly one word: OK");
+}
+
 /** Retrieves and decrypts the active API key for a user. Returns null if none configured. */
 export async function getActiveKey(userEmail: string): Promise<{ provider: AIProvider; key: string } | null> {
   await ensureApiKeysTable();
@@ -80,11 +95,11 @@ export async function callAI(provider: AIProvider, apiKey: string, prompt: strin
   if (provider === "openai") {
     const { default: OpenAI } = await import("openai");
     const openai = new OpenAI({ apiKey });
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: prompt }],
+    const response = await openai.responses.create({
+      model: process.env.OPENAI_MODEL || "gpt-5-mini",
+      input: prompt,
     });
-    return completion.choices[0]?.message?.content ?? "";
+    return response.output_text ?? "";
   }
 
   if (provider === "anthropic") {

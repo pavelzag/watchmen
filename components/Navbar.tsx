@@ -1,10 +1,9 @@
 import { auth, signOut } from "@/lib/auth";
-import { ShieldAlert, Clock, ClipboardCheck, Settings, LogOut, IterationCw, Network, Swords, Container, GitBranch, Server } from "lucide-react";
+import { ShieldAlert, Clock, ClipboardCheck, Settings, LogOut, IterationCw, Swords, Container, Server, Radar } from "lucide-react";
 import Link from "next/link";
 import NavbarAskButton from "./NavbarAskButton";
 import NavbarSubNav from "./NavbarSubNav";
 import NavbarLink from "./NavbarLink";
-import NavbarTasksButton from "./NavbarTasksButton";
 
 export default async function Navbar() {
   const session = await auth();
@@ -45,7 +44,6 @@ export default async function Navbar() {
 
         {/* Right: ask button + user + logout */}
         <div className="flex items-center gap-3 shrink-0">
-          <NavbarTasksButton />
           <NavbarAskButton />
           {user && (
             <>
@@ -75,12 +73,12 @@ export default async function Navbar() {
       <NavbarSubNav>
         <NavbarLink href="/dashboard/self-managed" icon={<Server className="w-3 h-3" />} label="SELF-MANAGED" />
         <NavbarLink href="/dashboard/trace" icon={<IterationCw className="w-3 h-3" />} label="TRACE" />
+        <NavbarLink href="/dashboard/runtime" icon={<Radar className="w-3 h-3" />} label="RUNTIME" />
         <NavbarLink href="/dashboard/findings" icon={<ShieldAlert className="w-3 h-3" />} label="FINDINGS" danger />
         <NavbarLink href="/dashboard/attack-paths" icon={<Swords className="w-3 h-3" />} label="ATTACK PATHS" />
         {/* IAC DRIFT hidden temporarily — re-enable by uncommenting next line */}
         {/* <NavbarLink href="/dashboard/iac-drift" icon={<GitBranch className="w-3 h-3" />} label="IAC DRIFT" /> */}
         <NavbarLink href="/dashboard/container-scan" icon={<Container className="w-3 h-3" />} label="CONTAINERS" />
-        <NavbarLink href="/dashboard/tasks" icon={<IterationCw className="w-3 h-3" />} label="TASKS" />
         <NavbarLink href="/dashboard/history" icon={<Clock className="w-3 h-3" />} label="HISTORY" />
         <NavbarLink href="/dashboard/compliance" icon={<ClipboardCheck className="w-3 h-3" />} label="COMPLIANCE" />
         <NavbarLink href="/dashboard/settings" icon={<Settings className="w-3 h-3" />} label="SETTINGS" />

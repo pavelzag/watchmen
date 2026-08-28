@@ -167,7 +167,7 @@ func run(ctx context.Context, endpoint string, verbose bool) error {
 }
 
 func isUnsupportedMemlockDetection(err error) bool {
-	msg := err.Error()
+	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "function not implemented") ||
 		strings.Contains(msg, "operation not supported")
 }

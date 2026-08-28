@@ -24,6 +24,15 @@ type Listener = (event: LiveTraceIngressEvent) => void;
 const listenersByUser = new Map<string, Set<Listener>>();
 const recentEventsByUser = new Map<string, LiveTraceIngressEvent[]>();
 const MAX_RECENT_EVENTS = 64;
+// Keep in sync with LIVE_EVENT_RETENTION_MS in app/dashboard/trace/RequestTracer.tsx —
+// events older than this are stale (e.g. from a source that has since been stopped)
+// and must not be replayed to newly-opened streams.
+const MAX_RECENT_EVENT_AGE_MS = 120_000;
+
+function isFresh(event: LiveTraceIngressEvent): boolean {
+  const ts = Date.parse(event.timestamp);
+  return Number.isNaN(ts) || Date.now() - ts < MAX_RECENT_EVENT_AGE_MS;
+}
 
 export function publishLiveTraceEvent(userEmail: string, event: LiveTraceIngressEvent) {
   const push = (key: string) => {
@@ -70,6 +79,7 @@ export function getRecentLiveTraceEvents(userEmail: string): LiveTraceIngressEve
     seen.add(e.id);
     return true;
   });
-  // Return last MAX_RECENT_EVENTS
-  return deduped.slice(-MAX_RECENT_EVENTS);
+  // Drop stale events so a stream that just (re)connected doesn't replay traffic
+  // from a source that has since stopped sending (e.g. an undeployed test app).
+  return deduped.filter(isFresh).slice(-MAX_RECENT_EVENTS);
 }
