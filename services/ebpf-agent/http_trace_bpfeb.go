@@ -12,6 +12,13 @@ import (
 	"github.com/cilium/ebpf"
 )
 
+type http_traceFlowKey struct {
+	Saddr uint32
+	Daddr uint32
+	Sport uint16
+	Dport uint16
+}
+
 // loadHttp_trace returns the embedded CollectionSpec for http_trace.
 func loadHttp_trace() (*ebpf.CollectionSpec, error) {
 	reader := bytes.NewReader(_Http_traceBytes)
@@ -54,15 +61,19 @@ type http_traceSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type http_traceProgramSpecs struct {
-	TraceHttpWrite *ebpf.ProgramSpec `ebpf:"trace_http_write"`
+	TraceHttpWrite  *ebpf.ProgramSpec `ebpf:"trace_http_write"`
+	TraceTcpConnect *ebpf.ProgramSpec `ebpf:"trace_tcp_connect"`
+	TraceTcpRecvmsg *ebpf.ProgramSpec `ebpf:"trace_tcp_recvmsg"`
+	TraceTcpSendmsg *ebpf.ProgramSpec `ebpf:"trace_tcp_sendmsg"`
 }
 
 // http_traceMapSpecs contains maps before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type http_traceMapSpecs struct {
-	Events  *ebpf.MapSpec `ebpf:"events"`
-	Scratch *ebpf.MapSpec `ebpf:"scratch"`
+	Events   *ebpf.MapSpec `ebpf:"events"`
+	LastFlow *ebpf.MapSpec `ebpf:"last_flow"`
+	Scratch  *ebpf.MapSpec `ebpf:"scratch"`
 }
 
 // http_traceVariableSpecs contains global variables before they are loaded into the kernel.
@@ -91,13 +102,15 @@ func (o *http_traceObjects) Close() error {
 //
 // It can be passed to loadHttp_traceObjects or ebpf.CollectionSpec.LoadAndAssign.
 type http_traceMaps struct {
-	Events  *ebpf.Map `ebpf:"events"`
-	Scratch *ebpf.Map `ebpf:"scratch"`
+	Events   *ebpf.Map `ebpf:"events"`
+	LastFlow *ebpf.Map `ebpf:"last_flow"`
+	Scratch  *ebpf.Map `ebpf:"scratch"`
 }
 
 func (m *http_traceMaps) Close() error {
 	return _Http_traceClose(
 		m.Events,
+		m.LastFlow,
 		m.Scratch,
 	)
 }
@@ -112,12 +125,18 @@ type http_traceVariables struct {
 //
 // It can be passed to loadHttp_traceObjects or ebpf.CollectionSpec.LoadAndAssign.
 type http_tracePrograms struct {
-	TraceHttpWrite *ebpf.Program `ebpf:"trace_http_write"`
+	TraceHttpWrite  *ebpf.Program `ebpf:"trace_http_write"`
+	TraceTcpConnect *ebpf.Program `ebpf:"trace_tcp_connect"`
+	TraceTcpRecvmsg *ebpf.Program `ebpf:"trace_tcp_recvmsg"`
+	TraceTcpSendmsg *ebpf.Program `ebpf:"trace_tcp_sendmsg"`
 }
 
 func (p *http_tracePrograms) Close() error {
 	return _Http_traceClose(
 		p.TraceHttpWrite,
+		p.TraceTcpConnect,
+		p.TraceTcpRecvmsg,
+		p.TraceTcpSendmsg,
 	)
 }
 

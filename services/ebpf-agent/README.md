@@ -2,11 +2,18 @@
 
 Minimal Go/eBPF agent for VM smoke testing.
 
-The first collector attaches to `syscalls:sys_enter_execve` and emits process execution events:
+The agent attaches a `raw_tracepoint/sys_enter` sniffer for HTTP bytes plus
+`kprobe/tcp_sendmsg` and `kprobe/tcp_recvmsg` for the L4 tuple, and emits
+enriched events:
 
 ```json
-{"type":"process_exec","timestamp":"2026-06-07T12:00:00Z","hostname":"ebpf-agent-test","pid":1234,"ppid":1,"uid":0,"comm":"curl","filename":"/usr/bin/curl"}
+{"type":"http_request","timestamp":"2026-06-07T12:00:00Z","hostname":"node-1","pid":1234,"uid":0,"comm":"curl","method":"GET","path":"/api/products","data":"GET /api/products HTTP/1.1","sourceIp":"10.0.0.7","sourcePort":45678,"destIp":"10.0.1.20","destPort":8080,"family":"ipv4","cgroupId":12345,"sockCookie":6789,"containerId":"ad8b5c..."}
+{"type":"tcp_flow","timestamp":"2026-06-07T12:00:00Z","hostname":"node-1","pid":1234,"uid":0,"comm":"curl","data":"","sourceIp":"10.0.0.7","sourcePort":45678,"destIp":"10.0.1.20","destPort":8080,"family":"ipv4","cgroupId":12345,"sockCookie":6789}
 ```
+
+Flow events are throttled to one per socket per second (`last_flow` LRU map).
+When the checked-in bindings predate the tuple probes, the agent logs a
+warning and runs HTTP-only; regenerate to enable them (see below).
 
 ## Build on the GCP VM
 

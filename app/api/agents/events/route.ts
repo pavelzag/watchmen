@@ -38,6 +38,9 @@ function toLiveTraceEvent(input: {
       ? input.event.trace_id
       : `${input.agentId}:${timestamp}:${method ?? "HTTP"}:${path ?? "/"}`;
   const rawData = typeof input.event?.data === "string" ? input.event.data : undefined;
+  const kernelSourceIp = typeof input.event?.sourceIp === "string" && input.event.sourceIp.trim()
+    ? input.event.sourceIp.trim()
+    : undefined;
   const forwardedSourceIp = extractHeaderValue(rawData, "X-Watchmen-Source-IP")
     ?? extractHeaderValue(rawData, "X-Forwarded-For")
     ?? extractHeaderValue(rawData, "X-Real-IP");
@@ -48,12 +51,19 @@ function toLiveTraceEvent(input: {
     kind: "gke",
     projectId: clusterName,
     resourceName: clusterName,
+    container: typeof input.event?.pod === "string"
+      ? input.event.pod
+      : typeof input.event?.containerId === "string"
+        ? input.event.containerId
+        : typeof input.event?.container === "string"
+          ? input.event.container
+          : undefined,
     timestamp,
     method,
     path,
     status: input.status ?? undefined,
     latency: typeof input.event?.latency === "string" ? input.event.latency : undefined,
-    remoteIp: forwardedSourceIp ?? (typeof input.event?.remoteIp === "string" ? input.event.remoteIp : undefined),
+    remoteIp: kernelSourceIp ?? forwardedSourceIp ?? (typeof input.event?.remoteIp === "string" ? input.event.remoteIp : undefined),
     userAgent: typeof input.event?.userAgent === "string" ? input.event.userAgent : extractHeaderValue(rawData, "User-Agent"),
     rawData,
     count: 1,

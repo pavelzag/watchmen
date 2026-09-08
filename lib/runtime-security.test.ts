@@ -139,4 +139,43 @@ describe("runtime security rule engine", () => {
     expect(event.sourceIpClass).toBe("public");
     expect(event.matchedRuleIds).toContain("public");
   });
+
+  it("prefers the kernel tuple over spoofable L7 headers", () => {
+    const event = normalizeAgentEventRow({
+      id: 43,
+      received_at: "2026-08-24T00:00:00.000Z",
+      event: {
+        method: "GET",
+        path: "/api/products",
+        sourceIp: "10.0.0.7",
+        sourcePort: 45678,
+        destIp: "10.0.0.9",
+        data: "GET /api/products HTTP/1.1\r\nX-Forwarded-For: 203.0.113.99\r\n",
+      },
+    }, rules);
+
+    expect(event.sourceIp).toBe("10.0.0.7");
+    expect(event.sourceIpClass).toBe("private");
+    expect(event.matchedRuleIds).not.toContain("public");
+  });
+
+  it("maps dest tuple and container identity onto destinations", () => {
+    const event = normalizeAgentEventRow({
+      id: 44,
+      received_at: "2026-08-24T00:00:00.000Z",
+      cluster_name: null,
+      event: {
+        method: "POST",
+        path: "/checkout",
+        sourceIp: "10.0.0.7",
+        destIp: "10.0.1.20",
+        destPort: 8080,
+        containerId: "ad8b5c2e1f9a4b6c8d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e",
+        hostname: "node-1",
+      },
+    }, rules);
+
+    expect(event.destinationService).toBe("10.0.1.20:8080");
+    expect(event.destinationWorkload).toBe("ad8b5c2e1f9a4b6c8d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e");
+  });
 });

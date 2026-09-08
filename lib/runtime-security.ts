@@ -218,13 +218,18 @@ export function normalizeAgentEventRow(
   rules: RuntimeSecurityRule[],
 ): RuntimeRequestEvent {
   const event = row.event ?? {};
-  const sourceIp = stringValue(event.remoteIp)
-    ?? stringValue(event.sourceIp)
+  // Prefer the kernel-observed L4 tuple (eBPF tcp_sendmsg/recvmsg kprobes)
+  // over spoofable L7 headers; headers remain as fallback for HTTP-only
+  // agents predating the tuple probes.
+  const sourceIp = stringValue(event.sourceIp)
+    ?? stringValue(event.remoteIp)
     ?? stringValue(event.clientIp)
     ?? stringValue(event["x-forwarded-for"])?.split(",")[0]?.trim()
     ?? headerValue(stringValue(event.data), "X-Watchmen-Source-IP")
     ?? headerValue(stringValue(event.data), "X-Forwarded-For")
     ?? headerValue(stringValue(event.data), "X-Real-IP");
+  const destIp = stringValue(event.destIp) ?? stringValue(event.destinationIp);
+  const destPort = numberValue(event.destPort) ?? numberValue(event.destinationPort);
 
   return applyRuntimeDecision({
     id: `agent-${row.id}`,
@@ -238,10 +243,17 @@ export function normalizeAgentEventRow(
     bodySize: numberValue(event.bodySize) ?? numberValue(event.body_size),
     bodySample: stringValue(event.bodySample) ?? stringValue(event.body_sample),
     statusCode: numberValue(event.status),
-    destinationService: stringValue(event.service) ?? stringValue(event.destinationService) ?? row.cluster_name ?? undefined,
+    destinationService: stringValue(event.service)
+      ?? stringValue(event.destinationService)
+      ?? (destIp ? destPort !== undefined ? `${destIp}:${destPort}` : destIp : undefined)
+      ?? row.cluster_name
+      ?? undefined,
     destinationNamespace: stringValue(event.namespace) ?? stringValue(event.destinationNamespace),
     destinationPod: stringValue(event.pod) ?? stringValue(event.destinationPod),
-    destinationWorkload: stringValue(event.workload) ?? stringValue(event.destinationWorkload) ?? stringValue(event.hostname),
+    destinationWorkload: stringValue(event.workload)
+      ?? stringValue(event.destinationWorkload)
+      ?? stringValue(event.containerId)
+      ?? stringValue(event.hostname),
   }, rules);
 }
 

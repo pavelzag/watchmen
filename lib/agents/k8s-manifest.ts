@@ -186,6 +186,9 @@ wget -T 5 -t 1 -qO- --header="Content-Type: application/json" \\
                   },
                   { name: "WATCHMEN_VERBOSE", value: "1" },
                   { name: "WATCHMEN_SKIP_MEMLOCK", value: "1" },
+                  // Host /proc lets the agent resolve host PIDs (as seen by
+                  // eBPF) to container ids via /host/proc/<pid>/cgroup.
+                  { name: "WATCHMEN_HOST_PROC", value: "/host/proc" },
                   { name: "WATCHMEN_DROP_COMM_PREFIXES", value: "watchmen-ebpf,dockerd,containerd,kubelet" },
                   { name: "WATCHMEN_DROP_PATH_PREFIXES", value: "/api/agents/events,/api/agents/k8s/register,/v1.,/_ping,/health,/readyz" },
                   { name: "WATCHMEN_SEND_RESPONSES", value: "0" },
@@ -206,6 +209,11 @@ wget -T 5 -t 1 -qO- --header="Content-Type: application/json" \\
                   {
                     name: "tracefs",
                     mountPath: "/sys/kernel/tracing",
+                  },
+                  {
+                    name: "host-proc",
+                    mountPath: "/host/proc",
+                    readOnly: true,
                   },
                 ],
                 resources: {
@@ -235,6 +243,12 @@ wget -T 5 -t 1 -qO- --header="Content-Type: application/json" \\
                 name: "tracefs",
                 hostPath: {
                   path: "/sys/kernel/tracing",
+                },
+              },
+              {
+                name: "host-proc",
+                hostPath: {
+                  path: "/proc",
                 },
               },
             ],

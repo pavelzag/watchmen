@@ -17,9 +17,12 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/ringbuf"
 	"github.com/cilium/ebpf/rlimit"
+
+	"watchmen/ebpf-agent/enrich"
 )
 
 //go:generate ./scripts/generate-bpf.sh
@@ -27,19 +30,34 @@ import (
 const (
 	eventTypeHTTPReq        = "http_request"
 	eventTypeHTTPResp       = "http_response"
+	eventTypeFlow           = "tcp_flow"
 	eventDataLen            = 1024
+	// legacyEventSize is the ringbuf sample size produced by bindings
+	// predating the tuple/cgroup fields (pid+uid+type+comm+data).
+	legacyEventSize = 8 + 4 + 4 + 16 + eventDataLen
 	defaultDropPathPrefixes = "/api/agents/events,/api/agents/k8s/register,/v1.,/_ping,/health,/readyz"
 	defaultDropCommPrefixes = "watchmen-ebpf,dockerd,containerd,kubelet"
 )
 
 var version = "dev"
 
+// bpfEvent mirrors struct event in bpf/http_trace.bpf.c. Field order and
+// the explicit Pad match the C layout (cgroup_id needs 8-byte alignment);
+// unsafe.Sizeof must equal 64 + eventDataLen.
 type bpfEvent struct {
-	PID  uint64
-	UID  uint32
-	Type uint32
-	Comm [16]byte
-	Data [eventDataLen]byte
+	PID        uint64
+	UID        uint32
+	Type       uint32
+	Comm       [16]byte
+	Saddr      uint32
+	Daddr      uint32
+	Sport      uint16
+	Dport      uint16
+	Family     uint16
+	Pad        uint16
+	CgroupID   uint64
+	SockCookie uint64
+	Data       [eventDataLen]byte
 }
 
 type httpEvent struct {
@@ -53,6 +71,17 @@ type httpEvent struct {
 	Path      string `json:"path,omitempty"`
 	Status    string `json:"status,omitempty"`
 	Data      string `json:"data"`
+	// Socket tuple + container identity (#1 enrichment). SourceIP is the
+	// observed local address; DestIP/DestPort identify the peer. Empty when
+	// the kernel did not supply them (old bindings, non-IPv4).
+	SourceIP    string `json:"sourceIp,omitempty"`
+	SourcePort  uint16 `json:"sourcePort,omitempty"`
+	DestIP      string `json:"destIp,omitempty"`
+	DestPort    uint16 `json:"destPort,omitempty"`
+	Family      string `json:"family,omitempty"`
+	CgroupID    uint64 `json:"cgroupId,omitempty"`
+	SockCookie  uint64 `json:"sockCookie,omitempty"`
+	ContainerID string `json:"containerId,omitempty"`
 }
 
 type sender struct {
@@ -94,22 +123,60 @@ func run(ctx context.Context, endpoint string, verbose bool) error {
 		}
 	}
 
-	var objs http_traceObjects
-	if err := loadHttp_traceObjects(&objs, nil); err != nil {
+	// Load the collection manually (instead of the generated
+	// http_traceObjects struct) so the tuple kprobes stay optional: with
+	// pre-regeneration bindings the programs are simply absent and the
+	// agent runs in degraded HTTP-only mode. Regenerate on the Linux VM
+	// with ./scripts/generate-bpf.sh to enable them.
+	spec, err := loadHttp_trace()
+	if err != nil {
+		return fmt.Errorf("load eBPF spec: %w", err)
+	}
+	coll, err := ebpf.NewCollection(spec)
+	if err != nil {
 		return fmt.Errorf("load eBPF objects: %w", err)
 	}
-	defer objs.Close()
+	defer coll.Close()
 
+	httpProg, ok := coll.Programs["trace_http_write"]
+	if !ok {
+		return fmt.Errorf("eBPF program trace_http_write not found; regenerate bindings with ./scripts/generate-bpf.sh")
+	}
 	tpWrite, err := link.AttachRawTracepoint(link.RawTracepointOptions{
 		Name:    "sys_enter",
-		Program: objs.TraceHttpWrite,
+		Program: httpProg,
 	})
 	if err != nil {
 		return fmt.Errorf("attach raw sys_enter tracepoint: %w", err)
 	}
 	defer tpWrite.Close()
 
-	reader, err := ringbuf.NewReader(objs.Events)
+	// Tuple kprobes are best-effort: missing programs mean old bindings,
+	// and a failed attach (e.g. restricted kernel) must not kill HTTP tracing.
+	for _, probe := range []struct{ prog, symbol string }{
+		{"trace_tcp_sendmsg", "tcp_sendmsg"},
+		{"trace_tcp_recvmsg", "tcp_recvmsg"},
+		{"trace_tcp_connect", "tcp_connect"},
+	} {
+		prog, ok := coll.Programs[probe.prog]
+		if !ok {
+			log.Printf("tuple probe %s absent (regenerate bindings on Linux VM to enable); continuing HTTP-only", probe.prog)
+			continue
+		}
+		kp, err := link.Kprobe(probe.symbol, prog, nil)
+		if err != nil {
+			log.Printf("attach kprobe %s: %v; continuing HTTP-only", probe.symbol, err)
+			continue
+		}
+		defer kp.Close()
+		log.Printf("tuple probe attached: kprobe/%s", probe.symbol)
+	}
+
+	eventsMap, ok := coll.Maps["events"]
+	if !ok {
+		return fmt.Errorf("eBPF map events not found")
+	}
+	reader, err := ringbuf.NewReader(eventsMap)
 	if err != nil {
 		return fmt.Errorf("open ring buffer: %w", err)
 	}
@@ -135,6 +202,24 @@ func run(ctx context.Context, endpoint string, verbose bool) error {
 		sendResponses:    getenv("WATCHMEN_SEND_RESPONSES", "") == "1",
 	}
 
+	flows := enrich.NewCache()
+	procRoot := getenv("WATCHMEN_HOST_PROC", "/proc")
+	containers := make(map[uint64]string)
+
+	prune := time.NewTicker(time.Minute)
+	defer prune.Stop()
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-prune.C:
+				flows.Prune()
+				containers = make(map[uint64]string)
+			}
+		}
+	}()
+
 	log.Printf("watchmen HTTP trace agent started version=%s host=%s endpoint=%q", version, host, endpoint)
 
 	for {
@@ -153,6 +238,35 @@ func run(ctx context.Context, endpoint string, verbose bool) error {
 			}
 			continue
 		}
+
+		// Join the two kernel streams: flow events refresh the per-pid
+		// tuple, HTTP events consume it when their own tuple is empty.
+		if event.Type == eventTypeFlow {
+			flows.Remember(event.PID, flowOf(event))
+		} else if event.SourceIP == "" {
+			if f, ok := flows.Lookup(event.PID); ok {
+				event.SourceIP = f.SourceIP
+				event.SourcePort = f.SourcePort
+				event.DestIP = f.DestIP
+				event.DestPort = f.DestPort
+				event.Family = f.Family
+				if event.CgroupID == 0 {
+					event.CgroupID = f.CgroupID
+				}
+				if event.SockCookie == 0 {
+					event.SockCookie = f.SockCookie
+				}
+			}
+		}
+		if event.CgroupID != 0 && event.ContainerID == "" {
+			cached, ok := containers[event.PID]
+			if !ok {
+				cached = enrich.ReadContainerID(procRoot, event.PID)
+				containers[event.PID] = cached
+			}
+			event.ContainerID = cached
+		}
+
 		if out.shouldDrop(event) {
 			if verbose {
 				log.Printf("drop self/noisy event comm=%q method=%q path=%q status=%q", event.Comm, event.Method, event.Path, event.Status)
@@ -173,44 +287,99 @@ func isUnsupportedMemlockDetection(err error) bool {
 }
 
 func decodeEvent(raw []byte, hostname string) (httpEvent, error) {
-	var event bpfEvent
-	if len(raw) < int(unsafe.Sizeof(event)) {
+	fullSize := int(unsafe.Sizeof(bpfEvent{}))
+	if len(raw) < legacyEventSize {
 		return httpEvent{}, fmt.Errorf("sample too small: got %d bytes", len(raw))
 	}
 
+	// Old bindings emit the legacy layout (data at a different offset),
+	// so legacy samples need their own struct: zero-padding the tail
+	// would misread HTTP bytes as tuple fields.
+	if len(raw) < fullSize {
+		var legacy legacyBpfEvent
+		if err := binary.Read(bytes.NewReader(raw), binary.LittleEndian, &legacy); err != nil {
+			return httpEvent{}, err
+		}
+		var event bpfEvent
+		event.PID = legacy.PID
+		event.UID = legacy.UID
+		event.Type = legacy.Type
+		event.Comm = legacy.Comm
+		event.Data = legacy.Data
+		return finalizeEvent(event, hostname), nil
+	}
+
+	var event bpfEvent
 	if err := binary.Read(bytes.NewReader(raw), binary.LittleEndian, &event); err != nil {
 		return httpEvent{}, err
 	}
+	return finalizeEvent(event, hostname), nil
+}
 
+// legacyBpfEvent is the ringbuf layout emitted by bindings predating the
+// tuple/cgroup fields.
+type legacyBpfEvent struct {
+	PID  uint64
+	UID  uint32
+	Type uint32
+	Comm [16]byte
+	Data [eventDataLen]byte
+}
+
+func finalizeEvent(event bpfEvent, hostname string) httpEvent {
 	eventType := eventTypeHTTPReq
-	if event.Type == 1 {
+	switch event.Type {
+	case 1:
 		eventType = eventTypeHTTPResp
+	case 2:
+		eventType = eventTypeFlow
 	}
 
 	dataStr := strings.TrimSpace(cString(event.Data[:]))
 
 	h := httpEvent{
-		Type:      eventType,
-		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
-		Hostname:  hostname,
-		PID:       event.PID,
-		UID:       event.UID,
-		Comm:      cString(event.Comm[:]),
-		Data:      dataStr,
+		Type:       eventType,
+		Timestamp:  time.Now().UTC().Format(time.RFC3339Nano),
+		Hostname:   hostname,
+		PID:        event.PID,
+		UID:        event.UID,
+		Comm:       cString(event.Comm[:]),
+		Data:       dataStr,
+		SourceIP:   enrich.FormatIPv4(event.Saddr),
+		SourcePort: event.Sport,
+		DestIP:     enrich.FormatIPv4(event.Daddr),
+		DestPort:   event.Dport,
+		Family:     enrich.FamilyName(event.Family),
+		CgroupID:   event.CgroupID,
+		SockCookie: event.SockCookie,
 	}
 
-	if event.Type == 0 {
+	switch event.Type {
+	case 0:
 		if parts := strings.SplitN(dataStr, " ", 3); len(parts) >= 2 {
 			h.Method = parts[0]
 			h.Path = parts[1]
 		}
-	} else {
+	case 1:
 		if parts := strings.SplitN(dataStr, " ", 3); len(parts) >= 2 {
 			h.Status = parts[1]
 		}
 	}
 
-	return h, nil
+	return h
+}
+
+// flowOf converts a decoded flow event into a cache entry.
+func flowOf(event httpEvent) enrich.Flow {
+	return enrich.Flow{
+		SourceIP:   event.SourceIP,
+		SourcePort: event.SourcePort,
+		DestIP:     event.DestIP,
+		DestPort:   event.DestPort,
+		Family:     event.Family,
+		CgroupID:   event.CgroupID,
+		SockCookie: event.SockCookie,
+	}
 }
 
 func (s sender) shouldDrop(event httpEvent) bool {
