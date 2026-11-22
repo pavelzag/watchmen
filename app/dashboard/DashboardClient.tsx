@@ -280,14 +280,16 @@ export default function DashboardClient({
       triggerScan("initial_demo_credentials");
       return;
     }
-    let hasGcpServiceAccount = false;
+    let hasGcpAccess = false;
     console.info("[gcp-dashboard] loading cached GCP snapshot");
     appendSyncLog("[gcp-dashboard] checking GCP credentials");
     fetch("/api/settings/credentials", { cache: "no-store" })
       .then((r) => r.json())
-      .then(async (data: { credentials?: { provider: string }[] }) => {
+      .then(async (data: { credentials?: { provider: string }[]; gcpAdc?: { enabled?: boolean } }) => {
         const providers = data.credentials ?? [];
-        hasGcpServiceAccount = providers.some((credential) => credential.provider === "gcp");
+        const hasGcpServiceAccount = providers.some((credential) => credential.provider === "gcp");
+        const hasGcpAdc = Boolean(data.gcpAdc?.enabled);
+        hasGcpAccess = hasGcpServiceAccount || hasGcpAdc;
         // Check Self-Managed kubeconfig status (multi-cluster + legacy single)
         let hasSelfManaged = false;
         try {
@@ -306,12 +308,13 @@ export default function DashboardClient({
           }
         } catch {}
         setCloudConnections({
-          gcp: hasGcpServiceAccount,
+          gcp: hasGcpAccess,
           aws: providers.some((credential) => credential.provider === "aws"),
           selfManaged: hasSelfManaged,
         });
         appendSyncLog("[gcp-dashboard] GCP credential state", {
           serviceAccountConfigured: hasGcpServiceAccount,
+          adcEnabled: hasGcpAdc,
           googleSessionFallback: false,
         });
         return fetch("/api/scan", { cache: "no-store" });
@@ -326,11 +329,12 @@ export default function DashboardClient({
           hasSnapshot: Boolean(data.snapshot),
           fetchedAt: data.fetchedAt ?? data.snapshot?.fetchedAt ?? null,
         });
-        if (!data.snapshot && !hasGcpServiceAccount) {
+        if (!data.snapshot && !hasGcpAccess) {
           setGcpCredsRequired(true);
           appendSyncLog("[gcp-dashboard] no saved GCP service account; connect one before syncing");
           return;
         }
+        setGcpCredsRequired(false);
         if (!data.snapshot) triggerScan("initial_missing_snapshot");
         if (data.snapshot?.snapshotId) saveSnapshot(data.snapshot as GcpSnapshot);
       })

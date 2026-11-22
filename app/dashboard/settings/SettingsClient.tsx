@@ -243,6 +243,7 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
 
   // Server-backed cloud credentials state (non-demo users)
   const [cloudCreds, setCloudCreds] = useState<CloudCredRecord[]>([]);
+  const [gcpAdcStatus, setGcpAdcStatus] = useState<{ enabled: boolean; principal?: string | null; projects?: string[] } | null>(null);
   const [cloudLoading, setCloudLoading] = useState(true);
   const [gcpKeyInput, setGcpKeyInput] = useState("");
   const [awsAuthMode, setAwsAuthMode] = useState<"role" | "keys">("keys");
@@ -363,7 +364,10 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
     } else {
       fetch("/api/settings/credentials")
         .then((r) => r.json())
-        .then((d) => setCloudCreds(d.credentials ?? []))
+        .then((d) => {
+          setCloudCreds(d.credentials ?? []);
+          setGcpAdcStatus(d.gcpAdc ?? null);
+        })
         .catch(() => { })
         .finally(() => setCloudLoading(false));
 
@@ -1945,16 +1949,37 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
                             {isDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
                           </button>
                         </>
+                      ) : gcpAdcStatus?.enabled ? (
+                        <span className="flex items-center gap-1 text-xs text-emerald-400">
+                          <Check className="w-3 h-3" /> Connected (Keyless ADC)
+                        </span>
                       ) : (
                         <span className="text-xs text-slate-600">Not configured</span>
                       )}
                     </div>
                   </div>
+                  {gcpAdcStatus?.enabled && !record && (
+                    <div className="rounded-lg border border-emerald-500/30 bg-emerald-950/20 px-3 py-2 text-xs font-mono text-emerald-300 space-y-1">
+                      <div>Keyless Application Default Credentials active (no exported JSON key needed).</div>
+                      {gcpAdcStatus.principal && (
+                        <div className="text-emerald-400/90">Principal: {gcpAdcStatus.principal}</div>
+                      )}
+                      {gcpAdcStatus.projects && gcpAdcStatus.projects.length > 0 && (
+                        <div className="text-emerald-400/90">Projects: {gcpAdcStatus.projects.join(", ")}</div>
+                      )}
+                    </div>
+                  )}
                   <div className="space-y-2">
                     <textarea
                       value={gcpKeyInput}
                       onChange={(e) => setGcpKeyInput(e.target.value)}
-                      placeholder={record ? "Paste new service account JSON to update" : "Paste service account JSON key"}
+                      placeholder={
+                        record
+                          ? "Paste new service account JSON to update"
+                          : gcpAdcStatus?.enabled
+                            ? "Optional: paste a service account JSON key only to override keyless ADC"
+                            : "Paste service account JSON key"
+                      }
                       rows={4}
                       className="w-full px-3 py-2 rounded-lg bg-slate-900/60 border border-slate-700 text-xs text-slate-200 placeholder:text-slate-600 outline-none focus:border-sky-500/50 font-mono resize-none"
                     />

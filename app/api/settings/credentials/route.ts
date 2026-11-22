@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { STSClient, GetCallerIdentityCommand, AssumeRoleCommand } from "@aws-sdk/client-sts";
-import { initGoogleAuthFromKey } from "@/lib/gcp/client";
+import { initGoogleAuthFromKey, isGcpAdcEnabled } from "@/lib/gcp/client";
 import {
   ensureCredentialsTable,
   listUserCloudCredentials,
@@ -15,7 +15,19 @@ export async function GET() {
   try {
     await ensureCredentialsTable();
     const credentials = await listUserCloudCredentials(session.user.email);
-    return NextResponse.json({ credentials });
+    const adcEnabled = isGcpAdcEnabled();
+    const projects = (process.env.GCP_PROJECTS ?? "")
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean);
+    return NextResponse.json({
+      credentials,
+      gcpAdc: {
+        enabled: adcEnabled,
+        principal: process.env.GCP_SCANNER_PRINCIPAL?.trim() || null,
+        projects,
+      },
+    });
   } catch (err) {
     console.error("[api/settings/credentials] GET error:", err);
     return NextResponse.json({ error: "Failed to load credentials." }, { status: 500 });
