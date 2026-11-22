@@ -1,11 +1,17 @@
 {
   "name": "watchmen",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "private": true,
+  "bin": {
+    "watchmen-cli": "./scripts/watchmen-cli.mjs",
+    "watchmen-mcp": "./scripts/watchmen-mcp.mjs"
+  },
   "scripts": {
     "dev": "next dev -p 3000",
     "dev:debug": "WATCHMEN_DEBUG=true NEXT_PUBLIC_WATCHMEN_DEBUG=true next dev -p 3000",
     "seed:runtime-geo": "node scripts/seed-runtime-geo-events.mjs",
+    "cli": "node scripts/watchmen-cli.mjs",
+    "mcp": "node scripts/watchmen-mcp.mjs",
     "build": "next build",
     "start": "node .next/standalone/server.js",
     "lint": "next lint",
@@ -34,10 +40,10 @@
     "@aws-sdk/client-sts": "^3.1000.0",
     "@google/generative-ai": "^0.21.0",
     "@kubernetes/client-node": "^2.0.0",
+    "@neondatabase/serverless": "^1.2.1",
     "@types/pg": "^8.20.0",
     "@types/three": "^0.185.4",
     "@types/topojson-client": "^3.1.5",
-    "@vercel/postgres": "^0.10.0",
     "clsx": "^2.1.1",
     "framer-motion": "^12.35.0",
     "googleapis": "^144.0.0",
@@ -68,11 +74,15 @@
     "autoprefixer": "^10.4.20",
     "eslint": "^9.21.0",
     "eslint-config-next": "^15.1.6",
-    "jest": "^30.2.0",
-    "jest-environment-jsdom": "^30.2.0",
+    "jest": "^30.5.2",
+    "jest-environment-jsdom": "^30.5.2",
     "postcss": "^8.5.3",
     "tailwindcss": "^3.4.17",
     "ts-node": "^10.9.2",
     "typescript": "^5.8.2"
+  },
+  "overrides": {
+    "jsdom": "^28.1.0",
+    "test-exclude": "^8.0.0"
   }
 }

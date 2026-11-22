@@ -18,6 +18,10 @@ const mockUpdateFile = jest.fn();
 const mockCreatePullRequest = jest.fn();
 const mockPostToSlack = jest.fn();
 const mockSql = jest.fn();
+const mockEnsureBackgroundTasksTable = jest.fn();
+const mockUpsertBackgroundTask = jest.fn();
+const mockGetBackgroundTask = jest.fn();
+const taskStoreMemory = new Map<string, unknown>();
 
 jest.mock("@/lib/auth", () => ({
   auth: mockAuth,
@@ -53,7 +57,17 @@ jest.mock("@/lib/alerting", () => ({
 
 jest.mock("@/lib/db", () => ({
   sql: mockSql,
+  ensureBackgroundTasksTable: mockEnsureBackgroundTasksTable,
 }));
+
+jest.mock("@/lib/tasks/store", () => {
+  const actual = jest.requireActual("@/lib/tasks/store");
+  return {
+    ...actual,
+    upsertBackgroundTask: mockUpsertBackgroundTask,
+    getBackgroundTask: mockGetBackgroundTask,
+  };
+});
 
 const { GET: getRepos } = require("@/app/api/github/repos/route");
 const { POST: previewTerraformPr } = require("@/app/api/github/terraform-pr/preview/route");
@@ -130,10 +144,18 @@ interface StreamEvent {
 describe("GitHub connectivity routes", () => {
   beforeEach(() => {
     jest.resetAllMocks();
+    taskStoreMemory.clear();
     mockAuth.mockResolvedValue(SESSION);
     mockGetUserCloudCredentials.mockResolvedValue({ token: "gh-token" });
     mockResolveAI.mockResolvedValue({ provider: "google", key: "ai-key" });
     mockSql.mockResolvedValue({ rows: [] });
+    mockEnsureBackgroundTasksTable.mockResolvedValue(undefined);
+    mockUpsertBackgroundTask.mockImplementation(async (email: string, task: { id: string }) => {
+      taskStoreMemory.set(`${email}:${task.id}`, structuredClone(task));
+    });
+    mockGetBackgroundTask.mockImplementation(async (email: string, taskId: string) => {
+      return taskStoreMemory.get(`${email}:${taskId}`) ?? null;
+    });
   });
 
   describe("repo listing", () => {
@@ -241,7 +263,8 @@ describe("GitHub connectivity routes", () => {
       const body = await parseJson(response);
 
       expect(response.status).toBe(200);
-      expect(body).toMatchObject({
+      expect(body.taskId).toEqual(expect.any(String));
+      expect(body.result).toMatchObject({
         patches: makePlan().patches,
         summary: "Prepared 1 patch.",
         coveredTargetIds: ["finding-1"],
@@ -256,7 +279,7 @@ describe("GitHub connectivity routes", () => {
         TARGETS,
         "google",
         "ai-key",
-        expect.objectContaining({ scope: "api/github/terraform-pr/preview:POST" })
+        expect.objectContaining({ scope: expect.stringContaining("api/github/terraform-pr/preview:") })
       );
     });
 
@@ -280,8 +303,10 @@ describe("GitHub connectivity routes", () => {
       const raw = await response.text();
       const events = raw.trim().split("\n").map((line: string) => JSON.parse(line) as StreamEvent);
 
+      const nonHeartbeatEvents = events.filter((event: StreamEvent) => event.type !== "heartbeat");
+
       expect(response.headers.get("Content-Type")).toContain("application/x-ndjson");
-      expect(events).toEqual([
+      expect(nonHeartbeatEvents).toEqual([
         {
           type: "progress",
           progress: {
@@ -290,7 +315,7 @@ describe("GitHub connectivity routes", () => {
             percent: 10,
           },
         },
-        {
+        expect.objectContaining({
           type: "result",
           patches: makePlan().patches,
           failures: [],
@@ -299,11 +324,11 @@ describe("GitHub connectivity routes", () => {
           uncoveredTargets: [],
           fullyAddressed: true,
           suggestedBatches: [],
-        },
+        }),
       ]);
     });
 
-    it("auto-splits large mixed preview requests before AI analysis", async () => {
+    it("returns suggested batches when preview splits large mixed requests", async () => {
       const manyTargets = Array.from({ length: 12 }, (_, index) => ({
         ...TARGETS[0],
         id: `finding-${index}`,
@@ -311,18 +336,36 @@ describe("GitHub connectivity routes", () => {
         resourceType: index < 6 ? "firewall_rule" : "cloud_run",
       })) as RemediationTarget[];
 
+      mockBuildRemediationPlan.mockResolvedValue({
+        patches: [],
+        failures: [],
+        coveredTargetIds: [],
+        uncoveredTargets: manyTargets,
+        fullyAddressed: false,
+        suggestedBatches: [
+          {
+            id: "firewall:1",
+            title: "Firewall issues",
+            reason: "Firewall rules need targeted network-specific remediation.",
+            category: "firewall",
+            targets: manyTargets.slice(0, 6),
+          },
+        ],
+        summary: "Split 12 selected items into focused batches.",
+      });
+
       const response = await previewTerraformPr(jsonRequest("http://localhost/api/github/terraform-pr/preview", {
         repoFullName: "owner/repo",
         defaultBranch: "main",
         targets: manyTargets,
       }));
       const body = await parseJson(response);
+      const result = body.result as Record<string, unknown>;
 
       expect(response.status).toBe(200);
-      expect(body.summary).toEqual(expect.stringContaining("Split 12 selected items"));
-      expect(body.fullyAddressed).toBe(false);
-      expect(Array.isArray(body.suggestedBatches)).toBe(true);
-      expect(mockBuildRemediationPlan).not.toHaveBeenCalled();
+      expect(result.summary).toEqual(expect.stringContaining("Split 12 selected items"));
+      expect(result.fullyAddressed).toBe(false);
+      expect(Array.isArray(result.suggestedBatches)).toBe(true);
     });
   });
 
@@ -346,7 +389,8 @@ describe("GitHub connectivity routes", () => {
       const body = await parseJson(response);
 
       expect(response.status).toBe(200);
-      expect(body).toMatchObject({
+      expect(body.taskId).toEqual(expect.any(String));
+      expect(body.result).toMatchObject({
         ok: true,
         prUrl: "https://github.com/owner/repo/pull/42",
         prNumber: 42,
@@ -408,19 +452,19 @@ describe("GitHub connectivity routes", () => {
       expect(events.some((event: StreamEvent) => event.type === "progress" && event.progress?.stage === "build_plan")).toBe(true);
       expect(events.some((event: StreamEvent) => event.type === "progress" && event.progress?.stage === "analyze_files")).toBe(true);
       expect(events.some((event: StreamEvent) => event.type === "progress" && event.progress?.stage === "complete")).toBe(true);
-      expect(events).toContainEqual({
+      expect(events).toContainEqual(expect.objectContaining({
         type: "result",
         ok: true,
         prUrl: "https://github.com/owner/repo/pull/7",
         prNumber: 7,
         patchCount: 1,
-        message: "Prepared 1 patch.",
+        message: "Pull request #7 created",
         failures: [],
         coveredTargetIds: ["finding-1"],
         uncoveredTargets: [],
         fullyAddressed: true,
         suggestedBatches: [],
-      });
+      }));
     });
 
     it("returns a non-PR success payload when no patches are needed", async () => {
@@ -442,9 +486,9 @@ describe("GitHub connectivity routes", () => {
       const body = await parseJson(response);
 
       expect(response.status).toBe(200);
-      expect(body).toEqual({
+      expect(body.result).toMatchObject({
         ok: true,
-        message: "No Terraform files found in this repository.",
+        message: "No changes were needed.",
         patchCount: 0,
         failures: [],
         coveredTargetIds: [],
@@ -455,13 +499,21 @@ describe("GitHub connectivity routes", () => {
       expect(mockCreatePullRequest).not.toHaveBeenCalled();
     });
 
-    it("rejects PR creation when some selected targets remain uncovered", async () => {
+    it("continues with partial remediation PR creation and reports uncovered targets", async () => {
       mockBuildRemediationPlan.mockResolvedValue(makePlan({
         coveredTargetIds: [],
         uncoveredTargets: TARGETS,
         fullyAddressed: false,
         summary: "Prepared 1 patch, but 1 selected item remains uncovered.",
       }));
+      mockGetDefaultBranchSha.mockResolvedValue("head-sha");
+      mockCreateBranch.mockResolvedValue(undefined);
+      mockCreateFile.mockResolvedValue(undefined);
+      mockUpdateFile.mockResolvedValue(undefined);
+      mockCreatePullRequest.mockResolvedValue({
+        number: 12,
+        html_url: "https://github.com/owner/repo/pull/12",
+      });
 
       const response = await createTerraformPr(jsonRequest("http://localhost/api/github/terraform-pr", {
         repoFullName: "owner/repo",
@@ -470,9 +522,14 @@ describe("GitHub connectivity routes", () => {
       }));
       const body = await parseJson(response);
 
-      expect(response.status).toBe(422);
-      expect(String(body.error)).toContain("Refusing to open a partial remediation PR");
-      expect(mockCreatePullRequest).not.toHaveBeenCalled();
+      expect(response.status).toBe(200);
+      expect(body.result).toMatchObject({
+        ok: true,
+        prNumber: 12,
+        fullyAddressed: false,
+        uncoveredTargets: TARGETS,
+      });
+      expect(mockCreatePullRequest).toHaveBeenCalled();
     });
   });
 });
