@@ -90,6 +90,23 @@ export interface CloudRunService {
   iamPolicy: { bindings: IamBinding[] };
   /** Environment variables from the latest revision (may contain secrets) */
   envVars?: Record<string, string>;
+  /** Secret Manager secret references mounted into env vars */
+  secretEnvVars?: string[];
+  vpcEgress?: string;
+}
+
+export interface CloudRunJob {
+  name: string;
+  projectId: string;
+  region: string;
+  status: string;
+  image?: string;
+  serviceAccount?: string;
+  vpcEgress?: string;
+  iamPolicy: { bindings: IamBinding[] };
+  envVars?: Record<string, string>;
+  secretEnvVars?: string[];
+  executionCount?: number;
 }
 
 export interface CloudSqlInstance {
@@ -221,6 +238,7 @@ export interface GcpSnapshot {
   gkeClusters: GkeCluster[];
   vms: VM[];
   cloudRunServices: CloudRunService[];
+  cloudRunJobs?: CloudRunJob[];
   cloudSqlInstances: CloudSqlInstance[];
   bigqueryDatasets: BigQueryDataset[];
   pubsubTopics: PubSubTopic[];

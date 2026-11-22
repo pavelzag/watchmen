@@ -9,6 +9,8 @@ export async function GET(req: NextRequest) {
   }
 
   const cluster = req.nextUrl.searchParams.get("cluster") ?? "";
+  const instance = req.nextUrl.searchParams.get("instance") ?? "";
+  const provider = req.nextUrl.searchParams.get("provider") ?? "";
   const after = req.nextUrl.searchParams.get("after") ?? "";
   const limit = Math.min(Number(req.nextUrl.searchParams.get("limit")) || 50, 200);
   const offset = Math.max(Number(req.nextUrl.searchParams.get("offset")) || 0, 0);
@@ -17,9 +19,32 @@ export async function GET(req: NextRequest) {
   await ensureAgentInstallTables();
 
   let events;
-  if (cluster && after) {
+  if (instance && after) {
     events = await sql`
-      SELECT e.id, e.agent_id, e.provider, e.project_id, e.event, e.received_at, COALESCE(e.cluster_name, h.metadata->>'clusterName') AS cluster_name
+      SELECT e.id, e.agent_id, e.provider, e.project_id, e.event, e.received_at, h.instance_name, h.zone, COALESCE(e.cluster_name, h.metadata->>'clusterName') AS cluster_name
+      FROM agent_events e
+      JOIN agent_hosts h ON h.id = e.agent_id
+      WHERE h.instance_name = ${instance}
+        AND (${provider} = '' OR h.provider = ${provider})
+        AND e.received_at > ${after}::timestamptz
+        AND (h.user_email = ${email} OR h.user_email = 'system')
+      ORDER BY e.received_at DESC
+      LIMIT ${limit} OFFSET ${offset}
+    `;
+  } else if (instance) {
+    events = await sql`
+      SELECT e.id, e.agent_id, e.provider, e.project_id, e.event, e.received_at, h.instance_name, h.zone, COALESCE(e.cluster_name, h.metadata->>'clusterName') AS cluster_name
+      FROM agent_events e
+      JOIN agent_hosts h ON h.id = e.agent_id
+      WHERE h.instance_name = ${instance}
+        AND (${provider} = '' OR h.provider = ${provider})
+        AND (h.user_email = ${email} OR h.user_email = 'system')
+      ORDER BY e.received_at DESC
+      LIMIT ${limit} OFFSET ${offset}
+    `;
+  } else if (cluster && after) {
+    events = await sql`
+      SELECT e.id, e.agent_id, e.provider, e.project_id, e.event, e.received_at, h.instance_name, h.zone, COALESCE(e.cluster_name, h.metadata->>'clusterName') AS cluster_name
       FROM agent_events e
       JOIN agent_hosts h ON h.id = e.agent_id
       WHERE h.provider = 'k8s'
@@ -31,7 +56,7 @@ export async function GET(req: NextRequest) {
     `;
   } else if (cluster) {
     events = await sql`
-      SELECT e.id, e.agent_id, e.provider, e.project_id, e.event, e.received_at, COALESCE(e.cluster_name, h.metadata->>'clusterName') AS cluster_name
+      SELECT e.id, e.agent_id, e.provider, e.project_id, e.event, e.received_at, h.instance_name, h.zone, COALESCE(e.cluster_name, h.metadata->>'clusterName') AS cluster_name
       FROM agent_events e
       JOIN agent_hosts h ON h.id = e.agent_id
       WHERE h.provider = 'k8s'
@@ -42,21 +67,22 @@ export async function GET(req: NextRequest) {
     `;
   } else if (after) {
     events = await sql`
-      SELECT e.id, e.agent_id, e.provider, e.project_id, e.event, e.received_at, COALESCE(e.cluster_name, h.metadata->>'clusterName') AS cluster_name
+      SELECT e.id, e.agent_id, e.provider, e.project_id, e.event, e.received_at, h.instance_name, h.zone, COALESCE(e.cluster_name, h.metadata->>'clusterName') AS cluster_name
       FROM agent_events e
       JOIN agent_hosts h ON h.id = e.agent_id
-      WHERE e.received_at > ${after}::timestamptz
+      WHERE (${provider} = '' OR h.provider = ${provider})
+        AND e.received_at > ${after}::timestamptz
         AND (h.user_email = ${email} OR h.user_email = 'system')
       ORDER BY e.received_at DESC
       LIMIT ${limit} OFFSET ${offset}
     `;
   } else {
     events = await sql`
-      SELECT e.id, e.agent_id, e.provider, e.project_id, e.event, e.received_at, COALESCE(e.cluster_name, h.metadata->>'clusterName') AS cluster_name
+      SELECT e.id, e.agent_id, e.provider, e.project_id, e.event, e.received_at, h.instance_name, h.zone, COALESCE(e.cluster_name, h.metadata->>'clusterName') AS cluster_name
       FROM agent_events e
       JOIN agent_hosts h ON h.id = e.agent_id
-      WHERE h.user_email = ${email}
-         OR h.user_email = 'system'
+      WHERE (${provider} = '' OR h.provider = ${provider})
+        AND (h.user_email = ${email} OR h.user_email = 'system')
       ORDER BY e.received_at DESC
       LIMIT ${limit} OFFSET ${offset}
     `;

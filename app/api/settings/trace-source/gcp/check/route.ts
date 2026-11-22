@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { google } from "googleapis";
 import { getUserCloudCredentials } from "@/lib/credentials";
-import { initGoogleAuthFromKey, initUserAuth } from "@/lib/gcp/client";
+import { initGoogleAuthForRequest } from "@/lib/gcp/client";
 import { getUserGcpTraceSourceConfig, saveUserGcpTraceSourceConfig } from "@/lib/trace-source";
 
 export async function POST() {
@@ -28,15 +28,14 @@ export async function POST() {
 
   const gcpCreds = await getUserCloudCredentials(session.user.email, "gcp");
   const accessToken = session.accessToken;
-  if (!gcpCreds && !accessToken) {
-    return NextResponse.json({ error: "No GCP credentials configured." }, { status: 422 });
-  }
 
   try {
-    if (gcpCreds?.serviceAccountKey) {
-      initGoogleAuthFromKey(gcpCreds.serviceAccountKey as string);
-    } else if (accessToken) {
-      initUserAuth(accessToken as string);
+    const authMode = initGoogleAuthForRequest({
+      serviceAccountKey: gcpCreds?.serviceAccountKey as string | undefined,
+      accessToken,
+    });
+    if (!authMode) {
+      return NextResponse.json({ error: "No GCP credentials configured." }, { status: 422 });
     }
 
     const topicName = `${config.namePrefix}-topic`;

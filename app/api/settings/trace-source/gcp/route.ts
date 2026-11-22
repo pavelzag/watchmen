@@ -62,6 +62,12 @@ export async function PUT(req: NextRequest) {
     namePrefix: String(body.namePrefix ?? current.namePrefix ?? DEFAULT_GCP_TRACE_SOURCE_CONFIG.namePrefix).trim() || DEFAULT_GCP_TRACE_SOURCE_CONFIG.namePrefix,
     pushEndpoint: String(body.pushEndpoint ?? current.pushEndpoint ?? "").trim(),
     pushAudience: String(body.pushAudience ?? current.pushAudience ?? "").trim(),
+    excludeServices: Array.isArray(body.excludeServices)
+      ? body.excludeServices.map((s) => String(s).trim()).filter(Boolean)
+      : current.excludeServices,
+    excludeRequestLogServices: Array.isArray(body.excludeRequestLogServices)
+      ? body.excludeRequestLogServices.map((s) => String(s).trim()).filter(Boolean)
+      : current.excludeRequestLogServices,
     lastCheckedAt: current.lastCheckedAt,
     lastCheckMessage: current.lastCheckMessage,
     setupState: current.setupState,

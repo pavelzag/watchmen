@@ -19,6 +19,8 @@ export interface GcpTraceSourceConfig {
   namePrefix: string;
   pushEndpoint: string;
   pushAudience: string;
+  excludeServices?: string[];
+  excludeRequestLogServices?: string[];
   setupState: TraceSetupState;
   lastCheckedAt: string | null;
   lastCheckMessage: string;
@@ -155,6 +157,19 @@ export function generateGcpTraceSourceBundle(config: GcpTraceSourceConfig): GcpT
   const namePrefix = config.namePrefix.trim() || "watchmen-live-trace";
   const pushEndpoint = config.pushEndpoint.trim();
   const pushAudience = config.pushAudience.trim();
+  const excludeServices = (config.excludeServices ?? []).map((s) => s.trim()).filter(Boolean);
+  const excludeRequestLogServices = (config.excludeRequestLogServices ?? []).map((s) => s.trim()).filter(Boolean);
+
+  const cloudRunExclusions: string[] = [];
+  if (excludeServices.length > 0) {
+    cloudRunExclusions.push(`NOT (${excludeServices.map((s) => `resource.labels.service_name="${s}"`).join(" OR ")})`);
+  }
+  if (excludeRequestLogServices.length > 0) {
+    cloudRunExclusions.push(`NOT ((${excludeRequestLogServices.map((s) => `resource.labels.service_name="${s}"`).join(" OR ")}) AND log_id("run.googleapis.com/requests"))`);
+  }
+  const cloudRunFilter = cloudRunExclusions.length > 0
+    ? `(resource.type="cloud_run_revision" AND ${cloudRunExclusions.join(" AND ")})`
+    : `resource.type="cloud_run_revision"`;
 
   const variablesTf = `variable "name_prefix" {
   description = "Prefix used for created resources."
@@ -177,7 +192,7 @@ variable "gcp_log_filter" {
   description = "Cloud Logging filter for request-oriented live trace events."
   type        = string
   default     = <<-EOT
-    resource.type="cloud_run_revision"
+    ${cloudRunFilter}
     OR resource.type="gce_instance"
     OR resource.type="k8s_container"
     OR resource.type="http_load_balancer"

@@ -237,6 +237,7 @@ export function computeFindings(snapshot: GcpSnapshot): SecurityFinding[] {
       ...snapshot.storageBuckets.flatMap((b) => b.iamPolicy.bindings),
       ...snapshot.gkeClusters.flatMap((c) => c.iamPolicy.bindings),
       ...snapshot.cloudRunServices.flatMap((s) => s.iamPolicy.bindings),
+      ...(snapshot.cloudRunJobs ?? []).flatMap((j) => j.iamPolicy.bindings),
       ...snapshot.bigqueryDatasets.flatMap((d) => d.iamPolicy.bindings),
       ...snapshot.secrets.flatMap((s) => s.iamPolicy.bindings),
     ];
@@ -281,6 +282,24 @@ export function computeFindings(snapshot: GcpSnapshot): SecurityFinding[] {
         projectId: svc.projectId,
         resourceType: "cloud_run",
         remediationHint: `Move the value of "${match.key}" in service "${svc.name}" to Google Secret Manager and reference it as a mounted secret instead of a plain env var.`,
+      });
+    }
+  }
+
+  // cloud_run_job_secret_env: Cloud Run jobs with secrets in plain environment variables
+  for (const job of snapshot.cloudRunJobs ?? []) {
+    if (!job.envVars || Object.keys(job.envVars).length === 0) continue;
+    const matches = scanEnvVars(job.envVars);
+    for (const match of matches) {
+      findings.push({
+        id: `secret_in_env:cloudrun-job:${job.projectId}:${job.name}:${match.key}`,
+        severity: match.confidence === "high" ? "critical" : "high",
+        title: "Secret Detected in Cloud Run Job Environment Variable",
+        description: `Cloud Run job "${job.name}" has a potential secret in env var "${match.key}" — detected pattern: ${match.patternLabel}. Value starts with: ${match.redactedValue}`,
+        resourceName: job.name,
+        projectId: job.projectId,
+        resourceType: "cloud_run",
+        remediationHint: `Move the value of "${match.key}" in job "${job.name}" to Google Secret Manager and reference it via secretKeyRef instead of a plain env var.`,
       });
     }
   }

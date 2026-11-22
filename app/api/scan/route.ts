@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { fetchGcpSnapshot, extractUsers, extractServiceAccountEmails } from "@/lib/gcp";
 import { sql, ensureGcpSnapshotTable } from "@/lib/db";
-import { useMockData } from "@/lib/gcp/client";
+import { isGcpAdcEnabled, useMockData } from "@/lib/gcp/client";
 import { getUserCloudCredentials } from "@/lib/credentials";
 import { debugError, debugLog, withDebugTiming } from "@/lib/debug";
 import type { TaskProgressEvent } from "@/lib/tasks/types";
@@ -31,6 +31,7 @@ function summarizeGcpSnapshot(snapshot: GcpSnapshot): Record<string, number | st
     gkeClusters: snapshot.gkeClusters.length,
     vms: snapshot.vms.length,
     cloudRunServices: snapshot.cloudRunServices.length,
+    cloudRunJobs: (snapshot.cloudRunJobs ?? []).length,
     cloudSqlInstances: snapshot.cloudSqlInstances.length,
     bigqueryDatasets: snapshot.bigqueryDatasets.length,
     pubsubTopics: snapshot.pubsubTopics.length,
@@ -156,8 +157,9 @@ export async function POST(req: NextRequest) {
     }
 
     const gcpCreds = await getUserCloudCredentials(email, "gcp");
+    const adcEnabled = isGcpAdcEnabled();
 
-    if (!gcpCreds) {
+    if (!gcpCreds && !adcEnabled) {
       console.info(`[api/scan:${scanId}] no GCP credentials configured`, { email });
       return {
         ok: false as const,
@@ -167,21 +169,25 @@ export async function POST(req: NextRequest) {
       };
     }
 
+    const credentialMode = gcpCreds?.serviceAccountKey ? "service_account" : "adc";
     emit({
       stage: "start",
-      message: "Starting live GCP scan",
+      message: credentialMode === "adc"
+        ? "Starting live GCP scan using Application Default Credentials"
+        : "Starting live GCP scan",
       percent: 0,
       metadata: {
-        credentialMode: "service_account",
+        credentialMode,
       },
     });
 
     const snapshot = await withDebugTiming(scope, "fetchGcpSnapshot.live", {
       email,
-      credentialMode: "service_account",
+      credentialMode,
     }, () =>
       fetchGcpSnapshot({
         serviceAccountKey: gcpCreds?.serviceAccountKey as string | undefined,
+        useAdc: credentialMode === "adc",
         onProgress: emit,
       })
     );
@@ -206,7 +212,7 @@ export async function POST(req: NextRequest) {
 
     const snapshotSummary = {
       ...summarizeGcpSnapshot(snapshot),
-      credentialMode: "service_account",
+      credentialMode,
     };
     console.info(`[api/scan:${scanId}] POST complete`, {
       mode: "live",

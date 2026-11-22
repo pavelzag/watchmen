@@ -2,6 +2,7 @@ import { createHash } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { publishLiveTraceEvent, type LiveTraceIngressEvent } from "@/lib/live-trace-bus";
+import { redactRawHttpPayload, redactSensitivePath, sanitizeRemoteIp } from "@/lib/privacy";
 import { getRuntimeSecurityRulesForEvaluation, saveRuntimeRequestEvent } from "@/lib/runtime-security-store";
 import { normalizeAgentEventRow } from "@/lib/runtime-security";
 
@@ -22,22 +23,27 @@ function toLiveTraceEvent(input: {
   userEmail: string;
   provider: string;
   projectId: string;
+  instanceName: string;
   clusterName: string | null;
   event: any;
   status: number | null;
 }): LiveTraceIngressEvent | null {
   const method = typeof input.event?.method === "string" ? input.event.method : undefined;
-  const path = typeof input.event?.path === "string" ? input.event.path : undefined;
+  const path = redactSensitivePath(typeof input.event?.path === "string" ? input.event.path : undefined);
   if (!method && !path && input.status === null) return null;
 
+  const isK8s = input.provider === "k8s";
   const clusterName = input.clusterName || input.projectId || "kubernetes";
+  const resourceName = isK8s
+    ? clusterName
+    : (input.instanceName || input.clusterName || input.agentId);
   const timestamp = typeof input.event?.timestamp === "string" ? input.event.timestamp : new Date().toISOString();
   const traceId = typeof input.event?.traceId === "string"
     ? input.event.traceId
     : typeof input.event?.trace_id === "string"
       ? input.event.trace_id
       : `${input.agentId}:${timestamp}:${method ?? "HTTP"}:${path ?? "/"}`;
-  const rawData = typeof input.event?.data === "string" ? input.event.data : undefined;
+  const rawData = redactRawHttpPayload(typeof input.event?.data === "string" ? input.event.data : undefined);
   const kernelSourceIp = typeof input.event?.sourceIp === "string" && input.event.sourceIp.trim()
     ? input.event.sourceIp.trim()
     : undefined;
@@ -47,23 +53,25 @@ function toLiveTraceEvent(input: {
 
   return {
     id: `agent:${traceId}`,
-    cloud: input.provider === "k8s" ? "kubernetes" : "gcp",
-    kind: "gke",
-    projectId: clusterName,
-    resourceName: clusterName,
+    cloud: isK8s ? "kubernetes" : "gcp",
+    kind: isK8s ? "gke" : "vm",
+    projectId: isK8s ? clusterName : (input.projectId || "gcp"),
+    resourceName,
     container: typeof input.event?.pod === "string"
       ? input.event.pod
       : typeof input.event?.containerId === "string"
         ? input.event.containerId
         : typeof input.event?.container === "string"
           ? input.event.container
-          : undefined,
+          : !isK8s && typeof input.event?.comm === "string"
+            ? input.event.comm
+            : undefined,
     timestamp,
     method,
     path,
     status: input.status ?? undefined,
     latency: typeof input.event?.latency === "string" ? input.event.latency : undefined,
-    remoteIp: kernelSourceIp ?? forwardedSourceIp ?? (typeof input.event?.remoteIp === "string" ? input.event.remoteIp : undefined),
+    remoteIp: sanitizeRemoteIp(kernelSourceIp ?? forwardedSourceIp ?? (typeof input.event?.remoteIp === "string" ? input.event.remoteIp : undefined)),
     userAgent: typeof input.event?.userAgent === "string" ? input.event.userAgent : extractHeaderValue(rawData, "User-Agent"),
     rawData,
     count: 1,
@@ -86,9 +94,10 @@ export async function POST(req: NextRequest) {
       user_email: string;
       provider: string;
       project_id: string;
+      instance_name: string;
       cluster_name: string | null;
     }>`
-      SELECT id, user_email, provider, project_id, metadata->>'clusterName' AS cluster_name FROM agent_hosts
+      SELECT id, user_email, provider, project_id, instance_name, metadata->>'clusterName' AS cluster_name FROM agent_hosts
       WHERE id = ${agentId} AND secret_hash = ${secretHash}
       LIMIT 1
     `;
@@ -103,7 +112,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid agent credentials." }, { status: 403 });
   }
 
-  const event = await req.json();
+  const rawEvent = await req.json();
+  const event = {
+    ...rawEvent,
+    ...(typeof rawEvent?.path === "string" ? { path: redactSensitivePath(rawEvent.path) } : {}),
+    ...(typeof rawEvent?.data === "string" ? { data: redactRawHttpPayload(rawEvent.data) ?? "" } : {}),
+    ...(typeof rawEvent?.sourceIp === "string" ? { sourceIp: sanitizeRemoteIp(rawEvent.sourceIp) } : {}),
+    ...(typeof rawEvent?.remoteIp === "string" ? { remoteIp: sanitizeRemoteIp(rawEvent.remoteIp) } : {}),
+  };
   const hostRow = host.rows[0];
   const status = parseStatus(event?.status);
   const liveEvent = toLiveTraceEvent({
@@ -111,6 +127,7 @@ export async function POST(req: NextRequest) {
     userEmail: hostRow.user_email,
     provider: hostRow.provider,
     projectId: hostRow.project_id,
+    instanceName: hostRow.instance_name,
     clusterName: hostRow.cluster_name,
     event,
     status,

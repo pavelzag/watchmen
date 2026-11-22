@@ -227,3 +227,14 @@ ALTER TABLE runtime_request_events ADD COLUMN IF NOT EXISTS source_geo_country T
 
 CREATE INDEX IF NOT EXISTS idx_runtime_request_events_lookup
   ON runtime_request_events (user_email, ts DESC);
+
+CREATE TABLE IF NOT EXISTS live_trace_events (
+  id          TEXT NOT NULL,
+  user_email  TEXT NOT NULL,
+  event       JSONB NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_email, id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_live_trace_events_lookup
+  ON live_trace_events (user_email, created_at DESC);

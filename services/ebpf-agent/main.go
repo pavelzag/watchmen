@@ -92,6 +92,9 @@ type sender struct {
 	dropPathPrefixes []string
 	dropCommPrefixes []string
 	sendResponses    bool
+	redactSecrets    bool
+	truncateIPs      bool
+	omitRawData      bool
 }
 
 func main() {
@@ -200,6 +203,9 @@ func run(ctx context.Context, endpoint string, verbose bool) error {
 		dropPathPrefixes: splitList(getenv("WATCHMEN_DROP_PATH_PREFIXES", defaultDropPathPrefixes)),
 		dropCommPrefixes: splitList(getenv("WATCHMEN_DROP_COMM_PREFIXES", defaultDropCommPrefixes)),
 		sendResponses:    getenv("WATCHMEN_SEND_RESPONSES", "") == "1",
+		redactSecrets:    getenv("WATCHMEN_REDACT_SECRETS", "1") != "0",
+		truncateIPs:      getenv("WATCHMEN_TRUNCATE_IPS", "") == "1",
+		omitRawData:      getenv("WATCHMEN_OMIT_RAW_DATA", "") == "1",
 	}
 
 	flows := enrich.NewCache()
@@ -399,7 +405,23 @@ func (s sender) shouldDrop(event httpEvent) bool {
 	return false
 }
 
+func (s sender) sanitize(event httpEvent) httpEvent {
+	if s.truncateIPs {
+		event.SourceIP = enrich.TruncateIPv4(event.SourceIP)
+		event.DestIP = enrich.TruncateIPv4(event.DestIP)
+	}
+	if s.redactSecrets {
+		event.Path = enrich.RedactPathQuerySecrets(event.Path)
+		event.Data = enrich.RedactHTTPPayload(event.Data)
+	}
+	if s.omitRawData {
+		event.Data = ""
+	}
+	return event
+}
+
 func (s sender) send(ctx context.Context, event httpEvent) error {
+	event = s.sanitize(event)
 	payload, err := json.Marshal(event)
 	if err != nil {
 		return err
