@@ -31,6 +31,11 @@ describe("keyless GCP ADC auth resolution", () => {
     expect(isGcpAdcEnabled()).toBe(true);
     expect(initGoogleAuthForRequest({})).toBe("adc");
   });
+
+  it("prefers ADC over login-only OAuth accessToken when GCP_USE_ADC=true", () => {
+    process.env.GCP_USE_ADC = "true";
+    expect(initGoogleAuthForRequest({ accessToken: "openid-profile-only-token" })).toBe("adc");
+  });
 });
 
 describe("Pub/Sub OIDC verification", () => {

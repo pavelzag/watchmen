@@ -49,8 +49,8 @@ const MAX_TOTAL_TASKS = 75;
 const PREVIEW_BATCH_CONCURRENCY = 2;
 const STALE_CHECK_INTERVAL_MS = 30 * 1000;
 const TASK_STALE_TIMEOUT_MS: Record<BackgroundTaskKind, number> = {
-  gcp_scan: 30 * 60 * 1000,
-  aws_scan: 30 * 60 * 1000,
+  gcp_scan: 3 * 60 * 1000,
+  aws_scan: 3 * 60 * 1000,
   attack_paths: 15 * 60 * 1000,
   terraform_preview: 7 * 60 * 1000,
   terraform_pr: 7 * 60 * 1000,

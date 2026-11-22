@@ -57,8 +57,8 @@ export function initGoogleAuth() {
 /**
  * Resolves the best available GCP auth mechanism for an API request:
  * 1. User-supplied service account key JSON (if present)
- * 2. User OAuth access token (if present)
- * 3. Server Application Default Credentials (if GCP_USE_ADC=true)
+ * 2. Server Application Default Credentials (if GCP_USE_ADC=true)
+ * 3. User OAuth access token (if present and ADC is not enabled)
  */
 export function initGoogleAuthForRequest(options: {
   serviceAccountKey?: string | null;
@@ -68,13 +68,13 @@ export function initGoogleAuthForRequest(options: {
     initGoogleAuthFromKey(options.serviceAccountKey);
     return "service_account_key";
   }
-  if (typeof options.accessToken === "string" && options.accessToken) {
-    initUserAuth(options.accessToken);
-    return "oauth_token";
-  }
   if (isGcpAdcEnabled()) {
     initGoogleAuthFromAdc();
     return "adc";
+  }
+  if (typeof options.accessToken === "string" && options.accessToken) {
+    initUserAuth(options.accessToken);
+    return "oauth_token";
   }
   return null;
 }
