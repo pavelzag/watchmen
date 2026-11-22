@@ -4,14 +4,16 @@ import { useCallback, useEffect, useState, type MouseEvent } from "react";
 import {
   Globe, Flame, Server, Database, Key, Shield, ChevronRight,
   AlertTriangle, RefreshCw, Lock, User, Cloud, HardDrive, GitPullRequest,
-  Sparkles, Loader2, ChevronDown, ChevronUp, AlertCircle,
+  Sparkles, Loader2, ChevronDown, ChevronUp, AlertCircle, Terminal,
 } from "lucide-react";
 import { computeAttackPaths, type AttackNode, type AttackPath } from "@/lib/gcp/attack-paths";
 import type { AwsSecurityFinding, AwsSnapshot } from "@/lib/aws/types";
 import { computeAwsFindings } from "@/lib/aws-findings";
 import RemediateModal from "./RemediateModal";
+import PushToCliModal from "@/components/PushToCliModal";
 import ScanCloudButton from "@/components/ScanCloudButton";
 import { remediationTargetFromAttackPath } from "@/lib/github/remediation-targets";
+import { handoffIssueFromAttackPath } from "@/lib/handoff/tasks";
 import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
 import { linkifyText } from "@/lib/utils/linkify";
 import CopyAiResponseButton from "@/components/CopyAiResponseButton";
@@ -491,6 +493,7 @@ export default function AttackPathsPage() {
   const [filter, setFilter] = useState<"all" | "critical" | "high">("all");
   const [cloudFilter, setCloudFilter] = useState<CloudFilter>("all");
   const [showRemediate, setShowRemediate] = useState(false);
+  const [showCliModal, setShowCliModal] = useState(false);
 
   const hasAwsCredentialsConfigured = useCallback(async () => {
     try {
@@ -636,7 +639,7 @@ export default function AttackPathsPage() {
             {fetchedAt && <span style={{ color: "var(--border-dim)" }}> · snapshot {new Date(fetchedAt).toLocaleTimeString()}</span>}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {gcpRemediablePaths.length > 0 && (
             <button
               onClick={() => setShowRemediate(true)}
@@ -645,6 +648,17 @@ export default function AttackPathsPage() {
             >
               <GitPullRequest className="w-3 h-3" />
               Fix GCP with GitHub PR
+            </button>
+          )}
+          {visible.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowCliModal(true)}
+              className="flex items-center gap-2 px-3 py-1.5 text-xs uppercase tracking-widest transition-all"
+              style={{ border: "1px solid rgba(16,185,129,0.5)", color: "#34d399", background: "rgba(16,185,129,0.08)" }}
+            >
+              <Terminal className="w-3 h-3" />
+              Send to CLI
             </button>
           )}
           <ScanCloudButton onScanComplete={handleLoad} variant="terminal" />
@@ -768,6 +782,13 @@ export default function AttackPathsPage() {
       {showRemediate && (
         <RemediateModal targets={gcpRemediablePaths.map(remediationTargetFromAttackPath)} onClose={() => setShowRemediate(false)} />
       )}
+
+      <PushToCliModal
+        isOpen={showCliModal}
+        onClose={() => setShowCliModal(false)}
+        issues={visible.map(handoffIssueFromAttackPath)}
+        contextLabel="Attack Paths"
+      />
     </div>
   );
 }

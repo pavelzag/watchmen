@@ -1,10 +1,24 @@
 # Watchmen
 
-Current version: **v0.8.0**
+Current version: **v0.9.0**
 
 Cloud security posture management, compliance, and live request tracing — for AWS and GCP — in a single dashboard.
 
 Watchmen scans your cloud infrastructure for misconfigurations, runs SOC 2 Type II and ISO 27001:2022 compliance checks, answers natural-language questions about your environment, and lets you watch live Kubernetes request traffic flow in real time.
+
+---
+
+## v0.9.0 — CLI Task Handoff (Phases 1–3) & Dependency Modernization
+
+- **CLI Task Handoff (Phases 1–3)**: Push findings and attack paths from Watchmen into open tasks for **OpenCode**, **Claude Code**, and **Codex**:
+  - Canonical task normalization, category batching, deterministic deduplication, and secret redaction (`lib/handoff/tasks.ts`).
+  - Postgres-backed handoff queue (`cli_handoff_tasks`) and scoped Personal API Tokens (`user_api_tokens`, `wm_...`) in `lib/db.ts` and `/api/handoff/tasks`.
+  - **Watchmen MCP Server**: Remote Streamable HTTP endpoint at `/api/mcp` (`lib/handoff/mcp.ts`) and zero-dependency `stdio` bridge (`scripts/watchmen-mcp.mjs`, `npm run mcp`) exposing `watchmen_list_open_tasks`, `watchmen_get_task`, `watchmen_claim_task`, `watchmen_complete_task`, and `watchmen_verify_task`.
+  - **Local Runner & Watcher CLI (`scripts/watchmen-cli.mjs`, `npm run cli`)**: `list`, `pull`, `run`, `watch`, and `verify` subcommands with OpenCode/Claude/Codex/custom adapters, `--worktree` git branch isolation, PR URL extraction, and `--verify` closed-loop verification.
+  - **Closed-Loop Verification (`lib/handoff/verify.ts`, `POST /api/handoff/tasks/[id]/verify`)**: Compares pushed tasks against the latest stored GCP/AWS snapshots (with optional audited `verifyFix` AI summary) and auto-completes resolved tasks.
+  - **Send to CLI** modal on **Findings** and **Attack Paths**, **CLI & MCP Task Queue** on `/dashboard/tasks`, and token + MCP setup snippets in **Settings → Integrations**.
+  - See [Watchmen v0.9 CLI Task Handoff Plan](docs/v0.9-cli-task-handoff.md) for the full design and usage details.
+- **Database & Build Modernization**: Migrated from deprecated `@vercel/postgres` to `@neondatabase/serverless` + `pg`, updated `jest`/`jsdom` and `caniuse-lite`, and eliminated npm install deprecation warnings.
 
 ---
 

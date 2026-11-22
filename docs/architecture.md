@@ -406,7 +406,17 @@ All SOC 2 and ISO 27001 control checks are pure functions in `lib/compliance/che
 | Path | Purpose |
 |---|---|
 | `lib/auth.ts` | NextAuth config — Google provider, JWT/session callbacks, email/domain allowlist |
-| `lib/db.ts` | Re-exports `sql` from `@vercel/postgres` — works with any PostgreSQL URL |
+| `lib/db.ts` | PostgreSQL `sql` template helper using `pg` (direct) and `@neondatabase/serverless` (pooled) — works with any PostgreSQL URL |
+| `lib/handoff/tasks.ts` | Canonical CLI task builder, batch grouping, secret redaction, and OpenCode/Claude/Codex command & Markdown pack formatters |
+| `lib/handoff/store.ts` | Postgres persistence for `cli_handoff_tasks` and Personal API Token (`wm_...`) authentication |
+| `lib/handoff/mcp.ts` | MCP JSON-RPC 2.0 server & tool handlers (`watchmen_list_open_tasks`, `watchmen_get_task`, `watchmen_claim_task`, `watchmen_complete_task`, `watchmen_verify_task`) |
+| `lib/handoff/verify.ts` | Closed-loop task verification against latest cloud snapshots + optional `verifyFix` AI run |
+| `app/api/mcp/route.ts` | Authenticated Streamable HTTP MCP endpoint (`GET`/`POST`) |
+| `scripts/watchmen-mcp.mjs` | Zero-dependency local `stdio` MCP bridge wrapping `/api/handoff/tasks` |
+| `scripts/watchmen-cli.mjs` | Local CLI runner & watcher (`list`, `pull`, `run`, `watch`, `verify`) with git worktree isolation for OpenCode/Claude/Codex |
+| `app/api/handoff/tasks/route.ts` | REST API (`GET`/`POST`) for listing and pushing CLI handoff tasks via session or Bearer API token |
+| `app/api/handoff/tasks/[id]/verify/route.ts` | Closed-loop verification endpoint (`POST`) for CLI/MCP/UI task verification |
+| `app/api/settings/api-tokens/route.ts` | Personal API Token management (`GET`/`POST`/`DELETE`) for CLI & MCP access |
 | `lib/gcp/client.ts` | SA auth (`initGoogleAuth`), user OAuth auth (`initUserAuth`), org-level project enumeration |
 | `lib/gcp/index.ts` | `fetchGcpSnapshot()` — orchestrates all GCP fetchers |
 | `lib/gcp/types.ts` | All GCP type definitions |

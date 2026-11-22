@@ -1,13 +1,11 @@
-import {
-  sql as pooledSql,
-  type QueryResult,
-  type QueryResultRow,
-} from "@vercel/postgres";
-import { Pool } from "pg";
+import { neon, type NeonQueryFunction } from "@neondatabase/serverless";
+import { Pool, type QueryResult, type QueryResultRow } from "pg";
 
 type SqlPrimitive = string | number | boolean | undefined | null;
 
 let directPool: Pool | null = null;
+let pooledClientUrl: string | undefined;
+let pooledClient: NeonQueryFunction<false, true> | null = null;
 
 function getConnectionString(): string | undefined {
   return process.env.POSTGRES_URL || process.env.DATABASE_URL;
@@ -46,23 +44,36 @@ function getDirectPool(): Pool {
   return directPool;
 }
 
+function getPooledClient(connectionString: string): NeonQueryFunction<false, true> {
+  if (!pooledClient || pooledClientUrl !== connectionString) {
+    pooledClientUrl = connectionString;
+    pooledClient = neon(connectionString, { fullResults: true });
+  }
+  return pooledClient;
+}
+
 export async function sql<O extends QueryResultRow>(
   strings: TemplateStringsArray,
   ...values: SqlPrimitive[]
 ): Promise<QueryResult<O>> {
   const connectionString = getConnectionString();
+  const query = templateToQuery(strings, values);
   if (shouldUseDirectClient(connectionString)) {
     const pool = getDirectPool();
-    const query = templateToQuery(strings, values);
     return pool.query<O>(query.text, query.values);
   }
-  return pooledSql<O>(strings, ...values);
+  if (!connectionString) {
+    throw new Error("Missing POSTGRES_URL or DATABASE_URL environment variable.");
+  }
+  const neonSql = getPooledClient(connectionString);
+  return (await neonSql.query(query.text, query.values)) as unknown as QueryResult<O>;
 }
 
 let backgroundTasksTableReady: Promise<void> | null = null;
 let agentRunsTableReady: Promise<void> | null = null;
 let agentInstallTablesReady: Promise<void> | null = null;
 let runtimeSecurityTablesReady: Promise<void> | null = null;
+let handoffTablesReady: Promise<void> | null = null;
 
 export async function retryOnce<T>(work: () => Promise<T>): Promise<T> {
   try {
@@ -465,4 +476,65 @@ export async function ensureAgentInstallTables(): Promise<void> {
   }
 
   await agentInstallTablesReady;
+}
+
+/**
+ * Ensures tables for v0.9 CLI task handoff and personal API tokens.
+ */
+export async function ensureHandoffTables(): Promise<void> {
+  if (!handoffTablesReady) {
+    handoffTablesReady = retryOnce(async () => {
+      await sql`
+        CREATE TABLE IF NOT EXISTS user_api_tokens (
+          id            TEXT PRIMARY KEY,
+          user_email    TEXT NOT NULL,
+          name          TEXT NOT NULL,
+          token_prefix  TEXT NOT NULL,
+          token_hash    TEXT NOT NULL UNIQUE,
+          last_used_at  TIMESTAMPTZ,
+          revoked_at    TIMESTAMPTZ,
+          created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `;
+      await sql`
+        CREATE INDEX IF NOT EXISTS idx_user_api_tokens_lookup
+          ON user_api_tokens (user_email, created_at DESC)
+      `;
+      await sql`
+        CREATE TABLE IF NOT EXISTS cli_handoff_tasks (
+          id              TEXT PRIMARY KEY,
+          user_email      TEXT NOT NULL,
+          fingerprint     TEXT NOT NULL,
+          title           TEXT NOT NULL,
+          target_tool     TEXT NOT NULL DEFAULT 'any',
+          batch_mode      TEXT NOT NULL DEFAULT 'grouped',
+          status          TEXT NOT NULL DEFAULT 'open',
+          severity        TEXT NOT NULL DEFAULT 'medium',
+          issue_count     INT NOT NULL DEFAULT 1,
+          payload         JSONB NOT NULL DEFAULT '{}',
+          prompt_markdown TEXT NOT NULL DEFAULT '',
+          pr_url          TEXT,
+          session_ref     TEXT,
+          claimed_by      TEXT,
+          claimed_at      TIMESTAMPTZ,
+          completed_at    TIMESTAMPTZ,
+          created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `;
+      await sql`
+        CREATE INDEX IF NOT EXISTS idx_cli_handoff_tasks_lookup
+          ON cli_handoff_tasks (user_email, status, updated_at DESC)
+      `;
+      await sql`
+        CREATE INDEX IF NOT EXISTS idx_cli_handoff_tasks_fingerprint
+          ON cli_handoff_tasks (user_email, fingerprint, status)
+      `;
+    }).catch((error) => {
+      handoffTablesReady = null;
+      throw error;
+    });
+  }
+
+  await handoffTablesReady;
 }

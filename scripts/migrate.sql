@@ -238,3 +238,44 @@ CREATE TABLE IF NOT EXISTS live_trace_events (
 
 CREATE INDEX IF NOT EXISTS idx_live_trace_events_lookup
   ON live_trace_events (user_email, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS user_api_tokens (
+  id            TEXT PRIMARY KEY,
+  user_email    TEXT NOT NULL,
+  name          TEXT NOT NULL,
+  token_prefix  TEXT NOT NULL,
+  token_hash    TEXT NOT NULL UNIQUE,
+  last_used_at  TIMESTAMPTZ,
+  revoked_at    TIMESTAMPTZ,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_api_tokens_lookup
+  ON user_api_tokens (user_email, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS cli_handoff_tasks (
+  id              TEXT PRIMARY KEY,
+  user_email      TEXT NOT NULL,
+  fingerprint     TEXT NOT NULL,
+  title           TEXT NOT NULL,
+  target_tool     TEXT NOT NULL DEFAULT 'any',
+  batch_mode      TEXT NOT NULL DEFAULT 'grouped',
+  status          TEXT NOT NULL DEFAULT 'open',
+  severity        TEXT NOT NULL DEFAULT 'medium',
+  issue_count     INT NOT NULL DEFAULT 1,
+  payload         JSONB NOT NULL DEFAULT '{}',
+  prompt_markdown TEXT NOT NULL DEFAULT '',
+  pr_url          TEXT,
+  session_ref     TEXT,
+  claimed_by      TEXT,
+  claimed_at      TIMESTAMPTZ,
+  completed_at    TIMESTAMPTZ,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_cli_handoff_tasks_lookup
+  ON cli_handoff_tasks (user_email, status, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_cli_handoff_tasks_fingerprint
+  ON cli_handoff_tasks (user_email, fingerprint, status);

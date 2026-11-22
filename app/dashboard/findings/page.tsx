@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo, useRef, type KeyboardEvent, type MouseEvent } from "react";
 import Link from "next/link";
-import { ArrowLeft, ShieldAlert, ShieldCheck, RefreshCw, Loader2, ChevronDown, ChevronUp, AlertCircle, GitPullRequest, Search, X, Download, Star, FileSearch, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, ShieldAlert, ShieldCheck, RefreshCw, Loader2, ChevronDown, ChevronUp, AlertCircle, GitPullRequest, Search, X, Download, Star, FileSearch, CheckCircle2, Terminal } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { computeFindings } from "@/lib/findings";
 import type { GcpSnapshot, SecurityFinding, SecurityFindingSeverity } from "@/lib/gcp/types";
@@ -12,8 +12,10 @@ import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
 import { linkifyText } from "@/lib/utils/linkify";
 import type { ResourceItem } from "@/lib/claude/query-processor";
 import RemediateModal from "@/app/dashboard/attack-paths/RemediateModal";
+import PushToCliModal from "@/components/PushToCliModal";
 import ScanCloudButton from "@/components/ScanCloudButton";
 import { remediationTargetFromFinding } from "@/lib/github/remediation-targets";
+import { handoffIssueFromFinding, type HandoffIssueItem } from "@/lib/handoff/tasks";
 import CopyAiResponseButton from "@/components/CopyAiResponseButton";
 import { useDemoMode } from "@/components/DemoModeProvider";
 
@@ -232,6 +234,7 @@ function FindingCard({
   pinned,
   onTogglePin,
   onOpenRemediation,
+  onSendToCli,
   agentRuns,
 }: {
   finding: CloudFinding;
@@ -239,6 +242,7 @@ function FindingCard({
   pinned: boolean;
   onTogglePin: (id: string) => void;
   onOpenRemediation: (finding: CloudFinding) => void;
+  onSendToCli: (issue: HandoffIssueItem) => void;
   agentRuns?: FindingAgentRuns;
 }) {
   const demoMode = useDemoMode();
@@ -633,6 +637,22 @@ function FindingCard({
               Create PR now
             </button>
           )}
+          <button
+            type="button"
+            onClick={() =>
+              onSendToCli(
+                handoffIssueFromFinding(finding, {
+                  investigationReport: investigation.text ?? undefined,
+                  proposedPlan: plan.text ?? undefined,
+                })
+              )
+            }
+            className="flex items-center gap-1.5 text-xs font-medium transition-all duration-150 rounded-lg px-2.5 py-1 border border-emerald-500/35 text-emerald-300 hover:bg-emerald-500/10"
+            title="Send this finding (with any investigation/plan) to OpenCode, Claude Code, or Codex"
+          >
+            <Terminal className="w-3 h-3" />
+            Send to CLI
+          </button>
         </div>
 
         {investigation.error && (
@@ -857,6 +877,7 @@ export default function FindingsPage() {
   const [showRemediate, setShowRemediate] = useState(false);
   const [remediationFindings, setRemediationFindings] = useState<CloudFinding[]>([]);
   const [remediationAutoCreatePr, setRemediationAutoCreatePr] = useState(false);
+  const [cliModalIssues, setCliModalIssues] = useState<HandoffIssueItem[] | null>(null);
   const [agentRunsByFinding, setAgentRunsByFinding] = useState<Record<string, FindingAgentRuns>>({});
   const [search, setSearch] = useState("");
   const [showWatchlist, setShowWatchlist] = useState(false);
@@ -1026,6 +1047,25 @@ export default function FindingsPage() {
           >
             <GitPullRequest className="w-3.5 h-3.5" />
             Fix with GitHub PR
+          </button>
+        )}
+        {!loading && displayed.length > 0 && (
+          <button
+            type="button"
+            onClick={() =>
+              setCliModalIssues(
+                displayed.map((finding) =>
+                  handoffIssueFromFinding(finding, {
+                    investigationReport: agentRunsByFinding[finding.id]?.investigate_finding?.report ?? undefined,
+                    proposedPlan: agentRunsByFinding[finding.id]?.plan_remediation?.report ?? undefined,
+                  })
+                )
+              )
+            }
+            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 transition-colors"
+          >
+            <Terminal className="w-3.5 h-3.5" />
+            Send to CLI
           </button>
         )}
         <ExportButton findings={displayed} />
@@ -1206,6 +1246,13 @@ export default function FindingsPage() {
         />
       )}
 
+      <PushToCliModal
+        isOpen={Boolean(cliModalIssues)}
+        onClose={() => setCliModalIssues(null)}
+        issues={cliModalIssues ?? []}
+        contextLabel="Security Findings"
+      />
+
       {!loading && bySeverity.map(({ severity, items }) => {
         const cfg = SEVERITY_CONFIG[severity];
         return (
@@ -1226,6 +1273,7 @@ export default function FindingsPage() {
                   pinned={pinned.has(finding.id)}
                   onTogglePin={togglePin}
                   onOpenRemediation={(targetFinding) => openRemediation([targetFinding])}
+                  onSendToCli={(issue) => setCliModalIssues([issue])}
                   agentRuns={agentRunsByFinding[finding.id]}
                 />
               ))}

@@ -16,6 +16,7 @@ import {
 import { getBrowserAIKeys, setBrowserAIKey, removeBrowserAIKey, getActiveBrowserProvider, setActiveBrowserProvider, type BrowserAIKeys } from "@/lib/ai/browser-ai-keys";
 import SelfManagedClusterCard from "@/components/SelfManagedClusterCard";
 import TasksPanel from "@/components/TasksPanel";
+import CliApiTokensCard from "@/components/CliApiTokensCard";
 
 interface CloudCredRecord {
   provider: string;
@@ -2948,6 +2949,8 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
           })()
         )}
       </div>
+
+          <CliApiTokensCard isDemoUser={isDemoUser} />
         </div>
       )}
 
