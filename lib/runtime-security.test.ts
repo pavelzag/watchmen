@@ -178,4 +178,91 @@ describe("runtime security rule engine", () => {
     expect(event.destinationService).toBe("10.0.1.20:8080");
     expect(event.destinationWorkload).toBe("ad8b5c2e1f9a4b6c8d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e");
   });
+
+  it("extracts source geo headers from agent payloads", () => {
+    const event = normalizeAgentEventRow({
+      id: 45,
+      received_at: "2026-08-24T00:00:00.000Z",
+      event: {
+        method: "GET",
+        path: "/api/products",
+        data: [
+          "GET /api/products HTTP/1.1",
+          "X-Watchmen-Source-IP: 203.162.4.190",
+          "X-Watchmen-Source-Lat: 10.8231",
+          "X-Watchmen-Source-Lon: 106.6297",
+          "X-Watchmen-Source-City: Ho Chi Minh City",
+          "X-Watchmen-Source-Region: Ho Chi Minh City",
+          "X-Watchmen-Source-Country: Vietnam",
+          "",
+        ].join("\r\n"),
+      },
+    }, rules);
+
+    expect(event.sourceGeo).toEqual({
+      lat: 10.8231,
+      lon: 106.6297,
+      city: "Ho Chi Minh City",
+      region: "Ho Chi Minh City",
+      country: "Vietnam",
+    });
+  });
+
+  it("extracts source geo from lowercase agent header maps", () => {
+    const event = normalizeAgentEventRow({
+      id: 46,
+      received_at: "2026-08-24T00:00:00.000Z",
+      event: {
+        method: "GET",
+        path: "/api/products",
+        headers: {
+          "x-watchmen-source-ip": "51.158.66.10",
+          "x-watchmen-source-lat": "48.8566",
+          "x-watchmen-source-lon": "2.3522",
+          "x-watchmen-source-city": "Paris",
+          "x-watchmen-source-region": "Ile-de-France",
+          "x-watchmen-source-country": "France",
+        },
+      },
+    }, rules);
+
+    expect(event.sourceIp).toBe("51.158.66.10");
+    expect(event.sourceGeo).toEqual({
+      lat: 48.8566,
+      lon: 2.3522,
+      city: "Paris",
+      region: "Ile-de-France",
+      country: "France",
+    });
+  });
+
+  it("extracts source geo from JSON encoded agent data", () => {
+    const event = normalizeAgentEventRow({
+      id: 47,
+      received_at: "2026-08-24T00:00:00.000Z",
+      event: {
+        method: "GET",
+        path: "/api/products",
+        data: JSON.stringify({
+          headers: {
+            "X-Watchmen-Source-IP": "139.130.4.5",
+            "X-Watchmen-Source-Lat": "-33.8688",
+            "X-Watchmen-Source-Lon": "151.2093",
+            "X-Watchmen-Source-City": "Sydney",
+            "X-Watchmen-Source-Region": "New South Wales",
+            "X-Watchmen-Source-Country": "Australia",
+          },
+        }),
+      },
+    }, rules);
+
+    expect(event.sourceIp).toBe("139.130.4.5");
+    expect(event.sourceGeo).toEqual({
+      lat: -33.8688,
+      lon: 151.2093,
+      city: "Sydney",
+      region: "New South Wales",
+      country: "Australia",
+    });
+  });
 });

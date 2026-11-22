@@ -225,9 +225,9 @@ export function normalizeAgentEventRow(
     ?? stringValue(event.remoteIp)
     ?? stringValue(event.clientIp)
     ?? stringValue(event["x-forwarded-for"])?.split(",")[0]?.trim()
-    ?? headerValue(stringValue(event.data), "X-Watchmen-Source-IP")
-    ?? headerValue(stringValue(event.data), "X-Forwarded-For")
-    ?? headerValue(stringValue(event.data), "X-Real-IP");
+    ?? eventHeaderValue(event, "X-Watchmen-Source-IP")
+    ?? eventHeaderValue(event, "X-Forwarded-For")
+    ?? eventHeaderValue(event, "X-Real-IP");
   const destIp = stringValue(event.destIp) ?? stringValue(event.destinationIp);
   const destPort = numberValue(event.destPort) ?? numberValue(event.destinationPort);
 
@@ -313,6 +313,53 @@ function headerValue(raw: string | undefined, name: string): string | undefined 
   return match?.[1]?.split(",")[0]?.trim() || undefined;
 }
 
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function parseJsonRecord(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value !== "string" || !value.trim().startsWith("{")) return undefined;
+  try {
+    return recordValue(JSON.parse(value));
+  } catch {
+    return undefined;
+  }
+}
+
+function valueByCaseInsensitiveKey(record: Record<string, unknown> | undefined, key: string): unknown {
+  if (!record) return undefined;
+  const direct = record[key];
+  if (direct !== undefined) return direct;
+  const lowerKey = key.toLowerCase();
+  const entry = Object.entries(record).find(([name]) => name.toLowerCase() === lowerKey);
+  return entry?.[1];
+}
+
+function firstHeaderPart(value: string | undefined): string | undefined {
+  return value?.split(",")[0]?.trim() || undefined;
+}
+
+function eventHeaderValue(event: Record<string, unknown>, headerName: string): string | undefined {
+  const direct = firstHeaderPart(stringValue(valueByCaseInsensitiveKey(event, headerName)));
+  if (direct) return direct;
+
+  const headers = recordValue(event.headers) ?? recordValue(event.requestHeaders);
+  const header = firstHeaderPart(stringValue(valueByCaseInsensitiveKey(headers, headerName)));
+  if (header) return header;
+
+  const dataRecord = parseJsonRecord(event.data);
+  const dataDirect = firstHeaderPart(stringValue(valueByCaseInsensitiveKey(dataRecord, headerName)));
+  if (dataDirect) return dataDirect;
+
+  const dataHeaders = recordValue(dataRecord?.headers) ?? recordValue(dataRecord?.requestHeaders);
+  const dataHeader = firstHeaderPart(stringValue(valueByCaseInsensitiveKey(dataHeaders, headerName)));
+  if (dataHeader) return dataHeader;
+
+  return headerValue(stringValue(event.data), headerName);
+}
+
 function numberValue(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string" && /^\d+$/.test(value)) return Number(value);
@@ -336,7 +383,8 @@ function geoValue(event: Record<string, unknown>): RuntimeRequestEvent["sourceGe
     ?? coordinateValue(event.sourceLat)
     ?? coordinateValue(event.sourceLatitude)
     ?? coordinateValue(event.lat)
-    ?? coordinateValue(event.latitude);
+    ?? coordinateValue(event.latitude)
+    ?? coordinateValue(eventHeaderValue(event, "X-Watchmen-Source-Lat"));
   const lon = coordinateValue(nested?.lon)
     ?? coordinateValue(nested?.lng)
     ?? coordinateValue(nested?.longitude)
@@ -345,7 +393,9 @@ function geoValue(event: Record<string, unknown>): RuntimeRequestEvent["sourceGe
     ?? coordinateValue(event.sourceLongitude)
     ?? coordinateValue(event.lon)
     ?? coordinateValue(event.lng)
-    ?? coordinateValue(event.longitude);
+    ?? coordinateValue(event.longitude)
+    ?? coordinateValue(eventHeaderValue(event, "X-Watchmen-Source-Lon"))
+    ?? coordinateValue(eventHeaderValue(event, "X-Watchmen-Source-Lng"));
 
   if (lat === undefined || lon === undefined || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
     return undefined;
@@ -354,8 +404,8 @@ function geoValue(event: Record<string, unknown>): RuntimeRequestEvent["sourceGe
   return {
     lat,
     lon,
-    region: stringValue(nested?.region) ?? stringValue(event.sourceRegion) ?? stringValue(event.region),
-    city: stringValue(nested?.city) ?? stringValue(event.sourceCity) ?? stringValue(event.city),
-    country: stringValue(nested?.country) ?? stringValue(event.sourceCountry) ?? stringValue(event.country),
+    region: stringValue(nested?.region) ?? stringValue(event.sourceRegion) ?? stringValue(event.region) ?? eventHeaderValue(event, "X-Watchmen-Source-Region"),
+    city: stringValue(nested?.city) ?? stringValue(event.sourceCity) ?? stringValue(event.city) ?? eventHeaderValue(event, "X-Watchmen-Source-City"),
+    country: stringValue(nested?.country) ?? stringValue(event.sourceCountry) ?? stringValue(event.country) ?? eventHeaderValue(event, "X-Watchmen-Source-Country"),
   };
 }

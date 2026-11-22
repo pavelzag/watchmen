@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import {
   AlertTriangle,
   ChevronDown,
@@ -199,6 +199,25 @@ function locationLabel(geo: NonNullable<RuntimeRequestEvent["sourceGeo"]>) {
   return [geo.city, geo.region, geo.country].filter(Boolean).join(", ") || "Source geo";
 }
 
+function sourceLabel(event: RuntimeRequestEvent) {
+  if (event.sourceGeo) {
+    return [event.sourceGeo.city, event.sourceGeo.region, event.sourceGeo.country]
+      .filter(Boolean)
+      .join(", ") || "Unknown source";
+  }
+  if (!event.sourceIp) return "Unknown source";
+
+  const location = approximateRequestLocation(event);
+  if (location.region.startsWith("Unknown source")) return "Unknown source";
+  return `${location.region} (approx)`;
+}
+
+function sourceLabelWithFallback(event: RuntimeRequestEvent, fallback?: string) {
+  const label = sourceLabel(event);
+  if (label !== "Unknown source") return label;
+  return fallback ?? label;
+}
+
 function approximateRequestLocation(event: RuntimeRequestEvent): Omit<GlobePoint, "event" | "x" | "y"> {
   if (event.sourceGeo) {
     return {
@@ -292,6 +311,7 @@ function windowLabel(windowValue: RuntimeMapWindow) {
 export default function RuntimeSecurityPanel() {
   const [tab, setTab] = useState<RuntimeTab>("requests");
   const [globeExpanded, setGlobeExpanded] = useState(false);
+  const [minimizedGlobeHeight, setMinimizedGlobeHeight] = useState<number | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<RuntimeRequestEvent | null>(null);
   const [rules, setRules] = useState<RuntimeSecurityRule[]>([]);
   const [events, setEvents] = useState<RuntimeRequestEvent[]>([]);
@@ -369,6 +389,33 @@ export default function RuntimeSecurityPanel() {
       .map(globePointFromEvent),
     [events],
   );
+
+  const startMinimizedGlobeResize = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+
+    const startY = event.clientY;
+    const startHeight = minimizedGlobeHeight ?? 288;
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = "row-resize";
+    document.body.style.userSelect = "none";
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const nextHeight = Math.min(560, Math.max(180, startHeight + moveEvent.clientY - startY));
+      setMinimizedGlobeHeight(nextHeight);
+    };
+
+    const onPointerUp = () => {
+      document.removeEventListener("pointermove", onPointerMove);
+      document.removeEventListener("pointerup", onPointerUp);
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+    };
+
+    document.addEventListener("pointermove", onPointerMove);
+    document.addEventListener("pointerup", onPointerUp, { once: true });
+  }, [minimizedGlobeHeight]);
 
   const toggleRule = async (rule: RuntimeSecurityRule) => {
     setSavingRuleId(rule.id);
@@ -463,10 +510,22 @@ export default function RuntimeSecurityPanel() {
           points={globePoints}
           rules={ruleById}
           expanded={globeExpanded}
+          minimizedHeight={minimizedGlobeHeight}
           onToggleExpanded={() => setGlobeExpanded((value) => !value)}
           onSelectEvent={setSelectedEvent}
         />
       </div>
+
+      <button
+        type="button"
+        onPointerDown={startMinimizedGlobeResize}
+        className="group relative flex h-3 w-full cursor-row-resize items-center justify-center border-b border-slate-800/70"
+        title="Drag to resize"
+        aria-label="Resize globe and requests panes"
+      >
+        <span className="h-px w-full bg-slate-900 transition-colors group-hover:bg-emerald-500/70" />
+        <span className="absolute h-1.5 w-14 bg-slate-800 transition-colors group-hover:bg-emerald-400" />
+      </button>
 
       <div className="flex flex-wrap items-center gap-3 border-b border-slate-800/70 px-4 py-2">
         <div className="flex items-center gap-2">
@@ -654,23 +713,37 @@ function RuntimeRequestGlobe({
   points,
   rules,
   expanded,
+  minimizedHeight,
   onToggleExpanded,
   onSelectEvent,
 }: {
   points: GlobePoint[];
   rules: Map<string, RuntimeSecurityRule>;
   expanded: boolean;
+  minimizedHeight: number | null;
   onToggleExpanded: () => void;
   onSelectEvent: (event: RuntimeRequestEvent) => void;
 }) {
   const [mapWindow, setMapWindow] = useState<RuntimeMapWindow>("5m");
   const [selectedCluster, setSelectedCluster] = useState<GlobeCluster | null>(null);
   const [windowNowMs, setWindowNowMs] = useState(() => Date.now());
+  const [expandedGlobeHeight, setExpandedGlobeHeight] = useState<number | null>(null);
+  const expandedShellRef = useRef<HTMLDivElement | null>(null);
   const visiblePoints = useMemo(() => filterPointsByWindow(points, mapWindow, windowNowMs), [mapWindow, points, windowNowMs]);
   const suspiciousCount = visiblePoints.filter((point) => point.event.decision !== "allow").length;
   const latest = visiblePoints[0]?.event;
   const clusters = useMemo(() => clusterGlobePoints(visiblePoints), [visiblePoints]);
-  const expandedRequestPoints = useMemo(() => visiblePoints.slice(0, 80), [visiblePoints]);
+  const expandedRequestEvents = useMemo(() => visiblePoints.map((point) => point.event), [visiblePoints]);
+  const expandedSourceLabels = useMemo(() => {
+    const labels = new Map<string, string>();
+    for (const point of visiblePoints) {
+      labels.set(
+        point.event.id,
+        point.locationQuality === "source_geo" ? point.region : `${point.region} (approx)`,
+      );
+    }
+    return labels;
+  }, [visiblePoints]);
 
   useEffect(() => {
     const interval = window.setInterval(() => setWindowNowMs(Date.now()), 5000);
@@ -684,11 +757,50 @@ function RuntimeRequestGlobe({
     });
   }, [clusters]);
 
+  const startExpandedResize = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    const shell = expandedShellRef.current;
+    if (!shell) return;
+
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = "row-resize";
+    document.body.style.userSelect = "none";
+
+    const setHeightFromPointer = (clientY: number) => {
+      const rect = shell.getBoundingClientRect();
+      const minGlobeHeight = 220;
+      const minRequestsHeight = 190;
+      const splitterSpace = 20;
+      const maxGlobeHeight = Math.max(minGlobeHeight, rect.height - minRequestsHeight - splitterSpace);
+      const nextHeight = Math.min(maxGlobeHeight, Math.max(minGlobeHeight, clientY - rect.top));
+      setExpandedGlobeHeight(nextHeight);
+    };
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      setHeightFromPointer(moveEvent.clientY);
+    };
+
+    const onPointerUp = () => {
+      document.removeEventListener("pointermove", onPointerMove);
+      document.removeEventListener("pointerup", onPointerUp);
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+    };
+
+    setHeightFromPointer(event.clientY);
+    document.addEventListener("pointermove", onPointerMove);
+    document.addEventListener("pointerup", onPointerUp, { once: true });
+  }, []);
+
   const globe = (
     <div className={cn(
       "relative overflow-hidden border border-sky-900/60 bg-[#020713]",
-      expanded ? "h-[min(78vh,760px)]" : "h-72",
-    )}>
+      expanded ? "shrink-0" : "h-72 shrink-0",
+    )}
+    style={expanded ? { height: expandedGlobeHeight ?? "min(62vh, 620px)" } : minimizedHeight ? { height: minimizedHeight } : undefined}>
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_48%,rgba(56,189,248,0.18),rgba(14,116,144,0.08)_28%,rgba(0,0,0,0.92)_78%)]" />
       <div className="absolute inset-0 opacity-[0.14] bg-[radial-gradient(circle_at_18%_24%,#ffffff_0_1px,transparent_1.4px),radial-gradient(circle_at_72%_34%,#ffffff_0_1px,transparent_1.3px),radial-gradient(circle_at_42%_72%,#ffffff_0_1px,transparent_1.2px)] bg-[length:130px_90px,170px_120px,210px_150px]" />
 
@@ -885,7 +997,7 @@ function RuntimeRequestGlobe({
         <div className="border border-slate-800/80 bg-black/60 px-3 py-2 backdrop-blur-sm">
           <div className="text-[9px] uppercase tracking-widest text-slate-600">Latest Request</div>
           <div className="mt-1 truncate text-xs font-bold text-slate-200">{latest ? summarizeEvent(latest) : "No runtime requests yet"}</div>
-          <div className="mt-1 truncate font-mono text-[10px] text-slate-500">{latest?.sourceIp ?? "waiting for source IP"} {latest?.destinationService ? `-> ${latest.destinationService}` : ""}</div>
+          <div className="mt-1 truncate font-mono text-[10px] text-slate-500">{latest ? sourceLabel(latest) : "Unknown source"}{latest?.sourceIp ? ` · ${latest.sourceIp}` : ""} {latest?.destinationService ? `-> ${latest.destinationService}` : ""}</div>
         </div>
         <div className="grid grid-cols-3 border border-slate-800/80 bg-black/60 backdrop-blur-sm">
           <Metric label="allow" value={visiblePoints.filter((point) => point.event.decision === "allow").length} />
@@ -912,39 +1024,35 @@ function RuntimeRequestGlobe({
   if (!expanded) return globe;
 
   return (
-    <div className="fixed inset-4 z-[120] bg-black/80 p-3 backdrop-blur-md">
+    <div ref={expandedShellRef} className="fixed inset-4 z-[120] flex flex-col bg-black/80 p-3 backdrop-blur-md">
       {globe}
-      <div className="mt-3 overflow-hidden border border-slate-800 bg-black/75">
+      <button
+        type="button"
+        onPointerDown={startExpandedResize}
+        className="group relative my-2 flex h-3 shrink-0 cursor-row-resize items-center justify-center"
+        title="Drag to resize"
+        aria-label="Resize globe and requests panes"
+      >
+        <span className="h-px w-full bg-slate-800 transition-colors group-hover:bg-emerald-500/70" />
+        <span className="absolute h-1.5 w-16 bg-slate-700 transition-colors group-hover:bg-emerald-400" />
+      </button>
+      <div className="min-h-0 flex-1 overflow-hidden border border-slate-800 bg-black/75">
         <div className="flex items-center justify-between border-b border-slate-900 px-3 py-2">
           <div className="text-[9px] font-bold uppercase tracking-widest text-slate-600">
             Requests in {windowLabel(mapWindow)}
           </div>
           <div className="font-mono text-[10px] text-slate-500">
-            showing {expandedRequestPoints.length} of {visiblePoints.length}
+            {visiblePoints.length} request{visiblePoints.length === 1 ? "" : "s"}
           </div>
         </div>
-        <div className="max-h-40 overflow-y-auto">
-        {expandedRequestPoints.map((point) => {
-          const rule = point.event.matchedRuleIds[0] ? rules.get(point.event.matchedRuleIds[0]) : null;
-          return (
-            <button
-              key={`expanded-${point.event.id}`}
-              type="button"
-              onClick={() => onSelectEvent(point.event)}
-              className="grid w-full grid-cols-[80px_120px_1fr_130px] items-center gap-2 border-b border-slate-900 px-3 py-2 text-left text-[11px] last:border-b-0 hover:bg-slate-900/45"
-            >
-              <span className="font-mono text-slate-500">{formatTime(point.event.ts)}</span>
-              <span className="truncate font-mono text-slate-400">{point.event.sourceIp ?? point.region}</span>
-              <span className="truncate font-mono text-slate-200">{summarizeEvent(point.event)}</span>
-              <span className="truncate text-slate-500">{rule?.name ?? point.event.decision}</span>
-            </button>
-          );
-        })}
-        {expandedRequestPoints.length === 0 && (
-          <div className="px-3 py-6 text-center text-[11px] uppercase tracking-widest text-slate-600">
-            No requests in {windowLabel(mapWindow)}
-          </div>
-        )}
+        <div className="h-[calc(100%-33px)] overflow-y-auto">
+          <RuntimeEventTable
+            events={expandedRequestEvents}
+            rules={rules}
+            sourceLabels={expandedSourceLabels}
+            emptyLabel={`No requests in ${windowLabel(mapWindow)}`}
+            onSelectEvent={onSelectEvent}
+          />
         </div>
       </div>
     </div>
@@ -1787,6 +1895,15 @@ function RuntimeEventDetailModal({
   onClose: () => void;
 }) {
   const matchedRules = event.matchedRuleIds.map((id) => rules.get(id)).filter((rule): rule is RuntimeSecurityRule => Boolean(rule));
+
+  useEffect(() => {
+    const onKeyDown = (keyEvent: KeyboardEvent) => {
+      if (keyEvent.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
   return (
     <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
       <div className="flex max-h-[82vh] w-full max-w-3xl flex-col border border-slate-700 bg-[#050805] shadow-2xl shadow-black">
@@ -1795,7 +1912,7 @@ function RuntimeEventDetailModal({
           <div className="min-w-0">
             <div className="truncate text-sm font-bold uppercase tracking-widest text-slate-100">{summarizeEvent(event)}</div>
             <div className="truncate font-mono text-[10px] text-slate-500">
-              {event.sourceIp ?? "unknown source"} {"->"} {event.destinationService ?? event.destinationWorkload ?? "unknown destination"}
+              {sourceLabel(event)} {"->"} {event.destinationService ?? event.destinationWorkload ?? "unknown destination"}
             </div>
           </div>
           <button
@@ -1814,6 +1931,7 @@ function RuntimeEventDetailModal({
               {event.decision.replace("_", " ")}
             </div>
             <Detail label="Time" value={event.ts} />
+            <Detail label="Source location" value={sourceLabel(event)} />
             <Detail label="Source IP" value={event.sourceIp ?? "-"} />
             <Detail label="Source class" value={event.sourceIpClass ?? "-"} />
             <Detail label="Content-Type" value={event.contentType ?? "-"} />
@@ -1842,7 +1960,7 @@ function RuntimeEventDetailModal({
 
             <div>
               <div className="mb-2 text-[9px] font-bold uppercase tracking-widest text-slate-600">Request Content</div>
-              <pre className="max-h-72 overflow-auto border border-slate-800 bg-black/60 p-3 text-[11px] leading-relaxed text-emerald-300">
+              <pre className="max-h-72 whitespace-pre-wrap break-words overflow-auto border border-slate-800 bg-black/60 p-3 text-[11px] leading-relaxed text-emerald-300">
                 {JSON.stringify(event, null, 2)}
               </pre>
             </div>
@@ -1881,6 +1999,14 @@ function RuntimeClusterRequestsModal({
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
 
   useEffect(() => {
+    const onKeyDown = (keyEvent: KeyboardEvent) => {
+      if (keyEvent.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  useEffect(() => {
     setPage(1);
   }, [cluster.id, pageSize, sortKey, sortDirection]);
 
@@ -1892,7 +2018,7 @@ function RuntimeClusterRequestsModal({
     const valueFor = (event: RuntimeRequestEvent): string | number => {
       switch (sortKey) {
         case "time": return eventTimestampMs(event);
-        case "source": return event.sourceIp ?? "";
+        case "source": return sourceLabel(event);
         case "method": return event.method ?? "";
         case "path": return event.path ?? "";
         case "status": return event.statusCode ?? -1;
@@ -2006,7 +2132,7 @@ function RuntimeClusterRequestsModal({
             </div>
             <div className="grid grid-cols-[82px_110px_76px_minmax(160px,1fr)_88px_118px_160px] gap-2 border-b border-slate-800/70 px-3 py-2 text-[9px]">
               {header("time", "Time")}
-              {header("source", "Source")}
+              {header("source", "Source location")}
               {header("method", "Method")}
               {header("path", "Path")}
               {header("status", "Status")}
@@ -2023,7 +2149,7 @@ function RuntimeClusterRequestsModal({
                   className="grid w-full grid-cols-[82px_110px_76px_minmax(160px,1fr)_88px_118px_160px] items-center gap-2 border-b border-slate-900 px-3 py-2 text-left text-[11px] transition-colors last:border-b-0 hover:bg-slate-900/45"
                 >
                   <span className="font-mono text-slate-500">{formatTime(event.ts)}</span>
-                  <span className="truncate font-mono text-slate-400">{event.sourceIp ?? "-"}</span>
+                  <span className="truncate font-mono text-slate-400">{sourceLabel(event)}</span>
                   <span className="font-mono font-bold text-emerald-300">{event.method ?? "HTTP"}</span>
                   <span className="truncate font-mono text-slate-300">{event.path ?? "/"}</span>
                   <span className="font-mono text-slate-400">{event.statusCode ?? "-"}</span>
@@ -2044,11 +2170,13 @@ function RuntimeClusterRequestsModal({
 function RuntimeEventTable({
   events,
   rules,
+  sourceLabels,
   emptyLabel,
   onSelectEvent,
 }: {
   events: RuntimeRequestEvent[];
   rules: Map<string, RuntimeSecurityRule>;
+  sourceLabels?: Map<string, string>;
   emptyLabel: string;
   onSelectEvent: (event: RuntimeRequestEvent) => void;
 }) {
@@ -2069,7 +2197,7 @@ function RuntimeEventTable({
     const valueFor = (event: RuntimeRequestEvent): string | number => {
       switch (sortKey) {
         case "time": return eventTimestampMs(event);
-        case "source": return event.sourceIp ?? "";
+        case "source": return sourceLabelWithFallback(event, sourceLabels?.get(event.id));
         case "method": return event.method ?? "";
         case "path": return event.path ?? "";
         case "status": return event.statusCode ?? -1;
@@ -2085,7 +2213,7 @@ function RuntimeEventTable({
         : String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: "base" });
       return sortDirection === "asc" ? result : -result;
     });
-  }, [events, rules, sortDirection, sortKey]);
+  }, [events, rules, sortDirection, sortKey, sourceLabels]);
 
   const totalPages = Math.max(1, Math.ceil(sortedEvents.length / pageSize));
   const currentPage = Math.min(page, totalPages);
@@ -2159,7 +2287,7 @@ function RuntimeEventTable({
       </div>
       <div className="grid grid-cols-[82px_110px_76px_minmax(160px,1fr)_110px_118px_160px] gap-2 border-b border-slate-800/70 px-3 py-2 text-[9px]">
         {header("time", "Time")}
-        {header("source", "Source")}
+        {header("source", "Source location")}
         {header("method", "Method")}
         {header("path", "Path")}
         {header("status", "Status")}
@@ -2176,7 +2304,7 @@ function RuntimeEventTable({
             className="grid w-full grid-cols-[82px_110px_76px_minmax(160px,1fr)_110px_118px_160px] items-center gap-2 border-b border-slate-900 px-3 py-2 text-left text-[11px] transition-colors last:border-b-0 hover:bg-slate-900/45"
           >
             <span className="font-mono text-slate-500">{formatTime(event.ts)}</span>
-            <span className="truncate font-mono text-slate-400">{event.sourceIp ?? "-"}</span>
+            <span className="truncate font-mono text-slate-400">{sourceLabelWithFallback(event, sourceLabels?.get(event.id))}</span>
             <span className={cn("font-mono font-bold", event.method === "DELETE" ? "text-red-300" : "text-emerald-300")}>{event.method ?? "-"}</span>
             <span className="truncate font-mono text-slate-300">{event.path ?? "/"}</span>
             <span className="font-mono text-slate-400">{event.statusCode ?? "-"}</span>
