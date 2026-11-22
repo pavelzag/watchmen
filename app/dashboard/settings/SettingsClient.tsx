@@ -157,7 +157,7 @@ const PROVIDERS: ProviderConfig[] = [
     border: "border-blue-500/25",
     accent: "bg-blue-500",
     logo: "G",
-    models: "gemini-2.5-flash",
+    models: "gemini-3.8-flash",
     placeholder: "AIza...",
   },
   {
