@@ -93,7 +93,7 @@ export const GCP_SCAN_CAPABILITIES: GcpScanCapability[] = [
   {
     service: "cloudrun",
     label: "Cloud Run",
-    shows: "Services, regions, URLs, runtime service accounts, env var names, and service IAM policies.",
+    shows: "Services and jobs, regions, URLs, runtime service accounts, VPC egress, env var/secret refs, and IAM policies.",
     api: "run.googleapis.com",
     roles: ["roles/run.viewer"],
   },

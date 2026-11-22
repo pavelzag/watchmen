@@ -1,6 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { auth } from "@/lib/auth";
-import { getRecentLiveTraceEvents, subscribeLiveTraceEvents } from "@/lib/live-trace-bus";
+import {
+  ensureLiveTraceBusListener,
+  getRecentLiveTraceEventsAsync,
+  subscribeLiveTraceEvents,
+} from "@/lib/live-trace-bus";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,6 +16,9 @@ export async function GET(req: NextRequest) {
   const session = await auth();
   const email = session?.user?.email ?? "anonymous";
 
+  await ensureLiveTraceBusListener();
+  const recent = await getRecentLiveTraceEventsAsync(email);
+
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream<Uint8Array>({
@@ -21,7 +28,6 @@ export async function GET(req: NextRequest) {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
       };
 
-      const recent = getRecentLiveTraceEvents(email);
       console.info(`[api/trace/live:${streamId}] stream open`, {
         email,
         recentEvents: recent.length,

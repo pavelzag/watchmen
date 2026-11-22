@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { useMockData, initGoogleAuthFromKey, initUserAuth } from "@/lib/gcp/client";
+import { useMockData, initGoogleAuthForRequest } from "@/lib/gcp/client";
 import { getUserCloudCredentials } from "@/lib/credentials";
 import { getClusterEntryPoints } from "@/lib/gcp/cluster-entrypoints";
 import { sql, ensureGcpSnapshotTable } from "@/lib/db";
@@ -19,13 +19,6 @@ export async function GET() {
   const email = session.user.email;
   const gcpCreds = await getUserCloudCredentials(email, "gcp");
   const accessToken = session.accessToken;
-
-  if (!gcpCreds && !accessToken) {
-    return NextResponse.json(
-      { error: "No GCP credentials configured.", credentialsRequired: true },
-      { status: 422 },
-    );
-  }
 
   // Read clusters from the stored snapshot — no re-scan needed
   let clusters: GkeCluster[] = [];
@@ -50,10 +43,15 @@ export async function GET() {
 
   // Init auth (once) then delegate to fetcher
   try {
-    if (gcpCreds?.serviceAccountKey) {
-      initGoogleAuthFromKey(gcpCreds.serviceAccountKey as string);
-    } else if (accessToken) {
-      initUserAuth(accessToken as string);
+    const authMode = initGoogleAuthForRequest({
+      serviceAccountKey: gcpCreds?.serviceAccountKey as string | undefined,
+      accessToken,
+    });
+    if (!authMode) {
+      return NextResponse.json(
+        { error: "No GCP credentials configured.", credentialsRequired: true },
+        { status: 422 },
+      );
     }
 
     const entryPoints = await getClusterEntryPoints(clusters);

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { publishLiveTraceEvent, type LiveTraceIngressEvent } from "@/lib/live-trace-bus";
+import { redactSensitivePath, sanitizeRemoteIp } from "@/lib/privacy";
+import { verifyPubsubPushRequest } from "@/lib/pubsub-auth";
 import { listUsersForGcpStreamingProject, saveUserGcpTraceSourceConfig } from "@/lib/trace-source";
 
 export const runtime = "nodejs";
@@ -54,9 +56,10 @@ function extractProjectId(entry: GcpLogEntry): string {
 function extractPath(url: string | undefined): string | undefined {
   if (!url) return undefined;
   try {
-    return new URL(url).pathname;
+    const parsed = new URL(url);
+    return redactSensitivePath(`${parsed.pathname}${parsed.search}`);
   } catch {
-    return url;
+    return redactSensitivePath(url);
   }
 }
 
@@ -82,7 +85,7 @@ function normalizeGcpLogEntry(entry: GcpLogEntry, messageId: string | undefined)
       path: extractPath(httpRequest?.requestUrl),
       status: httpRequest?.status ? Number(httpRequest.status) : undefined,
       latency: httpRequest?.latency,
-      remoteIp: httpRequest?.remoteIp,
+      remoteIp: sanitizeRemoteIp(httpRequest?.remoteIp),
       userAgent: httpRequest?.userAgent,
       count: 1,
     };
@@ -103,7 +106,7 @@ function normalizeGcpLogEntry(entry: GcpLogEntry, messageId: string | undefined)
       path: extractPath(httpRequest?.requestUrl),
       status: httpRequest?.status ? Number(httpRequest.status) : undefined,
       latency: httpRequest?.latency,
-      remoteIp: httpRequest?.remoteIp,
+      remoteIp: sanitizeRemoteIp(httpRequest?.remoteIp),
       userAgent: httpRequest?.userAgent,
       count: 1,
     };
@@ -123,7 +126,7 @@ function normalizeGcpLogEntry(entry: GcpLogEntry, messageId: string | undefined)
       path: extractPath(httpRequest?.requestUrl),
       status: httpRequest?.status ? Number(httpRequest.status) : undefined,
       latency: httpRequest?.latency,
-      remoteIp: httpRequest?.remoteIp,
+      remoteIp: sanitizeRemoteIp(httpRequest?.remoteIp),
       userAgent: httpRequest?.userAgent,
       count: 1,
     };
@@ -133,6 +136,14 @@ function normalizeGcpLogEntry(entry: GcpLogEntry, messageId: string | undefined)
 }
 
 export async function POST(req: NextRequest) {
+  const authResult = await verifyPubsubPushRequest(req);
+  if (!authResult.ok) {
+    return NextResponse.json(
+      { ok: false, error: authResult.error ?? "Unauthorized Pub/Sub push request." },
+      { status: authResult.status ?? 401 },
+    );
+  }
+
   const body = (await req.json().catch(() => ({}))) as PubsubPushEnvelope;
   const payload = decodePubsubData(body.message?.data);
   const entry = payload as GcpLogEntry | null;

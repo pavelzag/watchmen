@@ -1,9 +1,9 @@
-import { getProjectIdFromServiceAccountKey, getProjectIds, getProjectIdsForOrg, initGoogleAuth, initGoogleAuthFromKey, initUserAuth, discoverUserProjectIds, useMockData, getGcpScanWarnings, resetGcpScanWarnings } from "./client";
+import { getProjectIdFromServiceAccountKey, getProjectIds, getProjectIdsForOrg, initGoogleAuth, initGoogleAuthFromAdc, initGoogleAuthFromKey, isGcpAdcEnabled, discoverUserProjectIds, useMockData, getGcpScanWarnings, resetGcpScanWarnings } from "./client";
 import { getProjectPolicies, getServiceAccounts } from "./iam";
 import { getStorageBuckets } from "./storage";
 import { getGkeClusters } from "./gke";
 import { getVMs } from "./vms";
-import { getCloudRunServices } from "./cloudrun";
+import { getCloudRunJobs, getCloudRunServices } from "./cloudrun";
 import { getCloudSqlInstances } from "./cloudsql";
 import { getBigQueryDatasets } from "./bigquery";
 import { getPubSubTopics } from "./pubsub";
@@ -32,6 +32,7 @@ function emitProgress(
 export async function fetchGcpSnapshot(options?: {
   accessToken?: string;
   serviceAccountKey?: string;
+  useAdc?: boolean;
   forceMock?: boolean;
   onProgress?: (event: TaskProgressEvent) => void;
 }): Promise<GcpSnapshot> {
@@ -53,6 +54,9 @@ export async function fetchGcpSnapshot(options?: {
         : [];
   } else if (options?.accessToken) {
     projectIds = await discoverUserProjectIds(options.accessToken);
+  } else if (options?.useAdc || (!process.env.GCP_SERVICE_ACCOUNT_KEY && isGcpAdcEnabled())) {
+    initGoogleAuthFromAdc();
+    projectIds = await getProjectIdsForOrg();
   } else {
     initGoogleAuth();
     projectIds = await getProjectIdsForOrg();
@@ -72,7 +76,7 @@ export async function fetchGcpSnapshot(options?: {
   });
 
   let completedServices = 0;
-  const totalServices = 12;
+  const totalServices = 13;
   emitProgress(options?.onProgress, {
     stage: "scan_services",
     message: `Scanning ${totalServices} GCP service areas`,
@@ -102,6 +106,7 @@ export async function fetchGcpSnapshot(options?: {
     gkeClusters,
     vms,
     cloudRunServices,
+    cloudRunJobs,
     cloudSqlInstances,
     bigqueryDatasets,
     pubsubTopics,
@@ -115,6 +120,7 @@ export async function fetchGcpSnapshot(options?: {
     runLoader("gkeClusters", "Loading GKE clusters", () => getGkeClusters(projectIds, mock)),
     runLoader("vms", "Loading virtual machines", () => getVMs(projectIds, mock)),
     runLoader("cloudRunServices", "Loading Cloud Run services", () => getCloudRunServices(projectIds, mock)),
+    runLoader("cloudRunJobs", "Loading Cloud Run jobs", () => getCloudRunJobs(projectIds, mock)),
     runLoader("cloudSqlInstances", "Loading Cloud SQL instances", () => getCloudSqlInstances(projectIds, mock)),
     runLoader("bigqueryDatasets", "Loading BigQuery datasets", () => getBigQueryDatasets(projectIds, mock)),
     runLoader("pubsubTopics", "Loading Pub/Sub topics", () => getPubSubTopics(projectIds, mock)),
@@ -161,6 +167,7 @@ export async function fetchGcpSnapshot(options?: {
     gkeClusters,
     vms,
     cloudRunServices,
+    cloudRunJobs,
     cloudSqlInstances,
     bigqueryDatasets,
     pubsubTopics,

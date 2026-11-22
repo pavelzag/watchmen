@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { google } from "googleapis";
-import { initGoogleAuthFromKey, initUserAuth } from "@/lib/gcp/client";
+import { initGoogleAuthForRequest } from "@/lib/gcp/client";
 import { getUserCloudCredentials } from "@/lib/credentials";
 
 export async function GET(req: NextRequest) {
@@ -24,15 +24,13 @@ export async function GET(req: NextRequest) {
   const gcpCreds = await getUserCloudCredentials(email, "gcp");
   const accessToken = session.accessToken;
 
-  if (!gcpCreds && !accessToken) {
-    return NextResponse.json({ error: "No GCP credentials configured." }, { status: 422 });
-  }
-
   try {
-    if (gcpCreds?.serviceAccountKey) {
-      initGoogleAuthFromKey(gcpCreds.serviceAccountKey as string);
-    } else if (accessToken) {
-      initUserAuth(accessToken as string);
+    const authMode = initGoogleAuthForRequest({
+      serviceAccountKey: gcpCreds?.serviceAccountKey as string | undefined,
+      accessToken,
+    });
+    if (!authMode) {
+      return NextResponse.json({ error: "No GCP credentials configured." }, { status: 422 });
     }
 
     const logging = google.logging("v2");

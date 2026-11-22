@@ -7,17 +7,39 @@ let _userAuthInitialized = false;
 let _scanWarnings: GcpScanWarning[] = [];
 let _scannerPrincipal: string | undefined;
 
+export function isGcpAdcEnabled(): boolean {
+  return process.env.GCP_USE_ADC === "true";
+}
+
+export function initGoogleAuthFromAdc() {
+  _initialized = true;
+  _userAuthInitialized = false;
+  const configuredPrincipal = process.env.GCP_SCANNER_PRINCIPAL?.trim();
+  _scannerPrincipal = configuredPrincipal || undefined;
+
+  const auth = new google.auth.GoogleAuth({
+    scopes: ["https://www.googleapis.com/auth/cloud-platform"],
+  });
+  google.options({ auth } as Parameters<typeof google.options>[0]);
+}
+
 /**
- * Initializes googleapis with the service account credentials globally.
+ * Initializes googleapis with the service account credentials globally (or ADC when GCP_USE_ADC=true).
  * Must be called before any google.* API call in real (non-mock) mode.
  */
 export function initGoogleAuth() {
   if (_initialized || _userAuthInitialized) return;
-  _initialized = true;
 
   const raw = process.env.GCP_SERVICE_ACCOUNT_KEY;
-  if (!raw) throw new Error("GCP_SERVICE_ACCOUNT_KEY is not set");
+  if (!raw) {
+    if (isGcpAdcEnabled()) {
+      initGoogleAuthFromAdc();
+      return;
+    }
+    throw new Error("GCP_SERVICE_ACCOUNT_KEY is not set (or set GCP_USE_ADC=true for Application Default Credentials)");
+  }
 
+  _initialized = true;
   const credentials = JSON.parse(
     Buffer.from(raw, "base64").toString("utf-8")
   ) as { client_email?: string };
@@ -30,6 +52,31 @@ export function initGoogleAuth() {
 
   // Set auth globally — avoids TypeScript overload issues on individual clients
   google.options({ auth } as Parameters<typeof google.options>[0]);
+}
+
+/**
+ * Resolves the best available GCP auth mechanism for an API request:
+ * 1. User-supplied service account key JSON (if present)
+ * 2. User OAuth access token (if present)
+ * 3. Server Application Default Credentials (if GCP_USE_ADC=true)
+ */
+export function initGoogleAuthForRequest(options: {
+  serviceAccountKey?: string | null;
+  accessToken?: unknown;
+}): "service_account_key" | "oauth_token" | "adc" | null {
+  if (options.serviceAccountKey) {
+    initGoogleAuthFromKey(options.serviceAccountKey);
+    return "service_account_key";
+  }
+  if (typeof options.accessToken === "string" && options.accessToken) {
+    initUserAuth(options.accessToken);
+    return "oauth_token";
+  }
+  if (isGcpAdcEnabled()) {
+    initGoogleAuthFromAdc();
+    return "adc";
+  }
+  return null;
 }
 
 /**

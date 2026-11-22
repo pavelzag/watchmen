@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { fetchGcpSnapshot } from "@/lib/gcp";
 import { fetchAwsSnapshot } from "@/lib/aws"; // Integrated AWS
-import { initGoogleAuthFromKey, initUserAuth, useMockData } from "@/lib/gcp/client";
+import { initGoogleAuthForRequest, useMockData } from "@/lib/gcp/client";
 import { useMockAwsData } from "@/lib/aws/client"; // Integrated AWS
 import { extractIntent, generateAnswer, extractResources, type QueryIntent } from "@/lib/claude/query-processor";
 import { callAI, resolveAI, type AIProvider } from "@/lib/ai/client";
@@ -1054,11 +1054,11 @@ async function buildGkeEntryPointContext(params: {
 
   try {
     const gcpCreds = await getUserCloudCredentials(params.email, "gcp");
-    if (gcpCreds?.serviceAccountKey) {
-      initGoogleAuthFromKey(gcpCreds.serviceAccountKey as string);
-    } else if (typeof params.accessToken === "string" && params.accessToken) {
-      initUserAuth(params.accessToken);
-    } else {
+    const authMode = initGoogleAuthForRequest({
+      serviceAccountKey: gcpCreds?.serviceAccountKey as string | undefined,
+      accessToken: params.accessToken,
+    });
+    if (!authMode) {
       return {
         available: false,
         reason: "No GCP credentials are available for live GKE endpoint discovery.",
