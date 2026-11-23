@@ -127,16 +127,31 @@ export const GCP_SCAN_CAPABILITIES: GcpScanCapability[] = [
   },
 ];
 
+export const EXTRA_GCP_SERVICE_METADATA: Record<string, { api?: string; roles: string[] }> = {
+  artifactregistry: {
+    api: "artifactregistry.googleapis.com",
+    roles: ["roles/artifactregistry.reader"],
+  },
+  containeranalysis: {
+    api: "containeranalysis.googleapis.com",
+    roles: ["roles/containeranalysis.occurrences.viewer"],
+  },
+  containerscanning: {
+    api: "containerscanning.googleapis.com",
+    roles: ["roles/containeranalysis.occurrences.viewer"],
+  },
+};
+
 export function getGcpCapability(service: string): GcpScanCapability | undefined {
   return GCP_SCAN_CAPABILITIES.find((capability) => capability.service === service);
 }
 
 export function getGcpRequiredRoles(service: string): string[] {
-  return getGcpCapability(service)?.roles ?? [];
+  return getGcpCapability(service)?.roles ?? EXTRA_GCP_SERVICE_METADATA[service]?.roles ?? [];
 }
 
 export function getGcpRequiredApi(service: string): string | undefined {
-  return getGcpCapability(service)?.api;
+  return getGcpCapability(service)?.api ?? EXTRA_GCP_SERVICE_METADATA[service]?.api;
 }
 
 export function buildGcpGrantCommands(projectId: string, member: string | undefined, service: string): string[] {

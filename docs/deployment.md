@@ -117,6 +117,8 @@ for role in \
   roles/pubsub.viewer \
   roles/secretmanager.viewer \
   roles/compute.networkViewer \
+  roles/artifactregistry.reader \
+  roles/containeranalysis.occurrences.viewer \
   roles/logging.viewer; do
     gcloud projects add-iam-policy-binding $PROJECT_ID \
       --member="serviceAccount:watchmen-reader@${PROJECT_ID}.iam.gserviceaccount.com" \
@@ -124,7 +126,7 @@ for role in \
 done
 ```
 
-The `logging.viewer` role is required for the live log viewer and AI log analysis features.
+The `logging.viewer` role is required for the live log viewer and AI log analysis features. The `artifactregistry.reader` and `containeranalysis.occurrences.viewer` roles (along with enabling `artifactregistry.googleapis.com`, `containeranalysis.googleapis.com`, and `containerscanning.googleapis.com` in your scanned projects) are required for the **Containers** (`/dashboard/container-scan`) vulnerability page.
 
 ### 3. Export and encode the key
 

@@ -1351,6 +1351,14 @@ export async function POST(req: NextRequest) {
         const gcpProjects = gcpSnapshot?.projects?.map((p: any) => p.projectId).filter(Boolean) ?? [];
         const awsRegions = getAwsRegions();
 
+        if (!isMock && gcpProjects.length > 0) {
+          const gcpCreds = await getUserCloudCredentials(email, "gcp");
+          initGoogleAuthForRequest({
+            serviceAccountKey: gcpCreds?.serviceAccountKey as string | undefined,
+            accessToken: session.accessToken,
+          });
+        }
+
         const [gcpResultsList, awsResultsList, ghcrResults, dockerHubResults] = await Promise.all([
           Promise.all(gcpProjects.map((pid: string) => (!isMock ? getGcpContainerVulnerabilities(pid) : []))),
           Promise.all(awsRegions.map((region: string) => (!isAwsMock ? getAwsContainerVulnerabilities(region) : []))),

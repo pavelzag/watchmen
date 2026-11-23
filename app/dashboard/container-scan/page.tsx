@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Container, RefreshCw, AlertTriangle, ChevronRight, Sparkles, Loader2, ChevronDown, ChevronUp, AlertCircle } from "lucide-react";
 import type { ImageScanResult, ContainerVulnerability, CveSeverity } from "@/lib/container-scanning";
+import type { GcpScanWarning } from "@/lib/gcp/types";
 import { cn } from "@/lib/utils";
 import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
 import { linkifyText } from "@/lib/utils/linkify";
@@ -263,8 +264,23 @@ function ImageCard({ result, filter }: { result: ImageScanResult; filter: string
                 {result.summary.low} LOW
               </span>
             )}
+            {result.scanStatus === "clean" && (
+              <span style={{ fontSize: 9, color: "#4ade80", fontFamily: "monospace", border: "1px solid #22c55e33", padding: "0 5px" }}>
+                CLEAN
+              </span>
+            )}
+            {result.scanStatus === "unscanned" && (
+              <span style={{ fontSize: 9, color: "#fbbf24", fontFamily: "monospace", border: "1px solid #f59e0b33", padding: "0 5px" }}>
+                UNSCANNED
+              </span>
+            )}
+            {result.scanStatus === "failed" && (
+              <span style={{ fontSize: 9, color: "#f87171", fontFamily: "monospace", border: "1px solid #ef444433", padding: "0 5px" }}>
+                SCAN FAILED
+              </span>
+            )}
             <span style={{ fontSize: 9, color: "#4b5563", fontFamily: "monospace" }}>
-              · scanned {new Date(result.scannedAt).toLocaleTimeString()}
+              · {result.scanStatus === "unscanned" ? "updated" : "scanned"} {new Date(result.scannedAt).toLocaleTimeString()}
             </span>
           </div>
         </div>
@@ -277,13 +293,25 @@ function ImageCard({ result, filter }: { result: ImageScanResult; filter: string
       {open && (
         <div style={{ borderTop: `1px solid ${borderColor}22`, padding: "0 16px 16px" }}>
           {sortedVulns.length === 0 ? (
-            <p style={{ fontSize: 11, color: "#4b5563", fontFamily: "monospace", padding: "12px 0" }}>
-              No vulnerabilities found.
-            </p>
+            <div style={{ padding: "12px 0" }} className="space-y-2">
+              <p style={{ fontSize: 11, color: result.scanStatus === "unscanned" ? "#fbbf24" : "#94a3b8", fontFamily: "monospace" }}>
+                {result.scanStatusMessage ?? "No vulnerabilities found."}
+              </p>
+              {result.cloud === "gcp" && result.scanStatus === "unscanned" && result.accountId && (
+                <pre className="bg-slate-900/80 border border-slate-800 rounded px-3 py-2 text-[10px] font-mono text-slate-300 overflow-x-auto">
+                  {`gcloud services enable containerscanning.googleapis.com --project=${result.accountId}`}
+                </pre>
+              )}
+            </div>
           ) : (
             <div>
-              {sortedVulns.map((cve) => (
-                <CveRow key={cve.cveId} cve={cve} imageRef={result.imageRef} cloud={result.cloud} />
+              {sortedVulns.map((cve, idx) => (
+                <CveRow
+                  key={`${cve.cveId}-${cve.packageName}-${cve.installedVersion}-${idx}`}
+                  cve={cve}
+                  imageRef={result.imageRef}
+                  cloud={result.cloud}
+                />
               ))}
             </div>
           )}
@@ -295,6 +323,9 @@ function ImageCard({ result, filter }: { result: ImageScanResult; filter: string
 
 export default function ContainerScanPage() {
   const [results, setResults] = useState<ImageScanResult[]>([]);
+  const [warnings, setWarnings] = useState<GcpScanWarning[]>([]);
+  const [gcpProjects, setGcpProjects] = useState<string[]>([]);
+  const [gcpAuthConfigured, setGcpAuthConfigured] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [scannedAt, setScannedAt] = useState<string | null>(null);
@@ -307,8 +338,11 @@ export default function ContainerScanPage() {
       const res = await fetch("/api/container-scan");
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to load");
-      setResults(data.results);
-      setScannedAt(data.scannedAt);
+      setResults(data.results ?? []);
+      setWarnings(data.warnings ?? []);
+      setGcpProjects(data.gcpProjects ?? []);
+      setGcpAuthConfigured(data.gcpAuthConfigured ?? true);
+      setScannedAt(data.scannedAt ?? null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unknown error");
     } finally {
@@ -365,6 +399,36 @@ export default function ContainerScanPage() {
         </div>
       )}
 
+      {!loading && warnings.length > 0 && (
+        <div
+          className="px-4 py-3 space-y-2.5 text-xs font-mono"
+          style={{ border: "1px solid #f59e0b55", background: "#1a1006", color: "#fbbf24" }}
+        >
+          <div className="flex items-center gap-2 font-bold uppercase tracking-wider">
+            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+            <span>GCP Container Scan Diagnostics ({warnings.length})</span>
+          </div>
+          <div className="space-y-2">
+            {warnings.map((w, idx) => (
+              <div key={`${w.service}-${w.projectId}-${idx}`} className="border-t border-amber-500/20 pt-2 space-y-1">
+                <div className="text-amber-200">{w.message}</div>
+                {w.detail && <div className="text-[10px] text-amber-300/70 break-all">{w.detail}</div>}
+                {w.code === "api_not_enabled" && w.enableApiCommand && (
+                  <pre className="bg-black/40 border border-amber-500/20 rounded px-2.5 py-1.5 text-[10px] text-slate-200 overflow-x-auto">
+                    {w.enableApiCommand}
+                  </pre>
+                )}
+                {w.code === "permission_denied" && w.grantCommands && w.grantCommands.length > 0 && (
+                  <pre className="bg-black/40 border border-amber-500/20 rounded px-2.5 py-1.5 text-[10px] text-slate-200 overflow-x-auto">
+                    {w.grantCommands.join("\n")}
+                  </pre>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {!loading && results.length > 0 && (
         <>
           {/* Stats */}
@@ -418,12 +482,18 @@ export default function ContainerScanPage() {
 
       {!loading && results.length === 0 && !error && (
         <div
-          className="flex flex-col items-center justify-center py-20 gap-4"
+          className="flex flex-col items-center justify-center py-20 gap-4 px-6 text-center"
           style={{ border: "1px solid var(--border-dim)" }}
         >
           <AlertTriangle className="w-8 h-8" style={{ color: "var(--green)" }} />
           <p style={{ color: "var(--text-muted)", fontFamily: "monospace", fontSize: 12 }}>
-            No container images found. Connect GCP Artifact Registry, AWS ECR, GHCR, or Docker Hub to enable scanning.
+            {warnings.length > 0
+              ? "No container images returned — review the GCP scan diagnostics above to enable APIs or grant permissions."
+              : !gcpAuthConfigured
+                ? "No GCP credentials configured. Connect GCP in Settings, or connect AWS ECR, GHCR, or Docker Hub to enable scanning."
+                : gcpProjects.length === 0
+                  ? "No GCP projects configured to scan (set GCP_PROJECTS or GCP_ORG_ID, or run a GCP scan first), and no images were found in AWS ECR, GHCR, or Docker Hub."
+                  : `No container images found in Artifact Registry (${gcpProjects.join(", ")}), AWS ECR, GHCR, or Docker Hub.`}
           </p>
         </div>
       )}

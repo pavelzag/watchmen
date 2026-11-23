@@ -21,6 +21,8 @@ export interface ContainerVulnerability {
 
 export type ImageRegistry = "gcp" | "aws" | "ghcr" | "dockerhub";
 
+export type GcpImageScanStatus = "scanned" | "clean" | "unscanned" | "failed";
+
 export interface ImageScanResult {
   /** Full image reference, e.g. us-docker.pkg.dev/my-project/repo/image:tag */
   imageRef: string;
@@ -39,6 +41,10 @@ export interface ImageScanResult {
     low: number;
     negligible: number;
   };
+  /** Optional scan coverage status (used for Artifact Registry images with no CVE occurrences) */
+  scanStatus?: GcpImageScanStatus;
+  /** Optional diagnostic detail about why scan results are clean/unscanned/failed */
+  scanStatusMessage?: string;
 }
 
 // ─── Mock data ────────────────────────────────────────────────────────────────
