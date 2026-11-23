@@ -185,7 +185,7 @@ export default function RemediateModal({ targets, onClose, autoCreatePr = false 
   const autoAnalysisStartedRef = useRef(false);
   const autoCreateStartedRef = useRef(false);
   const workflowStageLabels: Record<Step, string> = {
-    "select-paths": "Select findings",
+    "select-paths": "Select items",
     "select-repo": "Select repo",
     analyzing: "Generate preview",
     preview: "Review diff",
@@ -195,6 +195,7 @@ export default function RemediateModal({ targets, onClose, autoCreatePr = false 
     error: "Error",
   };
   const workflowStages: Step[] = ["select-paths", "select-repo", "analyzing", "preview", "confirm-pr", "creating", "done"];
+  const isContainerOnly = targets.length > 0 && targets.every((target) => target.kind === "container_cve");
 
   const selectedTargets = targets.filter((target) => selectedPathIds.has(target.id));
 
@@ -505,9 +506,9 @@ export default function RemediateModal({ targets, onClose, autoCreatePr = false 
               // Fix with GitHub PR
             </p>
             <p style={{ fontFamily: "monospace", fontSize: 10, color: "var(--border-dim)", marginTop: 2 }}>
-              {step === "select-paths" && "Select findings or attack paths to remediate"}
-              {step === "select-repo" && "Choose a repository with Terraform files"}
-              {step === "analyzing" && "Scanning Terraform files…"}
+              {step === "select-paths" && (isContainerOnly ? "Select container CVEs to remediate" : "Select findings or attack paths to remediate")}
+              {step === "select-repo" && (isContainerOnly ? "Choose a repository with Dockerfiles or dependency manifests" : "Choose a repository with Terraform files")}
+              {step === "analyzing" && (isContainerOnly ? "Scanning Dockerfiles & dependency manifests…" : "Scanning Terraform files…")}
               {step === "preview" && analysisSummary && analysisSummary}
               {step === "confirm-pr" && "Confirm the PR destination before opening it"}
               {step === "preview" && !analysisSummary && patches.length > 0 && (
@@ -585,10 +586,14 @@ export default function RemediateModal({ targets, onClose, autoCreatePr = false 
                       <Check className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "var(--green)" }} />
                       <div className="flex-1 flex items-start justify-between gap-3">
                         <p style={{ fontFamily: "monospace", fontSize: 11, color: "#9ca3af", lineHeight: 1.6 }}>
-                          No changes were needed — your Terraform files already address these findings or attack paths, or no matching resources were found.
+                          {isContainerOnly
+                            ? "No changes were needed — your Dockerfiles or dependency manifests already address these CVEs, or no matching files were found."
+                            : "No changes were needed — your Terraform files already address these findings or attack paths, or no matching resources were found."}
                         </p>
                         <CopyTextButton
-                          text={creationSummary ?? "No changes were needed — your Terraform files already address these findings or attack paths, or no matching resources were found."}
+                          text={creationSummary ?? (isContainerOnly
+                            ? "No changes were needed — your Dockerfiles or dependency manifests already address these CVEs, or no matching files were found."
+                            : "No changes were needed — your Terraform files already address these findings or attack paths, or no matching resources were found.")}
                           label="Copy"
                           className="text-[10px] font-mono"
                           style={{ color: "var(--green)" }}
@@ -623,13 +628,33 @@ export default function RemediateModal({ targets, onClose, autoCreatePr = false 
           {/* ── Step 1: select paths ─────────────────────────────────── */}
           {step === "select-paths" && (
             <>
-              <p style={{ fontFamily: "monospace", fontSize: 10, color: "var(--text-muted)" }}>
-                Choose which security items Watchmen should attempt to fix:
-              </p>
-              <div className="space-y-2">
-                {targets.map((target) => (
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <p style={{ fontFamily: "monospace", fontSize: 10, color: "var(--text-muted)" }}>
+                  Choose which security items Watchmen should attempt to fix ({selectedPathIds.size}/{targets.length} selected):
+                </p>
+                {targets.length > 1 && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPathIds(new Set(targets.map((t) => t.id)))}
+                      className="text-[10px] font-mono px-2 py-0.5 border border-slate-700 text-slate-300 hover:text-white"
+                    >
+                      Select all
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPathIds(new Set())}
+                      className="text-[10px] font-mono px-2 py-0.5 border border-slate-700 text-slate-400 hover:text-white"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div className="space-y-2 max-h-[45vh] overflow-y-auto pr-1">
+                {targets.map((target, idx) => (
                   <label
-                    key={target.id}
+                    key={`${target.id}-${idx}`}
                     className="flex items-center gap-3 cursor-pointer group"
                     style={{ padding: "8px 12px", border: "1px solid var(--border-dim)", background: selectedPathIds.has(target.id) ? "rgba(0,170,43,0.05)" : "transparent" }}
                   >
@@ -642,7 +667,7 @@ export default function RemediateModal({ targets, onClose, autoCreatePr = false 
                     <div className="flex items-center gap-2 flex-1 min-w-0">
                       <SevBadge severity={target.severity} />
                       <span style={{ fontFamily: "monospace", fontSize: 9, color: "var(--border-dim)", textTransform: "uppercase", letterSpacing: 1 }}>
-                        {target.kind === "attack_path" ? "Path" : "Finding"}
+                        {target.kind === "attack_path" ? "Path" : target.kind === "container_cve" ? "CVE" : "Finding"}
                       </span>
                       <span style={{ fontFamily: "monospace", fontSize: 11, color: "#e5e7eb", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {target.title}
@@ -783,7 +808,7 @@ export default function RemediateModal({ targets, onClose, autoCreatePr = false 
             <div className="flex flex-col items-center justify-center py-12 gap-4">
               <Loader2 className="w-8 h-8 animate-spin" style={{ color: "var(--green)" }} />
               <p style={{ fontFamily: "monospace", fontSize: 12, color: "var(--text-muted)" }}>
-                Scanning Terraform files…
+                {isContainerOnly ? "Scanning Dockerfiles & dependency manifests…" : "Scanning Terraform files…"}
               </p>
               <div className="w-full max-w-md" style={{ border: "1px solid var(--border-dim)", background: "#050505", height: 10 }}>
                 <div
@@ -852,7 +877,9 @@ export default function RemediateModal({ targets, onClose, autoCreatePr = false 
                   <div className="flex-1 flex items-start justify-between gap-3">
                     <div className="space-y-1">
                       <p style={{ fontFamily: "monospace", fontSize: 11, color: "#9ca3af", lineHeight: 1.6 }}>
-                        No Terraform files matched the selected resources, or no changes were needed.
+                        {isContainerOnly
+                          ? "No Dockerfiles or dependency manifests matched the selected CVEs, or no changes were needed."
+                          : "No Terraform files matched the selected resources, or no changes were needed."}
                       </p>
                       {!analysisFullyAddressed && analysisUncoveredTargets.length > 0 && (
                         <p style={{ fontFamily: "monospace", fontSize: 10, color: "#fbbf24", lineHeight: 1.6 }}>
@@ -861,7 +888,9 @@ export default function RemediateModal({ targets, onClose, autoCreatePr = false 
                       )}
                     </div>
                     <CopyTextButton
-                      text={analysisSummary ?? "No Terraform files matched the selected resources, or no changes were needed."}
+                      text={analysisSummary ?? (isContainerOnly
+                        ? "No Dockerfiles or dependency manifests matched the selected CVEs, or no changes were needed."
+                        : "No Terraform files matched the selected resources, or no changes were needed.")}
                       label="Copy"
                       className="text-[10px] font-mono"
                       style={{ color: "var(--green)" }}

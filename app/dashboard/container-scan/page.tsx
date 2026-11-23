@@ -1,14 +1,38 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Container, RefreshCw, AlertTriangle, ChevronRight, Sparkles, Loader2, ChevronDown, ChevronUp, AlertCircle, ShieldCheck } from "lucide-react";
-import type { ImageScanResult, ContainerVulnerability, CveSeverity } from "@/lib/container-scanning";
+import { useEffect, useMemo, useState } from "react";
+import {
+  Container,
+  RefreshCw,
+  AlertTriangle,
+  ChevronRight,
+  ChevronLeft,
+  Sparkles,
+  Loader2,
+  ChevronDown,
+  ChevronUp,
+  AlertCircle,
+  ShieldCheck,
+  Search,
+  X,
+  GitPullRequest,
+  Terminal,
+} from "lucide-react";
+import type { ImageScanResult, ContainerVulnerability, CveSeverity, ImageRegistry } from "@/lib/container-scanning";
 import type { GcpScanWarning } from "@/lib/gcp/types";
 import { cn } from "@/lib/utils";
 import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
 import { linkifyText } from "@/lib/utils/linkify";
 import CopyAiResponseButton from "@/components/CopyAiResponseButton";
 import CopyTextButton from "@/components/CopyTextButton";
+import PushToCliModal from "@/components/PushToCliModal";
+import RemediateModal from "@/app/dashboard/attack-paths/RemediateModal";
+import {
+  remediationTargetFromContainerCve,
+  remediationTargetsFromContainerImage,
+  type RemediationTarget,
+} from "@/lib/github/remediation-targets";
+import { handoffIssueFromContainerCve, type HandoffIssueItem } from "@/lib/handoff/tasks";
 import { useDemoMode } from "@/components/DemoModeProvider";
 
 const DEMO_AI_DISABLED_MESSAGE =
@@ -21,6 +45,14 @@ const SEV_STYLES: Record<CveSeverity, { label: string; color: string; border: st
   low:      { label: "LOW",      color: "#94a3b8", border: "#475569", bg: "#0f1115" },
   negligible:{ label: "INFO",   color: "#6b7280", border: "#374151", bg: "#0f1115" },
 };
+
+const SEVERITY_ORDER: CveSeverity[] = ["critical", "high", "medium", "low", "negligible"];
+
+type SeverityFilter = "all" | "critical" | "high" | "medium" | "low";
+type CloudFilter = "all" | ImageRegistry;
+type StatusFilter = "all" | "vulnerable" | "clean" | "unscanned";
+type DateRangeFilter = "all" | "24h" | "7d" | "30d" | "custom";
+type SortOption = "critical" | "total_cves" | "newest" | "oldest" | "name_asc";
 
 interface RecState {
   loading: boolean;
@@ -49,7 +81,68 @@ function renderMd(text: string): string {
   return linkifyText(html, []);
 }
 
-function CveRow({ cve, imageRef, cloud }: { cve: ContainerVulnerability; imageRef: string; cloud: string }) {
+function formatWarningText(w: GcpScanWarning): {
+  warningCommand: string | null;
+  fullText: string;
+} {
+  const callerProjectMatch = w.detail?.match(/in project ([a-z0-9-]+)/i);
+  const callerProject =
+    callerProjectMatch?.[1] && callerProjectMatch[1] !== w.projectId
+      ? callerProjectMatch[1]
+      : null;
+  const apiCommands =
+    w.code === "api_not_enabled"
+      ? [
+          ...(callerProject && w.requiredApi
+            ? [`gcloud services enable ${w.requiredApi} --project=${callerProject}`]
+            : []),
+          ...(w.enableApiCommand ? [w.enableApiCommand] : []),
+        ]
+      : [];
+  const warningCommand =
+    apiCommands.length > 0
+      ? apiCommands.join("\n")
+      : w.code === "permission_denied" && w.grantCommands && w.grantCommands.length > 0
+        ? w.grantCommands.join("\n")
+        : null;
+  const fullText = [w.message, w.detail, warningCommand].filter(Boolean).join("\n");
+  return { warningCommand, fullText };
+}
+
+function matchesSearchText(text: string | undefined, needle: string): boolean {
+  if (!text) return false;
+  return text.toLowerCase().includes(needle);
+}
+
+function cveMatchesFilters(
+  cve: ContainerVulnerability,
+  severityFilter: SeverityFilter,
+  searchNeedle: string
+): boolean {
+  if (severityFilter !== "all" && cve.severity !== severityFilter) {
+    return false;
+  }
+  if (!searchNeedle) return true;
+  return (
+    matchesSearchText(cve.cveId, searchNeedle) ||
+    matchesSearchText(cve.packageName, searchNeedle) ||
+    matchesSearchText(cve.description, searchNeedle) ||
+    matchesSearchText(cve.installedVersion, searchNeedle) ||
+    matchesSearchText(cve.fixedVersion, searchNeedle)
+  );
+}
+
+function CveRow({
+  cve,
+  result,
+  onCreatePr,
+  onSendToCli,
+}: {
+  cve: ContainerVulnerability;
+  result: ImageScanResult;
+  onCreatePr: (targets: RemediationTarget[]) => void;
+  onSendToCli: (issues: HandoffIssueItem[]) => void;
+}) {
   const s = SEV_STYLES[cve.severity];
   const [rec, setRec] = useState<RecState>({ loading: false, text: null, error: null });
   const [open, setOpen] = useState(false);
@@ -65,7 +158,7 @@ function CveRow({ cve, imageRef, cloud }: { cve: ContainerVulnerability; imageRe
     setOpen(true);
     try {
       const cacheKey = `watchmen:cve-rec:${cve.cveId}`;
-      
+
       if (!forceRegenerate) {
         const cached = localStorage.getItem(cacheKey);
         if (cached) {
@@ -79,8 +172,8 @@ function CveRow({ cve, imageRef, cloud }: { cve: ContainerVulnerability; imageRe
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...cve,
-          imageRef,
-          cloud,
+          imageRef: result.imageRef,
+          cloud: result.cloud,
           demoCredentials: (() => {
             const browserAI = getActiveBrowserAIKey();
             return browserAI ? { aiKey: browserAI.key, aiProvider: browserAI.provider } : undefined;
@@ -89,7 +182,7 @@ function CveRow({ cve, imageRef, cloud }: { cve: ContainerVulnerability; imageRe
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed");
-      
+
       localStorage.setItem(cacheKey, data.recommendation);
       setRec({ loading: false, text: data.recommendation, error: null });
     } catch (e) {
@@ -135,10 +228,11 @@ function CveRow({ cve, imageRef, cloud }: { cve: ContainerVulnerability; imageRe
         </div>
       </div>
 
-      {/* AI recommendation area */}
+      {/* Actions: ASK AI, Create PR, Send to CLI */}
       <div className="mt-2 pl-[42px] pr-4">
-        <div className="flex items-center justify-between gap-2 max-w-fit">
+        <div className="flex items-center gap-2 flex-wrap">
           <button
+            type="button"
             onClick={rec.text ? () => setOpen((o) => !o) : () => askAI()}
             disabled={rec.loading || demoMode}
             className={cn(
@@ -160,12 +254,57 @@ function CveRow({ cve, imageRef, cloud }: { cve: ContainerVulnerability; imageRe
 
           {rec.text && (
             <button
+              type="button"
               onClick={() => setOpen((o) => !o)}
-              className="text-slate-500 hover:text-slate-300 transition-colors pl-1"
+              className="text-slate-500 hover:text-slate-300 transition-colors px-0.5"
+              aria-label={open ? "Collapse AI recommendation" : "Expand AI recommendation"}
             >
               {open ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
             </button>
           )}
+
+          {!demoMode && (
+            <button
+              type="button"
+              onClick={() =>
+                onCreatePr([
+                  remediationTargetFromContainerCve({
+                    imageRef: result.imageRef,
+                    imageName: result.imageName,
+                    cloud: result.cloud,
+                    accountId: result.accountId,
+                    cve,
+                  }),
+                ])
+              }
+              className="flex items-center gap-1 text-[10px] font-medium transition-all duration-150 rounded px-2 py-0.5 font-mono border border-violet-500/35 text-violet-300 hover:bg-violet-500/10"
+              title="Open a GitHub Pull Request fixing this CVE"
+            >
+              <GitPullRequest className="w-2.5 h-2.5" />
+              Create PR
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() =>
+              onSendToCli([
+                handoffIssueFromContainerCve({
+                  imageRef: result.imageRef,
+                  imageName: result.imageName,
+                  cloud: result.cloud,
+                  accountId: result.accountId,
+                  cve,
+                  aiRecommendation: rec.text ?? undefined,
+                }),
+              ])
+            }
+            className="flex items-center gap-1 text-[10px] font-medium transition-all duration-150 rounded px-2 py-0.5 font-mono border border-emerald-500/35 text-emerald-300 hover:bg-emerald-500/10"
+            title="Send this CVE to OpenCode, Claude Code, or Codex"
+          >
+            <Terminal className="w-2.5 h-2.5" />
+            Send to CLI
+          </button>
         </div>
 
         {rec.error && (
@@ -191,6 +330,7 @@ function CveRow({ cve, imageRef, cloud }: { cve: ContainerVulnerability; imageRe
               dangerouslySetInnerHTML={{ __html: renderMd(rec.text) }}
             />
             <button
+              type="button"
               onClick={() => askAI(true)}
               disabled={rec.loading || demoMode}
               className="mt-3 flex items-center gap-1 text-[10px] text-slate-500 hover:text-violet-400 transition-colors font-mono"
@@ -207,37 +347,57 @@ function CveRow({ cve, imageRef, cloud }: { cve: ContainerVulnerability; imageRe
 
 function ImageCard({
   result,
-  filter,
+  severityFilter,
+  searchNeedle,
   trivyAvailable,
   scanningRef,
+  demoMode,
   onScanImage,
+  onCreatePr,
+  onSendToCli,
 }: {
   result: ImageScanResult;
-  filter: string;
+  severityFilter: SeverityFilter;
+  searchNeedle: string;
   trivyAvailable: boolean;
   scanningRef: boolean;
+  demoMode: boolean;
   onScanImage: (imageRef: string, force: boolean) => void;
+  onCreatePr: (targets: RemediationTarget[]) => void;
+  onSendToCli: (issues: HandoffIssueItem[]) => void;
 }) {
-  const [open, setOpen] = useState(filter !== "all");
+  const imageLevelMatch =
+    !searchNeedle ||
+    matchesSearchText(result.imageName, searchNeedle) ||
+    matchesSearchText(result.imageRef, searchNeedle) ||
+    matchesSearchText(result.accountId, searchNeedle);
+
+  const filteredVulns = result.vulnerabilities.filter((v) =>
+    cveMatchesFilters(v, severityFilter, imageLevelMatch ? "" : searchNeedle)
+  );
+
+  const sortedVulns = [...filteredVulns].sort(
+    (a, b) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity)
+  );
+
+  const [open, setOpen] = useState(severityFilter !== "all" || Boolean(searchNeedle && !imageLevelMatch));
+
+  useEffect(() => {
+    if (severityFilter !== "all" || (searchNeedle && !imageLevelMatch && sortedVulns.length > 0)) {
+      setOpen(true);
+    }
+  }, [severityFilter, searchNeedle, imageLevelMatch, sortedVulns.length]);
+
   const hasCritical = result.summary.critical > 0;
   const hasHigh = result.summary.high > 0;
   const borderColor = hasCritical ? "#ef4444" : hasHigh ? "#f59e0b" : "#374151";
-
-  const filteredVulns = result.vulnerabilities.filter(
-    (v) => filter === "all" || v.severity === filter
-  );
-
-  const sortedVulns = [...filteredVulns].sort((a, b) => {
-    const order: CveSeverity[] = ["critical", "high", "medium", "low", "negligible"];
-    return order.indexOf(a.severity) - order.indexOf(b.severity);
-  });
-
   const canTrivyScan = result.cloud === "gcp" && trivyAvailable;
 
   return (
     <div style={{ border: `1px solid ${borderColor}33`, background: "#09090b", marginBottom: 10 }}>
-      <div className="flex items-start gap-2 p-4 transition-colors hover:bg-white/[0.02]">
+      <div className="flex items-start gap-2 p-4 transition-colors hover:bg-white/[0.02] flex-wrap sm:flex-nowrap">
         <button
+          type="button"
           onClick={() => setOpen((v) => !v)}
           className="flex-1 text-left flex items-start gap-4 min-w-0"
         >
@@ -301,7 +461,7 @@ function ImageCard({
                 </span>
               )}
               <span style={{ fontSize: 9, color: "#4b5563", fontFamily: "monospace" }}>
-                · {result.scanStatus === "unscanned" ? "updated" : "scanned"} {new Date(result.scannedAt).toLocaleTimeString()}
+                · {result.scanStatus === "unscanned" ? "updated" : "scanned"} {new Date(result.scannedAt).toLocaleString()}
               </span>
             </div>
           </div>
@@ -310,21 +470,58 @@ function ImageCard({
             style={{ color: "#4b5563", transform: open ? "rotate(90deg)" : "none" }}
           />
         </button>
-        {canTrivyScan && (
-          <button
-            type="button"
-            onClick={() => onScanImage(result.imageRef, result.scanStatus !== "unscanned")}
-            disabled={scanningRef}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-mono uppercase tracking-wider border rounded shrink-0 transition-colors hover:bg-emerald-500/10 disabled:opacity-50"
-            style={{
-              borderColor: result.scanStatus === "unscanned" ? "#10b98166" : "var(--border-dim)",
-              color: result.scanStatus === "unscanned" ? "#4ade80" : "var(--text-muted)",
-            }}
-          >
-            {scanningRef ? <Loader2 className="w-3 h-3 animate-spin" /> : <ShieldCheck className="w-3 h-3" />}
-            {scanningRef ? "Scanning…" : result.scanStatus === "unscanned" ? "Scan (Trivy)" : "Re-scan"}
-          </button>
-        )}
+
+        <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
+          {sortedVulns.length > 0 && !demoMode && (
+            <button
+              type="button"
+              onClick={() => onCreatePr(remediationTargetsFromContainerImage(result, sortedVulns))}
+              className="flex items-center gap-1 px-2 py-1 text-[10px] font-mono uppercase tracking-wider border border-violet-500/35 text-violet-300 rounded hover:bg-violet-500/10 transition-colors"
+              title="Open a GitHub PR fixing vulnerabilities in this image"
+            >
+              <GitPullRequest className="w-3 h-3" />
+              Create PR
+            </button>
+          )}
+          {sortedVulns.length > 0 && (
+            <button
+              type="button"
+              onClick={() =>
+                onSendToCli(
+                  sortedVulns.map((cve) =>
+                    handoffIssueFromContainerCve({
+                      imageRef: result.imageRef,
+                      imageName: result.imageName,
+                      cloud: result.cloud,
+                      accountId: result.accountId,
+                      cve,
+                    })
+                  )
+                )
+              }
+              className="flex items-center gap-1 px-2 py-1 text-[10px] font-mono uppercase tracking-wider border border-emerald-500/35 text-emerald-300 rounded hover:bg-emerald-500/10 transition-colors"
+              title="Send this image's CVEs to AI / CLI Queue"
+            >
+              <Terminal className="w-3 h-3" />
+              Send to CLI
+            </button>
+          )}
+          {canTrivyScan && (
+            <button
+              type="button"
+              onClick={() => onScanImage(result.imageRef, result.scanStatus !== "unscanned")}
+              disabled={scanningRef}
+              className="flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-mono uppercase tracking-wider border rounded shrink-0 transition-colors hover:bg-emerald-500/10 disabled:opacity-50"
+              style={{
+                borderColor: result.scanStatus === "unscanned" ? "#10b98166" : "var(--border-dim)",
+                color: result.scanStatus === "unscanned" ? "#4ade80" : "var(--text-muted)",
+              }}
+            >
+              {scanningRef ? <Loader2 className="w-3 h-3 animate-spin" /> : <ShieldCheck className="w-3 h-3" />}
+              {scanningRef ? "Scanning…" : result.scanStatus === "unscanned" ? "Scan (Trivy)" : "Re-scan"}
+            </button>
+          )}
+        </div>
       </div>
 
       {open && (
@@ -332,9 +529,11 @@ function ImageCard({
           {sortedVulns.length === 0 ? (
             <div style={{ padding: "12px 0" }} className="space-y-2">
               <p style={{ fontSize: 11, color: result.scanStatus === "unscanned" ? "#fbbf24" : "#94a3b8", fontFamily: "monospace" }}>
-                {result.scanStatus === "unscanned" && canTrivyScan
-                  ? "No Container Analysis results. Click \"Scan (Trivy)\" to scan this image for CVEs at $0 GCP scanning cost (cached by digest)."
-                  : (result.scanStatusMessage ?? "No vulnerabilities found.")}
+                {result.vulnerabilities.length > 0
+                  ? "No CVEs match the active search or severity filters."
+                  : result.scanStatus === "unscanned" && canTrivyScan
+                    ? "No Container Analysis results. Click \"Scan (Trivy)\" to scan this image for CVEs at $0 GCP scanning cost (cached by digest)."
+                    : (result.scanStatusMessage ?? "No vulnerabilities found.")}
               </p>
               {result.cloud === "gcp" && result.scanStatus === "unscanned" && result.accountId && !canTrivyScan && (
                 <div className="flex items-center justify-between gap-2 bg-slate-900/80 border border-slate-800 rounded px-3 py-2">
@@ -354,8 +553,9 @@ function ImageCard({
                 <CveRow
                   key={`${cve.cveId}-${cve.packageName}-${cve.installedVersion}-${idx}`}
                   cve={cve}
-                  imageRef={result.imageRef}
-                  cloud={result.cloud}
+                  result={result}
+                  onCreatePr={onCreatePr}
+                  onSendToCli={onSendToCli}
                 />
               ))}
             </div>
@@ -367,8 +567,10 @@ function ImageCard({
 }
 
 export default function ContainerScanPage() {
+  const demoMode = useDemoMode();
   const [results, setResults] = useState<ImageScanResult[]>([]);
   const [warnings, setWarnings] = useState<GcpScanWarning[]>([]);
+  const [showIgnoredWarnings, setShowIgnoredWarnings] = useState(false);
   const [gcpProjects, setGcpProjects] = useState<string[]>([]);
   const [gcpAuthConfigured, setGcpAuthConfigured] = useState(true);
   const [trivyAvailable, setTrivyAvailable] = useState(false);
@@ -378,7 +580,22 @@ export default function ContainerScanPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [scannedAt, setScannedAt] = useState<string | null>(null);
-  const [filter, setFilter] = useState<"all" | "critical" | "high" | "medium" | "low">("all");
+
+  // Filters, sorting, pagination
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<SeverityFilter>("all");
+  const [cloudFilter, setCloudFilter] = useState<CloudFilter>("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [dateRange, setDateRange] = useState<DateRangeFilter>("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [sortBy, setSortBy] = useState<SortOption>("critical");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
+  // PR & CLI handoff modals
+  const [remediateTargets, setRemediateTargets] = useState<RemediationTarget[] | null>(null);
+  const [cliModalIssues, setCliModalIssues] = useState<HandoffIssueItem[] | null>(null);
 
   async function load() {
     setLoading(true);
@@ -425,16 +642,7 @@ export default function ContainerScanPage() {
 
       if (scannedList.length > 0) {
         const scannedByRef = new Map(scannedList.map((s) => [s.imageRef, s]));
-        setResults((prev) => {
-          const updated = prev.map((item) => scannedByRef.get(item.imageRef) ?? item);
-          return [...updated].sort((a, b) => {
-            if (b.summary.critical !== a.summary.critical) return b.summary.critical - a.summary.critical;
-            if (b.summary.high !== a.summary.high) return b.summary.high - a.summary.high;
-            if (b.summary.medium !== a.summary.medium) return b.summary.medium - a.summary.medium;
-            if (b.summary.low !== a.summary.low) return b.summary.low - a.summary.low;
-            return b.vulnerabilities.length - a.vulnerabilities.length;
-          });
-        });
+        setResults((prev) => prev.map((item) => scannedByRef.get(item.imageRef) ?? item));
       }
 
       if (errorsList.length > 0) {
@@ -464,8 +672,113 @@ export default function ContainerScanPage() {
     }
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    void load();
+  }, []);
 
+  // Reset to page 1 when filters or sort change
+  useEffect(() => {
+    setPage(1);
+  }, [search, filter, cloudFilter, statusFilter, dateRange, dateFrom, dateTo, sortBy, pageSize]);
+
+  const hasGcpImages = useMemo(() => results.some((r) => r.cloud === "gcp"), [results]);
+
+  // If Trivy is active and Artifact Registry images are present, managed Container Analysis 403/disabled is non-blocking noise.
+  const { actionableWarnings, ignoredCaWarnings } = useMemo(() => {
+    const actionable: GcpScanWarning[] = [];
+    const ignored: GcpScanWarning[] = [];
+    for (const w of warnings) {
+      const isOptionalCaWarning =
+        w.service === "containeranalysis" &&
+        trivyAvailable &&
+        hasGcpImages &&
+        (w.code === "permission_denied" || w.code === "api_not_enabled");
+      if (isOptionalCaWarning) ignored.push(w);
+      else actionable.push(w);
+    }
+    return { actionableWarnings: actionable, ignoredCaWarnings: ignored };
+  }, [warnings, trivyAvailable, hasGcpImages]);
+
+  const searchNeedle = search.trim().toLowerCase();
+
+  const filteredAndSorted = useMemo(() => {
+    const now = Date.now();
+    const minTs =
+      dateRange === "24h"
+        ? now - 24 * 3600_000
+        : dateRange === "7d"
+          ? now - 7 * 86400_000
+          : dateRange === "30d"
+            ? now - 30 * 86400_000
+            : dateRange === "custom" && dateFrom
+              ? new Date(`${dateFrom}T00:00:00`).getTime()
+              : null;
+    const maxTs =
+      dateRange === "custom" && dateTo
+        ? new Date(`${dateTo}T23:59:59.999`).getTime()
+        : null;
+
+    const filtered = results.filter((r) => {
+      if (cloudFilter !== "all" && r.cloud !== cloudFilter) return false;
+
+      if (statusFilter === "vulnerable" && r.vulnerabilities.length === 0) return false;
+      if (statusFilter === "clean" && !(r.scanStatus === "clean" || (r.scanStatus !== "unscanned" && r.vulnerabilities.length === 0))) {
+        return false;
+      }
+      if (statusFilter === "unscanned" && r.scanStatus !== "unscanned") return false;
+
+      if (minTs !== null || maxTs !== null) {
+        const ts = new Date(r.scannedAt).getTime();
+        if (Number.isFinite(ts)) {
+          if (minTs !== null && ts < minTs) return false;
+          if (maxTs !== null && ts > maxTs) return false;
+        }
+      }
+
+      if (filter !== "all" && r.summary[filter] === 0) return false;
+
+      if (searchNeedle) {
+        const imageMatch =
+          matchesSearchText(r.imageName, searchNeedle) ||
+          matchesSearchText(r.imageRef, searchNeedle) ||
+          matchesSearchText(r.accountId, searchNeedle);
+        const cveMatch = r.vulnerabilities.some((v) =>
+          cveMatchesFilters(v, filter, searchNeedle)
+        );
+        if (!imageMatch && !cveMatch) return false;
+      }
+
+      return true;
+    });
+
+    return [...filtered].sort((a, b) => {
+      if (sortBy === "newest") {
+        return new Date(b.scannedAt).getTime() - new Date(a.scannedAt).getTime();
+      }
+      if (sortBy === "oldest") {
+        return new Date(a.scannedAt).getTime() - new Date(b.scannedAt).getTime();
+      }
+      if (sortBy === "name_asc") {
+        return a.imageName.localeCompare(b.imageName);
+      }
+      if (sortBy === "total_cves") {
+        return b.vulnerabilities.length - a.vulnerabilities.length;
+      }
+      // "critical" default
+      if (b.summary.critical !== a.summary.critical) return b.summary.critical - a.summary.critical;
+      if (b.summary.high !== a.summary.high) return b.summary.high - a.summary.high;
+      if (b.summary.medium !== a.summary.medium) return b.summary.medium - a.summary.medium;
+      if (b.summary.low !== a.summary.low) return b.summary.low - a.summary.low;
+      return b.vulnerabilities.length - a.vulnerabilities.length;
+    });
+  }, [results, cloudFilter, statusFilter, dateRange, dateFrom, dateTo, filter, searchNeedle, sortBy]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredAndSorted.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const pageStart = (safePage - 1) * pageSize;
+  const paginated = filteredAndSorted.slice(pageStart, pageStart + pageSize);
+
+  // Totals across all loaded results (for severity pills)
   const totalCritical = results.reduce((s, r) => s + r.summary.critical, 0);
   const totalHigh = results.reduce((s, r) => s + r.summary.high, 0);
   const totalMedium = results.reduce((s, r) => s + r.summary.medium, 0);
@@ -475,14 +788,45 @@ export default function ContainerScanPage() {
     0
   );
 
-  const visible = results.filter((r) => {
-    if (filter === "all") return true;
-    return r.summary[filter] > 0;
-  });
+  // Matching CVEs across filtered images (for header Create PR & Send to CLI buttons)
+  const visibleCvePairs = useMemo(() => {
+    const pairs: Array<{ result: ImageScanResult; cve: ContainerVulnerability }> = [];
+    for (const r of filteredAndSorted) {
+      const imageMatch =
+        !searchNeedle ||
+        matchesSearchText(r.imageName, searchNeedle) ||
+        matchesSearchText(r.imageRef, searchNeedle) ||
+        matchesSearchText(r.accountId, searchNeedle);
+      for (const cve of r.vulnerabilities) {
+        if (cveMatchesFilters(cve, filter, imageMatch ? "" : searchNeedle)) {
+          pairs.push({ result: r, cve });
+        }
+      }
+    }
+    return pairs;
+  }, [filteredAndSorted, filter, searchNeedle]);
 
   const unscannedGcpCount = results.filter(
     (r) => r.cloud === "gcp" && r.scanStatus === "unscanned"
   ).length;
+
+  const hasActiveFilters =
+    Boolean(search) ||
+    filter !== "all" ||
+    cloudFilter !== "all" ||
+    statusFilter !== "all" ||
+    dateRange !== "all";
+
+  function clearFilters() {
+    setSearch("");
+    setFilter("all");
+    setCloudFilter("all");
+    setStatusFilter("all");
+    setDateRange("all");
+    setDateFrom("");
+    setDateTo("");
+    setSortBy("critical");
+  }
 
   return (
     <div className="space-y-6">
@@ -500,7 +844,53 @@ export default function ContainerScanPage() {
             )}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {visibleCvePairs.length > 0 && !demoMode && (
+            <button
+              type="button"
+              onClick={() =>
+                setRemediateTargets(
+                  visibleCvePairs.slice(0, 40).map(({ result, cve }) =>
+                    remediationTargetFromContainerCve({
+                      imageRef: result.imageRef,
+                      imageName: result.imageName,
+                      cloud: result.cloud,
+                      accountId: result.accountId,
+                      cve,
+                    })
+                  )
+                )
+              }
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs uppercase tracking-widest border border-violet-500/40 text-violet-300 hover:bg-violet-500/10 transition-all"
+              title="Open a GitHub PR fixing visible container CVEs"
+            >
+              <GitPullRequest className="w-3.5 h-3.5" />
+              Create PR
+            </button>
+          )}
+          {visibleCvePairs.length > 0 && (
+            <button
+              type="button"
+              onClick={() =>
+                setCliModalIssues(
+                  visibleCvePairs.map(({ result, cve }) =>
+                    handoffIssueFromContainerCve({
+                      imageRef: result.imageRef,
+                      imageName: result.imageName,
+                      cloud: result.cloud,
+                      accountId: result.accountId,
+                      cve,
+                    })
+                  )
+                )
+              }
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs uppercase tracking-widest border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 transition-all"
+              title="Send visible CVEs to OpenCode, Claude Code, or Codex"
+            >
+              <Terminal className="w-3.5 h-3.5" />
+              Send to CLI
+            </button>
+          )}
           {trivyAvailable && unscannedGcpCount > 0 && (
             <button
               type="button"
@@ -514,6 +904,7 @@ export default function ContainerScanPage() {
             </button>
           )}
           <button
+            type="button"
             onClick={load}
             disabled={loading}
             className="flex items-center gap-2 px-3 py-1.5 text-xs uppercase tracking-widest transition-all"
@@ -531,7 +922,7 @@ export default function ContainerScanPage() {
         </div>
       )}
 
-      {!loading && warnings.length > 0 && (
+      {!loading && actionableWarnings.length > 0 && (
         <div
           className="px-4 py-3 space-y-2.5 text-xs font-mono select-text"
           style={{ border: "1px solid #f59e0b55", background: "#1a1006", color: "#fbbf24" }}
@@ -539,60 +930,23 @@ export default function ContainerScanPage() {
           <div className="flex items-center justify-between gap-2 font-bold uppercase tracking-wider">
             <div className="flex items-center gap-2">
               <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-              <span>GCP Container Scan Diagnostics ({warnings.length})</span>
+              <span>GCP Container Scan Diagnostics ({actionableWarnings.length})</span>
             </div>
             <CopyTextButton
-              text={warnings
-                .map((w) => {
-                  const lines = [w.message];
-                  if (w.detail) lines.push(w.detail);
-                  if (w.code === "api_not_enabled") {
-                    const m = w.detail?.match(/in project ([a-z0-9-]+)/i);
-                    if (m?.[1] && m[1] !== w.projectId && w.requiredApi) {
-                      lines.push(`gcloud services enable ${w.requiredApi} --project=${m[1]}`);
-                    }
-                    if (w.enableApiCommand) lines.push(w.enableApiCommand);
-                  }
-                  if (w.code === "permission_denied" && w.grantCommands?.length) {
-                    lines.push(...w.grantCommands);
-                  }
-                  return lines.join("\n");
-                })
-                .join("\n\n")}
+              text={actionableWarnings.map((w) => formatWarningText(w).fullText).join("\n\n")}
               label="Copy all"
               className="flex items-center gap-1 px-2 py-0.5 text-[10px] font-normal normal-case tracking-normal border border-amber-500/30 rounded text-amber-200 hover:bg-amber-500/10 transition-colors shrink-0"
             />
           </div>
           <div className="space-y-2">
-            {warnings.map((w, idx) => {
-              const callerProjectMatch = w.detail?.match(/in project ([a-z0-9-]+)/i);
-              const callerProject =
-                callerProjectMatch?.[1] && callerProjectMatch[1] !== w.projectId
-                  ? callerProjectMatch[1]
-                  : null;
-              const apiCommands =
-                w.code === "api_not_enabled"
-                  ? [
-                      ...(callerProject && w.requiredApi
-                        ? [`gcloud services enable ${w.requiredApi} --project=${callerProject}`]
-                        : []),
-                      ...(w.enableApiCommand ? [w.enableApiCommand] : []),
-                    ]
-                  : [];
-              const warningCommand =
-                apiCommands.length > 0
-                  ? apiCommands.join("\n")
-                  : w.code === "permission_denied" && w.grantCommands && w.grantCommands.length > 0
-                    ? w.grantCommands.join("\n")
-                    : null;
-              const fullWarningText = [w.message, w.detail, warningCommand].filter(Boolean).join("\n");
-
+            {actionableWarnings.map((w, idx) => {
+              const { warningCommand, fullText } = formatWarningText(w);
               return (
                 <div key={`${w.service}-${w.projectId}-${idx}`} className="border-t border-amber-500/20 pt-2 space-y-1.5">
                   <div className="flex items-start justify-between gap-2">
                     <div className="text-amber-200">{w.message}</div>
                     <CopyTextButton
-                      text={fullWarningText}
+                      text={fullText}
                       label="Copy"
                       className="flex items-center gap-1 px-2 py-0.5 text-[10px] border border-amber-500/30 rounded text-amber-200 hover:bg-amber-500/10 transition-colors shrink-0"
                     />
@@ -617,12 +971,52 @@ export default function ContainerScanPage() {
         </div>
       )}
 
+      {!loading && ignoredCaWarnings.length > 0 && (
+        <div
+          className="px-3 py-2 text-[11px] font-mono text-slate-400"
+          style={{ border: "1px solid var(--border-dim)", background: "#09090b" }}
+        >
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <span>
+              GCP Container Analysis is not enabled on {ignoredCaWarnings.map((w) => w.projectId).join(", ")} — using built-in Trivy scanner ($0 GCP scanning cost).
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowIgnoredWarnings((v) => !v)}
+              className="text-[10px] text-slate-500 hover:text-slate-300 underline"
+            >
+              {showIgnoredWarnings ? "Hide details" : "Show details"}
+            </button>
+          </div>
+          {showIgnoredWarnings && (
+            <div className="mt-2 pt-2 border-t border-slate-800 space-y-2">
+              {ignoredCaWarnings.map((w, idx) => {
+                const { warningCommand, fullText } = formatWarningText(w);
+                return (
+                  <div key={`${w.service}-${w.projectId}-${idx}`} className="space-y-1 text-[10px] text-slate-500">
+                    <div className="flex items-start justify-between gap-2">
+                      <span>{w.message}</span>
+                      <CopyTextButton
+                        text={fullText}
+                        label="Copy"
+                        className="flex items-center gap-1 px-1.5 py-0.5 border border-slate-700 rounded text-slate-400 hover:text-slate-200 shrink-0"
+                      />
+                    </div>
+                    {warningCommand && <pre className="text-slate-400 overflow-x-auto">{warningCommand}</pre>}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {!loading && results.length > 0 && (
         <>
           {/* Stats */}
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {[
-              { label: "Images Scanned", value: results.length, color: "var(--green)" },
+              { label: "Images Listed", value: results.length, color: "var(--green)" },
               { label: "Total CVEs", value: totalVulns, color: "var(--text-muted)" },
               { label: "Critical", value: totalCritical, color: "#f87171" },
               { label: "High", value: totalHigh, color: "#fb923c" },
@@ -634,44 +1028,216 @@ export default function ContainerScanPage() {
             ))}
           </div>
 
-          {/* Filter */}
-          <div className="flex gap-1 flex-wrap">
-            {(["all", "critical", "high", "medium", "low"] as const).map((f) => {
-              const count = f === "all" ? totalVulns :
-                            f === "critical" ? totalCritical :
-                            f === "high" ? totalHigh :
-                            f === "medium" ? totalMedium :
-                            totalLow;
-              return (
+          {/* Search, Filter & Sort Controls */}
+          <div className="space-y-3 p-3 border" style={{ borderColor: "var(--border-dim)", background: "#09090b" }}>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative flex-1 min-w-[220px]">
+                <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Filter by image name, project, CVE ID, or package…"
+                  aria-label="Filter container scans"
+                  className="w-full pl-8 pr-8 py-1.5 bg-black/50 border border-slate-800 text-xs font-mono text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-emerald-500/50"
+                />
+                {search && (
+                  <button
+                    type="button"
+                    onClick={() => setSearch("")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                    aria-label="Clear search"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              <select
+                value={cloudFilter}
+                onChange={(e) => setCloudFilter(e.target.value as CloudFilter)}
+                aria-label="Filter by registry"
+                className="px-2.5 py-1.5 bg-black/50 border border-slate-800 text-xs font-mono text-slate-300 focus:outline-none focus:border-emerald-500/50"
+              >
+                <option value="all">Registry: All</option>
+                <option value="gcp">GCP Artifact Registry</option>
+                <option value="aws">AWS ECR</option>
+                <option value="ghcr">GitHub (GHCR)</option>
+                <option value="dockerhub">Docker Hub</option>
+              </select>
+
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+                aria-label="Filter by scan status"
+                className="px-2.5 py-1.5 bg-black/50 border border-slate-800 text-xs font-mono text-slate-300 focus:outline-none focus:border-emerald-500/50"
+              >
+                <option value="all">Status: All</option>
+                <option value="vulnerable">Has CVEs</option>
+                <option value="clean">Clean (0 CVEs)</option>
+                <option value="unscanned">Unscanned</option>
+              </select>
+
+              <select
+                value={dateRange}
+                onChange={(e) => setDateRange(e.target.value as DateRangeFilter)}
+                aria-label="Filter by date"
+                className="px-2.5 py-1.5 bg-black/50 border border-slate-800 text-xs font-mono text-slate-300 focus:outline-none focus:border-emerald-500/50"
+              >
+                <option value="all">Date: Any time</option>
+                <option value="24h">Last 24 hours</option>
+                <option value="7d">Last 7 days</option>
+                <option value="30d">Last 30 days</option>
+                <option value="custom">Custom range…</option>
+              </select>
+
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as SortOption)}
+                aria-label="Sort images"
+                className="px-2.5 py-1.5 bg-black/50 border border-slate-800 text-xs font-mono text-slate-300 focus:outline-none focus:border-emerald-500/50"
+              >
+                <option value="critical">Sort: Highest severity</option>
+                <option value="total_cves">Sort: Most CVEs</option>
+                <option value="newest">Sort: Newest first</option>
+                <option value="oldest">Sort: Oldest first</option>
+                <option value="name_asc">Sort: Name (A–Z)</option>
+              </select>
+
+              {hasActiveFilters && (
                 <button
-                  key={f}
-                  onClick={() => setFilter(f)}
-                  style={{
-                    fontFamily: "monospace", fontSize: 10, letterSpacing: 2, padding: "4px 14px",
-                    border: filter === f ? "1px solid var(--green)" : "1px solid var(--border-dim)",
-                    color: filter === f ? "var(--green)" : "var(--text-muted)",
-                    background: "transparent", textTransform: "uppercase",
-                  }}
+                  type="button"
+                  onClick={clearFilters}
+                  className="px-2.5 py-1.5 text-[11px] font-mono border border-slate-700 text-slate-400 hover:text-slate-200"
                 >
-                  {f} ({count})
+                  Reset
                 </button>
-              );
-            })}
+              )}
+            </div>
+
+            {dateRange === "custom" && (
+              <div className="flex flex-wrap items-center gap-2 text-xs font-mono text-slate-400">
+                <span>From:</span>
+                <input
+                  type="date"
+                  value={dateFrom}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                  aria-label="Date from"
+                  className="px-2 py-1 bg-black/50 border border-slate-800 text-xs font-mono text-slate-200"
+                />
+                <span>To:</span>
+                <input
+                  type="date"
+                  value={dateTo}
+                  onChange={(e) => setDateTo(e.target.value)}
+                  aria-label="Date to"
+                  className="px-2 py-1 bg-black/50 border border-slate-800 text-xs font-mono text-slate-200"
+                />
+              </div>
+            )}
+
+            {/* Severity Pills */}
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex gap-1 flex-wrap">
+                {(["all", "critical", "high", "medium", "low"] as const).map((f) => {
+                  const count = f === "all" ? totalVulns :
+                                f === "critical" ? totalCritical :
+                                f === "high" ? totalHigh :
+                                f === "medium" ? totalMedium :
+                                totalLow;
+                  return (
+                    <button
+                      type="button"
+                      key={f}
+                      onClick={() => setFilter(f)}
+                      style={{
+                        fontFamily: "monospace", fontSize: 10, letterSpacing: 2, padding: "4px 14px",
+                        border: filter === f ? "1px solid var(--green)" : "1px solid var(--border-dim)",
+                        color: filter === f ? "var(--green)" : "var(--text-muted)",
+                        background: "transparent", textTransform: "uppercase",
+                      }}
+                    >
+                      {f} ({count})
+                    </button>
+                  );
+                })}
+              </div>
+              <span className="text-[11px] font-mono text-slate-500">
+                {filteredAndSorted.length} image{filteredAndSorted.length === 1 ? "" : "s"} · {visibleCvePairs.length} matching CVE{visibleCvePairs.length === 1 ? "" : "s"}
+              </span>
+            </div>
           </div>
 
           {/* Image cards */}
-          <div>
-            {visible.map((result) => (
-              <ImageCard
-                key={result.imageRef}
-                result={result}
-                filter={filter}
-                trivyAvailable={trivyAvailable}
-                scanningRef={Boolean(scanningRefs[result.imageRef])}
-                onScanImage={(ref, force) => void runTrivyScan([ref], force)}
-              />
-            ))}
-          </div>
+          {paginated.length === 0 ? (
+            <div className="py-12 text-center border font-mono text-xs text-slate-500" style={{ borderColor: "var(--border-dim)" }}>
+              No container images or CVEs match the selected filters.
+            </div>
+          ) : (
+            <div>
+              {paginated.map((result) => (
+                <ImageCard
+                  key={result.imageRef}
+                  result={result}
+                  severityFilter={filter}
+                  searchNeedle={searchNeedle}
+                  trivyAvailable={trivyAvailable}
+                  scanningRef={Boolean(scanningRefs[result.imageRef])}
+                  demoMode={demoMode}
+                  onScanImage={(ref, force) => void runTrivyScan([ref], force)}
+                  onCreatePr={(targets) => setRemediateTargets(targets)}
+                  onSendToCli={(issues) => setCliModalIssues(issues)}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* Pagination */}
+          {filteredAndSorted.length > 0 && (
+            <div
+              className="flex items-center justify-between gap-3 flex-wrap pt-2 border-t text-xs font-mono text-slate-400"
+              style={{ borderColor: "var(--border-dim)" }}
+            >
+              <div className="flex items-center gap-2">
+                <span>
+                  Showing {pageStart + 1}–{Math.min(pageStart + pageSize, filteredAndSorted.length)} of {filteredAndSorted.length}
+                </span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => setPageSize(Number(e.target.value))}
+                  aria-label="Items per page"
+                  className="px-2 py-1 bg-black/50 border border-slate-800 text-xs font-mono text-slate-300"
+                >
+                  <option value={10}>10 / page</option>
+                  <option value={25}>25 / page</option>
+                  <option value={50}>50 / page</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={safePage <= 1}
+                  className="flex items-center gap-1 px-2.5 py-1 border border-slate-800 text-slate-300 hover:bg-white/5 disabled:opacity-40"
+                >
+                  <ChevronLeft className="w-3 h-3" />
+                  Prev
+                </button>
+                <span className="px-2 text-slate-500">
+                  Page {safePage} / {totalPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={safePage >= totalPages}
+                  className="flex items-center gap-1 px-2.5 py-1 border border-slate-800 text-slate-300 hover:bg-white/5 disabled:opacity-40"
+                >
+                  Next
+                  <ChevronRight className="w-3 h-3" />
+                </button>
+              </div>
+            </div>
+          )}
         </>
       )}
 
@@ -682,7 +1248,7 @@ export default function ContainerScanPage() {
         >
           <AlertTriangle className="w-8 h-8" style={{ color: "var(--green)" }} />
           <p style={{ color: "var(--text-muted)", fontFamily: "monospace", fontSize: 12 }}>
-            {warnings.length > 0
+            {actionableWarnings.length > 0
               ? "No container images returned — review the GCP scan diagnostics above to enable APIs or grant permissions."
               : !gcpAuthConfigured
                 ? "No GCP credentials configured. Connect GCP in Settings, or connect AWS ECR, GHCR, or Docker Hub to enable scanning."
@@ -701,6 +1267,20 @@ export default function ContainerScanPage() {
           </p>
         </div>
       )}
+
+      {remediateTargets && (
+        <RemediateModal
+          targets={remediateTargets}
+          onClose={() => setRemediateTargets(null)}
+        />
+      )}
+
+      <PushToCliModal
+        isOpen={Boolean(cliModalIssues)}
+        onClose={() => setCliModalIssues(null)}
+        issues={cliModalIssues ?? []}
+        contextLabel="Container CVEs"
+      />
     </div>
   );
 }

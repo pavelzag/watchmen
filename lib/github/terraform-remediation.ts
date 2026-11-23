@@ -1,5 +1,5 @@
 import { callAI, type AIProvider } from "@/lib/ai/client";
-import { searchTfFiles, getFileContent } from "@/lib/github/client";
+import { searchTfFiles, searchContainerFiles, getFileContent } from "@/lib/github/client";
 import {
   buildRemediationBatchSuggestions,
   type RemediationBatchSuggestion,
@@ -529,7 +529,40 @@ function shouldAttemptFallbackForTargets(targets: RemediationTarget[]): boolean 
   });
 }
 
+function stripMarkdownFences(content: string): string {
+  const trimmed = content.trim();
+  const fenced = trimmed.match(/^```[\w.-]*\n([\s\S]*?)\n```$/);
+  return fenced ? fenced[1].trim() : trimmed;
+}
+
+function buildContainerPromptFromTargets(
+  filePath: string,
+  fileContent: string,
+  targets: RemediationTarget[]
+): string {
+  const targetDetails = buildTargetDetails(targets);
+
+  return `You are a DevSecOps & container security expert. The following container image CVEs were detected:
+
+${targetDetails}
+
+Update the container build or dependency manifest file below to remediate the relevant CVEs.
+Rules:
+- For Dockerfiles: update outdated base image tags (FROM ...) to a newer patched patch/minor release where appropriate, or add/update package upgrades (e.g. apk upgrade --no-cache / apt-get update && apt-get upgrade) only if needed for OS packages
+- For package manifests (package.json, go.mod, requirements.txt, pyproject.toml, Cargo.toml, etc.): bump only the affected vulnerable packages to their fixed versions when listed in this file
+- Do NOT invent packages, files, or dependencies that do not belong in this file
+- Preserve all unrelated instructions, comments, formatting, and dependencies as-is
+- If this file does not need any change for the CVEs above, return the exact original file content unchanged
+- Return ONLY the complete file content, no markdown fences, no explanation
+
+File: ${filePath}
+${fileContent}`;
+}
+
 function buildPromptFromTargets(filePath: string, fileContent: string, targets: RemediationTarget[]): string {
+  if (targets.some((target) => target.kind === "container_cve") && !filePath.toLowerCase().endsWith(".tf")) {
+    return buildContainerPromptFromTargets(filePath, fileContent, targets);
+  }
   const targetDetails = buildTargetDetails(targets);
 
   return `You are a Terraform security expert. The following GCP security findings and attack paths were detected:
@@ -652,7 +685,18 @@ async function fetchRelevantFiles(
           }, () => getFileContent(token, owner, repo, filePath));
           fileMap.set(filePath, data);
 
-          const { score: contentScore, matchedTargetCount } = getFileRelevanceScore(data.content, targets);
+          const { score: baseContentScore, matchedTargetCount } = getFileRelevanceScore(data.content, targets);
+          const isContainerTargets = targets.some((t) => t.kind === "container_cve");
+          const lowerFile = filePath.toLowerCase();
+          const isDockerfile =
+            lowerFile === "dockerfile" ||
+            lowerFile.endsWith("/dockerfile") ||
+            lowerFile.endsWith(".dockerfile") ||
+            lowerFile.split("/").pop()?.startsWith("dockerfile.");
+          const contentScore =
+            isContainerTargets && isDockerfile && baseContentScore === 0
+              ? 5
+              : baseContentScore;
           const scoredPath = batch.find((item) => item.filePath === filePath);
           const finalScore = getFinalCandidateScore({
             pathScore,
@@ -903,7 +947,9 @@ async function remediateExistingFiles(
         ])
       );
 
-      const trimmedFixed = sanitizeTerraformRemediationContent(fixedContent.trim());
+      const trimmedFixed = filePath.toLowerCase().endsWith(".tf")
+        ? sanitizeTerraformRemediationContent(fixedContent.trim())
+        : stripMarkdownFences(fixedContent);
       completed += 1;
       emitProgress(onProgress, {
         stage: "analyze_files",
@@ -1011,6 +1057,104 @@ export async function buildRemediationPlan(
       fullyAddressed: false,
       suggestedBatches: buildRemediationBatchSuggestions(targets),
       summary: `Selected items require manual review and are not eligible for Terraform auto-remediation.${manualReviewTargets.length > 0 ? ` ${manualReviewTargets.length} item${manualReviewTargets.length === 1 ? "" : "s"} were classified as review-only.` : ""}`,
+    };
+  }
+
+  const isContainerOnly = autoTargets.every((target) => target.kind === "container_cve");
+
+  if (isContainerOnly) {
+    const containerPaths = await withDebugTiming(scope, "searchContainerFiles", {
+      repo: `${owner}/${repo}`,
+    }, () => searchContainerFiles(token, owner, repo));
+    emitProgress(options.onProgress, {
+      stage: "list_tf_files",
+      message: `Found ${containerPaths.length} container/dependency files in the repository`,
+      percent: 10,
+      metadata: { totalPaths: containerPaths.length },
+    });
+
+    if (containerPaths.length === 0) {
+      return {
+        patches: [],
+        failures: [],
+        coveredTargetIds: [],
+        uncoveredTargets: targets,
+        fullyAddressed: false,
+        suggestedBatches: buildRemediationBatchSuggestions(targets),
+        summary: "No Dockerfile or dependency manifest files found in this repository.",
+      };
+    }
+
+    const rankedContainerPaths = containerPaths
+      .map((filePath) => {
+        const lower = filePath.toLowerCase();
+        const isDocker =
+          lower === "dockerfile" ||
+          lower.endsWith("/dockerfile") ||
+          lower.endsWith(".dockerfile") ||
+          lower.split("/").pop()?.startsWith("dockerfile.");
+        let boost = isDocker ? 25 : 10;
+        for (const t of autoTargets) {
+          for (const term of t.searchTerms.slice(0, 12)) {
+            if (lower.includes(term)) boost += 8;
+          }
+        }
+        return {
+          filePath,
+          pathBoost: boost,
+          pathPenalty: 0,
+          pathScore: boost,
+          pathSignals: isDocker ? ["container:dockerfile"] : ["container:manifest"],
+          deprioritized: false,
+        } satisfies ScoredPath;
+      })
+      .sort((a, b) => b.pathScore - a.pathScore || a.filePath.localeCompare(b.filePath));
+
+    const { fileMap, relevantFiles } = await fetchRelevantFiles(
+      token,
+      owner,
+      repo,
+      rankedContainerPaths,
+      autoTargets,
+      scope,
+      options.onProgress
+    );
+
+    if (relevantFiles.length === 0) {
+      return {
+        patches: [],
+        failures: [],
+        coveredTargetIds: [],
+        uncoveredTargets: targets,
+        fullyAddressed: false,
+        suggestedBatches: buildRemediationBatchSuggestions(targets),
+        summary: "No Dockerfile or dependency manifest matched the selected container CVEs.",
+      };
+    }
+
+    const { patches, failures } = await remediateExistingFiles(
+      relevantFiles,
+      fileMap,
+      autoTargets,
+      aiProvider,
+      aiApiKey,
+      PRIMARY_AI_TIMEOUT_MS,
+      scope,
+      options.onProgress
+    );
+    const coveredTargetIds = [...new Set(patches.flatMap((p) => p.targetIdsCovered ?? []))];
+    const uncoveredTargets = targets.filter((t) => !coveredTargetIds.includes(t.id));
+
+    return {
+      patches,
+      failures,
+      coveredTargetIds,
+      uncoveredTargets,
+      fullyAddressed: uncoveredTargets.length === 0 && patches.length > 0,
+      suggestedBatches: buildRemediationBatchSuggestions(uncoveredTargets),
+      summary: patches.length > 0
+        ? `Generated ${patches.length} container/dependency patch${patches.length === 1 ? "" : "es"} covering ${coveredTargetIds.length} CVE${coveredTargetIds.length === 1 ? "" : "s"}.`
+        : "No changes were needed in the matched container/dependency files.",
     };
   }
 

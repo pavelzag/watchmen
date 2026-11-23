@@ -8,6 +8,7 @@ import {
 import type { AttackPath } from "@/lib/gcp/attack-paths";
 import type { SecurityFinding, SecurityFindingSeverity } from "@/lib/gcp/types";
 import type { ControlResult } from "@/lib/compliance/types";
+import type { ContainerVulnerability, ImageRegistry } from "@/lib/container-scanning";
 
 export type HandoffTool = "any" | "opencode" | "claude" | "codex";
 export type HandoffBatchMode = "grouped" | "combined" | "individual";
@@ -15,8 +16,8 @@ export type HandoffTaskStatus = "open" | "claimed" | "in_progress" | "completed"
 
 export interface HandoffIssueItem {
   id: string;
-  kind: "finding" | "attack_path" | "compliance_control";
-  cloud: "gcp" | "aws";
+  kind: "finding" | "attack_path" | "compliance_control" | "container_cve";
+  cloud: ImageRegistry;
   severity: SecurityFindingSeverity;
   title: string;
   description: string;
@@ -47,7 +48,7 @@ export interface HandoffTaskPayload {
   category: RemediationBatchCategory | "combined" | "individual";
   batchMode: HandoffBatchMode;
   targetTool: HandoffTool;
-  clouds: Array<"gcp" | "aws">;
+  clouds: ImageRegistry[];
   projectIds: string[];
   issues: HandoffIssueItem[];
   lastVerification?: LastVerificationSummary;
@@ -213,7 +214,58 @@ export function handoffIssueFromComplianceControl(
   });
 }
 
+export function handoffIssueFromContainerCve(params: {
+  imageRef: string;
+  imageName: string;
+  cloud: ImageRegistry;
+  accountId: string;
+  cve: ContainerVulnerability;
+  aiRecommendation?: string;
+}): HandoffIssueItem {
+  const { imageRef, imageName, cloud, accountId, cve, aiRecommendation } = params;
+  const severity: SecurityFindingSeverity =
+    cve.severity === "negligible" ? "low" : cve.severity;
+  const fixHint = cve.fixedVersion
+    ? `Upgrade ${cve.packageName} from ${cve.installedVersion} to ${cve.fixedVersion} in ${imageName}.`
+    : `Update ${cve.packageName} (${cve.installedVersion}) or upgrade the container base image for ${imageName}.`;
+
+  return sanitizeHandoffIssue({
+    id: `container-cve:${cloud}:${accountId}:${imageName}:${cve.cveId}:${cve.packageName}`,
+    kind: "container_cve",
+    cloud,
+    severity,
+    title: `${cve.cveId}: ${cve.packageName} ${cve.installedVersion}${cve.fixedVersion ? ` -> ${cve.fixedVersion}` : ""}`,
+    description: `${cve.description || cve.cveId} (Image: ${imageRef})`,
+    resourceName: imageName,
+    resourceType: "container_image",
+    projectId: accountId,
+    remediationHint: fixHint,
+    mitigations: [fixHint],
+    proposedPlan: aiRecommendation,
+  });
+}
+
 export function issueToRemediationTarget(issue: HandoffIssueItem): RemediationTarget {
+  if (issue.kind === "container_cve") {
+    return {
+      id: issue.id,
+      kind: "container_cve",
+      severity: issue.severity,
+      title: issue.title,
+      description: issue.description,
+      mitigations: issue.mitigations ?? (issue.remediationHint ? [issue.remediationHint] : []),
+      projectIds: [issue.projectId],
+      resourceType: issue.resourceType ?? "container_image",
+      resourceName: issue.resourceName,
+      searchTerms: [issue.resourceName, issue.projectId, issue.title].filter(Boolean),
+      promptDetails: [
+        `- [${issue.cloud.toUpperCase()}] ${issue.title} (${issue.severity})`,
+        `- Container Image: ${issue.resourceName} in ${issue.projectId}`,
+        ...(issue.remediationHint ? [`- Action: ${issue.remediationHint}`] : []),
+      ],
+      autoRemediable: true,
+    };
+  }
   if (issue.kind === "attack_path" || issue.kind === "compliance_control") {
     return {
       id: issue.id,

@@ -134,6 +134,74 @@ export async function searchTfFiles(
     .map((item) => item.path);
 }
 
+const CONTAINER_MANIFEST_BASENAMES = new Set([
+  "dockerfile",
+  "package.json",
+  "go.mod",
+  "requirements.txt",
+  "pyproject.toml",
+  "pipfile",
+  "cargo.toml",
+  "gemfile",
+  "pom.xml",
+  "build.gradle",
+  "build.gradle.kts",
+  "composer.json",
+]);
+
+function isContainerOrDependencyPath(filePath: string): boolean {
+  const lower = filePath.toLowerCase();
+  if (
+    lower.includes("node_modules/") ||
+    lower.includes(".git/") ||
+    lower.includes(".next/") ||
+    lower.includes("/dist/") ||
+    lower.includes("/build/")
+  ) {
+    return false;
+  }
+  const base = lower.split("/").pop() ?? "";
+  if (CONTAINER_MANIFEST_BASENAMES.has(base)) return true;
+  if (base.startsWith("dockerfile.") || base.endsWith(".dockerfile")) return true;
+  return false;
+}
+
+/** Return Dockerfile and dependency manifest paths in the repo using the git trees API. */
+export async function searchContainerFiles(
+  token: string,
+  owner: string,
+  repo: string,
+  branch?: string
+): Promise<string[]> {
+  let sha: string;
+  if (branch) {
+    sha = await getDefaultBranchSha(token, owner, repo, branch);
+  } else {
+    const repoRes = await fetch(`${GITHUB_API}/repos/${owner}/${repo}`, {
+      headers: ghHeaders(token),
+    });
+    if (!repoRes.ok) throw new Error(`Failed to fetch repo info (${repoRes.status})`);
+    const repoData = (await repoRes.json()) as { default_branch: string };
+    sha = await getDefaultBranchSha(token, owner, repo, repoData.default_branch);
+  }
+
+  const res = await ghFetch(
+    `${GITHUB_API}/repos/${owner}/${repo}/git/trees/${sha}?recursive=1`,
+    { headers: ghHeaders(token) }
+  );
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`GitHub searchContainerFiles failed (${res.status}): ${body.slice(0, 200)}`);
+  }
+  const data = (await res.json()) as {
+    tree: Array<{ path: string; type: string }>;
+    truncated: boolean;
+  };
+  return data.tree
+    .filter((item) => item.type === "blob" && isContainerOrDependencyPath(item.path))
+    .map((item) => item.path);
+}
+
 /** Get the content (decoded) and current SHA of a file. */
 export async function getFileContent(
   token: string,

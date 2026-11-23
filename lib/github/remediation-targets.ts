@@ -1,7 +1,8 @@
 import type { AttackPath, AttackNode } from "@/lib/gcp/attack-paths";
 import type { SecurityFinding, SecurityFindingSeverity } from "@/lib/gcp/types";
+import type { ContainerVulnerability, ImageScanResult } from "@/lib/container-scanning";
 
-export type RemediationTargetKind = "attack_path" | "finding";
+export type RemediationTargetKind = "attack_path" | "finding" | "container_cve";
 export type RemediationBatchCategory =
   | "iam"
   | "firewall"
@@ -9,6 +10,7 @@ export type RemediationBatchCategory =
   | "cloud_sql"
   | "storage"
   | "service_accounts"
+  | "container_images"
   | "other";
 
 export interface RemediationBatchSuggestion {
@@ -44,6 +46,13 @@ function categorizeTarget(target: RemediationTarget): RemediationBatchCategory {
   const resourceType = target.resourceType?.toLowerCase() ?? "";
   const detailBlob = target.promptDetails.join(" ").toLowerCase();
 
+  if (
+    target.kind === "container_cve" ||
+    resourceType === "container_image" ||
+    id.startsWith("container-cve:")
+  ) {
+    return "container_images";
+  }
   if (resourceType === "firewall_rule" || id.includes("firewall") || title.includes("firewall")) {
     return "firewall";
   }
@@ -86,6 +95,7 @@ function batchTitle(category: RemediationBatchCategory): string {
   if (category === "cloud_sql") return "Cloud SQL issues";
   if (category === "storage") return "Storage issues";
   if (category === "service_accounts") return "Service account inventory issues";
+  if (category === "container_images") return "Container image vulnerabilities";
   return "Other issues";
 }
 
@@ -96,6 +106,7 @@ function batchReason(category: RemediationBatchCategory): string {
   if (category === "cloud_sql") return "Cloud SQL changes should be reviewed as a dedicated batch.";
   if (category === "storage") return "Bucket exposure changes fit a dedicated storage batch.";
   if (category === "service_accounts") return "Service-account inventory findings usually require separate review.";
+  if (category === "container_images") return "Container package and base-image updates belong in Dockerfile or manifest PRs.";
   return "These issues are better handled in a smaller dedicated batch.";
 }
 
@@ -305,4 +316,63 @@ export function remediationTargetFromFinding(finding: SecurityFinding): Remediat
   }
 
   return target;
+}
+
+export function remediationTargetFromContainerCve(params: {
+  imageRef: string;
+  imageName: string;
+  cloud: string;
+  accountId: string;
+  cve: ContainerVulnerability;
+}): RemediationTarget {
+  const { imageRef, imageName, cloud, accountId, cve } = params;
+  const severity: SecurityFindingSeverity =
+    cve.severity === "negligible" ? "low" : cve.severity;
+  const fixText = cve.fixedVersion
+    ? `Upgrade ${cve.packageName} from ${cve.installedVersion} to ${cve.fixedVersion}`
+    : `Patch or replace ${cve.packageName} (${cve.installedVersion}) or update base image`;
+
+  return {
+    id: `container-cve:${cloud}:${accountId}:${imageName}:${cve.cveId}:${cve.packageName}`,
+    kind: "container_cve",
+    severity,
+    title: `${cve.cveId}: ${cve.packageName} ${cve.installedVersion} in ${imageName}`,
+    description: `${cve.description || cve.cveId} (Image: ${imageRef})`,
+    mitigations: [fixText],
+    projectIds: accountId ? [accountId] : [],
+    resourceType: "container_image",
+    resourceName: imageName,
+    searchTerms: collectTerms(
+      imageName,
+      imageRef,
+      accountId,
+      cve.cveId,
+      cve.packageName,
+      cve.installedVersion,
+      cve.fixedVersion
+    ),
+    promptDetails: [
+      `    - [container_image] ${imageName} (${imageRef})`,
+      `    - CVE: ${cve.cveId} (${cve.severity.toUpperCase()})`,
+      `    - Package: ${cve.packageName} installed=${cve.installedVersion}${cve.fixedVersion ? ` fixed=${cve.fixedVersion}` : ""}`,
+      `    - Action: ${fixText}`,
+    ],
+    autoRemediable: true,
+  };
+}
+
+export function remediationTargetsFromContainerImage(
+  result: ImageScanResult,
+  cves?: ContainerVulnerability[]
+): RemediationTarget[] {
+  const list = cves ?? result.vulnerabilities;
+  return list.map((cve) =>
+    remediationTargetFromContainerCve({
+      imageRef: result.imageRef,
+      imageName: result.imageName,
+      cloud: result.cloud,
+      accountId: result.accountId,
+      cve,
+    })
+  );
 }
