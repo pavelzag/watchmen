@@ -7,6 +7,11 @@ const mockListHandoffTasks = jest.fn();
 const mockGetHandoffTask = jest.fn();
 const mockUpdateHandoffTask = jest.fn();
 const mockVerifyHandoffTask = jest.fn();
+const mockGetCloudSnapshotForMcp = jest.fn();
+const mockListCloudFindingsForMcp = jest.fn();
+const mockListAttackPathsForMcp = jest.fn();
+const mockGetComplianceForMcp = jest.fn();
+const mockTriggerGcpScanForMcp = jest.fn();
 
 jest.mock("@/lib/handoff/store", () => ({
   resolveHandoffActor: mockResolveHandoffActor,
@@ -17,6 +22,14 @@ jest.mock("@/lib/handoff/store", () => ({
 
 jest.mock("@/lib/handoff/verify", () => ({
   verifyHandoffTask: mockVerifyHandoffTask,
+}));
+
+jest.mock("@/lib/handoff/cloud-data", () => ({
+  getCloudSnapshotForMcp: mockGetCloudSnapshotForMcp,
+  listCloudFindingsForMcp: mockListCloudFindingsForMcp,
+  listAttackPathsForMcp: mockListAttackPathsForMcp,
+  getComplianceForMcp: mockGetComplianceForMcp,
+  triggerGcpScanForMcp: mockTriggerGcpScanForMcp,
 }));
 
 const { GET: getMcp, POST: postMcp } = require("@/app/api/mcp/route");
@@ -83,6 +96,11 @@ describe("Watchmen MCP endpoint (/api/mcp)", () => {
       "watchmen_list_runtime_requests",
       "watchmen_get_runtime_summary",
       "watchmen_upsert_runtime_rule",
+      "watchmen_get_cloud_snapshot",
+      "watchmen_list_findings",
+      "watchmen_list_attack_paths",
+      "watchmen_get_compliance",
+      "watchmen_trigger_scan",
     ]);
   });
 
@@ -214,5 +232,66 @@ describe("Watchmen MCP endpoint (/api/mcp)", () => {
     );
     const verifyJson = await verifyCall.json();
     expect(verifyJson.result.content[0].text).toContain("Verified 1 issue as resolved");
+
+    mockGetCloudSnapshotForMcp.mockResolvedValueOnce({
+      cloud: "gcp",
+      resourceType: "vms",
+      gcp: { projects: ["theinsite-dev", "theinsite-prod"], vms: [{ name: "cms-prod-vm", projectId: "theinsite-prod" }] },
+    });
+    const snapCall = await postMcp(
+      new NextRequest("http://localhost:3000/api/mcp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 15,
+          method: "tools/call",
+          params: {
+            name: "watchmen_get_cloud_snapshot",
+            arguments: { cloud: "gcp", projectId: "theinsite-prod", resourceType: "vms" },
+          },
+        }),
+      })
+    );
+    const snapJson = await snapCall.json();
+    expect(snapJson.result.structuredContent.gcp.vms).toHaveLength(1);
+
+    mockListCloudFindingsForMcp.mockResolvedValueOnce({
+      gcpFetchedAt: "2026-11-23T00:00:00.000Z",
+      awsFetchedAt: null,
+      total: 1,
+      countsBySeverity: { critical: 1 },
+      findings: [
+        {
+          id: "public_firewall:theinsite-dev:cms-dev-allow-http-https",
+          cloud: "gcp",
+          severity: "critical",
+          title: "Firewall Rule Open to the Internet",
+          description: "Allows 0.0.0.0/0",
+          projectOrAccountId: "theinsite-dev",
+          resourceName: "cms-dev-allow-http-https",
+          resourceType: "firewall_rule",
+          remediationHint: "Restrict source ranges",
+        },
+      ],
+    });
+    const findingsCall = await postMcp(
+      new NextRequest("http://localhost:3000/api/mcp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 16,
+          method: "tools/call",
+          params: {
+            name: "watchmen_list_findings",
+            arguments: { cloud: "gcp", projectId: "theinsite-dev", severity: "critical" },
+          },
+        }),
+      })
+    );
+    const findingsJson = await findingsCall.json();
+    expect(findingsJson.result.content[0].text).toContain("cms-dev-allow-http-https");
+    expect(findingsJson.result.structuredContent.total).toBe(1);
   });
 });

@@ -7,6 +7,13 @@ import {
 } from "@/lib/handoff/store";
 import { verifyHandoffTask } from "@/lib/handoff/verify";
 import {
+  getCloudSnapshotForMcp,
+  getComplianceForMcp,
+  listAttackPathsForMcp,
+  listCloudFindingsForMcp,
+  triggerGcpScanForMcp,
+} from "@/lib/handoff/cloud-data";
+import {
   createRuntimeSecurityRule,
   getRuntimeSecuritySummary,
   queryRuntimeRequestEvents,
@@ -93,6 +100,11 @@ function createServerTaskClient(userEmail: string): McpTaskClient {
         description: input.description ?? "",
       });
     },
+    getCloudSnapshot: (options) => getCloudSnapshotForMcp(userEmail, options),
+    listFindings: (options) => listCloudFindingsForMcp(userEmail, options),
+    listAttackPaths: (options) => listAttackPathsForMcp(userEmail, options),
+    getCompliance: (options) => getComplianceForMcp(userEmail, options),
+    triggerGcpScan: () => triggerGcpScanForMcp(userEmail),
   };
 }
 

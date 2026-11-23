@@ -1,4 +1,5 @@
 import type { HandoffTaskRecord, HandoffTaskStatus, HandoffTool, LastVerificationSummary } from "@/lib/handoff/tasks";
+import type { CloudSnapshotResourceType } from "@/lib/handoff/cloud-data";
 import type {
   RuntimeRequestEvent,
   RuntimeSecurityDecisionAction,
@@ -53,6 +54,48 @@ export interface McpTaskClient {
     severity?: RuntimeSecuritySeverity;
     description?: string;
   }) => Promise<RuntimeSecurityRule | null>;
+  getCloudSnapshot?: (options: {
+    cloud?: "gcp" | "aws" | "all";
+    projectId?: string;
+    resourceType?: CloudSnapshotResourceType;
+  }) => Promise<Record<string, unknown>>;
+  listFindings?: (options: {
+    cloud?: "gcp" | "aws" | "all";
+    projectId?: string;
+    severity?: string;
+    limit?: number;
+  }) => Promise<{
+    gcpFetchedAt: string | null;
+    awsFetchedAt: string | null;
+    total: number;
+    countsBySeverity: Record<string, number>;
+    findings: Array<{
+      id: string;
+      cloud: "gcp" | "aws";
+      severity: string;
+      title: string;
+      description: string;
+      projectOrAccountId: string;
+      resourceName: string;
+      resourceType: string;
+      remediationHint: string;
+    }>;
+  }>;
+  listAttackPaths?: (options: {
+    projectId?: string;
+    severity?: string;
+    limit?: number;
+  }) => Promise<{
+    fetchedAt: string | null;
+    total: number;
+    attackPaths: Array<{ id: string; severity: string; title: string; description: string }>;
+  }>;
+  getCompliance?: (options: {
+    standard?: "soc2" | "iso27001" | "all";
+    cloud?: "gcp" | "aws" | "all";
+    status?: string;
+  }) => Promise<Record<string, unknown>>;
+  triggerGcpScan?: () => Promise<Record<string, unknown>>;
 }
 
 export interface JsonRpcRequest {
@@ -255,6 +298,127 @@ export const WATCHMEN_MCP_TOOLS: McpToolDefinition[] = [
       },
     },
   },
+  {
+    name: "watchmen_get_cloud_snapshot",
+    description:
+      "Pull stored cloud inventory from Watchmen (GCP projects, VMs, Cloud Run services/jobs, Cloud SQL, buckets, IAM, service accounts, firewall rules, load balancers, secrets, pubsub, GKE, BigQuery, or AWS). Defaults to summary; pass resourceType to fetch full resource lists.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cloud: {
+          type: "string",
+          enum: ["gcp", "aws", "all"],
+          description: "Cloud provider to inspect (defaults to gcp).",
+        },
+        projectId: {
+          type: "string",
+          description: "Optional GCP project ID filter (e.g. theinsite-dev or theinsite-prod).",
+        },
+        resourceType: {
+          type: "string",
+          enum: [
+            "summary",
+            "vms",
+            "cloud_run",
+            "cloud_sql",
+            "buckets",
+            "iam",
+            "service_accounts",
+            "firewall",
+            "load_balancers",
+            "secrets",
+            "pubsub",
+            "gke",
+            "bigquery",
+            "all",
+          ],
+          description: "Which inventory slice to return (defaults to summary).",
+        },
+      },
+    },
+  },
+  {
+    name: "watchmen_list_findings",
+    description:
+      "List computed security findings from Watchmen's latest stored GCP/AWS snapshots, sorted by severity.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cloud: {
+          type: "string",
+          enum: ["gcp", "aws", "all"],
+          description: "Cloud filter (defaults to all).",
+        },
+        projectId: {
+          type: "string",
+          description: "Optional GCP project ID or AWS account ID filter.",
+        },
+        severity: {
+          type: "string",
+          description: "Comma-separated severities: critical, high, medium, low, or all (defaults to all).",
+        },
+        limit: {
+          type: "number",
+          description: "Maximum findings to return (1-200, defaults to 50).",
+        },
+      },
+    },
+  },
+  {
+    name: "watchmen_list_attack_paths",
+    description:
+      "List multi-hop GCP attack paths discovered from Watchmen's latest stored snapshot.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: {
+          type: "string",
+          description: "Optional GCP project ID filter.",
+        },
+        severity: {
+          type: "string",
+          description: "Severity filter: critical, high, or all (defaults to all).",
+        },
+        limit: {
+          type: "number",
+          description: "Maximum attack paths to return (1-100, defaults to 25).",
+        },
+      },
+    },
+  },
+  {
+    name: "watchmen_get_compliance",
+    description:
+      "Evaluate SOC 2 and ISO 27001 compliance controls and scores against Watchmen's latest stored cloud snapshots.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        standard: {
+          type: "string",
+          enum: ["soc2", "iso27001", "all"],
+          description: "Compliance standard (defaults to all).",
+        },
+        cloud: {
+          type: "string",
+          enum: ["gcp", "aws", "all"],
+          description: "Cloud provider (defaults to gcp).",
+        },
+        status: {
+          type: "string",
+          description: "Optional comma-separated control status filter: fail, warning, pass, suppressed, or all.",
+        },
+      },
+    },
+  },
+  {
+    name: "watchmen_trigger_scan",
+    description:
+      "Run a fresh live GCP cloud posture scan using Watchmen's configured credentials (keyless ADC or saved SA key), persist the snapshot, and return the updated summary.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
 ];
 
 function okResult(id: string | number | null, result: unknown): JsonRpcResponse {
@@ -310,7 +474,7 @@ export async function handleMcpJsonRpc(
         version: "0.9.0",
       },
       instructions:
-        "Use watchmen_list_open_tasks to see security issues pushed from Watchmen, watchmen_get_task to read full remediation instructions, watchmen_claim_task before editing code, and watchmen_complete_task when done.",
+        "Use watchmen_get_cloud_snapshot, watchmen_list_findings, watchmen_list_attack_paths, watchmen_get_compliance, and watchmen_trigger_scan to inspect cloud inventory and security posture, and use watchmen_list_open_tasks, watchmen_get_task, watchmen_claim_task, watchmen_complete_task, and watchmen_verify_task to remediate queued tasks.",
     });
   }
 
@@ -484,6 +648,71 @@ export async function handleMcpJsonRpc(
           id,
           toolText(`Rule ${rule.id} (${rule.name}) saved [${rule.action}/${rule.mode ?? "detect"}].`, { rule })
         );
+      }
+
+      if (name === "watchmen_get_cloud_snapshot") {
+        if (!client.getCloudSnapshot) {
+          return okResult(id, toolText("Cloud snapshot queries are not supported by this MCP client.", undefined, true));
+        }
+        const cloud = args.cloud === "aws" || args.cloud === "all" ? args.cloud : "gcp";
+        const projectId = typeof args.projectId === "string" ? args.projectId.trim() : undefined;
+        const resourceType = typeof args.resourceType === "string"
+          ? (args.resourceType as CloudSnapshotResourceType)
+          : "summary";
+        const data = await client.getCloudSnapshot({ cloud, projectId, resourceType });
+        return okResult(id, toolText(JSON.stringify(data, null, 2), data));
+      }
+
+      if (name === "watchmen_list_findings") {
+        if (!client.listFindings) {
+          return okResult(id, toolText("Findings queries are not supported by this MCP client.", undefined, true));
+        }
+        const cloud = args.cloud === "gcp" || args.cloud === "aws" ? args.cloud : "all";
+        const projectId = typeof args.projectId === "string" ? args.projectId.trim() : undefined;
+        const severity = typeof args.severity === "string" ? args.severity : "all";
+        const limit = typeof args.limit === "number" && Number.isFinite(args.limit) ? args.limit : 50;
+        const data = await client.listFindings({ cloud, projectId, severity, limit });
+        const summary = data.findings.length
+          ? `Found ${data.total} finding(s) (showing ${data.findings.length}):\n` +
+            data.findings
+              .map((f) => `- [${f.severity.toUpperCase()}] ${f.id} (${f.projectOrAccountId}): ${f.title} — ${f.resourceName}`)
+              .join("\n")
+          : "No matching findings found in stored snapshots.";
+        return okResult(id, toolText(summary, data));
+      }
+
+      if (name === "watchmen_list_attack_paths") {
+        if (!client.listAttackPaths) {
+          return okResult(id, toolText("Attack path queries are not supported by this MCP client.", undefined, true));
+        }
+        const projectId = typeof args.projectId === "string" ? args.projectId.trim() : undefined;
+        const severity = typeof args.severity === "string" ? args.severity : "all";
+        const limit = typeof args.limit === "number" && Number.isFinite(args.limit) ? args.limit : 25;
+        const data = await client.listAttackPaths({ projectId, severity, limit });
+        const summary = data.attackPaths.length
+          ? `Found ${data.total} attack path(s) (showing ${data.attackPaths.length}):\n` +
+            data.attackPaths.map((p) => `- [${p.severity.toUpperCase()}] ${p.id}: ${p.title}`).join("\n")
+          : "No matching attack paths found in stored snapshots.";
+        return okResult(id, toolText(summary, data));
+      }
+
+      if (name === "watchmen_get_compliance") {
+        if (!client.getCompliance) {
+          return okResult(id, toolText("Compliance queries are not supported by this MCP client.", undefined, true));
+        }
+        const standard = args.standard === "soc2" || args.standard === "iso27001" ? args.standard : "all";
+        const cloud = args.cloud === "aws" || args.cloud === "all" ? args.cloud : "gcp";
+        const status = typeof args.status === "string" ? args.status : "all";
+        const reports = await client.getCompliance({ standard, cloud, status });
+        return okResult(id, toolText(JSON.stringify(reports, null, 2), { reports }));
+      }
+
+      if (name === "watchmen_trigger_scan") {
+        if (!client.triggerGcpScan) {
+          return okResult(id, toolText("Cloud scanning is not supported by this MCP client.", undefined, true));
+        }
+        const summary = await client.triggerGcpScan();
+        return okResult(id, toolText(`GCP scan completed.\n${JSON.stringify(summary, null, 2)}`, summary));
       }
 
       return errResult(id, -32601, `Unknown tool: ${name}`);
