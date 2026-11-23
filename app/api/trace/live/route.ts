@@ -101,7 +101,7 @@ export async function GET(req: NextRequest) {
               id: `demo-live-stream-${Date.now()}-${demoIndex}`,
               timestamp: new Date().toISOString(),
             });
-          }, 3_500)
+          }, 1_800)
         : null;
 
       let closed = false;

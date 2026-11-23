@@ -1426,26 +1426,47 @@ function toLiveEvents(
   }));
 }
 
+const DEMO_LIVE_TRAFFIC_SAMPLES: Array<{
+  method: string;
+  path: string;
+  status: number;
+  origin: TrafficOrigin;
+  latencyRange: [number, number];
+}> = [
+  { method: "POST", path: "/api/checkout", status: 201, origin: "external", latencyRange: [35, 160] },
+  { method: "GET", path: "/admin/export-users", status: 403, origin: "external", latencyRange: [3, 14] },
+  { method: "POST", path: "/cgi-bin/luci", status: 403, origin: "external", latencyRange: [2, 9] },
+  { method: "GET", path: "/api/users?id=1' or 1=1", status: 400, origin: "external", latencyRange: [12, 48] },
+  { method: "GET", path: "/files/../../etc/passwd", status: 403, origin: "external", latencyRange: [4, 15] },
+  { method: "GET", path: "/.env", status: 404, origin: "external", latencyRange: [5, 18] },
+  { method: "DELETE", path: "/api/orders/9821", status: 200, origin: "external", latencyRange: [45, 190] },
+  { method: "PUT", path: "/api/inventory/sku-402", status: 200, origin: "external", latencyRange: [28, 120] },
+  { method: "PATCH", path: "/api/settings/webhooks", status: 204, origin: "external", latencyRange: [18, 80] },
+  { method: "POST", path: "/api/auth/login", status: 429, origin: "external", latencyRange: [8, 25] },
+  { method: "POST", path: "/v1/models/fraud-v2:predict", status: 200, origin: "internal", latencyRange: [85, 340] },
+  { method: "POST", path: "/internal/ledger/reconcile", status: 500, origin: "internal", latencyRange: [180, 620] },
+  { method: "GET", path: "/healthz", status: 200, origin: "internal", latencyRange: [2, 12] },
+  { method: "GET", path: "/metrics", status: 200, origin: "internal", latencyRange: [4, 22] },
+];
+
 function toDemoLiveEvent(target: LiveMonitorTarget, ts: string, count: number, nodes: GraphNode[]): LiveEvent {
-  const method = Math.random() < 0.8 ? "GET" : "POST";
-  const paths = ["/", "/healthz", "/index", "/api/trace", "/api/status"];
-  const path = paths[Math.floor(Math.random() * paths.length)];
-  const statuses = [200, 200, 200, 201, 202, 403, 404, 500];
-  const status = statuses[Math.floor(Math.random() * statuses.length)];
-  const latencyMs = 20 + Math.floor(Math.random() * 900);
+  const sample = DEMO_LIVE_TRAFFIC_SAMPLES[Math.floor(Math.random() * DEMO_LIVE_TRAFFIC_SAMPLES.length)];
+  const [minLat, maxLat] = sample.latencyRange;
+  const latencyMs = minLat + Math.floor(Math.random() * (maxLat - minLat + 1));
+  const suffix = Math.random().toString(36).slice(2, 6);
   return {
-    id: `${liveTargetKey(target)}:${ts}:${count}:demo`,
+    id: `${liveTargetKey(target)}:${ts}:${count}:${suffix}:demo`,
     ts,
     label: liveTargetLabel(target),
     kind: target.kind,
     projectId: target.projectId,
     focusNodeId: resolveLiveTargetNodeId(target, nodes),
-    method,
-    path,
-    status,
+    method: sample.method,
+    path: sample.path,
+    status: sample.status,
     latency: `${latencyMs}ms`,
     count,
-    trafficOrigin: "external",
+    trafficOrigin: sample.origin,
   };
 }
 
@@ -3894,7 +3915,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
   // Live monitoring
   const [liveMode, setLiveMode] = useState(true);
-  const [liveScope, setLiveScope] = useState<LiveScope>("active");
+  const [liveScope, setLiveScope] = useState<LiveScope>(demoMode ? "all" : "active");
   const [trafficScope, setTrafficScope] = useState<TrafficScope>("all");
   const [liveIntensityEnabled, setLiveIntensityEnabled] = useState(false);
   const liveAnimEnabledRef = useRef(true);
@@ -4571,6 +4592,26 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     const targets: LiveMonitorTarget[] = [];
     const seen = new Set<string>();
     nodes.forEach(node => {
+      if (node.cloud === "kubernetes" && node.projectId && node.resourceName && (node.k8sKind === "pod" || node.k8sKind === "deployment" || node.k8sKind === "service")) {
+        const pathIds = buildPathForNode(node.id, edges);
+        const target: LiveMonitorTarget = {
+          cloud: "kubernetes",
+          kind: "gke",
+          projectId: node.projectId,
+          container: node.container ?? node.containers?.[0] ?? node.resourceName,
+          namespace: node.namespace,
+          pod: node.k8sKind === "pod" ? node.resourceName : undefined,
+          deployment: node.k8sKind !== "pod" ? node.resourceName : undefined,
+          resourceName: node.resourceName,
+          pathIds,
+        };
+        const key = liveTargetKey(target);
+        if (!seen.has(key)) {
+          seen.add(key);
+          targets.push(target);
+        }
+        return;
+      }
       if (
         (node.type === "cloudrun" && node.projectId && node.resourceName) ||
         (node.type === "vm" && node.projectId && node.resourceName) ||
@@ -5054,43 +5095,43 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     if (demoRunningRef.current) return;
     demoRunningRef.current = true;
 
-    // Build candidate paths through the topology using BFS from internet
+    // Build candidate paths through the topology using BFS from internet, picking random nodes per type
+    const pickRandom = <T,>(items: T[]): T | undefined =>
+      items.length > 0 ? items[Math.floor(Math.random() * items.length)] : undefined;
+
     const buildPath = (targetTypes: NodeType[]): Set<string> => {
       const path = new Set<string>(["internet"]);
       for (const type of targetTypes) {
-        const candidate = nodes.find(n => n.type === type && !path.has(n.id));
+        const candidates = nodes.filter(n => n.type === type && !path.has(n.id));
+        const candidate = pickRandom(candidates);
         if (!candidate) continue;
         // Include edge intermediaries: find LB nodes between internet and compute
         if (type !== "lb") {
-          const lbNode = nodes.find(n => n.type === "lb" &&
+          const lbNode = pickRandom(nodes.filter(n => n.type === "lb" &&
             edges.some(e => e.from === "internet" && e.to === n.id) &&
             edges.some(e => e.from === n.id && e.to === candidate.id)
-          );
+          ));
           if (lbNode) path.add(lbNode.id);
         }
         path.add(candidate.id);
-        // Pull in downstream data nodes connected to this compute node
+        // Pull in downstream data or sidecar nodes connected to this compute node
         const downstream = edges
           .filter(e => e.from === candidate.id)
           .map(e => nodes.find(n => n.id === e.to))
-          .filter((n): n is GraphNode => !!n && (n.type === "cloudsql"));
+          .filter((n): n is GraphNode => !!n && (n.type === "cloudsql" || n.type === "sidecar"));
         downstream.forEach(n => path.add(n.id));
       }
       return path;
     };
 
-    // Weighted scenario pool — mix of Cloud Run hits, GKE+SQL queries, errors
+    // Weighted scenario pool — mix of Cloud Run hits, VM routes, GKE+SQL queries, multi-node bursts, and errors
     const scenarios: Array<{ path: () => Set<string>; colDelay: number; error?: boolean; weight: number }> = [
-      { path: () => buildPath(["cloudrun"]), colDelay: 140, weight: 35 },
-      { path: () => buildPath(["gke", "cloudsql"]), colDelay: 200, weight: 25 },
-      { path: () => buildPath(["gke"]), colDelay: 160, weight: 20 },
-      { path: () => {
-          // Pick ALL cloudrun nodes for a broadcast-style scan hit
-          const all = new Set<string>(["internet"]);
-          nodes.filter(n => n.type === "cloudrun").forEach(n => all.add(n.id));
-          return all;
-        }, colDelay: 110, weight: 10 },
-      { path: () => buildPath(["cloudrun"]), colDelay: 120, error: true, weight: 10 },
+      { path: () => buildPath(["cloudrun"]), colDelay: 120, weight: 28 },
+      { path: () => buildPath(["gke", "cloudsql"]), colDelay: 150, weight: 22 },
+      { path: () => buildPath(["vm", "cloudsql"]), colDelay: 140, weight: 16 },
+      { path: () => buildPath(["gke"]), colDelay: 130, weight: 14 },
+      { path: () => buildPath(["vm"]), colDelay: 130, weight: 10 },
+      { path: () => buildPath(["cloudrun"]), colDelay: 110, error: true, weight: 10 },
     ];
 
     // Weighted random pick
@@ -5113,16 +5154,16 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
     let running = true;
     const run = async () => {
-      // Small staggered start so the graph doesn't animate on first render
-      await sleep(1200);
+      await sleep(500);
       while (running) {
         const sc = pickScenario();
         const path = sc.path();
-        if (path.size < 2) { await sleep(800); continue; }
+        if (path.size < 2) { await sleep(500); continue; }
 
         updateRps();
         demoReqCountRef.current += 1;
         setDemoRequestCount(demoReqCountRef.current);
+        emitLivePulseBurst(path);
 
         if (sc.error) {
           // Animate up to last compute node, then mark it error
@@ -5132,18 +5173,18 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
             .filter((n): n is GraphNode => !!n && n.col >= 2)
             .sort((a, b) => b.col - a.col)[0];
           if (errNode) setNodeStatus(prev => ({ ...prev, [errNode.id]: "error" }));
-          await sleep(600);
+          await sleep(450);
           setNodeStatus(prev => {
             const s = { ...prev };
             path.forEach(id => { if (s[id] === "error" || s[id] === "done") delete s[id]; });
             return s;
           });
         } else {
-          await runBfsAnimation(path, { colDelay: sc.colDelay, resetAfterMs: 900 });
+          await runBfsAnimation(path, { colDelay: sc.colDelay, resetAfterMs: 650 });
         }
 
-        // Variable inter-request gap: 0.4–1.8s
-        const gap = 400 + Math.random() * 1400;
+        // Lively inter-request gap: 0.25–0.85s
+        const gap = 250 + Math.random() * 600;
         await sleep(gap);
       }
     };
@@ -5395,12 +5436,27 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   useEffect(() => {
     if (!demoMode || !liveMode || demoLiveTargets.length === 0) return;
 
+    // Pre-seed an initial burst of varied live events so the activity feed is immediately populated.
+    const seedNow = Date.now();
+    const initialEvents = Array.from({ length: Math.min(8, Math.max(4, demoLiveTargets.length)) }, (_, idx) => {
+      const target = demoLiveTargets[idx % demoLiveTargets.length];
+      return toDemoLiveEvent(
+        target,
+        new Date(seedNow - (8 - idx) * 2_500).toISOString(),
+        1 + Math.floor(Math.random() * 4),
+        nodes,
+      );
+    });
+    setLiveEvents(prev => (prev.length === 0 ? initialEvents : prev));
+    initialEvents.forEach((ev) => liveTimestamps.current.push(eventTimestampMs(ev.ts)));
+    setLiveRps(estimateRateFromTimestamps(liveTimestamps.current, seedNow, LIVE_RPS_WINDOW_MS));
+
     let running = true;
     const run = async () => {
-      await sleep(600);
+      await sleep(300);
       while (running) {
         const targetCount = liveScope === "all"
-          ? Math.min(demoLiveTargets.length, 1 + Math.floor(Math.random() * Math.min(3, demoLiveTargets.length)))
+          ? Math.min(demoLiveTargets.length, 2 + Math.floor(Math.random() * Math.min(4, demoLiveTargets.length)))
           : 1;
         const shuffled = [...demoLiveTargets].sort(() => Math.random() - 0.5);
         const targets = liveScope === "all"
@@ -5411,7 +5467,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
         setLiveEvents(prev => {
           const merged = [...prev, ...events];
-          return merged.slice(-24);
+          return merged.slice(-40);
         });
 
         const nowMs = Date.now();
@@ -5420,20 +5476,21 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
         setLiveRps(estimateRateFromTimestamps(liveTimestamps.current, nowMs, LIVE_RPS_WINDOW_MS));
 
         if (liveAnimEnabledRef.current) {
-          for (let i = 0; i < targets.length; i++) {
+          targets.forEach((target) => emitLivePulseBurst(target.pathIds));
+          for (let i = 0; i < Math.min(targets.length, 3); i++) {
             if (!running) break;
-            if (i > 0) await sleep(180);
-            await runBfsAnimation(targets[i].pathIds, { colDelay: 140, resetAfterMs: 700 });
+            if (i > 0) await sleep(100);
+            await runBfsAnimation(targets[i].pathIds, { colDelay: 110, resetAfterMs: 550 });
           }
         }
 
-        await sleep(1200 + Math.random() * 2200);
+        await sleep(650 + Math.random() * 900);
       }
     };
 
     run();
     return () => { running = false; };
-  }, [demoLiveTargets, demoMode, liveMode, liveScope, nodes, runBfsAnimation]);
+  }, [demoLiveTargets, demoMode, emitLivePulseBurst, liveMode, liveScope, nodes, runBfsAnimation]);
 
   useEffect(() => {
     if (!selectedLiveEvent) return;
