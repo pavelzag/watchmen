@@ -103,7 +103,8 @@ describe("FindingsPage", () => {
     expect(screen.getByText("Showing 11–12 of 12")).toBeInTheDocument();
     expect(screen.getByText("Old AWS IAM Finding")).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Items per page"), { target: { value: "25" } });
+    fireEvent.click(screen.getByRole("button", { name: "Items per page" }));
+    fireEvent.click(screen.getByRole("option", { name: "25 / page" }));
     expect(screen.getByText("Showing 1–12 of 12")).toBeInTheDocument();
     expect(screen.getByText("Alpha Open Bucket")).toBeInTheDocument();
     expect(screen.getByText("Old AWS IAM Finding")).toBeInTheDocument();
@@ -117,14 +118,14 @@ describe("FindingsPage", () => {
     });
 
     // Filter by date range: Last 24 hours excludes the 45-day-old AWS findings
-    fireEvent.change(screen.getByLabelText("Filter by date"), { target: { value: "24h" } });
+    fireEvent.click(screen.getByRole("button", { name: "Filter by date" }));
+    fireEvent.click(screen.getByRole("option", { name: "Last 24 hours" }));
     expect(screen.getByText("Showing 1–10 of 10")).toBeInTheDocument();
     expect(screen.queryByText("Zeta AWS Public S3 Bucket")).not.toBeInTheDocument();
 
     // Filter by project
-    fireEvent.change(screen.getByLabelText("Filter by project or account"), {
-      target: { value: "theinsite-dev" },
-    });
+    fireEvent.click(screen.getByRole("button", { name: "Filter by project or account" }));
+    fireEvent.click(screen.getByRole("option", { name: "theinsite-dev" }));
     expect(screen.getByText("Showing 1–5 of 5")).toBeInTheDocument();
 
     // Filter by severity
@@ -149,12 +150,14 @@ describe("FindingsPage", () => {
     });
 
     // Sort by oldest first puts the 45-day-old AWS findings on page 1
-    fireEvent.change(screen.getByLabelText("Sort findings"), { target: { value: "oldest" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sort findings" }));
+    fireEvent.click(screen.getByRole("option", { name: "Oldest first" }));
     expect(screen.getByText("Old AWS IAM Finding")).toBeInTheDocument();
     expect(screen.getByText("Zeta AWS Public S3 Bucket")).toBeInTheDocument();
 
     // Sort by name A-Z keeps Alpha Open Bucket on page 1 and Zeta AWS Public S3 Bucket on page 2
-    fireEvent.change(screen.getByLabelText("Sort findings"), { target: { value: "name_asc" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sort findings" }));
+    fireEvent.click(screen.getByRole("option", { name: "Name (A–Z)" }));
     expect(screen.getByText("Alpha Open Bucket")).toBeInTheDocument();
     expect(screen.queryByText("Zeta AWS Public S3 Bucket")).not.toBeInTheDocument();
   });

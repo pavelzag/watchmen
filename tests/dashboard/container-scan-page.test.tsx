@@ -261,4 +261,84 @@ describe("ContainerScanPage", () => {
       expect.objectContaining({ method: "POST" })
     );
   });
+
+  it("uses custom TerminalSelect dropdowns and filters to the latest image per application", async () => {
+    mockFetchByRoute({
+      containerScan: () => ({
+        results: [
+          {
+            // Older app image pushed 10 days ago, but Trivy-scanned 1 minute ago
+            imageRef: "europe-west3-docker.pkg.dev/theinsite-prod/cms/web@sha256:old1",
+            imageName: "web:v1.0.0",
+            cloud: "gcp",
+            accountId: "theinsite-prod",
+            imageUpdatedAt: "2026-11-14T10:00:00.000Z",
+            scannedAt: "2026-11-24T10:00:00.000Z",
+            scanner: "trivy",
+            scanStatus: "scanned",
+            vulnerabilities: [
+              {
+                cveId: "CVE-2026-1111",
+                severity: "critical",
+                packageName: "openssl",
+                installedVersion: "3.0.0",
+                description: "Old version vuln",
+              },
+            ],
+            summary: { critical: 1, high: 0, medium: 0, low: 0, negligible: 0 },
+          },
+          {
+            // Newer version of the same app pushed yesterday
+            imageRef: "europe-west3-docker.pkg.dev/theinsite-prod/cms/web@sha256:new2",
+            imageName: "web:v2.0.0",
+            cloud: "gcp",
+            accountId: "theinsite-prod",
+            imageUpdatedAt: "2026-11-23T10:00:00.000Z",
+            scannedAt: "2026-11-23T10:00:00.000Z",
+            scanStatus: "clean",
+            vulnerabilities: [],
+            summary: { critical: 0, high: 0, medium: 0, low: 0, negligible: 0 },
+          },
+          {
+            // Different project (dev) for same app name
+            imageRef: "europe-west3-docker.pkg.dev/theinsite-dev/cms/web@sha256:dev1",
+            imageName: "web:dev-latest",
+            cloud: "gcp",
+            accountId: "theinsite-dev",
+            imageUpdatedAt: "2026-11-22T10:00:00.000Z",
+            scannedAt: "2026-11-22T10:00:00.000Z",
+            scanStatus: "unscanned",
+            vulnerabilities: [],
+            summary: { critical: 0, high: 0, medium: 0, low: 0, negligible: 0 },
+          },
+        ],
+        warnings: [],
+        gcpProjects: ["theinsite-prod", "theinsite-dev"],
+        gcpAuthConfigured: true,
+        trivyAvailable: true,
+        scannedAt: "2026-11-24T10:00:00.000Z",
+      }),
+    });
+
+    const { container } = renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("web:v1.0.0")).toBeInTheDocument();
+    });
+
+    // No generic native <select> elements
+    expect(container.querySelectorAll("select")).toHaveLength(0);
+
+    // Toggle "Latest per app (2)"
+    fireEvent.click(screen.getByRole("button", { name: /latest per app \(2\)/i }));
+    expect(screen.queryByText("web:v1.0.0")).not.toBeInTheDocument();
+    expect(screen.getByText("web:v2.0.0")).toBeInTheDocument();
+    expect(screen.getByText("web:dev-latest")).toBeInTheDocument();
+
+    // Custom TerminalSelect dropdown works (e.g. Status: Clean)
+    fireEvent.click(screen.getByRole("button", { name: "Filter by scan status" }));
+    fireEvent.click(screen.getByRole("option", { name: "Clean (0 CVEs)" }));
+    expect(screen.getByText("web:v2.0.0")).toBeInTheDocument();
+    expect(screen.queryByText("web:dev-latest")).not.toBeInTheDocument();
+  });
 });

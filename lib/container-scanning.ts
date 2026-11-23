@@ -32,6 +32,8 @@ export interface ImageScanResult {
   /** Project ID, AWS account ID, GitHub org, or Docker Hub namespace */
   accountId: string;
   scannedAt: string;
+  /** Registry push/build/update timestamp when distinct from vulnerability scan time */
+  imageUpdatedAt?: string;
   vulnerabilities: ContainerVulnerability[];
   /** Total counts by severity */
   summary: {
@@ -220,4 +222,54 @@ export function getMockScanResults(): ImageScanResult[] {
       summary: { critical: 0, high: 1, medium: 0, low: 1, negligible: 0 },
     },
   ];
+}
+
+/**
+ * Normalizes an image reference to an application-level repository key
+ * (stripping digest/tag from the final segment) so multiple versions of the
+ * same app in a registry/project group together.
+ */
+export function getApplicationKey(result: Pick<ImageScanResult, "imageRef" | "imageName" | "cloud" | "accountId">): string {
+  const ref = (result.imageRef || result.imageName || "").trim().replace(/^https?:\/\//i, "");
+  const parts = ref.split("/").filter(Boolean);
+  if (parts.length > 0) {
+    const last = parts[parts.length - 1];
+    const appSegment = last.split("@")[0].split(":")[0] || last;
+    const repoPath = [...parts.slice(0, -1), appSegment].join("/").toLowerCase();
+    return `${result.cloud}::${result.accountId}::${repoPath}`;
+  }
+  const fallbackName = (result.imageName || "").split("@")[0].split(":")[0].toLowerCase();
+  return `${result.cloud}::${result.accountId}::${fallbackName}`;
+}
+
+function getImageTimestampMs(result: Pick<ImageScanResult, "imageUpdatedAt" | "scannedAt">): number {
+  const primary = Date.parse(result.imageUpdatedAt ?? "");
+  if (Number.isFinite(primary)) return primary;
+  const fallback = Date.parse(result.scannedAt ?? "");
+  return Number.isFinite(fallback) ? fallback : 0;
+}
+
+function compareApplicationVersions(a: ImageScanResult, b: ImageScanResult): number {
+  const tsDiff = getImageTimestampMs(b) - getImageTimestampMs(a);
+  if (tsDiff !== 0) return tsDiff;
+
+  const aLatest = a.imageName.endsWith(":latest") || a.imageRef.endsWith(":latest") ? 1 : 0;
+  const bLatest = b.imageName.endsWith(":latest") || b.imageRef.endsWith(":latest") ? 1 : 0;
+  if (bLatest !== aLatest) return bLatest - aLatest;
+
+  const aScanned = a.scanStatus && a.scanStatus !== "unscanned" ? 1 : 0;
+  const bScanned = b.scanStatus && b.scanStatus !== "unscanned" ? 1 : 0;
+  return bScanned - aScanned;
+}
+
+export function filterLatestPerApplication(results: ImageScanResult[]): ImageScanResult[] {
+  const latestByApp = new Map<string, ImageScanResult>();
+  for (const item of results) {
+    const key = getApplicationKey(item);
+    const current = latestByApp.get(key);
+    if (!current || compareApplicationVersions(current, item) > 0) {
+      latestByApp.set(key, item);
+    }
+  }
+  return Array.from(latestByApp.values());
 }

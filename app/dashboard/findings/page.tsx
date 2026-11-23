@@ -17,6 +17,7 @@ import ScanCloudButton from "@/components/ScanCloudButton";
 import { remediationTargetFromFinding } from "@/lib/github/remediation-targets";
 import { handoffIssueFromFinding, type HandoffIssueItem } from "@/lib/handoff/tasks";
 import CopyAiResponseButton from "@/components/CopyAiResponseButton";
+import TerminalSelect from "@/components/TerminalSelect";
 import { useDemoMode } from "@/components/DemoModeProvider";
 
 const SEVERITY_CONFIG: Record<SecurityFindingSeverity, { label: string; color: string; bg: string; border: string; dot: string }> = {
@@ -1250,55 +1251,59 @@ export default function FindingsPage() {
             )}
           </div>
 
-          <select
+          <TerminalSelect
             value={projectFilter}
-            onChange={(e) => setProjectFilter(e.target.value)}
-            aria-label="Filter by project or account"
-            className="px-2.5 py-2 bg-slate-900/60 border border-slate-700/60 rounded-lg text-xs text-slate-300 focus:outline-none focus:border-slate-500"
-          >
-            <option value="all">Project / Account: All</option>
-            {availableProjects.map((proj) => (
-              <option key={proj} value={proj}>{proj}</option>
-            ))}
-          </select>
+            onChange={setProjectFilter}
+            ariaLabel="Filter by project or account"
+            prefix="PROJECT:"
+            active={projectFilter !== "all"}
+            options={[
+              { value: "all", label: "All projects" },
+              ...availableProjects.map((proj) => ({ value: proj, label: proj })),
+            ]}
+          />
 
-          <select
+          <TerminalSelect
             value={resourceTypeFilter}
-            onChange={(e) => setResourceTypeFilter(e.target.value)}
-            aria-label="Filter by resource type"
-            className="px-2.5 py-2 bg-slate-900/60 border border-slate-700/60 rounded-lg text-xs text-slate-300 focus:outline-none focus:border-slate-500"
-          >
-            <option value="all">Resource Type: All</option>
-            {availableResourceTypes.map((rt) => (
-              <option key={rt} value={rt}>{rt}</option>
-            ))}
-          </select>
+            onChange={setResourceTypeFilter}
+            ariaLabel="Filter by resource type"
+            prefix="TYPE:"
+            active={resourceTypeFilter !== "all"}
+            options={[
+              { value: "all", label: "All types" },
+              ...availableResourceTypes.map((rt) => ({ value: rt, label: rt })),
+            ]}
+          />
 
-          <select
+          <TerminalSelect
             value={dateRange}
-            onChange={(e) => setDateRange(e.target.value as DateRangeFilter)}
-            aria-label="Filter by date"
-            className="px-2.5 py-2 bg-slate-900/60 border border-slate-700/60 rounded-lg text-xs text-slate-300 focus:outline-none focus:border-slate-500"
-          >
-            <option value="all">Date: All time</option>
-            <option value="24h">Last 24 hours</option>
-            <option value="7d">Last 7 days</option>
-            <option value="30d">Last 30 days</option>
-            <option value="custom">Custom range…</option>
-          </select>
+            onChange={setDateRange}
+            ariaLabel="Filter by date"
+            prefix="DATE:"
+            active={dateRange !== "all"}
+            options={[
+              { value: "all", label: "All time" },
+              { value: "24h", label: "Last 24 hours" },
+              { value: "7d", label: "Last 7 days" },
+              { value: "30d", label: "Last 30 days" },
+              { value: "custom", label: "Custom range…" },
+            ]}
+          />
 
-          <select
+          <TerminalSelect
             value={sortBy}
-            onChange={(e) => setSortBy(e.target.value as SortOption)}
-            aria-label="Sort findings"
-            className="px-2.5 py-2 bg-slate-900/60 border border-slate-700/60 rounded-lg text-xs text-slate-300 focus:outline-none focus:border-slate-500"
-          >
-            <option value="severity">Sort: Severity</option>
-            <option value="newest">Sort: Newest first</option>
-            <option value="oldest">Sort: Oldest first</option>
-            <option value="name_asc">Sort: Name (A–Z)</option>
-            <option value="project_asc">Sort: Project (A–Z)</option>
-          </select>
+            onChange={setSortBy}
+            ariaLabel="Sort findings"
+            prefix="SORT:"
+            active={sortBy !== "severity"}
+            options={[
+              { value: "severity", label: "Severity" },
+              { value: "newest", label: "Newest first" },
+              { value: "oldest", label: "Oldest first" },
+              { value: "name_asc", label: "Name (A–Z)" },
+              { value: "project_asc", label: "Project (A–Z)" },
+            ]}
+          />
 
           {hasActiveFilters && (
             <button
@@ -1529,16 +1534,16 @@ export default function FindingsPage() {
             <span>
               Showing {pageStart + 1}–{Math.min(pageStart + pageSize, displayed.length)} of {displayed.length}
             </span>
-            <select
-              value={pageSize}
-              onChange={(e) => setPageSize(Number(e.target.value))}
-              aria-label="Items per page"
-              className="px-2 py-1 bg-slate-900/60 border border-slate-700/60 rounded text-xs text-slate-300"
-            >
-              <option value={10}>10 / page</option>
-              <option value={25}>25 / page</option>
-              <option value={50}>50 / page</option>
-            </select>
+            <TerminalSelect
+              value={String(pageSize)}
+              onChange={(val) => setPageSize(Number(val))}
+              ariaLabel="Items per page"
+              options={[
+                { value: "10", label: "10 / page" },
+                { value: "25", label: "25 / page" },
+                { value: "50", label: "50 / page" },
+              ]}
+            />
           </div>
           <div className="flex items-center gap-1">
             <button

@@ -18,7 +18,7 @@ import {
   GitPullRequest,
   Terminal,
 } from "lucide-react";
-import type { ImageScanResult, ContainerVulnerability, CveSeverity, ImageRegistry } from "@/lib/container-scanning";
+import { filterLatestPerApplication, type ImageScanResult, type ContainerVulnerability, type CveSeverity, type ImageRegistry } from "@/lib/container-scanning";
 import type { GcpScanWarning } from "@/lib/gcp/types";
 import { cn } from "@/lib/utils";
 import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
@@ -26,6 +26,7 @@ import { linkifyText } from "@/lib/utils/linkify";
 import CopyAiResponseButton from "@/components/CopyAiResponseButton";
 import CopyTextButton from "@/components/CopyTextButton";
 import PushToCliModal from "@/components/PushToCliModal";
+import TerminalSelect from "@/components/TerminalSelect";
 import RemediateModal from "@/app/dashboard/attack-paths/RemediateModal";
 import {
   remediationTargetFromContainerCve,
@@ -626,6 +627,7 @@ export default function ContainerScanPage() {
   const [filter, setFilter] = useState<SeverityFilter>("all");
   const [cloudFilter, setCloudFilter] = useState<CloudFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [latestOnly, setLatestOnly] = useState(false);
   const [dateRange, setDateRange] = useState<DateRangeFilter>("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -700,7 +702,7 @@ export default function ContainerScanPage() {
   }
 
   async function scanAllUnscanned() {
-    const refs = results
+    const refs = scopedResults
       .filter((r) => r.cloud === "gcp" && r.scanStatus === "unscanned")
       .map((r) => r.imageRef);
     if (refs.length === 0) return;
@@ -719,7 +721,7 @@ export default function ContainerScanPage() {
   // Reset to page 1 when filters or sort change
   useEffect(() => {
     setPage(1);
-  }, [search, filter, cloudFilter, statusFilter, dateRange, dateFrom, dateTo, sortBy, pageSize]);
+  }, [search, filter, cloudFilter, statusFilter, latestOnly, dateRange, dateFrom, dateTo, sortBy, pageSize]);
 
   // When Trivy is active, managed Container Analysis 403/disabled is optional non-blocking noise.
   const actionableWarnings = useMemo(() => {
@@ -732,6 +734,9 @@ export default function ContainerScanPage() {
         )
     );
   }, [warnings, trivyAvailable]);
+
+  const latestResults = useMemo(() => filterLatestPerApplication(results), [results]);
+  const scopedResults = latestOnly ? latestResults : results;
 
   const searchNeedle = search.trim().toLowerCase();
 
@@ -752,7 +757,7 @@ export default function ContainerScanPage() {
         ? new Date(`${dateTo}T23:59:59.999`).getTime()
         : null;
 
-    const filtered = results.filter((r) => {
+    const filtered = scopedResults.filter((r) => {
       if (cloudFilter !== "all" && r.cloud !== cloudFilter) return false;
 
       if (statusFilter === "vulnerable" && r.vulnerabilities.length === 0) return false;
@@ -762,7 +767,7 @@ export default function ContainerScanPage() {
       if (statusFilter === "unscanned" && r.scanStatus !== "unscanned") return false;
 
       if (minTs !== null || maxTs !== null) {
-        const ts = new Date(r.scannedAt).getTime();
+        const ts = new Date(r.imageUpdatedAt ?? r.scannedAt).getTime();
         if (Number.isFinite(ts)) {
           if (minTs !== null && ts < minTs) return false;
           if (maxTs !== null && ts > maxTs) return false;
@@ -787,10 +792,10 @@ export default function ContainerScanPage() {
 
     return [...filtered].sort((a, b) => {
       if (sortBy === "newest") {
-        return new Date(b.scannedAt).getTime() - new Date(a.scannedAt).getTime();
+        return new Date(b.imageUpdatedAt ?? b.scannedAt).getTime() - new Date(a.imageUpdatedAt ?? a.scannedAt).getTime();
       }
       if (sortBy === "oldest") {
-        return new Date(a.scannedAt).getTime() - new Date(b.scannedAt).getTime();
+        return new Date(a.imageUpdatedAt ?? a.scannedAt).getTime() - new Date(b.imageUpdatedAt ?? b.scannedAt).getTime();
       }
       if (sortBy === "name_asc") {
         return a.imageName.localeCompare(b.imageName);
@@ -805,19 +810,19 @@ export default function ContainerScanPage() {
       if (b.summary.low !== a.summary.low) return b.summary.low - a.summary.low;
       return b.vulnerabilities.length - a.vulnerabilities.length;
     });
-  }, [results, cloudFilter, statusFilter, dateRange, dateFrom, dateTo, filter, searchNeedle, sortBy]);
+  }, [scopedResults, cloudFilter, statusFilter, dateRange, dateFrom, dateTo, filter, searchNeedle, sortBy]);
 
   const totalPages = Math.max(1, Math.ceil(filteredAndSorted.length / pageSize));
   const safePage = Math.min(page, totalPages);
   const pageStart = (safePage - 1) * pageSize;
   const paginated = filteredAndSorted.slice(pageStart, pageStart + pageSize);
 
-  // Totals across all loaded results (for severity pills)
-  const totalCritical = results.reduce((s, r) => s + r.summary.critical, 0);
-  const totalHigh = results.reduce((s, r) => s + r.summary.high, 0);
-  const totalMedium = results.reduce((s, r) => s + r.summary.medium, 0);
-  const totalLow = results.reduce((s, r) => s + r.summary.low, 0);
-  const totalVulns = results.reduce(
+  // Totals across active scope (all images or latest per app)
+  const totalCritical = scopedResults.reduce((s, r) => s + r.summary.critical, 0);
+  const totalHigh = scopedResults.reduce((s, r) => s + r.summary.high, 0);
+  const totalMedium = scopedResults.reduce((s, r) => s + r.summary.medium, 0);
+  const totalLow = scopedResults.reduce((s, r) => s + r.summary.low, 0);
+  const totalVulns = scopedResults.reduce(
     (s, r) => s + r.summary.critical + r.summary.high + r.summary.medium + r.summary.low + r.summary.negligible,
     0
   );
@@ -840,7 +845,7 @@ export default function ContainerScanPage() {
     return pairs;
   }, [filteredAndSorted, filter, searchNeedle]);
 
-  const unscannedGcpCount = results.filter(
+  const unscannedGcpCount = scopedResults.filter(
     (r) => r.cloud === "gcp" && r.scanStatus === "unscanned"
   ).length;
 
@@ -849,6 +854,7 @@ export default function ContainerScanPage() {
     filter !== "all" ||
     cloudFilter !== "all" ||
     statusFilter !== "all" ||
+    latestOnly ||
     dateRange !== "all";
 
   function clearFilters() {
@@ -856,6 +862,7 @@ export default function ContainerScanPage() {
     setFilter("all");
     setCloudFilter("all");
     setStatusFilter("all");
+    setLatestOnly(false);
     setDateRange("all");
     setDateFrom("");
     setDateTo("");
@@ -1010,7 +1017,7 @@ export default function ContainerScanPage() {
           {/* Stats */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {[
-              { label: "Images Listed", value: results.length, color: "var(--green)" },
+              { label: latestOnly ? "Latest Apps" : "Images Listed", value: scopedResults.length, color: "var(--green)" },
               { label: "Total CVEs", value: totalVulns, color: "var(--text-muted)" },
               { label: "Critical", value: totalCritical, color: "#f87171" },
               { label: "High", value: totalHigh, color: "#fb923c" },
@@ -1047,56 +1054,79 @@ export default function ContainerScanPage() {
                 )}
               </div>
 
-              <select
+              <TerminalSelect
                 value={cloudFilter}
-                onChange={(e) => setCloudFilter(e.target.value as CloudFilter)}
-                aria-label="Filter by registry"
-                className="px-2.5 py-1.5 bg-black/50 border border-slate-800 text-xs font-mono text-slate-300 focus:outline-none focus:border-emerald-500/50"
-              >
-                <option value="all">Registry: All</option>
-                <option value="gcp">GCP Artifact Registry</option>
-                <option value="aws">AWS ECR</option>
-                <option value="ghcr">GitHub (GHCR)</option>
-                <option value="dockerhub">Docker Hub</option>
-              </select>
+                onChange={setCloudFilter}
+                ariaLabel="Filter by registry"
+                prefix="REG:"
+                active={cloudFilter !== "all"}
+                options={[
+                  { value: "all", label: "All registries" },
+                  { value: "gcp", label: "GCP Artifact Registry" },
+                  { value: "aws", label: "AWS ECR" },
+                  { value: "ghcr", label: "GitHub (GHCR)" },
+                  { value: "dockerhub", label: "Docker Hub" },
+                ]}
+              />
 
-              <select
+              <TerminalSelect
                 value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
-                aria-label="Filter by scan status"
-                className="px-2.5 py-1.5 bg-black/50 border border-slate-800 text-xs font-mono text-slate-300 focus:outline-none focus:border-emerald-500/50"
-              >
-                <option value="all">Status: All</option>
-                <option value="vulnerable">Has CVEs</option>
-                <option value="clean">Clean (0 CVEs)</option>
-                <option value="unscanned">Unscanned</option>
-              </select>
+                onChange={setStatusFilter}
+                ariaLabel="Filter by scan status"
+                prefix="STATUS:"
+                active={statusFilter !== "all"}
+                options={[
+                  { value: "all", label: "All statuses" },
+                  { value: "vulnerable", label: "Has CVEs" },
+                  { value: "clean", label: "Clean (0 CVEs)" },
+                  { value: "unscanned", label: "Unscanned" },
+                ]}
+              />
 
-              <select
+              <TerminalSelect
                 value={dateRange}
-                onChange={(e) => setDateRange(e.target.value as DateRangeFilter)}
-                aria-label="Filter by date"
-                className="px-2.5 py-1.5 bg-black/50 border border-slate-800 text-xs font-mono text-slate-300 focus:outline-none focus:border-emerald-500/50"
-              >
-                <option value="all">Date: Any time</option>
-                <option value="24h">Last 24 hours</option>
-                <option value="7d">Last 7 days</option>
-                <option value="30d">Last 30 days</option>
-                <option value="custom">Custom range…</option>
-              </select>
+                onChange={setDateRange}
+                ariaLabel="Filter by date"
+                prefix="DATE:"
+                active={dateRange !== "all"}
+                options={[
+                  { value: "all", label: "Any time" },
+                  { value: "24h", label: "Last 24 hours" },
+                  { value: "7d", label: "Last 7 days" },
+                  { value: "30d", label: "Last 30 days" },
+                  { value: "custom", label: "Custom range…" },
+                ]}
+              />
 
-              <select
+              <TerminalSelect
                 value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as SortOption)}
-                aria-label="Sort images"
-                className="px-2.5 py-1.5 bg-black/50 border border-slate-800 text-xs font-mono text-slate-300 focus:outline-none focus:border-emerald-500/50"
+                onChange={setSortBy}
+                ariaLabel="Sort images"
+                prefix="SORT:"
+                active={sortBy !== "critical"}
+                options={[
+                  { value: "critical", label: "Highest severity" },
+                  { value: "total_cves", label: "Most CVEs" },
+                  { value: "newest", label: "Newest first" },
+                  { value: "oldest", label: "Oldest first" },
+                  { value: "name_asc", label: "Name (A–Z)" },
+                ]}
+              />
+
+              <button
+                type="button"
+                onClick={() => setLatestOnly((v) => !v)}
+                aria-pressed={latestOnly}
+                title="Show only the most recent image version per application"
+                className="px-2.5 py-1.5 text-xs font-mono transition-colors whitespace-nowrap"
+                style={{
+                  border: latestOnly ? "1px solid var(--green)" : "1px solid var(--border-dim)",
+                  color: latestOnly ? "var(--green)" : "var(--text-muted)",
+                  background: latestOnly ? "rgba(0, 255, 65, 0.08)" : "#09090b",
+                }}
               >
-                <option value="critical">Sort: Highest severity</option>
-                <option value="total_cves">Sort: Most CVEs</option>
-                <option value="newest">Sort: Newest first</option>
-                <option value="oldest">Sort: Oldest first</option>
-                <option value="name_asc">Sort: Name (A–Z)</option>
-              </select>
+                Latest per app ({latestResults.length})
+              </button>
 
               {hasActiveFilters && (
                 <button
@@ -1196,16 +1226,16 @@ export default function ContainerScanPage() {
                 <span>
                   Showing {pageStart + 1}–{Math.min(pageStart + pageSize, filteredAndSorted.length)} of {filteredAndSorted.length}
                 </span>
-                <select
-                  value={pageSize}
-                  onChange={(e) => setPageSize(Number(e.target.value))}
-                  aria-label="Items per page"
-                  className="px-2 py-1 bg-black/50 border border-slate-800 text-xs font-mono text-slate-300"
-                >
-                  <option value={10}>10 / page</option>
-                  <option value={25}>25 / page</option>
-                  <option value={50}>50 / page</option>
-                </select>
+                <TerminalSelect
+                  value={String(pageSize)}
+                  onChange={(val) => setPageSize(Number(val))}
+                  ariaLabel="Items per page"
+                  options={[
+                    { value: "10", label: "10 / page" },
+                    { value: "25", label: "25 / page" },
+                    { value: "50", label: "50 / page" },
+                  ]}
+                />
               </div>
               <div className="flex items-center gap-1">
                 <button

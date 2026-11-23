@@ -48,6 +48,7 @@ interface ArDockerImage {
   uri: string;
   imageName: string;
   scannedAt: string;
+  imageUpdatedAt?: string;
 }
 
 interface DiscoveryState {
@@ -166,15 +167,17 @@ async function listArtifactRegistryDockerImages(projectId: string): Promise<{
           const uri: string | undefined = img.uri ?? img.name ?? undefined;
           if (!uri) continue;
           const normUri = normalizeImageUri(uri);
+          const updatedAt =
+            img.updateTime ??
+            img.uploadTime ??
+            img.buildTime ??
+            undefined;
           repoImages.push({
             normUri,
             uri: normUri,
             imageName: buildImageName(normUri, img.tags),
-            scannedAt:
-              img.updateTime ??
-              img.uploadTime ??
-              img.buildTime ??
-              new Date().toISOString(),
+            scannedAt: updatedAt ?? new Date().toISOString(),
+            ...(updatedAt ? { imageUpdatedAt: updatedAt } : {}),
           });
         }
 
@@ -352,6 +355,7 @@ export async function getGcpContainerVulnerabilities(
       cloud: "gcp",
       accountId: projectId,
       scannedAt,
+      ...(img.imageUpdatedAt ? { imageUpdatedAt: img.imageUpdatedAt } : {}),
       vulnerabilities: [],
       summary: emptySummary(),
       scanStatus,
