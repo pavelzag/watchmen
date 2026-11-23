@@ -14,10 +14,10 @@ export default function NavbarCloudTabs() {
   const isDashboardActive = pathname === "/dashboard" && !isSubMenu;
 
   return (
-    <div className="flex items-center h-full">
+    <div className="flex items-center h-full shrink-0">
       <Link
         href="/dashboard"
-        className="flex items-center gap-1.5 px-3 h-full text-xs uppercase tracking-widest transition-colors"
+        className="flex items-center gap-1.5 px-3 md:px-3.5 h-full text-xs uppercase tracking-widest transition-colors whitespace-nowrap shrink-0 terminal-nav-link"
         style={{
           color: isDashboardActive ? "var(--text-primary)" : "var(--text-muted)",
           background: isDashboardActive ? "var(--bg-card2)" : "transparent",

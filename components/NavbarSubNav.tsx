@@ -99,14 +99,19 @@ export default function NavbarSubNav({
 
     return (
         <div
-            className="max-w-7xl mx-auto px-4 md:px-6 h-8 flex items-center gap-0 overflow-x-auto no-scrollbar scroll-smooth"
+            className="max-w-7xl mx-auto px-4 md:px-6 h-9 flex items-center overflow-x-auto no-scrollbar scroll-smooth"
             style={{ borderTop: "1px solid var(--bg-card2)" }}
         >
-            <NavbarCloudTabs />
-            {hasSelfManaged && (
-                <NavbarLink href="/dashboard/self-managed" icon={<Server className="w-3 h-3" />} label="SELF-MANAGED" />
-            )}
-            {children}
+            <nav
+                aria-label="Dashboard navigation"
+                className="mx-auto flex items-center justify-center gap-1 sm:gap-2 md:gap-3 h-full shrink-0"
+            >
+                <NavbarCloudTabs />
+                {hasSelfManaged && (
+                    <NavbarLink href="/dashboard/self-managed" icon={<Server className="w-3 h-3" />} label="SELF-MANAGED" />
+                )}
+                {children}
+            </nav>
         </div>
     );
 }
