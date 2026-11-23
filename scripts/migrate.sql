@@ -282,3 +282,13 @@ CREATE INDEX IF NOT EXISTS idx_cli_handoff_tasks_lookup
 
 CREATE INDEX IF NOT EXISTS idx_cli_handoff_tasks_fingerprint
   ON cli_handoff_tasks (user_email, fingerprint, status);
+
+CREATE TABLE IF NOT EXISTS container_scan_cache (
+  image_ref        TEXT PRIMARY KEY,
+  cloud            TEXT NOT NULL,
+  account_id       TEXT NOT NULL,
+  scanner          TEXT NOT NULL DEFAULT 'trivy',
+  vulnerabilities  JSONB NOT NULL DEFAULT '[]',
+  summary          JSONB NOT NULL DEFAULT '{}',
+  scanned_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

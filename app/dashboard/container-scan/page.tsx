@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Container, RefreshCw, AlertTriangle, ChevronRight, Sparkles, Loader2, ChevronDown, ChevronUp, AlertCircle } from "lucide-react";
+import { Container, RefreshCw, AlertTriangle, ChevronRight, Sparkles, Loader2, ChevronDown, ChevronUp, AlertCircle, ShieldCheck } from "lucide-react";
 import type { ImageScanResult, ContainerVulnerability, CveSeverity } from "@/lib/container-scanning";
 import type { GcpScanWarning } from "@/lib/gcp/types";
 import { cn } from "@/lib/utils";
@@ -205,7 +205,19 @@ function CveRow({ cve, imageRef, cloud }: { cve: ContainerVulnerability; imageRe
   );
 }
 
-function ImageCard({ result, filter }: { result: ImageScanResult; filter: string }) {
+function ImageCard({
+  result,
+  filter,
+  trivyAvailable,
+  scanningRef,
+  onScanImage,
+}: {
+  result: ImageScanResult;
+  filter: string;
+  trivyAvailable: boolean;
+  scanningRef: boolean;
+  onScanImage: (imageRef: string, force: boolean) => void;
+}) {
   const [open, setOpen] = useState(filter !== "all");
   const hasCritical = result.summary.critical > 0;
   const hasHigh = result.summary.high > 0;
@@ -220,85 +232,111 @@ function ImageCard({ result, filter }: { result: ImageScanResult; filter: string
     return order.indexOf(a.severity) - order.indexOf(b.severity);
   });
 
+  const canTrivyScan = result.cloud === "gcp" && trivyAvailable;
+
   return (
     <div style={{ border: `1px solid ${borderColor}33`, background: "#09090b", marginBottom: 10 }}>
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="w-full text-left flex items-start gap-4 p-4 transition-colors hover:bg-white/[0.02]"
-      >
-        <div
-          style={{
-            flexShrink: 0,
-            fontSize: 9,
-            color: result.cloud === "gcp" ? "#4ade80" : result.cloud === "aws" ? "#fb923c" : result.cloud === "ghcr" ? "#a78bfa" : "#38bdf8",
-            fontFamily: "monospace", border: `1px solid currentColor`,
-            padding: "1px 6px", marginTop: 2, opacity: 0.8,
-          }}
+      <div className="flex items-start gap-2 p-4 transition-colors hover:bg-white/[0.02]">
+        <button
+          onClick={() => setOpen((v) => !v)}
+          className="flex-1 text-left flex items-start gap-4 min-w-0"
         >
-          {result.cloud.toUpperCase()}
-        </div>
-        <div className="flex-1 min-w-0">
-          <p style={{ fontSize: 12, fontWeight: 700, color: "#e5e7eb", fontFamily: "monospace", marginBottom: 4 }}>
-            {result.imageName}
-          </p>
-          <p style={{ fontSize: 10, color: "#6b7280", fontFamily: "monospace", marginBottom: 6, wordBreak: "break-all" }}>
-            {result.imageRef}
-          </p>
-          <div className="flex items-center gap-2 flex-wrap">
-            {result.summary.critical > 0 && (
-              <span style={{ fontSize: 9, color: "#f87171", fontFamily: "monospace", border: "1px solid #ef444433", padding: "0 5px" }}>
-                {result.summary.critical} CRITICAL
-              </span>
-            )}
-            {result.summary.high > 0 && (
-              <span style={{ fontSize: 9, color: "#fb923c", fontFamily: "monospace", border: "1px solid #f59e0b33", padding: "0 5px" }}>
-                {result.summary.high} HIGH
-              </span>
-            )}
-            {result.summary.medium > 0 && (
-              <span style={{ fontSize: 9, color: "#fbbf24", fontFamily: "monospace", border: "1px solid #d9770633", padding: "0 5px" }}>
-                {result.summary.medium} MEDIUM
-              </span>
-            )}
-            {result.summary.low > 0 && (
-              <span style={{ fontSize: 9, color: "#94a3b8", fontFamily: "monospace", border: "1px solid #47556933", padding: "0 5px" }}>
-                {result.summary.low} LOW
-              </span>
-            )}
-            {result.scanStatus === "clean" && (
-              <span style={{ fontSize: 9, color: "#4ade80", fontFamily: "monospace", border: "1px solid #22c55e33", padding: "0 5px" }}>
-                CLEAN
-              </span>
-            )}
-            {result.scanStatus === "unscanned" && (
-              <span style={{ fontSize: 9, color: "#fbbf24", fontFamily: "monospace", border: "1px solid #f59e0b33", padding: "0 5px" }}>
-                UNSCANNED
-              </span>
-            )}
-            {result.scanStatus === "failed" && (
-              <span style={{ fontSize: 9, color: "#f87171", fontFamily: "monospace", border: "1px solid #ef444433", padding: "0 5px" }}>
-                SCAN FAILED
-              </span>
-            )}
-            <span style={{ fontSize: 9, color: "#4b5563", fontFamily: "monospace" }}>
-              · {result.scanStatus === "unscanned" ? "updated" : "scanned"} {new Date(result.scannedAt).toLocaleTimeString()}
-            </span>
+          <div
+            style={{
+              flexShrink: 0,
+              fontSize: 9,
+              color: result.cloud === "gcp" ? "#4ade80" : result.cloud === "aws" ? "#fb923c" : result.cloud === "ghcr" ? "#a78bfa" : "#38bdf8",
+              fontFamily: "monospace", border: `1px solid currentColor`,
+              padding: "1px 6px", marginTop: 2, opacity: 0.8,
+            }}
+          >
+            {result.cloud.toUpperCase()}
           </div>
-        </div>
-        <ChevronRight
-          className="w-4 h-4 shrink-0 mt-1 transition-transform"
-          style={{ color: "#4b5563", transform: open ? "rotate(90deg)" : "none" }}
-        />
-      </button>
+          <div className="flex-1 min-w-0">
+            <p style={{ fontSize: 12, fontWeight: 700, color: "#e5e7eb", fontFamily: "monospace", marginBottom: 4 }}>
+              {result.imageName}
+            </p>
+            <p style={{ fontSize: 10, color: "#6b7280", fontFamily: "monospace", marginBottom: 6, wordBreak: "break-all" }}>
+              {result.imageRef}
+            </p>
+            <div className="flex items-center gap-2 flex-wrap">
+              {result.summary.critical > 0 && (
+                <span style={{ fontSize: 9, color: "#f87171", fontFamily: "monospace", border: "1px solid #ef444433", padding: "0 5px" }}>
+                  {result.summary.critical} CRITICAL
+                </span>
+              )}
+              {result.summary.high > 0 && (
+                <span style={{ fontSize: 9, color: "#fb923c", fontFamily: "monospace", border: "1px solid #f59e0b33", padding: "0 5px" }}>
+                  {result.summary.high} HIGH
+                </span>
+              )}
+              {result.summary.medium > 0 && (
+                <span style={{ fontSize: 9, color: "#fbbf24", fontFamily: "monospace", border: "1px solid #d9770633", padding: "0 5px" }}>
+                  {result.summary.medium} MEDIUM
+                </span>
+              )}
+              {result.summary.low > 0 && (
+                <span style={{ fontSize: 9, color: "#94a3b8", fontFamily: "monospace", border: "1px solid #47556933", padding: "0 5px" }}>
+                  {result.summary.low} LOW
+                </span>
+              )}
+              {result.scanStatus === "clean" && (
+                <span style={{ fontSize: 9, color: "#4ade80", fontFamily: "monospace", border: "1px solid #22c55e33", padding: "0 5px" }}>
+                  CLEAN
+                </span>
+              )}
+              {result.scanStatus === "unscanned" && (
+                <span style={{ fontSize: 9, color: "#fbbf24", fontFamily: "monospace", border: "1px solid #f59e0b33", padding: "0 5px" }}>
+                  UNSCANNED
+                </span>
+              )}
+              {result.scanStatus === "failed" && (
+                <span style={{ fontSize: 9, color: "#f87171", fontFamily: "monospace", border: "1px solid #ef444433", padding: "0 5px" }}>
+                  SCAN FAILED
+                </span>
+              )}
+              {result.scanner === "trivy" && (
+                <span style={{ fontSize: 9, color: "#38bdf8", fontFamily: "monospace", border: "1px solid #38bdf833", padding: "0 5px" }}>
+                  TRIVY
+                </span>
+              )}
+              <span style={{ fontSize: 9, color: "#4b5563", fontFamily: "monospace" }}>
+                · {result.scanStatus === "unscanned" ? "updated" : "scanned"} {new Date(result.scannedAt).toLocaleTimeString()}
+              </span>
+            </div>
+          </div>
+          <ChevronRight
+            className="w-4 h-4 shrink-0 mt-1 transition-transform"
+            style={{ color: "#4b5563", transform: open ? "rotate(90deg)" : "none" }}
+          />
+        </button>
+        {canTrivyScan && (
+          <button
+            type="button"
+            onClick={() => onScanImage(result.imageRef, result.scanStatus !== "unscanned")}
+            disabled={scanningRef}
+            className="flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-mono uppercase tracking-wider border rounded shrink-0 transition-colors hover:bg-emerald-500/10 disabled:opacity-50"
+            style={{
+              borderColor: result.scanStatus === "unscanned" ? "#10b98166" : "var(--border-dim)",
+              color: result.scanStatus === "unscanned" ? "#4ade80" : "var(--text-muted)",
+            }}
+          >
+            {scanningRef ? <Loader2 className="w-3 h-3 animate-spin" /> : <ShieldCheck className="w-3 h-3" />}
+            {scanningRef ? "Scanning…" : result.scanStatus === "unscanned" ? "Scan (Trivy)" : "Re-scan"}
+          </button>
+        )}
+      </div>
 
       {open && (
         <div style={{ borderTop: `1px solid ${borderColor}22`, padding: "0 16px 16px" }}>
           {sortedVulns.length === 0 ? (
             <div style={{ padding: "12px 0" }} className="space-y-2">
               <p style={{ fontSize: 11, color: result.scanStatus === "unscanned" ? "#fbbf24" : "#94a3b8", fontFamily: "monospace" }}>
-                {result.scanStatusMessage ?? "No vulnerabilities found."}
+                {result.scanStatus === "unscanned" && canTrivyScan
+                  ? "No Container Analysis results. Click \"Scan (Trivy)\" to scan this image for CVEs at $0 GCP scanning cost (cached by digest)."
+                  : (result.scanStatusMessage ?? "No vulnerabilities found.")}
               </p>
-              {result.cloud === "gcp" && result.scanStatus === "unscanned" && result.accountId && (
+              {result.cloud === "gcp" && result.scanStatus === "unscanned" && result.accountId && !canTrivyScan && (
                 <div className="flex items-center justify-between gap-2 bg-slate-900/80 border border-slate-800 rounded px-3 py-2">
                   <pre className="text-[10px] font-mono text-slate-300 overflow-x-auto select-text">
                     {`gcloud services enable containerscanning.googleapis.com --project=${result.accountId}`}
@@ -333,6 +371,10 @@ export default function ContainerScanPage() {
   const [warnings, setWarnings] = useState<GcpScanWarning[]>([]);
   const [gcpProjects, setGcpProjects] = useState<string[]>([]);
   const [gcpAuthConfigured, setGcpAuthConfigured] = useState(true);
+  const [trivyAvailable, setTrivyAvailable] = useState(false);
+  const [scanningRefs, setScanningRefs] = useState<Record<string, boolean>>({});
+  const [scanningAll, setScanningAll] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [scannedAt, setScannedAt] = useState<string | null>(null);
@@ -349,11 +391,76 @@ export default function ContainerScanPage() {
       setWarnings(data.warnings ?? []);
       setGcpProjects(data.gcpProjects ?? []);
       setGcpAuthConfigured(data.gcpAuthConfigured ?? true);
+      setTrivyAvailable(Boolean(data.trivyAvailable));
       setScannedAt(data.scannedAt ?? null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unknown error");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function runTrivyScan(imageRefs: string[], force = false) {
+    if (imageRefs.length === 0) return;
+    setScanError(null);
+    setScanningRefs((prev) => {
+      const next = { ...prev };
+      for (const ref of imageRefs) next[ref] = true;
+      return next;
+    });
+
+    try {
+      const res = await fetch("/api/container-scan/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageRefs, force }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error ?? "Trivy scan failed");
+      }
+
+      const scannedList = (data.scanned ?? []) as ImageScanResult[];
+      const errorsList = (data.errors ?? []) as Array<{ imageRef: string; error: string }>;
+
+      if (scannedList.length > 0) {
+        const scannedByRef = new Map(scannedList.map((s) => [s.imageRef, s]));
+        setResults((prev) => {
+          const updated = prev.map((item) => scannedByRef.get(item.imageRef) ?? item);
+          return [...updated].sort((a, b) => {
+            if (b.summary.critical !== a.summary.critical) return b.summary.critical - a.summary.critical;
+            if (b.summary.high !== a.summary.high) return b.summary.high - a.summary.high;
+            if (b.summary.medium !== a.summary.medium) return b.summary.medium - a.summary.medium;
+            if (b.summary.low !== a.summary.low) return b.summary.low - a.summary.low;
+            return b.vulnerabilities.length - a.vulnerabilities.length;
+          });
+        });
+      }
+
+      if (errorsList.length > 0) {
+        setScanError(errorsList.map((e) => `${e.imageRef}: ${e.error}`).join("; "));
+      }
+    } catch (e) {
+      setScanError(e instanceof Error ? e.message : "Trivy scan failed");
+    } finally {
+      setScanningRefs((prev) => {
+        const next = { ...prev };
+        for (const ref of imageRefs) delete next[ref];
+        return next;
+      });
+    }
+  }
+
+  async function scanAllUnscanned() {
+    const refs = results
+      .filter((r) => r.cloud === "gcp" && r.scanStatus === "unscanned")
+      .map((r) => r.imageRef);
+    if (refs.length === 0) return;
+    setScanningAll(true);
+    try {
+      await runTrivyScan(refs, false);
+    } finally {
+      setScanningAll(false);
     }
   }
 
@@ -373,6 +480,10 @@ export default function ContainerScanPage() {
     return r.summary[filter] > 0;
   });
 
+  const unscannedGcpCount = results.filter(
+    (r) => r.cloud === "gcp" && r.scanStatus === "unscanned"
+  ).length;
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -389,20 +500,34 @@ export default function ContainerScanPage() {
             )}
           </p>
         </div>
-        <button
-          onClick={load}
-          disabled={loading}
-          className="flex items-center gap-2 px-3 py-1.5 text-xs uppercase tracking-widest transition-all"
-          style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}
-        >
-          <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} />
-          {loading ? "Scanning…" : "Re-scan"}
-        </button>
+        <div className="flex items-center gap-2">
+          {trivyAvailable && unscannedGcpCount > 0 && (
+            <button
+              type="button"
+              onClick={scanAllUnscanned}
+              disabled={loading || scanningAll}
+              className="flex items-center gap-2 px-3 py-1.5 text-xs uppercase tracking-widest transition-all disabled:opacity-50"
+              style={{ border: "1px solid #10b98166", color: "#4ade80", background: "#052e1640" }}
+            >
+              {scanningAll ? <Loader2 className="w-3 h-3 animate-spin" /> : <ShieldCheck className="w-3 h-3" />}
+              {scanningAll ? `Scanning ${unscannedGcpCount}…` : `Scan Unscanned (${unscannedGcpCount})`}
+            </button>
+          )}
+          <button
+            onClick={load}
+            disabled={loading}
+            className="flex items-center gap-2 px-3 py-1.5 text-xs uppercase tracking-widest transition-all"
+            style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}
+          >
+            <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} />
+            {loading ? "Loading…" : "Refresh"}
+          </button>
+        </div>
       </div>
 
-      {error && (
+      {(error || scanError) && (
         <div className="px-4 py-3 text-sm font-mono" style={{ border: "1px solid var(--red)", color: "var(--red)", background: "#1a0606" }}>
-          !! {error}
+          !! {error ?? scanError}
         </div>
       )}
 
@@ -537,7 +662,14 @@ export default function ContainerScanPage() {
           {/* Image cards */}
           <div>
             {visible.map((result) => (
-              <ImageCard key={result.imageRef} result={result} filter={filter} />
+              <ImageCard
+                key={result.imageRef}
+                result={result}
+                filter={filter}
+                trivyAvailable={trivyAvailable}
+                scanningRef={Boolean(scanningRefs[result.imageRef])}
+                onScanImage={(ref, force) => void runTrivyScan([ref], force)}
+              />
             ))}
           </div>
         </>

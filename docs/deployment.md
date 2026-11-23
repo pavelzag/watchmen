@@ -126,7 +126,7 @@ for role in \
 done
 ```
 
-The `logging.viewer` role is required for the live log viewer and AI log analysis features. The `artifactregistry.reader` and `containeranalysis.occurrences.viewer` roles (along with enabling `artifactregistry.googleapis.com`, `containeranalysis.googleapis.com`, and `containerscanning.googleapis.com` in your scanned projects) are required for the **Containers** (`/dashboard/container-scan`) vulnerability page.
+The `logging.viewer` role is required for the live log viewer and AI log analysis features. The `artifactregistry.reader` role (with `artifactregistry.googleapis.com` enabled in your scanned projects) lets Watchmen discover and scan Artifact Registry images for CVEs at `$0` GCP scanning cost using its bundled **Trivy** scanner (results are cached by image digest in Postgres). Optionally, enabling `containeranalysis.googleapis.com` and `containerscanning.googleapis.com` surfaces GCP's managed Artifact Analysis CVE occurrences as well.
 
 ### 3. Export and encode the key
 

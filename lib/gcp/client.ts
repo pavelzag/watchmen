@@ -6,6 +6,10 @@ let _initialized = false;
 let _userAuthInitialized = false;
 let _scanWarnings: GcpScanWarning[] = [];
 let _scannerPrincipal: string | undefined;
+let _activeAuthClient:
+  | InstanceType<typeof google.auth.GoogleAuth>
+  | InstanceType<typeof google.auth.OAuth2>
+  | null = null;
 
 export function isGcpAdcEnabled(): boolean {
   return process.env.GCP_USE_ADC === "true";
@@ -20,6 +24,7 @@ export function initGoogleAuthFromAdc() {
   const auth = new google.auth.GoogleAuth({
     scopes: ["https://www.googleapis.com/auth/cloud-platform"],
   });
+  _activeAuthClient = auth;
   google.options({ auth } as Parameters<typeof google.options>[0]);
 }
 
@@ -50,6 +55,7 @@ export function initGoogleAuth() {
     scopes: ["https://www.googleapis.com/auth/cloud-platform"],
   });
 
+  _activeAuthClient = auth;
   // Set auth globally — avoids TypeScript overload issues on individual clients
   google.options({ auth } as Parameters<typeof google.options>[0]);
 }
@@ -94,6 +100,7 @@ export function initGoogleAuthFromKey(saKeyJson: string) {
     scopes: ["https://www.googleapis.com/auth/cloud-platform"],
   });
 
+  _activeAuthClient = auth;
   google.options({ auth } as Parameters<typeof google.options>[0]);
 }
 
@@ -122,7 +129,33 @@ export function initUserAuth(accessToken: string) {
     process.env.GOOGLE_CLIENT_SECRET
   );
   auth.setCredentials({ access_token: accessToken });
+  _activeAuthClient = auth;
   google.options({ auth } as Parameters<typeof google.options>[0]);
+}
+
+/**
+ * Returns an OAuth2 access token from the currently initialized Google auth client
+ * (ADC, service account key, or user OAuth token), e.g. for authenticating Trivy against Artifact Registry.
+ */
+export async function getGcpAccessToken(): Promise<string | null> {
+  if (!_activeAuthClient) {
+    try {
+      initGoogleAuth();
+    } catch {
+      return null;
+    }
+  }
+  if (!_activeAuthClient) return null;
+
+  if ("getClient" in _activeAuthClient && typeof _activeAuthClient.getClient === "function") {
+    const client = await _activeAuthClient.getClient();
+    const tokenRes = await client.getAccessToken();
+    return tokenRes?.token ?? null;
+  }
+
+  const oauthClient = _activeAuthClient as InstanceType<typeof google.auth.OAuth2>;
+  const tokenRes = await oauthClient.getAccessToken();
+  return tokenRes?.token ?? oauthClient.credentials?.access_token ?? null;
 }
 
 /**

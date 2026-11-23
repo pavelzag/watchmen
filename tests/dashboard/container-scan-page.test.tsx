@@ -66,4 +66,77 @@ describe("ContainerScanPage diagnostics copy controls", () => {
     const copiedCmd = (writeTextMock.mock.calls[1] as unknown[])[0] as string;
     expect(copiedCmd).toContain("gcloud services enable containeranalysis.googleapis.com --project=159171566143");
   });
+
+  it("triggers on-demand Trivy scanning for unscanned Artifact Registry images", async () => {
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          results: [
+            {
+              imageRef: "europe-west3-docker.pkg.dev/theinsite-dev/cms/app@sha256:aaa",
+              imageName: "app:dev",
+              cloud: "gcp",
+              accountId: "theinsite-dev",
+              scannedAt: "2026-11-23T15:00:00.000Z",
+              vulnerabilities: [],
+              summary: { critical: 0, high: 0, medium: 0, low: 0, negligible: 0 },
+              scanStatus: "unscanned",
+            },
+          ],
+          warnings: [],
+          gcpProjects: ["theinsite-dev"],
+          gcpAuthConfigured: true,
+          trivyAvailable: true,
+          scannedAt: "2026-11-23T15:30:00.000Z",
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          scanned: [
+            {
+              imageRef: "europe-west3-docker.pkg.dev/theinsite-dev/cms/app@sha256:aaa",
+              imageName: "app:dev",
+              cloud: "gcp",
+              accountId: "theinsite-dev",
+              scannedAt: "2026-11-23T15:35:00.000Z",
+              scanner: "trivy",
+              scanStatus: "scanned",
+              vulnerabilities: [
+                {
+                  cveId: "CVE-2026-9001",
+                  severity: "critical",
+                  packageName: "openssl",
+                  installedVersion: "3.0.0",
+                  fixedVersion: "3.0.2",
+                  description: "Critical OpenSSL flaw",
+                },
+              ],
+              summary: { critical: 1, high: 0, medium: 0, low: 0, negligible: 0 },
+            },
+          ],
+          errors: [],
+        }),
+      });
+
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    render(<ContainerScanPage />);
+
+    const scanAllBtn = await screen.findByRole("button", { name: /scan unscanned \(1\)/i });
+    fireEvent.click(scanAllBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText("TRIVY")).toBeInTheDocument();
+      expect(screen.getByText("1 CRITICAL")).toBeInTheDocument();
+    });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/container-scan/scan",
+      expect.objectContaining({ method: "POST" })
+    );
+  });
 });

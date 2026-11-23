@@ -45,6 +45,8 @@ export interface ImageScanResult {
   scanStatus?: GcpImageScanStatus;
   /** Optional diagnostic detail about why scan results are clean/unscanned/failed */
   scanStatusMessage?: string;
+  /** Which scanner produced the result (e.g. "gcp", "trivy", "aws", "ghcr", "dockerhub") */
+  scanner?: string;
 }
 
 // ─── Mock data ────────────────────────────────────────────────────────────────

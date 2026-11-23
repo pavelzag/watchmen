@@ -29,10 +29,29 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV TRIVY_CACHE_DIR=/app/.trivy-cache
+
+ARG TRIVY_VERSION=0.76.2
+
+# Install Trivy for $0 GCP Artifact Registry vulnerability scanning (cached by digest in Postgres)
+RUN apk add --no-cache ca-certificates curl \
+ && arch="$(uname -m)" \
+ && case "$arch" in \
+      x86_64) trivy_arch="Linux-64bit" ;; \
+      aarch64|arm64) trivy_arch="Linux-ARM64" ;; \
+      *) echo "Unsupported architecture: $arch" >&2; exit 1 ;; \
+    esac \
+ && curl -fsSL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_${trivy_arch}.tar.gz" \
+    | tar -xz -C /usr/local/bin trivy \
+ && trivy --version \
+ && mkdir -p /app/.trivy-cache \
+ && (trivy image --download-db-only --cache-dir /app/.trivy-cache || true) \
+ && apk del curl
 
 # Create a non-root user to run the app
 RUN addgroup --system --gid 1001 nodejs \
- && adduser  --system --uid 1001 nextjs
+ && adduser  --system --uid 1001 nextjs \
+ && chown -R nextjs:nodejs /app/.trivy-cache
 
 # Copy only the standalone bundle and static assets
 COPY --from=builder /app/public ./public

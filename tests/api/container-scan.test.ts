@@ -8,7 +8,10 @@ const mockGetGhcrVulnerabilities = jest.fn();
 const mockGetDockerHubVulnerabilities = jest.fn();
 const mockSql = jest.fn(async () => ({ rows: [] as any[] }));
 const mockEnsureGcpSnapshotTable = jest.fn(async () => {});
+const mockEnsureContainerScanCacheTable = jest.fn(async () => {});
 const mockDiscoverUserProjectIds = jest.fn();
+const mockIsTrivyAvailable = jest.fn();
+const mockScanImageWithTrivy = jest.fn();
 
 jest.mock("@/lib/auth", () => ({
   auth: (...args: any[]) => mockAuth(...args),
@@ -18,9 +21,13 @@ jest.mock("@/lib/credentials", () => ({
   getUserCloudCredentials: (...args: any[]) => mockGetUserCloudCredentials(...args),
 }));
 
-jest.mock("@/lib/gcp/container-analysis", () => ({
-  getGcpContainerVulnerabilities: (...args: any[]) => mockGetGcpContainerVulnerabilities(...args),
-}));
+jest.mock("@/lib/gcp/container-analysis", () => {
+  const actual = jest.requireActual("@/lib/gcp/container-analysis");
+  return {
+    ...actual,
+    getGcpContainerVulnerabilities: (...args: any[]) => mockGetGcpContainerVulnerabilities(...args),
+  };
+});
 
 jest.mock("@/lib/aws/ecr-scanning", () => ({
   getAwsContainerVulnerabilities: (...args: any[]) => mockGetAwsContainerVulnerabilities(...args),
@@ -37,6 +44,12 @@ jest.mock("@/lib/dockerhub/dockerhub-scanning", () => ({
 jest.mock("@/lib/db", () => ({
   sql: (...args: any[]) => (mockSql as any)(...args),
   ensureGcpSnapshotTable: () => mockEnsureGcpSnapshotTable(),
+  ensureContainerScanCacheTable: () => mockEnsureContainerScanCacheTable(),
+}));
+
+jest.mock("@/lib/trivy/scanner", () => ({
+  isTrivyAvailable: (...args: any[]) => mockIsTrivyAvailable(...args),
+  scanImageWithTrivy: (...args: any[]) => mockScanImageWithTrivy(...args),
 }));
 
 jest.mock("@/lib/gcp/client", () => {
@@ -44,10 +57,13 @@ jest.mock("@/lib/gcp/client", () => {
   return {
     ...actual,
     discoverUserProjectIds: (...args: any[]) => mockDiscoverUserProjectIds(...args),
+    getGcpAccessToken: jest.fn(async () => "mock-gcp-token"),
   };
 });
 
+import { NextRequest } from "next/server";
 import { GET } from "@/app/api/container-scan/route";
+import { POST as POST_SCAN } from "@/app/api/container-scan/scan/route";
 import { logFetchWarning, resetGcpScanWarnings } from "@/lib/gcp/client";
 
 describe("GET /api/container-scan", () => {
@@ -80,6 +96,7 @@ describe("GET /api/container-scan", () => {
     mockGetGhcrVulnerabilities.mockResolvedValue([]);
     mockGetDockerHubVulnerabilities.mockResolvedValue([]);
     mockDiscoverUserProjectIds.mockResolvedValue([]);
+    mockIsTrivyAvailable.mockResolvedValue(false);
     mockSql.mockResolvedValue({ rows: [] });
     jest.spyOn(console, "info").mockImplementation(() => {});
     jest.spyOn(console, "warn").mockImplementation(() => {});
@@ -137,6 +154,63 @@ describe("GET /api/container-scan", () => {
     expect(body.gcpAuthConfigured).toBe(true);
     expect(body.results).toHaveLength(1);
     expect(body.results[0].imageName).toBe("app:v1.0.0");
+  });
+
+  it("merges cached Trivy scans onto unscanned Artifact Registry images and exposes trivyAvailable", async () => {
+    process.env.GCP_USE_ADC = "true";
+    process.env.GCP_PROJECTS = "theinsite-dev";
+    process.env.POSTGRES_URL = "postgresql://localhost/watchmen";
+    mockIsTrivyAvailable.mockResolvedValue(true);
+
+    mockAuth.mockResolvedValue({
+      user: { email: "pavel@theinsite.dev" },
+    });
+    mockGetGcpContainerVulnerabilities.mockResolvedValue([
+      {
+        imageRef: "europe-west3-docker.pkg.dev/theinsite-dev/cms/web@sha256:aaa",
+        imageName: "web:dev",
+        cloud: "gcp",
+        accountId: "theinsite-dev",
+        scannedAt: "2026-11-23T08:00:00Z",
+        vulnerabilities: [],
+        summary: { critical: 0, high: 0, medium: 0, low: 0, negligible: 0 },
+        scanStatus: "unscanned",
+      },
+    ]);
+    mockSql.mockResolvedValueOnce({
+      rows: [
+        {
+          image_ref: "europe-west3-docker.pkg.dev/theinsite-dev/cms/web@sha256:aaa",
+          cloud: "gcp",
+          account_id: "theinsite-dev",
+          scanner: "trivy",
+          vulnerabilities: [
+            {
+              cveId: "CVE-2025-1234",
+              severity: "critical",
+              packageName: "openssl",
+              installedVersion: "3.0.0",
+              fixedVersion: "3.0.1",
+              description: "Critical issue",
+            },
+          ],
+          summary: { critical: 1, high: 0, medium: 0, low: 0, negligible: 0 },
+          scanned_at: "2026-11-23T12:00:00Z",
+        },
+      ],
+    });
+
+    const res = await GET();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(body.trivyAvailable).toBe(true);
+    expect(body.results[0]).toMatchObject({
+      imageName: "web:dev",
+      scanStatus: "scanned",
+      scanner: "trivy",
+      summary: { critical: 1, high: 0, medium: 0, low: 0, negligible: 0 },
+    });
   });
 
   it("falls back to projects from user_snapshots when GCP_USE_ADC=true and GCP_PROJECTS/GCP_ORG_ID are unset", async () => {
@@ -204,5 +278,87 @@ describe("GET /api/container-scan", () => {
 
     expect(mockGetGcpContainerVulnerabilities).not.toHaveBeenCalled();
     expect(body.results.some((r: any) => r.cloud === "gcp")).toBe(true);
+  });
+
+  describe("POST /api/container-scan/scan", () => {
+    it("scans authorized Artifact Registry images with Trivy and persists to cache", async () => {
+      process.env.GCP_USE_ADC = "true";
+      process.env.GCP_PROJECTS = "theinsite-dev";
+      process.env.POSTGRES_URL = "postgresql://localhost/watchmen";
+      mockIsTrivyAvailable.mockResolvedValue(true);
+      mockAuth.mockResolvedValue({
+        user: { email: "pavel@theinsite.dev" },
+      });
+      mockGetGcpContainerVulnerabilities.mockResolvedValue([
+        {
+          imageRef: "europe-west3-docker.pkg.dev/theinsite-dev/cms/api@sha256:111",
+          imageName: "api:dev",
+          cloud: "gcp",
+          accountId: "theinsite-dev",
+          scannedAt: "2026-11-23T08:00:00Z",
+          vulnerabilities: [],
+          summary: { critical: 0, high: 0, medium: 0, low: 0, negligible: 0 },
+          scanStatus: "unscanned",
+        },
+      ]);
+      mockScanImageWithTrivy.mockResolvedValue({
+        vulnerabilities: [
+          {
+            cveId: "CVE-2026-0042",
+            severity: "high",
+            packageName: "zlib",
+            installedVersion: "1.2.13",
+            fixedVersion: "1.3.1",
+            description: "Zlib issue",
+          },
+        ],
+        summary: { critical: 0, high: 1, medium: 0, low: 0, negligible: 0 },
+        scannedAt: "2026-11-23T16:00:00Z",
+      });
+
+      const req = new NextRequest("http://localhost:3000/api/container-scan/scan", {
+        method: "POST",
+        body: JSON.stringify({
+          imageRefs: ["europe-west3-docker.pkg.dev/theinsite-dev/cms/api@sha256:111"],
+        }),
+      });
+
+      const res = await POST_SCAN(req);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+
+      expect(mockScanImageWithTrivy).toHaveBeenCalledWith({
+        imageRef: "europe-west3-docker.pkg.dev/theinsite-dev/cms/api@sha256:111",
+        accessToken: "mock-gcp-token",
+      });
+      expect(mockSql).toHaveBeenCalled();
+      expect(body.scanned).toHaveLength(1);
+      expect(body.scanned[0]).toMatchObject({
+        scanner: "trivy",
+        scanStatus: "scanned",
+        summary: { critical: 0, high: 1, medium: 0, low: 0, negligible: 0 },
+      });
+    });
+
+    it("rejects arbitrary imageRefs not present in authorized GCP projects with 404", async () => {
+      process.env.GCP_USE_ADC = "true";
+      process.env.GCP_PROJECTS = "theinsite-dev";
+      mockIsTrivyAvailable.mockResolvedValue(true);
+      mockAuth.mockResolvedValue({
+        user: { email: "pavel@theinsite-dev" },
+      });
+      mockGetGcpContainerVulnerabilities.mockResolvedValue([]);
+
+      const req = new NextRequest("http://localhost:3000/api/container-scan/scan", {
+        method: "POST",
+        body: JSON.stringify({
+          imageRefs: ["evil.registry.example.com/attacker/image:latest"],
+        }),
+      });
+
+      const res = await POST_SCAN(req);
+      expect(res.status).toBe(404);
+      expect(mockScanImageWithTrivy).not.toHaveBeenCalled();
+    });
   });
 });

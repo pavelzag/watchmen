@@ -74,6 +74,7 @@ let agentRunsTableReady: Promise<void> | null = null;
 let agentInstallTablesReady: Promise<void> | null = null;
 let runtimeSecurityTablesReady: Promise<void> | null = null;
 let handoffTablesReady: Promise<void> | null = null;
+let containerScanCacheTableReady: Promise<void> | null = null;
 
 export async function retryOnce<T>(work: () => Promise<T>): Promise<T> {
   try {
@@ -539,4 +540,30 @@ export async function ensureHandoffTables(): Promise<void> {
   }
 
   await handoffTablesReady;
+}
+
+/**
+ * Ensures the container image scan cache table exists (keyed by immutable image ref/digest).
+ */
+export async function ensureContainerScanCacheTable(): Promise<void> {
+  if (!containerScanCacheTableReady) {
+    containerScanCacheTableReady = retryOnce(async () => {
+      await sql`
+        CREATE TABLE IF NOT EXISTS container_scan_cache (
+          image_ref        TEXT PRIMARY KEY,
+          cloud            TEXT NOT NULL,
+          account_id       TEXT NOT NULL,
+          scanner          TEXT NOT NULL DEFAULT 'trivy',
+          vulnerabilities  JSONB NOT NULL DEFAULT '[]',
+          summary          JSONB NOT NULL DEFAULT '{}',
+          scanned_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `;
+    }).catch((error) => {
+      containerScanCacheTableReady = null;
+      throw error;
+    });
+  }
+
+  await containerScanCacheTableReady;
 }

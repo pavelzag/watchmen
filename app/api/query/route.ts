@@ -14,6 +14,7 @@ import { getGcpAuthFailures } from "@/lib/gcp/auth-failures";
 import { getAwsAuthFailures } from "@/lib/aws/auth-failures";
 import { getMockScanResults } from "@/lib/container-scanning";
 import { getGcpContainerVulnerabilities } from "@/lib/gcp/container-analysis";
+import { mergeCachedTrivyScans } from "@/lib/container-scan-cache";
 import { getAwsContainerVulnerabilities } from "@/lib/aws/ecr-scanning";
 import { getGhcrVulnerabilities } from "@/lib/github/ghcr-scanning";
 import { getDockerHubVulnerabilities } from "@/lib/dockerhub/dockerhub-scanning";
@@ -1360,14 +1361,15 @@ export async function POST(req: NextRequest) {
         }
 
         const [gcpResultsList, awsResultsList, ghcrResults, dockerHubResults] = await Promise.all([
-          Promise.all(gcpProjects.map((pid: string) => (!isMock ? getGcpContainerVulnerabilities(pid) : []))),
+          Promise.all(gcpProjects.map((pid: string) => (!isMock ? getGcpContainerVulnerabilities(pid) : [])))
+            .then((lists) => (!isMock ? mergeCachedTrivyScans(lists.flat()) : [])),
           Promise.all(awsRegions.map((region: string) => (!isAwsMock ? getAwsContainerVulnerabilities(region) : []))),
           getGhcrVulnerabilities(email),
           getDockerHubVulnerabilities(email)
         ]);
 
         const results = [
-          ...gcpResultsList.flat(),
+          ...gcpResultsList,
           ...awsResultsList.flat(),
           ...ghcrResults,
           ...dockerHubResults,
