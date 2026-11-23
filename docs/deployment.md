@@ -289,6 +289,26 @@ gcloud config set project YOUR_PROJECT_ID
 gcloud services enable run.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com
 ```
 
+If Watchmen runs on Cloud Run with keyless ADC (`GCP_USE_ADC=true`) to scan other GCP projects, **also enable the scanner client APIs on the Watchmen host project itself** (Google Cloud checks API enablement on the caller's ADC project in addition to each scanned target project):
+
+```bash
+gcloud services enable \
+  artifactregistry.googleapis.com \
+  bigquery.googleapis.com \
+  cloudresourcemanager.googleapis.com \
+  cloudtrace.googleapis.com \
+  compute.googleapis.com \
+  container.googleapis.com \
+  containeranalysis.googleapis.com \
+  iam.googleapis.com \
+  logging.googleapis.com \
+  pubsub.googleapis.com \
+  run.googleapis.com \
+  secretmanager.googleapis.com \
+  sqladmin.googleapis.com \
+  storage.googleapis.com
+```
+
 ### Option A — Deploy from source (no Docker required locally)
 
 ```bash
