@@ -1,8 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { GitBranch, Upload, AlertTriangle, Ghost, Trash2, RefreshCw } from "lucide-react";
+import { GitBranch, Upload, AlertTriangle, Ghost, Trash2, RefreshCw, GitPullRequest, Terminal } from "lucide-react";
 import type { DriftItem } from "@/lib/iac-drift";
+import RemediateModal from "@/app/dashboard/attack-paths/RemediateModal";
+import PushToCliModal from "@/components/PushToCliModal";
+import { useDemoMode } from "@/components/DemoModeProvider";
+import { remediationTargetFromDriftItem, type RemediationTarget } from "@/lib/github/remediation-targets";
+import { handoffIssueFromDriftItem, type HandoffIssueItem } from "@/lib/handoff/tasks";
 
 const DRIFT_STYLES = {
   phantom: {
@@ -21,7 +26,17 @@ const DRIFT_STYLES = {
   },
 };
 
-function DriftCard({ item }: { item: DriftItem }) {
+function DriftCard({
+  item,
+  demoMode,
+  onCreatePr,
+  onSendToCli,
+}: {
+  item: DriftItem;
+  demoMode: boolean;
+  onCreatePr: (target: RemediationTarget) => void;
+  onSendToCli: (issue: HandoffIssueItem) => void;
+}) {
   const s = DRIFT_STYLES[item.driftType];
   const Icon = item.driftType === "phantom" ? Ghost : Trash2;
   return (
@@ -83,6 +98,28 @@ function DriftCard({ item }: { item: DriftItem }) {
           {item.description}
         </p>
       </div>
+      <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
+        {!demoMode && (
+          <button
+            type="button"
+            onClick={() => onCreatePr(remediationTargetFromDriftItem(item))}
+            className="flex items-center gap-1 px-2 py-1 text-[10px] font-mono uppercase tracking-wider border border-violet-500/35 text-violet-300 rounded hover:bg-violet-500/10 transition-colors"
+            title="Open a GitHub PR reconciling this drift"
+          >
+            <GitPullRequest className="w-3 h-3" />
+            Create PR
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => onSendToCli(handoffIssueFromDriftItem(item))}
+          className="flex items-center gap-1 px-2 py-1 text-[10px] font-mono uppercase tracking-wider border border-emerald-500/35 text-emerald-300 rounded hover:bg-emerald-500/10 transition-colors"
+          title="Send this drift item to AI / CLI Queue"
+        >
+          <Terminal className="w-3 h-3" />
+          Send to CLI
+        </button>
+      </div>
     </div>
   );
 }
@@ -126,11 +163,14 @@ const SAMPLE_STATE = JSON.stringify({
 }, null, 2);
 
 export default function IacDriftPage() {
+  const demoMode = useDemoMode();
   const [stateContent, setStateContent] = useState("");
   const [driftItems, setDriftItems] = useState<DriftItem[] | null>(null);
   const [tfResourceCount, setTfResourceCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [remediateTargets, setRemediateTargets] = useState<RemediationTarget[] | null>(null);
+  const [cliModalIssues, setCliModalIssues] = useState<HandoffIssueItem[] | null>(null);
 
   async function analyze(content?: string) {
     const toAnalyze = content ?? stateContent;
@@ -184,6 +224,28 @@ export default function IacDriftPage() {
             Compare live cloud resources against your Terraform state to surface shadow infrastructure and orphaned resources.
           </p>
         </div>
+        {driftItems && driftItems.length > 0 && (
+          <div className="flex items-center gap-2 flex-wrap">
+            {!demoMode && (
+              <button
+                type="button"
+                onClick={() => setRemediateTargets(driftItems.map(remediationTargetFromDriftItem))}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs uppercase tracking-widest border border-violet-500/40 text-violet-300 hover:bg-violet-500/10 transition-all"
+              >
+                <GitPullRequest className="w-3.5 h-3.5" />
+                Create PR
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setCliModalIssues(driftItems.map(handoffIssueFromDriftItem))}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs uppercase tracking-widest border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 transition-all"
+            >
+              <Terminal className="w-3.5 h-3.5" />
+              Send to CLI
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Input area */}
@@ -279,7 +341,15 @@ export default function IacDriftPage() {
                   <div className="space-y-2">
                     {driftItems
                       .filter((d) => d.driftType === "phantom")
-                      .map((item) => <DriftCard key={item.id} item={item} />)}
+                      .map((item) => (
+                        <DriftCard
+                          key={item.id}
+                          item={item}
+                          demoMode={demoMode}
+                          onCreatePr={(target) => setRemediateTargets([target])}
+                          onSendToCli={(issue) => setCliModalIssues([issue])}
+                        />
+                      ))}
                   </div>
                 </div>
               )}
@@ -293,7 +363,15 @@ export default function IacDriftPage() {
                   <div className="space-y-2">
                     {driftItems
                       .filter((d) => d.driftType === "orphaned")
-                      .map((item) => <DriftCard key={item.id} item={item} />)}
+                      .map((item) => (
+                        <DriftCard
+                          key={item.id}
+                          item={item}
+                          demoMode={demoMode}
+                          onCreatePr={(target) => setRemediateTargets([target])}
+                          onSendToCli={(issue) => setCliModalIssues([issue])}
+                        />
+                      ))}
                   </div>
                 </div>
               )}
@@ -301,6 +379,20 @@ export default function IacDriftPage() {
           )}
         </div>
       )}
+
+      {remediateTargets && (
+        <RemediateModal
+          targets={remediateTargets}
+          onClose={() => setRemediateTargets(null)}
+        />
+      )}
+
+      <PushToCliModal
+        isOpen={Boolean(cliModalIssues)}
+        onClose={() => setCliModalIssues(null)}
+        issues={cliModalIssues ?? []}
+        contextLabel="IaC Drift Items"
+      />
     </div>
   );
 }

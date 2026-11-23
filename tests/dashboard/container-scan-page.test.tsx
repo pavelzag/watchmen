@@ -87,21 +87,10 @@ describe("ContainerScanPage", () => {
     expect(copiedAll).toContain("gcloud services enable containeranalysis.googleapis.com --project=theinsite-prod");
   });
 
-  it("suppresses the noisy Container Analysis banner when Trivy is available and GCP images are present", async () => {
+  it("hides optional Container Analysis warnings completely when Trivy is available", async () => {
     mockFetchByRoute({
       containerScan: () => ({
-        results: [
-          {
-            imageRef: "europe-west3-docker.pkg.dev/theinsite-dev/cms/app@sha256:aaa",
-            imageName: "app:dev",
-            cloud: "gcp",
-            accountId: "theinsite-dev",
-            scannedAt: "2026-11-23T15:00:00.000Z",
-            vulnerabilities: [],
-            summary: { critical: 0, high: 0, medium: 0, low: 0, negligible: 0 },
-            scanStatus: "unscanned",
-          },
-        ],
+        results: [],
         warnings: [
           {
             service: "containeranalysis",
@@ -121,11 +110,12 @@ describe("ContainerScanPage", () => {
     renderPage();
 
     await waitFor(() => {
-      expect(screen.getByText("app:dev")).toBeInTheDocument();
+      expect(screen.getByText(/No container images found in Artifact Registry/i)).toBeInTheDocument();
     });
 
     expect(screen.queryByText(/GCP Container Scan Diagnostics/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/using built-in Trivy scanner/i)).toBeInTheDocument();
+    expect(screen.queryByText(/containeranalysis skipped/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/GCP Container Analysis is not enabled/i)).not.toBeInTheDocument();
   });
 
   it("filters by name/CVE/date/severity, paginates results, and opens Send to CLI & Create PR modals", async () => {

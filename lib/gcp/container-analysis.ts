@@ -266,8 +266,16 @@ async function listContainerAnalysisOccurrences(projectId: string): Promise<{
 function resolveArScanState(
   discovery: DiscoveryState | undefined,
   caFailed: boolean,
-  defaultScannedAt: string
+  defaultScannedAt: string,
+  skipContainerAnalysis = false
 ): { scanStatus: GcpImageScanStatus; scanStatusMessage?: string; scannedAt: string } {
+  if (skipContainerAnalysis) {
+    return {
+      scanStatus: "unscanned",
+      scanStatusMessage: "Not yet scanned. Run a Trivy scan to check for vulnerabilities.",
+      scannedAt: defaultScannedAt,
+    };
+  }
   const status = discovery?.analysisStatus?.toUpperCase();
   if (status === "FINISHED_SUCCESS") {
     return {
@@ -305,17 +313,24 @@ function resolveArScanState(
   };
 }
 
-export async function getGcpContainerVulnerabilities(projectId: string): Promise<ImageScanResult[]> {
+export async function getGcpContainerVulnerabilities(
+  projectId: string,
+  options?: { skipContainerAnalysis?: boolean }
+): Promise<ImageScanResult[]> {
+  const skipContainerAnalysis = Boolean(options?.skipContainerAnalysis);
+
   try {
     initGoogleAuth();
   } catch (error) {
-    logFetchWarning("containeranalysis", projectId, error);
+    logFetchWarning(skipContainerAnalysis ? "artifactregistry" : "containeranalysis", projectId, error);
     return [];
   }
 
   const [arResult, caResult] = await Promise.all([
     listArtifactRegistryDockerImages(projectId),
-    listContainerAnalysisOccurrences(projectId),
+    skipContainerAnalysis
+      ? Promise.resolve({ vulnerabilities: [] as any[], discoveryByUri: new Map<string, DiscoveryState>(), failed: false })
+      : listContainerAnalysisOccurrences(projectId),
   ]);
 
   const resultsByImage = new Map<string, ImageScanResult>();
@@ -327,7 +342,8 @@ export async function getGcpContainerVulnerabilities(projectId: string): Promise
     const { scanStatus, scanStatusMessage, scannedAt } = resolveArScanState(
       discovery,
       caResult.failed,
-      img.scannedAt
+      img.scannedAt,
+      skipContainerAnalysis
     );
 
     resultsByImage.set(img.normUri, {

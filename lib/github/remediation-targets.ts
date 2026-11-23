@@ -1,6 +1,8 @@
 import type { AttackPath, AttackNode } from "@/lib/gcp/attack-paths";
 import type { SecurityFinding, SecurityFindingSeverity } from "@/lib/gcp/types";
 import type { ContainerVulnerability, ImageScanResult } from "@/lib/container-scanning";
+import type { ControlResult } from "@/lib/compliance/types";
+import type { DriftItem } from "@/lib/iac-drift";
 
 export type RemediationTargetKind = "attack_path" | "finding" | "container_cve";
 export type RemediationBatchCategory =
@@ -375,4 +377,74 @@ export function remediationTargetsFromContainerImage(
       cve,
     })
   );
+}
+
+export function remediationTargetFromComplianceControl(
+  control: ControlResult,
+  opts?: { standard?: string; categoryName?: string; aiRecommendation?: string }
+): RemediationTarget {
+  const rawControlId = control.id.replace(/^(gcp|aws):/, "");
+  const projectIds = [...new Set(control.evidence.map((e) => e.projectId).filter(Boolean))];
+  const evidenceNames = control.evidence.map((e) => e.name).filter(Boolean);
+  const standardPrefix = opts?.standard
+    ? `[${opts.standard}${opts.categoryName ? ` · ${opts.categoryName}` : ""}] `
+    : "";
+
+  const mitigations = [
+    ...(control.remediationHint ? [control.remediationHint] : []),
+    ...(opts?.aiRecommendation ? [`AI guidance: ${opts.aiRecommendation.slice(0, 600)}`] : []),
+  ];
+
+  return {
+    id: control.id,
+    kind: "finding",
+    severity: control.impact,
+    title: `${rawControlId}: ${control.title}`,
+    description: `${standardPrefix}${control.description}`,
+    mitigations,
+    projectIds,
+    resourceType: "compliance_control",
+    resourceName: evidenceNames[0] ?? rawControlId,
+    searchTerms: collectTerms(
+      rawControlId,
+      control.title,
+      control.description,
+      control.remediationHint,
+      ...evidenceNames,
+      ...projectIds
+    ),
+    promptDetails: [
+      `    - Control: ${rawControlId} (${control.status.toUpperCase()}, impact: ${control.impact.toUpperCase()})`,
+      ...control.evidence.slice(0, 12).map(
+        (e) => `    - Evidence: ${e.name}${e.projectId ? ` (project: ${e.projectId})` : ""}`
+      ),
+      control.remediationHint ? `    - Hint: ${control.remediationHint}` : "",
+    ].filter(Boolean),
+    autoRemediable: true,
+  };
+}
+
+export function remediationTargetFromDriftItem(item: DriftItem): RemediationTarget {
+  const actionHint =
+    item.driftType === "phantom"
+      ? `Import or codify ${item.tfType} resource "${item.resourceId}" in Terraform.`
+      : `Remove or reconcile orphaned ${item.tfType} resource "${item.resourceId}" in Terraform.`;
+
+  return {
+    id: item.id,
+    kind: "finding",
+    severity: item.severity,
+    title: `${item.driftType === "phantom" ? "Phantom" : "Orphaned"} ${item.tfType}: ${item.resourceId}`,
+    description: item.description,
+    mitigations: [actionHint],
+    projectIds: [],
+    resourceType: item.resourceType,
+    resourceName: item.resourceId,
+    searchTerms: collectTerms(item.resourceId, item.tfType, item.resourceType, item.description),
+    promptDetails: [
+      `    - [${item.cloud.toUpperCase()} / ${item.driftType.toUpperCase()}] ${item.tfType} (${item.resourceId})`,
+      `    - Action: ${actionHint}`,
+    ],
+    autoRemediable: true,
+  };
 }

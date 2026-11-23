@@ -381,12 +381,23 @@ function ImageCard({
   );
 
   const [open, setOpen] = useState(severityFilter !== "all" || Boolean(searchNeedle && !imageLevelMatch));
+  const [cvePage, setCvePage] = useState(1);
+  const CVE_PAGE_SIZE = 25;
+
+  useEffect(() => {
+    setCvePage(1);
+  }, [severityFilter, searchNeedle, result.imageRef]);
 
   useEffect(() => {
     if (severityFilter !== "all" || (searchNeedle && !imageLevelMatch && sortedVulns.length > 0)) {
       setOpen(true);
     }
   }, [severityFilter, searchNeedle, imageLevelMatch, sortedVulns.length]);
+
+  const totalCvePages = Math.max(1, Math.ceil(sortedVulns.length / CVE_PAGE_SIZE));
+  const safeCvePage = Math.min(cvePage, totalCvePages);
+  const cveStart = (safeCvePage - 1) * CVE_PAGE_SIZE;
+  const paginatedVulns = sortedVulns.slice(cveStart, cveStart + CVE_PAGE_SIZE);
 
   const hasCritical = result.summary.critical > 0;
   const hasHigh = result.summary.high > 0;
@@ -549,15 +560,45 @@ function ImageCard({
             </div>
           ) : (
             <div>
-              {sortedVulns.map((cve, idx) => (
+              {paginatedVulns.map((cve, idx) => (
                 <CveRow
-                  key={`${cve.cveId}-${cve.packageName}-${cve.installedVersion}-${idx}`}
+                  key={`${cve.cveId}-${cve.packageName}-${cve.installedVersion}-${cveStart + idx}`}
                   cve={cve}
                   result={result}
                   onCreatePr={onCreatePr}
                   onSendToCli={onSendToCli}
                 />
               ))}
+              {sortedVulns.length > CVE_PAGE_SIZE && (
+                <div className="flex items-center justify-between gap-2 pt-3 mt-1 border-t border-slate-800/70 text-[11px] font-mono text-slate-400">
+                  <span>
+                    Showing {cveStart + 1}–{Math.min(cveStart + CVE_PAGE_SIZE, sortedVulns.length)} of {sortedVulns.length} CVEs
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setCvePage((p) => Math.max(1, p - 1))}
+                      disabled={safeCvePage <= 1}
+                      className="flex items-center gap-1 px-2 py-0.5 border border-slate-800 text-slate-300 hover:bg-white/5 disabled:opacity-40"
+                    >
+                      <ChevronLeft className="w-3 h-3" />
+                      Prev
+                    </button>
+                    <span className="px-1.5 text-slate-500">
+                      {safeCvePage} / {totalCvePages}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setCvePage((p) => Math.min(totalCvePages, p + 1))}
+                      disabled={safeCvePage >= totalCvePages}
+                      className="flex items-center gap-1 px-2 py-0.5 border border-slate-800 text-slate-300 hover:bg-white/5 disabled:opacity-40"
+                    >
+                      Next
+                      <ChevronRight className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -570,7 +611,6 @@ export default function ContainerScanPage() {
   const demoMode = useDemoMode();
   const [results, setResults] = useState<ImageScanResult[]>([]);
   const [warnings, setWarnings] = useState<GcpScanWarning[]>([]);
-  const [showIgnoredWarnings, setShowIgnoredWarnings] = useState(false);
   const [gcpProjects, setGcpProjects] = useState<string[]>([]);
   const [gcpAuthConfigured, setGcpAuthConfigured] = useState(true);
   const [trivyAvailable, setTrivyAvailable] = useState(false);
@@ -681,23 +721,17 @@ export default function ContainerScanPage() {
     setPage(1);
   }, [search, filter, cloudFilter, statusFilter, dateRange, dateFrom, dateTo, sortBy, pageSize]);
 
-  const hasGcpImages = useMemo(() => results.some((r) => r.cloud === "gcp"), [results]);
-
-  // If Trivy is active and Artifact Registry images are present, managed Container Analysis 403/disabled is non-blocking noise.
-  const { actionableWarnings, ignoredCaWarnings } = useMemo(() => {
-    const actionable: GcpScanWarning[] = [];
-    const ignored: GcpScanWarning[] = [];
-    for (const w of warnings) {
-      const isOptionalCaWarning =
-        w.service === "containeranalysis" &&
-        trivyAvailable &&
-        hasGcpImages &&
-        (w.code === "permission_denied" || w.code === "api_not_enabled");
-      if (isOptionalCaWarning) ignored.push(w);
-      else actionable.push(w);
-    }
-    return { actionableWarnings: actionable, ignoredCaWarnings: ignored };
-  }, [warnings, trivyAvailable, hasGcpImages]);
+  // When Trivy is active, managed Container Analysis 403/disabled is optional non-blocking noise.
+  const actionableWarnings = useMemo(() => {
+    return warnings.filter(
+      (w) =>
+        !(
+          w.service === "containeranalysis" &&
+          trivyAvailable &&
+          (w.code === "permission_denied" || w.code === "api_not_enabled")
+        )
+    );
+  }, [warnings, trivyAvailable]);
 
   const searchNeedle = search.trim().toLowerCase();
 
@@ -968,46 +1002,6 @@ export default function ContainerScanPage() {
               );
             })}
           </div>
-        </div>
-      )}
-
-      {!loading && ignoredCaWarnings.length > 0 && (
-        <div
-          className="px-3 py-2 text-[11px] font-mono text-slate-400"
-          style={{ border: "1px solid var(--border-dim)", background: "#09090b" }}
-        >
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <span>
-              GCP Container Analysis is not enabled on {ignoredCaWarnings.map((w) => w.projectId).join(", ")} — using built-in Trivy scanner ($0 GCP scanning cost).
-            </span>
-            <button
-              type="button"
-              onClick={() => setShowIgnoredWarnings((v) => !v)}
-              className="text-[10px] text-slate-500 hover:text-slate-300 underline"
-            >
-              {showIgnoredWarnings ? "Hide details" : "Show details"}
-            </button>
-          </div>
-          {showIgnoredWarnings && (
-            <div className="mt-2 pt-2 border-t border-slate-800 space-y-2">
-              {ignoredCaWarnings.map((w, idx) => {
-                const { warningCommand, fullText } = formatWarningText(w);
-                return (
-                  <div key={`${w.service}-${w.projectId}-${idx}`} className="space-y-1 text-[10px] text-slate-500">
-                    <div className="flex items-start justify-between gap-2">
-                      <span>{w.message}</span>
-                      <CopyTextButton
-                        text={fullText}
-                        label="Copy"
-                        className="flex items-center gap-1 px-1.5 py-0.5 border border-slate-700 rounded text-slate-400 hover:text-slate-200 shrink-0"
-                      />
-                    </div>
-                    {warningCommand && <pre className="text-slate-400 overflow-x-auto">{warningCommand}</pre>}
-                  </div>
-                );
-              })}
-            </div>
-          )}
         </div>
       )}
 

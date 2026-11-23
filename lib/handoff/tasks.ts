@@ -9,6 +9,7 @@ import type { AttackPath } from "@/lib/gcp/attack-paths";
 import type { SecurityFinding, SecurityFindingSeverity } from "@/lib/gcp/types";
 import type { ControlResult } from "@/lib/compliance/types";
 import type { ContainerVulnerability, ImageRegistry } from "@/lib/container-scanning";
+import type { DriftItem } from "@/lib/iac-drift";
 
 export type HandoffTool = "any" | "opencode" | "claude" | "codex";
 export type HandoffBatchMode = "grouped" | "combined" | "individual";
@@ -242,6 +243,27 @@ export function handoffIssueFromContainerCve(params: {
     remediationHint: fixHint,
     mitigations: [fixHint],
     proposedPlan: aiRecommendation,
+  });
+}
+
+export function handoffIssueFromDriftItem(item: DriftItem): HandoffIssueItem {
+  const actionHint =
+    item.driftType === "phantom"
+      ? `Import or codify ${item.tfType} resource "${item.resourceId}" in Terraform.`
+      : `Remove or reconcile orphaned ${item.tfType} resource "${item.resourceId}" in Terraform.`;
+
+  return sanitizeHandoffIssue({
+    id: item.id,
+    kind: "finding",
+    cloud: item.cloud,
+    severity: item.severity,
+    title: `${item.driftType === "phantom" ? "Phantom" : "Orphaned"} ${item.tfType}: ${item.resourceId}`,
+    description: item.description,
+    resourceName: item.resourceId,
+    resourceType: item.resourceType,
+    projectId: item.cloud,
+    remediationHint: actionHint,
+    mitigations: [actionHint],
   });
 }
 

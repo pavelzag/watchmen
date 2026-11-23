@@ -205,12 +205,35 @@ describe("GET /api/container-scan", () => {
     const body = await res.json();
 
     expect(body.trivyAvailable).toBe(true);
+    expect(mockGetGcpContainerVulnerabilities).toHaveBeenCalledWith("theinsite-dev", {
+      skipContainerAnalysis: true,
+    });
     expect(body.results[0]).toMatchObject({
       imageName: "web:dev",
       scanStatus: "scanned",
       scanner: "trivy",
       summary: { critical: 1, high: 0, medium: 0, low: 0, negligible: 0 },
     });
+  });
+
+  it("suppresses optional containeranalysis permission warnings when Trivy is available", async () => {
+    process.env.GCP_USE_ADC = "true";
+    process.env.GCP_PROJECTS = "theinsite-dev";
+    mockIsTrivyAvailable.mockResolvedValue(true);
+    mockAuth.mockResolvedValue({
+      user: { email: "pavel@theinsite.dev" },
+    });
+    mockGetGcpContainerVulnerabilities.mockImplementation(async (pid: string) => {
+      logFetchWarning("containeranalysis", pid, { code: 403, message: "Permission denied" });
+      return [];
+    });
+
+    const res = await GET();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(body.trivyAvailable).toBe(true);
+    expect(body.warnings).toEqual([]);
   });
 
   it("falls back to projects from user_snapshots when GCP_USE_ADC=true and GCP_PROJECTS/GCP_ORG_ID are unset", async () => {

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo, useRef, type KeyboardEvent, type MouseEvent } from "react";
 import Link from "next/link";
-import { ArrowLeft, ShieldAlert, ShieldCheck, RefreshCw, Loader2, ChevronDown, ChevronUp, AlertCircle, GitPullRequest, Search, X, Download, Star, FileSearch, CheckCircle2, Terminal } from "lucide-react";
+import { ArrowLeft, ShieldAlert, ShieldCheck, RefreshCw, Loader2, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, AlertCircle, GitPullRequest, Search, X, Download, Star, FileSearch, CheckCircle2, Terminal } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { computeFindings } from "@/lib/findings";
 import type { GcpSnapshot, SecurityFinding, SecurityFindingSeverity } from "@/lib/gcp/types";
@@ -52,9 +52,19 @@ const SEVERITY_CONFIG: Record<SecurityFindingSeverity, { label: string; color: s
 
 type Filter = "all" | SecurityFindingSeverity;
 type CloudFilter = "all" | "gcp" | "aws";
+type DateRangeFilter = "all" | "24h" | "7d" | "30d" | "custom";
+type SortOption = "severity" | "newest" | "oldest" | "name_asc" | "project_asc";
 type CloudFinding = SecurityFinding & {
   cloud: "gcp" | "aws";
   region?: string;
+  detectedAt?: string;
+};
+
+const SEVERITY_RANK: Record<SecurityFindingSeverity, number> = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
 };
 
 function toggleOnEnterOrSpace(event: KeyboardEvent<HTMLElement>, toggle: () => void) {
@@ -63,7 +73,7 @@ function toggleOnEnterOrSpace(event: KeyboardEvent<HTMLElement>, toggle: () => v
   toggle();
 }
 
-function awsFindingToCloudFinding(finding: AwsSecurityFinding): CloudFinding {
+function awsFindingToCloudFinding(finding: AwsSecurityFinding, detectedAt?: string): CloudFinding {
   return {
     id: `aws:${finding.id}`,
     severity: finding.severity,
@@ -75,6 +85,7 @@ function awsFindingToCloudFinding(finding: AwsSecurityFinding): CloudFinding {
     remediationHint: finding.remediationHint,
     cloud: "aws",
     region: finding.region,
+    detectedAt,
   };
 }
 
@@ -572,6 +583,11 @@ function FindingCard({
             <SeverityBadge severity={finding.severity} />
             <span className="text-xs text-slate-500 font-mono">{finding.resourceType}</span>
             {finding.region && <span className="text-xs text-slate-600 font-mono">{finding.region}</span>}
+            {finding.detectedAt && (
+              <span className="text-[11px] text-slate-600 font-mono">
+                · {new Date(finding.detectedAt).toLocaleDateString()}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <span className="px-1.5 py-0.5 rounded text-xs bg-slate-700/60 text-slate-300 font-mono shrink-0">
@@ -880,6 +896,14 @@ export default function FindingsPage() {
   const [cliModalIssues, setCliModalIssues] = useState<HandoffIssueItem[] | null>(null);
   const [agentRunsByFinding, setAgentRunsByFinding] = useState<Record<string, FindingAgentRuns>>({});
   const [search, setSearch] = useState("");
+  const [projectFilter, setProjectFilter] = useState("all");
+  const [resourceTypeFilter, setResourceTypeFilter] = useState("all");
+  const [dateRange, setDateRange] = useState<DateRangeFilter>("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [sortBy, setSortBy] = useState<SortOption>("severity");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [showWatchlist, setShowWatchlist] = useState(false);
   const [pinned, setPinned] = useState<Set<string>>(new Set());
   const autoOpenRemediationRef = useRef(false);
@@ -932,7 +956,13 @@ export default function FindingsPage() {
 
       if (gcpResult.status === "fulfilled" && gcpResult.value.ok) {
         const snap: GcpSnapshot = await gcpResult.value.json();
-        nextFindings.push(...computeFindings(snap).map((finding) => ({ ...finding, cloud: "gcp" as const })));
+        nextFindings.push(
+          ...computeFindings(snap).map((finding) => ({
+            ...finding,
+            cloud: "gcp" as const,
+            detectedAt: snap.fetchedAt,
+          }))
+        );
         if (snap.fetchedAt) fetchedAts.push(snap.fetchedAt);
       } else if (gcpResult.status === "rejected" || (gcpResult.status === "fulfilled" && gcpResult.value.status !== 404)) {
         errors.push("Failed to load GCP data");
@@ -940,7 +970,9 @@ export default function FindingsPage() {
 
       if (awsResult.status === "fulfilled" && awsResult.value.ok) {
         const snap: AwsSnapshot = await awsResult.value.json();
-        nextFindings.push(...computeAwsFindings(snap).map(awsFindingToCloudFinding));
+        nextFindings.push(
+          ...computeAwsFindings(snap).map((finding) => awsFindingToCloudFinding(finding, snap.fetchedAt))
+        );
         if (snap.fetchedAt) fetchedAts.push(snap.fetchedAt);
       } else if (awsResult.status === "rejected" || (awsResult.status === "fulfilled" && awsResult.value.status !== 404)) {
         errors.push("Failed to load AWS data");
@@ -970,6 +1002,10 @@ export default function FindingsPage() {
 
   useEffect(() => { load(); }, []);
 
+  useEffect(() => {
+    setPage(1);
+  }, [search, filter, cloudFilter, projectFilter, resourceTypeFilter, dateRange, dateFrom, dateTo, sortBy, showWatchlist, pageSize]);
+
   const severities: SecurityFindingSeverity[] = ["critical", "high", "medium", "low"];
 
   const cloudCounts = {
@@ -978,41 +1014,140 @@ export default function FindingsPage() {
     aws: findings.filter((f) => f.cloud === "aws").length,
   };
 
-  const cloudFiltered = cloudFilter === "all" ? findings : findings.filter((f) => f.cloud === cloudFilter);
-  const severityFiltered = filter === "all" ? cloudFiltered : cloudFiltered.filter((f) => f.severity === filter);
-  const watchlistFiltered = showWatchlist ? severityFiltered.filter((f) => pinned.has(f.id)) : severityFiltered;
+  const availableProjects = useMemo(
+    () => Array.from(new Set(findings.map((f) => f.projectId).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [findings]
+  );
+
+  const availableResourceTypes = useMemo(
+    () => Array.from(new Set(findings.map((f) => f.resourceType).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [findings]
+  );
 
   const searchQuery = search.trim().toLowerCase();
+
+  const baseFiltered = useMemo(() => {
+    const now = Date.now();
+    const minTs =
+      dateRange === "24h"
+        ? now - 24 * 3600_000
+        : dateRange === "7d"
+          ? now - 7 * 86400_000
+          : dateRange === "30d"
+            ? now - 30 * 86400_000
+            : dateRange === "custom" && dateFrom
+              ? new Date(`${dateFrom}T00:00:00`).getTime()
+              : null;
+    const maxTs =
+      dateRange === "custom" && dateTo
+        ? new Date(`${dateTo}T23:59:59.999`).getTime()
+        : null;
+
+    return findings.filter((f) => {
+      if (cloudFilter !== "all" && f.cloud !== cloudFilter) return false;
+      if (projectFilter !== "all" && f.projectId !== projectFilter) return false;
+      if (resourceTypeFilter !== "all" && f.resourceType !== resourceTypeFilter) return false;
+      if (showWatchlist && !pinned.has(f.id)) return false;
+
+      if (minTs !== null || maxTs !== null) {
+        if (!f.detectedAt) return false;
+        const ts = new Date(f.detectedAt).getTime();
+        if (!Number.isFinite(ts)) return false;
+        if (minTs !== null && ts < minTs) return false;
+        if (maxTs !== null && ts > maxTs) return false;
+      }
+
+      if (searchQuery) {
+        const matches =
+          f.title.toLowerCase().includes(searchQuery) ||
+          f.description.toLowerCase().includes(searchQuery) ||
+          f.resourceName.toLowerCase().includes(searchQuery) ||
+          f.resourceType.toLowerCase().includes(searchQuery) ||
+          f.projectId.toLowerCase().includes(searchQuery) ||
+          (f.remediationHint ?? "").toLowerCase().includes(searchQuery) ||
+          (f.region ?? "").toLowerCase().includes(searchQuery) ||
+          f.id.toLowerCase().includes(searchQuery);
+        if (!matches) return false;
+      }
+
+      return true;
+    });
+  }, [findings, cloudFilter, projectFilter, resourceTypeFilter, showWatchlist, pinned, dateRange, dateFrom, dateTo, searchQuery]);
+
   const displayed = useMemo(() => {
-    if (!searchQuery) return watchlistFiltered;
-    return watchlistFiltered.filter((f) =>
-      f.title.toLowerCase().includes(searchQuery) ||
-      f.description.toLowerCase().includes(searchQuery) ||
-      f.resourceName.toLowerCase().includes(searchQuery) ||
-      f.resourceType.toLowerCase().includes(searchQuery) ||
-      f.projectId.toLowerCase().includes(searchQuery) ||
-      (f.remediationHint ?? "").toLowerCase().includes(searchQuery) ||
-      (f.region ?? "").toLowerCase().includes(searchQuery)
-    );
-  }, [watchlistFiltered, searchQuery]);
+    const sevFiltered = filter === "all" ? baseFiltered : baseFiltered.filter((f) => f.severity === filter);
+    return [...sevFiltered].sort((a, b) => {
+      if (sortBy === "newest") {
+        const ta = a.detectedAt ? new Date(a.detectedAt).getTime() : 0;
+        const tb = b.detectedAt ? new Date(b.detectedAt).getTime() : 0;
+        if (tb !== ta) return tb - ta;
+      } else if (sortBy === "oldest") {
+        const ta = a.detectedAt ? new Date(a.detectedAt).getTime() : 0;
+        const tb = b.detectedAt ? new Date(b.detectedAt).getTime() : 0;
+        if (ta !== tb) return ta - tb;
+      } else if (sortBy === "name_asc") {
+        const titleCmp = a.title.localeCompare(b.title);
+        if (titleCmp !== 0) return titleCmp;
+        return a.resourceName.localeCompare(b.resourceName);
+      } else if (sortBy === "project_asc") {
+        const projCmp = a.projectId.localeCompare(b.projectId);
+        if (projCmp !== 0) return projCmp;
+      }
+      const rankCmp = SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity];
+      if (rankCmp !== 0) return rankCmp;
+      return a.title.localeCompare(b.title);
+    });
+  }, [baseFiltered, filter, sortBy]);
 
   const counts = {
-    all: cloudFiltered.length,
-    critical: cloudFiltered.filter((f) => f.severity === "critical").length,
-    high: cloudFiltered.filter((f) => f.severity === "high").length,
-    medium: cloudFiltered.filter((f) => f.severity === "medium").length,
-    low: cloudFiltered.filter((f) => f.severity === "low").length,
+    all: baseFiltered.length,
+    critical: baseFiltered.filter((f) => f.severity === "critical").length,
+    high: baseFiltered.filter((f) => f.severity === "high").length,
+    medium: baseFiltered.filter((f) => f.severity === "medium").length,
+    low: baseFiltered.filter((f) => f.severity === "low").length,
   };
+
+  const totalPages = Math.max(1, Math.ceil(displayed.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const pageStart = (safePage - 1) * pageSize;
+  const paginated = displayed.slice(pageStart, pageStart + pageSize);
 
   const remediableFindings = displayed;
   const bySeverity = severities
     .map((sev) => ({
       severity: sev,
-      items: displayed.filter((f) => f.severity === sev),
+      items: paginated.filter((f) => f.severity === sev),
     }))
     .filter((g) => g.items.length > 0);
 
   const pinnedCount = pinned.size;
+
+  const hasActiveFilters =
+    Boolean(search) ||
+    filter !== "all" ||
+    cloudFilter !== "all" ||
+    projectFilter !== "all" ||
+    resourceTypeFilter !== "all" ||
+    dateRange !== "all" ||
+    showWatchlist ||
+    sortBy !== "severity";
+
+  function clearFilters() {
+    setSearch("");
+    setFilter("all");
+    setCloudFilter("all");
+    setProjectFilter("all");
+    setResourceTypeFilter("all");
+    setDateRange("all");
+    setDateFrom("");
+    setDateTo("");
+    setSortBy("severity");
+    setShowWatchlist(false);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("cloud");
+    url.searchParams.delete("severity");
+    window.history.replaceState(null, "", url.toString());
+  }
 
   useEffect(() => {
     if (loading || autoOpenRemediationRef.current) return;
@@ -1090,23 +1225,111 @@ export default function FindingsPage() {
         <p className="text-sm text-red-400 px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/20">{error}</p>
       )}
 
-      {/* Search bar */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 pointer-events-none" />
-        <input
-          type="text"
-          placeholder="Search findings by title, resource, description, hint…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="w-full pl-9 pr-8 py-2 text-sm bg-slate-900/60 border border-slate-700/60 rounded-lg text-slate-200 placeholder-slate-600 focus:outline-none focus:border-slate-500 transition-colors"
-        />
-        {search && (
-          <button
-            onClick={() => setSearch("")}
-            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
+      {/* Search & Filter Controls */}
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative flex-1 min-w-[240px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Search findings by name, title, resource, project, hint…"
+              aria-label="Search findings"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full pl-9 pr-8 py-2 text-sm bg-slate-900/60 border border-slate-700/60 rounded-lg text-slate-200 placeholder-slate-600 focus:outline-none focus:border-slate-500 transition-colors"
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch("")}
+                aria-label="Clear search"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          <select
+            value={projectFilter}
+            onChange={(e) => setProjectFilter(e.target.value)}
+            aria-label="Filter by project or account"
+            className="px-2.5 py-2 bg-slate-900/60 border border-slate-700/60 rounded-lg text-xs text-slate-300 focus:outline-none focus:border-slate-500"
           >
-            <X className="w-3.5 h-3.5" />
-          </button>
+            <option value="all">Project / Account: All</option>
+            {availableProjects.map((proj) => (
+              <option key={proj} value={proj}>{proj}</option>
+            ))}
+          </select>
+
+          <select
+            value={resourceTypeFilter}
+            onChange={(e) => setResourceTypeFilter(e.target.value)}
+            aria-label="Filter by resource type"
+            className="px-2.5 py-2 bg-slate-900/60 border border-slate-700/60 rounded-lg text-xs text-slate-300 focus:outline-none focus:border-slate-500"
+          >
+            <option value="all">Resource Type: All</option>
+            {availableResourceTypes.map((rt) => (
+              <option key={rt} value={rt}>{rt}</option>
+            ))}
+          </select>
+
+          <select
+            value={dateRange}
+            onChange={(e) => setDateRange(e.target.value as DateRangeFilter)}
+            aria-label="Filter by date"
+            className="px-2.5 py-2 bg-slate-900/60 border border-slate-700/60 rounded-lg text-xs text-slate-300 focus:outline-none focus:border-slate-500"
+          >
+            <option value="all">Date: All time</option>
+            <option value="24h">Last 24 hours</option>
+            <option value="7d">Last 7 days</option>
+            <option value="30d">Last 30 days</option>
+            <option value="custom">Custom range…</option>
+          </select>
+
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as SortOption)}
+            aria-label="Sort findings"
+            className="px-2.5 py-2 bg-slate-900/60 border border-slate-700/60 rounded-lg text-xs text-slate-300 focus:outline-none focus:border-slate-500"
+          >
+            <option value="severity">Sort: Severity</option>
+            <option value="newest">Sort: Newest first</option>
+            <option value="oldest">Sort: Oldest first</option>
+            <option value="name_asc">Sort: Name (A–Z)</option>
+            <option value="project_asc">Sort: Project (A–Z)</option>
+          </select>
+
+          {hasActiveFilters && (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="px-2.5 py-2 rounded-lg text-xs border border-slate-700/60 text-slate-400 hover:text-slate-200 hover:border-slate-500 transition-colors"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
+
+        {dateRange === "custom" && (
+          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+            <span>From:</span>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              aria-label="Date from"
+              className="px-2 py-1 bg-slate-900/60 border border-slate-700/60 rounded text-xs text-slate-200"
+            />
+            <span>To:</span>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              aria-label="Date to"
+              className="px-2 py-1 bg-slate-900/60 border border-slate-700/60 rounded text-xs text-slate-200"
+            />
+          </div>
         )}
       </div>
 
@@ -1195,7 +1418,7 @@ export default function FindingsPage() {
           );
         })}
 
-        {search && (
+        {hasActiveFilters && (
           <span className="text-xs text-slate-500 ml-1">
             — {displayed.length} match{displayed.length !== 1 ? "es" : ""}
           </span>
@@ -1253,7 +1476,7 @@ export default function FindingsPage() {
         contextLabel="Security Findings"
       />
 
-      {!loading && bySeverity.map(({ severity, items }) => {
+      {!loading && sortBy === "severity" && bySeverity.map(({ severity, items }) => {
         const cfg = SEVERITY_CONFIG[severity];
         return (
           <div key={severity} className="space-y-2">
@@ -1281,6 +1504,67 @@ export default function FindingsPage() {
           </div>
         );
       })}
+
+      {!loading && sortBy !== "severity" && paginated.length > 0 && (
+        <div className="space-y-2">
+          {paginated.map((finding) => (
+            <FindingCard
+              key={finding.id}
+              finding={finding}
+              cfg={SEVERITY_CONFIG[finding.severity]}
+              pinned={pinned.has(finding.id)}
+              onTogglePin={togglePin}
+              onOpenRemediation={(targetFinding) => openRemediation([targetFinding])}
+              onSendToCli={(issue) => setCliModalIssues([issue])}
+              agentRuns={agentRunsByFinding[finding.id]}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Pagination */}
+      {!loading && displayed.length > 0 && (
+        <div className="flex items-center justify-between gap-3 flex-wrap pt-3 border-t border-slate-800 text-xs text-slate-400">
+          <div className="flex items-center gap-2">
+            <span>
+              Showing {pageStart + 1}–{Math.min(pageStart + pageSize, displayed.length)} of {displayed.length}
+            </span>
+            <select
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+              aria-label="Items per page"
+              className="px-2 py-1 bg-slate-900/60 border border-slate-700/60 rounded text-xs text-slate-300"
+            >
+              <option value={10}>10 / page</option>
+              <option value={25}>25 / page</option>
+              <option value={50}>50 / page</option>
+            </select>
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={safePage <= 1}
+              className="flex items-center gap-1 px-2.5 py-1 rounded border border-slate-700/60 text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+              Prev
+            </button>
+            <span className="px-2 text-slate-500">
+              Page {safePage} / {totalPages}
+            </span>
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={safePage >= totalPages}
+              className="flex items-center gap-1 px-2.5 py-1 rounded border border-slate-700/60 text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+            >
+              Next
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

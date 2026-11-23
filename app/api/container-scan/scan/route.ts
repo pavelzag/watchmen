@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
 
     // Discover authorized Artifact Registry images across the user's projects
     const gcpLists = await Promise.all(
-      ctx.projectIds.map((pid) => getGcpContainerVulnerabilities(pid))
+      ctx.projectIds.map((pid) => getGcpContainerVulnerabilities(pid, { skipContainerAnalysis: true }))
     );
     const allGcpImages = gcpLists.flat();
     const byNormRef = new Map<string, ImageScanResult>();

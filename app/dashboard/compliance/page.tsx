@@ -18,6 +18,7 @@ import {
   ExternalLink,
   PanelRight,
   Terminal,
+  GitPullRequest,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ComplianceReport, ComplianceCategory, ControlResult, ControlStatus, ControlImpact } from "@/lib/compliance/types";
@@ -25,9 +26,11 @@ import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
 import { linkifyText } from "@/lib/utils/linkify";
 import CopyAiResponseButton from "@/components/CopyAiResponseButton";
 import PushToCliModal from "@/components/PushToCliModal";
+import RemediateModal from "@/app/dashboard/attack-paths/RemediateModal";
 import ScanCloudButton from "@/components/ScanCloudButton";
 import { useDemoMode } from "@/components/DemoModeProvider";
 import { handoffIssueFromComplianceControl, type HandoffIssueItem } from "@/lib/handoff/tasks";
+import { remediationTargetFromComplianceControl, type RemediationTarget } from "@/lib/github/remediation-targets";
 import type { ResourceItem } from "@/lib/claude/query-processor";
 
 // ── Config ────────────────────────────────────────────────────────────────
@@ -658,6 +661,7 @@ function ControlCard({
   onSuppressed,
   onRevoked,
   onOpenDrawer,
+  onCreatePr,
   onSendToCli,
 }: {
   control: ControlResult;
@@ -666,6 +670,7 @@ function ControlCard({
   onSuppressed: (id: string, justification: string) => void;
   onRevoked: (id: string) => void;
   onOpenDrawer: (control: ControlResult) => void;
+  onCreatePr: (target: RemediationTarget) => void;
   onSendToCli: (issue: HandoffIssueItem) => void;
 }) {
   const demoMode = useDemoMode();
@@ -937,6 +942,25 @@ function ControlCard({
               {rec.loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
               {rec.loading ? "Asking AI…" : demoMode ? "Disabled in demo" : rec.text ? "AI Recommendation" : "Ask AI"}
             </button>
+            {control.status !== "pass" && !demoMode && (
+              <button
+                type="button"
+                onClick={() =>
+                  onCreatePr(
+                    remediationTargetFromComplianceControl(control, {
+                      standard: standard === "iso27001" ? "ISO 27001:2022" : "SOC 2 Type II",
+                      categoryName,
+                      aiRecommendation: rec.text ?? undefined,
+                    })
+                  )
+                }
+                className="flex items-center gap-1.5 text-xs font-medium transition-all duration-150 rounded-lg px-2.5 py-1 border border-violet-500/40 text-violet-300 hover:bg-violet-500/10"
+                title="Open a GitHub PR with fixes for this compliance control"
+              >
+                <GitPullRequest className="w-3 h-3" />
+                Create PR
+              </button>
+            )}
             {control.status !== "pass" && (
               <button
                 type="button"
@@ -1009,6 +1033,7 @@ function CategorySection({
   onSuppressed,
   onRevoked,
   onOpenDrawer,
+  onCreatePr,
   onSendToCli,
 }: {
   category: ComplianceCategory;
@@ -1018,6 +1043,7 @@ function CategorySection({
   onSuppressed: (id: string, justification: string) => void;
   onRevoked: (id: string) => void;
   onOpenDrawer: (control: ControlResult) => void;
+  onCreatePr: (target: RemediationTarget) => void;
   onSendToCli: (issue: HandoffIssueItem) => void;
 }) {
   const visibleControls = (forceExpand || filter === "all")
@@ -1090,6 +1116,7 @@ function CategorySection({
               onSuppressed={onSuppressed}
               onRevoked={onRevoked}
               onOpenDrawer={onOpenDrawer}
+              onCreatePr={onCreatePr}
               onSendToCli={onSendToCli}
             />
           ))}
@@ -1109,6 +1136,7 @@ const STANDARDS: { id: Standard; label: string; sublabel: string }[] = [
 ];
 
 export default function CompliancePage() {
+  const demoMode = useDemoMode();
   const [standard, setStandard] = useState<Standard>("soc2");
   const [report, setReport] = useState<ComplianceReport | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1118,6 +1146,7 @@ export default function CompliancePage() {
   const [history, setHistory] = useState<HistoryPoint[]>([]);
   const [isPrinting, setIsPrinting] = useState(false);
   const [drawerControl, setDrawerControl] = useState<ControlResult | null>(null);
+  const [remediateTargets, setRemediateTargets] = useState<RemediationTarget[] | null>(null);
   const [cliModalIssues, setCliModalIssues] = useState<HandoffIssueItem[] | null>(null);
 
   async function load(std: Standard = standard) {
@@ -1236,18 +1265,27 @@ export default function CompliancePage() {
     }))
     .filter((category) => category.controls.length > 0);
 
-  const actionableComplianceIssues: HandoffIssueItem[] = cloudFilteredCategories.flatMap((category) =>
+  const actionableControls = cloudFilteredCategories.flatMap((category) =>
     category.controls
       .filter((control) => {
         if (filter !== "all") return control.status === filter;
         return control.status === "fail" || control.status === "warning";
       })
-      .map((control) =>
-        handoffIssueFromComplianceControl(control, {
-          standard: standard === "iso27001" ? "ISO 27001:2022" : "SOC 2 Type II",
-          categoryName: category.name,
-        })
-      )
+      .map((control) => ({ control, categoryName: category.name }))
+  );
+
+  const actionableComplianceIssues: HandoffIssueItem[] = actionableControls.map(({ control, categoryName }) =>
+    handoffIssueFromComplianceControl(control, {
+      standard: standard === "iso27001" ? "ISO 27001:2022" : "SOC 2 Type II",
+      categoryName,
+    })
+  );
+
+  const actionableRemediationTargets: RemediationTarget[] = actionableControls.map(({ control, categoryName }) =>
+    remediationTargetFromComplianceControl(control, {
+      standard: standard === "iso27001" ? "ISO 27001:2022" : "SOC 2 Type II",
+      categoryName,
+    })
   );
 
   const scoreColor = report
@@ -1287,6 +1325,16 @@ export default function CompliancePage() {
           )}
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {report && actionableRemediationTargets.length > 0 && !demoMode && (
+            <button
+              type="button"
+              onClick={() => setRemediateTargets(actionableRemediationTargets)}
+              className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-violet-500/40 text-violet-300 hover:bg-violet-500/10 transition-colors"
+            >
+              <GitPullRequest className="w-3.5 h-3.5" />
+              Create PR
+            </button>
+          )}
           {report && actionableComplianceIssues.length > 0 && (
             <button
               type="button"
@@ -1486,6 +1534,7 @@ export default function CompliancePage() {
               onSuppressed={handleSuppressed}
               onRevoked={handleRevoked}
               onOpenDrawer={setDrawerControl}
+              onCreatePr={(target) => setRemediateTargets([target])}
               onSendToCli={(issue) => setCliModalIssues([issue])}
             />
           ))}
@@ -1523,6 +1572,13 @@ export default function CompliancePage() {
         control={drawerControl}
         standard={standard}
         onClose={() => setDrawerControl(null)}
+      />
+    )}
+
+    {remediateTargets && (
+      <RemediateModal
+        targets={remediateTargets}
+        onClose={() => setRemediateTargets(null)}
       />
     )}
 

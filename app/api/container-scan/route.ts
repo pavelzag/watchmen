@@ -64,24 +64,31 @@ export async function GET() {
     }
 
     const awsRegions = getAwsRegions();
+    const trivyAvailable = !isGcpMock ? await isTrivyAvailable() : false;
+    const skipContainerAnalysis =
+      trivyAvailable && process.env.GCP_ENABLE_CONTAINER_ANALYSIS !== "true";
 
     const gcpPromise = isGcpMock
       ? Promise.resolve(getMockScanResults().filter((r) => r.cloud === "gcp"))
       : gcpAuthMode && gcpProjectIds.length > 0
-        ? Promise.all(gcpProjectIds.map((pid) => getGcpContainerVulnerabilities(pid)))
-            .then((lists) => mergeCachedTrivyScans(lists.flat()))
+        ? Promise.all(
+            gcpProjectIds.map((pid) =>
+              skipContainerAnalysis
+                ? getGcpContainerVulnerabilities(pid, { skipContainerAnalysis: true })
+                : getGcpContainerVulnerabilities(pid)
+            )
+          ).then((lists) => mergeCachedTrivyScans(lists.flat()))
         : Promise.resolve([] as ImageScanResult[]);
 
     const awsPromise = isAwsMock
       ? Promise.resolve(getMockScanResults().filter((r) => r.cloud === "aws"))
       : Promise.all(awsRegions.map((region) => getAwsContainerVulnerabilities(region))).then((lists) => lists.flat());
 
-    const [gcpResults, awsResults, ghcrResults, dockerHubResults, trivyAvailable] = await Promise.all([
+    const [gcpResults, awsResults, ghcrResults, dockerHubResults] = await Promise.all([
       gcpPromise,
       awsPromise,
       getGhcrVulnerabilities(email),
       getDockerHubVulnerabilities(email),
-      !isGcpMock ? isTrivyAvailable() : Promise.resolve(false),
     ]);
 
     const results = sortScanResults([
@@ -91,9 +98,18 @@ export async function GET() {
       ...dockerHubResults,
     ]);
 
+    const warnings = getGcpScanWarnings().filter(
+      (w) =>
+        !(
+          trivyAvailable &&
+          w.service === "containeranalysis" &&
+          (w.code === "permission_denied" || w.code === "api_not_enabled")
+        )
+    );
+
     return NextResponse.json({
       results,
-      warnings: getGcpScanWarnings(),
+      warnings,
       gcpProjects: gcpProjectIds,
       gcpAuthConfigured: isGcpMock || gcpAuthMode !== null,
       trivyAvailable,

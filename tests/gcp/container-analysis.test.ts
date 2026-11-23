@@ -362,4 +362,47 @@ describe("GCP Artifact Registry & Container Analysis scanning", () => {
       requiredRoles: ["roles/artifactregistry.reader"],
     });
   });
+
+  it("skips querying Container Analysis when skipContainerAnalysis is true (Trivy mode)", async () => {
+    mockLocationsList.mockResolvedValue({
+      data: {
+        locations: [{ name: "projects/theinsite-dev/locations/europe-west3" }],
+      },
+    });
+    mockRepositoriesList.mockResolvedValue({
+      data: {
+        repositories: [
+          {
+            name: "projects/theinsite-dev/locations/europe-west3/repositories/apps",
+            format: "DOCKER",
+          },
+        ],
+      },
+    });
+    mockDockerImagesList.mockResolvedValue({
+      data: {
+        dockerImages: [
+          {
+            uri: "europe-west3-docker.pkg.dev/theinsite-dev/apps/gateway@sha256:deadbeef",
+            tags: ["dev"],
+            updateTime: "2026-11-22T10:00:00Z",
+          },
+        ],
+      },
+    });
+
+    const results = await getGcpContainerVulnerabilities("theinsite-dev", {
+      skipContainerAnalysis: true,
+    });
+    const warnings = getGcpScanWarnings();
+
+    expect(mockOccurrencesList).not.toHaveBeenCalled();
+    expect(warnings).toHaveLength(0);
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({
+      imageName: "gateway:dev",
+      scanStatus: "unscanned",
+      scanStatusMessage: "Not yet scanned. Run a Trivy scan to check for vulnerabilities.",
+    });
+  });
 });
