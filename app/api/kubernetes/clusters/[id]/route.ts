@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { getUserCluster, updateUserCluster, deleteUserCluster } from "@/lib/kubernetes/clusters";
+import { getUserCluster, updateUserCluster, deleteUserCluster, hasInlineKubeconfig } from "@/lib/kubernetes/clusters";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
@@ -8,7 +8,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   const { id } = await params;
   const cluster = await getUserCluster(session.user.email, id);
   if (!cluster) return NextResponse.json({ error: "Cluster not found." }, { status: 404 });
-  const safe = { ...cluster, kubeconfigContent: undefined };
+  const safe = { ...cluster, hasKubeconfig: hasInlineKubeconfig(cluster), kubeconfigContent: undefined };
   return NextResponse.json({ cluster: safe });
 }
 
@@ -27,7 +27,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   };
   try {
     const cluster = await updateUserCluster(session.user.email, id, body);
-    const safe = { ...cluster, kubeconfigContent: undefined };
+    const safe = { ...cluster, hasKubeconfig: hasInlineKubeconfig(cluster), kubeconfigContent: undefined };
     return NextResponse.json({ cluster: safe });
   } catch (e: unknown) {
     const err = e as { message?: string };

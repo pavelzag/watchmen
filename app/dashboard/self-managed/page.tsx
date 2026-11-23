@@ -2,8 +2,10 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import DetailPageHeader from "@/components/DetailPageHeader";
 import { cn } from "@/lib/utils";
+import { notifySelfManagedClustersChanged } from "@/lib/kubernetes/cluster-events";
 import { Check, Loader2, Server, Layers, Box, Network, Terminal, AlertCircle, Trash2 } from "lucide-react";
 
 interface LocalKubernetesStatus {
@@ -50,6 +52,7 @@ interface ResourcesResponse {
 }
 
 export default function SelfManagedPage() {
+  const router = useRouter();
   const [clusters, setClusters] = useState<Array<{ id: string; name: string }>>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [status, setStatus] = useState<LocalKubernetesStatus | null>(null);
@@ -126,6 +129,8 @@ export default function SelfManagedPage() {
       }
       const next = clusters.filter((c) => c.id !== selectedId);
       setClusters(next);
+      notifySelfManagedClustersChanged(next.length > 0);
+      router.refresh();
       setSelectedId(next.length ? next[0].id : null);
       setStatus(null);
       setResources(null);
@@ -197,6 +202,8 @@ export default function SelfManagedPage() {
                           }
                           const next = clusters.filter((x) => x.id !== c.id);
                           setClusters(next);
+                          notifySelfManagedClustersChanged(next.length > 0);
+                          router.refresh();
                           if (selectedId === c.id) {
                             setSelectedId(next.length ? next[0].id : null);
                             setStatus(null);

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, Eye, EyeOff, Trash2, Check, Loader2, AlertCircle, CheckCircle2, Star, Plus, X, ShieldCheck, Bell, Send, Wifi, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AIProvider, AIKeyRecord } from "@/lib/ai/client";
@@ -17,6 +17,7 @@ import { getBrowserAIKeys, setBrowserAIKey, removeBrowserAIKey, getActiveBrowser
 import SelfManagedClusterCard from "@/components/SelfManagedClusterCard";
 import TasksPanel from "@/components/TasksPanel";
 import CliApiTokensCard from "@/components/CliApiTokensCard";
+import { notifySelfManagedClustersChanged } from "@/lib/kubernetes/cluster-events";
 
 interface CloudCredRecord {
   provider: string;
@@ -227,6 +228,7 @@ type SettingsTab = "ai" | "self-managed" | "integrations" | "alerts" | "tasks" |
 const SETTINGS_TABS: SettingsTab[] = ["ai", "self-managed", "integrations", "alerts", "tasks", "diagnostics"];
 
 export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const [keys, setKeys] = useState<AIKeyRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -241,6 +243,13 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
     const tab = searchParams.get("tab");
     return SETTINGS_TABS.includes(tab as SettingsTab) ? (tab as SettingsTab) : "ai";
   });
+
+  useEffect(() => {
+    const tab = searchParams.get("tab");
+    if (tab && SETTINGS_TABS.includes(tab as SettingsTab)) {
+      setActiveTab(tab as SettingsTab);
+    }
+  }, [searchParams]);
 
   // Server-backed cloud credentials state (non-demo users)
   const [cloudCreds, setCloudCreds] = useState<CloudCredRecord[]>([]);
@@ -408,8 +417,9 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
       fetch("/api/kubernetes/clusters", { cache: "no-store" })
         .then((r) => r.json())
         .then((d) => {
-          if (Array.isArray(d.clusters)) setClusters(d.clusters);
-          else setClusters([]);
+          const list = Array.isArray(d.clusters) ? d.clusters : [];
+          setClusters(list);
+          notifySelfManagedClustersChanged(list.length > 0);
           if (d.error) setClustersError(d.error);
         })
         .catch(() => setClustersError("Failed to load clusters."))
@@ -766,7 +776,10 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
       const res = await fetch("/api/kubernetes/clusters", { cache: "no-store" });
       const d = await res.json();
       if (!res.ok) throw new Error(d.error ?? "Failed to load clusters");
-      setClusters(Array.isArray(d.clusters) ? d.clusters : []);
+      const list = Array.isArray(d.clusters) ? d.clusters : [];
+      setClusters(list);
+      notifySelfManagedClustersChanged(list.length > 0);
+      router.refresh();
     } catch (e) {
       setClustersError(e instanceof Error ? e.message : "Failed to load clusters");
     } finally {
@@ -798,6 +811,125 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
       await refreshClusters();
     } catch (e) {
       setClustersError(e instanceof Error ? e.message : "Failed to create cluster");
+    } finally {
+      setCreatingCluster(false);
+    }
+  }
+
+  async function createClustersFromKubeconfigFile(file: File) {
+    if (file.size > 500 * 1024) {
+      setClustersError("File too large — max 500 KB.");
+      return;
+    }
+    const text = await file.text();
+    const contextsBlockMatch = text.match(/contexts:\s*\n([\s\S]*?)(?=\n[a-zA-Z0-9_-]+\s*:|$)/);
+    const contextsBlock = contextsBlockMatch ? contextsBlockMatch[1] : text;
+    const contextEntries: Array<{ name: string; cluster: string; namespace?: string }> = [];
+    const contextRegex = /-\s*name:\s*([^\s\n]+)\s*\n[\s\S]*?cluster:\s*([^\s\n]+)(?:\s*\n[\s\S]*?namespace:\s*([^\s\n]+))?/g;
+    const searchText = contextsBlock.includes("cluster:") ? contextsBlock : text;
+    let m: RegExpExecArray | null;
+    const seen = new Set<string>();
+    while ((m = contextRegex.exec(searchText)) !== null) {
+      const n = m[1].replace(/["']/g, "").trim();
+      const c = m[2].replace(/["']/g, "").trim();
+      if (n && !seen.has(n)) {
+        seen.add(n);
+        contextEntries.push({ name: n, cluster: c, namespace: m[3]?.replace(/["']/g, "").trim() });
+      }
+      if (contextEntries.length >= 20) break;
+    }
+    const isMerged = contextEntries.length > 1;
+    const sanitize = (s: string) => s.replace(/[^a-z0-9-_\.]/gi, "-").slice(0, 64).replace(/^[^a-z0-9]+|[^a-z0-9]+$/gi, "") || s.slice(0, 64);
+    setCreatingCluster(true);
+    setClustersError(null);
+    try {
+      if (isMerged) {
+        let created = 0;
+        let lastError: string | null = null;
+        const unreachableNames: string[] = [];
+        const otherErrors: string[] = [];
+        for (const ctx of contextEntries) {
+          const base = ctx.cluster || ctx.name;
+          const derived = sanitize(base) || sanitize(ctx.name) || `cluster-${Date.now().toString(36)}`;
+          const prefix = newClusterName.trim();
+          let nameToUse = prefix ? `${prefix}-${derived}`.slice(0, 64) : derived;
+          const existingNames = new Set(clusters.map((c) => c.name));
+          let suffix = 1;
+          let candidate = nameToUse;
+          while (existingNames.has(candidate) && suffix < 20) {
+            suffix += 1;
+            candidate = `${nameToUse}-${suffix}`.slice(0, 64);
+          }
+          nameToUse = candidate;
+          existingNames.add(nameToUse);
+          const res = await fetch("/api/kubernetes/clusters", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: nameToUse, enabled: true, kubeconfigContent: text, kubeconfigFilename: file.name, context: ctx.name, namespace: ctx.namespace ?? "watchmen" }),
+          });
+          const d = await res.json().catch(() => ({} as { error?: string; code?: string }));
+          if (!res.ok) {
+            const errMsg = d.error ?? `Failed for ${nameToUse}`;
+            const isUnreachable = d.code === "unreachable" || /unreachable/i.test(errMsg);
+            if (isUnreachable) unreachableNames.push(nameToUse);
+            else otherErrors.push(errMsg);
+            lastError = errMsg;
+          } else {
+            created += 1;
+          }
+        }
+        if (created === 0) {
+          if (unreachableNames.length === contextEntries.length) {
+            setNewClusterName("");
+            await refreshClusters();
+            return;
+          }
+          throw new Error(lastError ?? "Failed to create clusters from merged kubeconfig");
+        }
+        if (created < contextEntries.length) {
+          if (otherErrors.length) {
+            setClustersError(`Added ${created}/${contextEntries.length} clusters. Errors: ${otherErrors.slice(0, 3).join(" | ")}`);
+          } else {
+            setClustersError(null);
+          }
+        } else {
+          setClustersError(null);
+        }
+        setNewClusterName("");
+        await refreshClusters();
+      } else {
+        let derived = "";
+        const clusterMatch = text.match(/clusters:\s*\n\s*-\s*name:\s*([^\s\n]+)/);
+        if (clusterMatch) derived = clusterMatch[1].replace(/["']/g, "");
+        if (!derived) {
+          const ctxCluster = text.match(/contexts:\s*\n[\s\S]*?cluster:\s*([^\s\n]+)/);
+          if (ctxCluster) derived = ctxCluster[1].replace(/["']/g, "");
+        }
+        if (!derived) derived = file.name.replace(/\.(yaml|yml|kubeconfig|txt)$/i, "").replace(/[^a-z0-9-_\.]/gi, "-").slice(0, 64) || `cluster-${Date.now().toString(36)}`;
+        derived = derived.trim().slice(0, 64).replace(/^[^a-z0-9]+|[^a-z0-9]+$/gi, "") || derived;
+        if (!derived) derived = `cluster-${Date.now().toString(36)}`;
+        const nameToUse = newClusterName.trim() || derived;
+        const res = await fetch("/api/kubernetes/clusters", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: nameToUse, enabled: true, kubeconfigContent: text, kubeconfigFilename: file.name }),
+        });
+        const d = await res.json().catch(() => ({} as { error?: string; code?: string }));
+        if (!res.ok) {
+          const isUnreachable = (d as { code?: string }).code === "unreachable" || /unreachable/i.test((d as { error?: string }).error ?? "") || /fetch failed/i.test((d as { error?: string }).error ?? "");
+          if (isUnreachable) {
+            setClustersError(null);
+            setNewClusterName("");
+            await refreshClusters();
+            return;
+          }
+          throw new Error(d.error ?? "Failed to create cluster");
+        }
+        setNewClusterName("");
+        await refreshClusters();
+      }
+    } catch (err) {
+      setClustersError(err instanceof Error ? err.message : "Failed to create cluster from kubeconfig");
     } finally {
       setCreatingCluster(false);
     }
@@ -1589,132 +1721,8 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
                     onChange={async (e) => {
                       const file = e.target.files?.[0];
                       if (!file) return;
-                      if (file.size > 500 * 1024) { setClustersError("File too large — max 500 KB."); e.target.value = ""; return; }
-                      const text = await file.text();
-                      // Parse all contexts from merged kubeconfig — each context becomes a separate cluster
-                      const contextsBlockMatch = text.match(/contexts:\s*\n([\s\S]*?)(?=\n[a-zA-Z0-9_-]+\s*:|$)/);
-                      const contextsBlock = contextsBlockMatch ? contextsBlockMatch[1] : text;
-                      // Find all context entries: "- name: <ctx>" followed by "cluster: <cluster>" and optional "namespace:"
-                      const contextEntries: Array<{ name: string; cluster: string; namespace?: string }> = [];
-                      const contextRegex = /-\s*name:\s*([^\s\n]+)\s*\n[\s\S]*?cluster:\s*([^\s\n]+)(?:\s*\n[\s\S]*?namespace:\s*([^\s\n]+))?/g;
-                      // If we have a contexts block, scope regex there; else global
-                      const searchText = contextsBlock.includes("cluster:") ? contextsBlock : text;
-                      let m: RegExpExecArray | null;
-                      const seen = new Set<string>();
-                      while ((m = contextRegex.exec(searchText)) !== null) {
-                        const n = m[1].replace(/["']/g, "").trim();
-                        const c = m[2].replace(/["']/g, "").trim();
-                        if (n && !seen.has(n)) {
-                          seen.add(n);
-                          contextEntries.push({ name: n, cluster: c, namespace: m[3]?.replace(/["']/g, "").trim() });
-                        }
-                        if (contextEntries.length >= 20) break; // safety cap
-                      }
-                      // Fallback: if no contexts parsed, treat as single cluster
-                      const isMerged = contextEntries.length > 1;
-                      const sanitize = (s: string) => s.replace(/[^a-z0-9-_\.]/gi, "-").slice(0, 64).replace(/^[^a-z0-9]+|[^a-z0-9]+$/gi, "") || s.slice(0, 64);
-                      setCreatingCluster(true);
-                      setClustersError(null);
-                      try {
-                        if (isMerged) {
-                          // Create one cluster per context, all sharing the same merged kubeconfig but pinned to different context
-                          let created = 0;
-                          let lastError: string | null = null;
-                          const unreachableNames: string[] = [];
-                          const otherErrors: string[] = [];
-                          for (const ctx of contextEntries) {
-                            const base = ctx.cluster || ctx.name;
-                            let derived = sanitize(base) || sanitize(ctx.name) || `cluster-${Date.now().toString(36)}`;
-                            // If user typed a prefix, prepend it
-                            const prefix = newClusterName.trim();
-                            let nameToUse = prefix ? `${prefix}-${derived}`.slice(0, 64) : derived;
-                            // De-duplicate against existing clusters and within this batch
-                            const existingNames = new Set(clusters.map((c) => c.name));
-                            let suffix = 1;
-                            let candidate = nameToUse;
-                            while (existingNames.has(candidate) && suffix < 20) {
-                              suffix += 1;
-                              candidate = `${nameToUse}-${suffix}`.slice(0, 64);
-                            }
-                            nameToUse = candidate;
-                            existingNames.add(nameToUse);
-                            const res = await fetch("/api/kubernetes/clusters", {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ name: nameToUse, enabled: true, kubeconfigContent: text, kubeconfigFilename: file.name, context: ctx.name, namespace: ctx.namespace ?? "watchmen" }),
-                            });
-                            const d = await res.json().catch(() => ({} as { error?: string; code?: string }));
-                            if (!res.ok) {
-                              const errMsg = d.error ?? `Failed for ${nameToUse}`;
-                              const isUnreachable = d.code === "unreachable" || /unreachable/i.test(errMsg);
-                              if (isUnreachable) unreachableNames.push(nameToUse);
-                              else otherErrors.push(errMsg);
-                              lastError = errMsg;
-                              // continue to next, but remember error
-                            } else {
-                              created += 1;
-                            }
-                          }
-                          if (created === 0) {
-                            if (unreachableNames.length === contextEntries.length) {
-                              // All unreachable — silently ignore per request, don't surface fetch failed
-                              setNewClusterName("");
-                              await refreshClusters();
-                              return;
-                            }
-                            throw new Error(lastError ?? "Failed to create clusters from merged kubeconfig");
-                          }
-                          if (created < contextEntries.length) {
-                            // Only surface non-unreachable errors; unreachable are silently ignored
-                            if (otherErrors.length) {
-                              setClustersError(`Added ${created}/${contextEntries.length} clusters. Errors: ${otherErrors.slice(0, 3).join(" | ")}`);
-                            } else {
-                              // Clear any previous error — unreachable are ignored
-                              setClustersError(null);
-                            }
-                          } else {
-                            setClustersError(null);
-                          }
-                          setNewClusterName("");
-                          await refreshClusters();
-                        } else {
-                          // Single cluster path — derive name as before
-                          let derived = "";
-                          const clusterMatch = text.match(/clusters:\s*\n\s*-\s*name:\s*([^\s\n]+)/);
-                          if (clusterMatch) derived = clusterMatch[1].replace(/["']/g, "");
-                          if (!derived) {
-                            const ctxCluster = text.match(/contexts:\s*\n[\s\S]*?cluster:\s*([^\s\n]+)/);
-                            if (ctxCluster) derived = ctxCluster[1].replace(/["']/g, "");
-                          }
-                          if (!derived) derived = file.name.replace(/\.(yaml|yml|kubeconfig|txt)$/i, "").replace(/[^a-z0-9-_\.]/gi, "-").slice(0, 64) || `cluster-${Date.now().toString(36)}`;
-                          derived = derived.trim().slice(0, 64).replace(/^[^a-z0-9]+|[^a-z0-9]+$/gi, "") || derived;
-                          if (!derived) derived = `cluster-${Date.now().toString(36)}`;
-                          const nameToUse = newClusterName.trim() || derived;
-                          const res = await fetch("/api/kubernetes/clusters", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ name: nameToUse, enabled: true, kubeconfigContent: text, kubeconfigFilename: file.name }),
-                          });
-                          const d = await res.json().catch(() => ({} as { error?: string; code?: string }));
-                          if (!res.ok) {
-                            const isUnreachable = (d as { code?: string }).code === "unreachable" || /unreachable/i.test((d as { error?: string }).error ?? "") || /fetch failed/i.test((d as { error?: string }).error ?? "");
-                            if (isUnreachable) {
-                              setClustersError(null);
-                              setNewClusterName("");
-                              await refreshClusters();
-                              return;
-                            }
-                            throw new Error(d.error ?? "Failed to create cluster");
-                          }
-                          setNewClusterName("");
-                          await refreshClusters();
-                        }
-                      } catch (err) {
-                        setClustersError(err instanceof Error ? err.message : "Failed to create cluster from kubeconfig");
-                      } finally {
-                        setCreatingCluster(false);
-                        e.target.value = "";
-                      }
+                      await createClustersFromKubeconfigFile(file);
+                      e.target.value = "";
                     }}
                   />
                 </label>
@@ -2116,6 +2124,103 @@ export default function SettingsClient({ isDemoUser }: { isDemoUser: boolean }) 
                 </div>
               );
             })()}
+
+            {/* Self-Managed Kubernetes Card */}
+            <div className="border p-5 space-y-4 transition-all duration-150" style={{ background: "rgba(16, 185, 129, 0.05)", borderColor: "rgba(16, 185, 129, 0.2)" }}>
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 flex items-center justify-center text-sm font-bold text-white shrink-0 bg-emerald-600">S</div>
+                  <div>
+                    <span className="text-sm font-bold text-emerald-400">Self-Managed Kubernetes</span>
+                    <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>k3s · k0s · microk8s · kind · minikube · on-prem</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {clustersLoading ? (
+                    <span className="text-xs" style={{ color: "var(--text-muted)" }}>Checking…</span>
+                  ) : clusters.length > 0 ? (
+                    <span className="flex items-center gap-1 text-xs" style={{ color: "var(--green)" }}>
+                      <Check className="w-3 h-3" /> {clusters.length} cluster{clusters.length === 1 ? "" : "s"} added
+                    </span>
+                  ) : (
+                    <span className="text-xs shrink-0" style={{ color: "var(--text-muted)" }}>Not configured</span>
+                  )}
+                </div>
+              </div>
+              {clusters.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {clusters.map((c) => (
+                    <span
+                      key={c.id}
+                      className="px-2 py-0.5 text-[11px] font-mono border"
+                      style={{ borderColor: "rgba(16, 185, 129, 0.25)", color: "var(--text-primary)", background: "rgba(16, 185, 129, 0.08)" }}
+                    >
+                      {c.name}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <div className="space-y-2">
+                <div className="flex gap-2 flex-wrap">
+                  <input
+                    type="text"
+                    value={newClusterName}
+                    onChange={(e) => setNewClusterName(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && createCluster()}
+                    placeholder="Cluster name (e.g. prod-k3s, kind-dev)"
+                    className="flex-1 min-w-[180px] px-3 py-2 bg-transparent border text-xs placeholder:opacity-30 outline-none font-mono"
+                    style={{ border: "1px solid var(--border-dim)", color: "var(--text-primary)" }}
+                  />
+                  <button
+                    type="button"
+                    onClick={createCluster}
+                    disabled={!newClusterName.trim() || creatingCluster}
+                    className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold transition-all duration-150"
+                    style={
+                      newClusterName.trim() && !creatingCluster
+                        ? { background: "var(--green)", color: "var(--bg)" }
+                        : { border: "1px solid var(--border-dim)", color: "var(--text-muted)", opacity: 0.5 }
+                    }
+                  >
+                    {creatingCluster ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                    Add cluster
+                  </button>
+                  <label
+                    className={cn("terminal-btn text-xs px-3 py-2 inline-flex items-center gap-1 cursor-pointer", creatingCluster && "opacity-50 pointer-events-none")}
+                    style={{ border: "1px dashed var(--border-dim)" }}
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Add from kubeconfig
+                    <input
+                      type="file"
+                      accept=".yaml,.yml,.kubeconfig,.txt,*/*"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        await createClustersFromKubeconfigFile(file);
+                        e.target.value = "";
+                      }}
+                    />
+                  </label>
+                </div>
+                {clustersError && <p className="text-xs text-red-400 font-mono">{clustersError}</p>}
+                <div className="flex items-center gap-3 flex-wrap pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("self-managed")}
+                    className="text-xs font-mono underline"
+                    style={{ color: "#10b981" }}
+                  >
+                    {clusters.length > 0 ? "Manage self-managed clusters & kubeconfigs →" : "Open Self Managed cluster setup →"}
+                  </button>
+                  {clusters.length > 0 && (
+                    <Link href="/dashboard/self-managed" className="text-xs font-mono underline" style={{ color: "var(--text-muted)" }}>
+                      View clusters →
+                    </Link>
+                  )}
+                </div>
+              </div>
+            </div>
 
             {/* GHCR Card */}
             {(() => {

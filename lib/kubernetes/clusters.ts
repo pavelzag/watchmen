@@ -115,6 +115,24 @@ export function hasInlineKubeconfig(record: Partial<KubernetesClusterRecord>): b
   return typeof record.kubeconfigContent === "string" && record.kubeconfigContent.trim().length > 0;
 }
 
+export async function hasUserClusters(email: string): Promise<boolean> {
+  await ensureClustersTable();
+  const res = await sql<{ count: string }>`SELECT COUNT(*) as count FROM user_kubernetes_clusters WHERE user_email = ${email}`;
+  if (Number(res.rows[0]?.count ?? 0) > 0) return true;
+  try {
+    const legacy = await sql<{ enabled: boolean; kubeconfig_encrypted: string | null }>`
+      SELECT enabled, kubeconfig_encrypted FROM user_local_kubernetes_configs WHERE user_email = ${email} LIMIT 1
+    `;
+    const row = legacy.rows[0];
+    if (row && (row.enabled || Boolean(row.kubeconfig_encrypted))) {
+      return true;
+    }
+  } catch {
+    // Legacy table may not exist yet
+  }
+  return false;
+}
+
 export async function listUserClusters(email: string): Promise<KubernetesClusterRecord[]> {
   await ensureClustersTable();
   // Auto-migrate legacy single config if no clusters yet

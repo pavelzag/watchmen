@@ -1,17 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { isDemoMode } from "@/lib/demo-mode";
-import { listUserClusters, createUserCluster } from "@/lib/kubernetes/clusters";
+import { listUserClusters, createUserCluster, hasInlineKubeconfig } from "@/lib/kubernetes/clusters";
 import { getDemoKubernetesCluster } from "@/lib/mock/runtime-events";
 
 export async function GET() {
   const session = await auth();
   if (!session?.user?.email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (session.isDemoUser || isDemoMode()) {
-    return NextResponse.json({ clusters: [getDemoKubernetesCluster()] });
+    return NextResponse.json({ clusters: [{ ...getDemoKubernetesCluster(), hasKubeconfig: true }] });
   }
   const clusters = await listUserClusters(session.user.email);
-  const safe = clusters.map((c) => ({ ...c, kubeconfigContent: undefined }));
+  const safe = clusters.map((c) => ({ ...c, hasKubeconfig: hasInlineKubeconfig(c), kubeconfigContent: undefined }));
   return NextResponse.json({ clusters: safe });
 }
 
@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
       kubeconfigContent: body.kubeconfigContent,
       kubeconfigFilename: body.kubeconfigFilename,
     });
-    const safe = { ...cluster, kubeconfigContent: undefined };
+    const safe = { ...cluster, hasKubeconfig: hasInlineKubeconfig(cluster), kubeconfigContent: undefined };
     return NextResponse.json({ cluster: safe }, { status: 201 });
   } catch (e: unknown) {
     const err = e as { message?: string; code?: string };

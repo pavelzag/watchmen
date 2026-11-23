@@ -1,5 +1,7 @@
 import { auth, signOut } from "@/lib/auth";
-import { ShieldAlert, Clock, ClipboardCheck, Settings, LogOut, IterationCw, Swords, Container, Server, Radar } from "lucide-react";
+import { isDemoMode } from "@/lib/demo-mode";
+import { hasUserClusters } from "@/lib/kubernetes/clusters";
+import { ShieldAlert, Clock, ClipboardCheck, Settings, LogOut, IterationCw, Swords, Container, Radar } from "lucide-react";
 import Link from "next/link";
 import NavbarAskButton from "./NavbarAskButton";
 import NavbarSubNav from "./NavbarSubNav";
@@ -8,6 +10,18 @@ import NavbarLink from "./NavbarLink";
 export default async function Navbar() {
   const session = await auth();
   const user = session?.isDemoUser ? null : session?.user;
+  let hasSelfManaged = false;
+  if (session?.user?.email) {
+    if (session.isDemoUser || isDemoMode()) {
+      hasSelfManaged = true;
+    } else {
+      try {
+        hasSelfManaged = await hasUserClusters(session.user.email);
+      } catch {
+        hasSelfManaged = false;
+      }
+    }
+  }
   return (
     <header
       style={{
@@ -70,8 +84,7 @@ export default async function Navbar() {
         </div>
       </div>
 
-      <NavbarSubNav>
-        <NavbarLink href="/dashboard/self-managed" icon={<Server className="w-3 h-3" />} label="SELF-MANAGED" />
+      <NavbarSubNav initialHasSelfManaged={hasSelfManaged}>
         <NavbarLink href="/dashboard/trace" icon={<IterationCw className="w-3 h-3" />} label="TRACE" />
         <NavbarLink href="/dashboard/runtime" icon={<Radar className="w-3 h-3" />} label="RUNTIME" />
         <NavbarLink href="/dashboard/findings" icon={<ShieldAlert className="w-3 h-3" />} label="FINDINGS" danger />

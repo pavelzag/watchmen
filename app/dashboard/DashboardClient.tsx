@@ -78,12 +78,9 @@ function CloudConnectionCards({ connections }: { connections: CloudConnections }
           {connections.selfManaged ? <Check className="h-4 w-4 text-emerald-400" /> : <ShieldCheck className="h-4 w-4 text-emerald-300/60" />}
         </div>
         <div className="flex flex-wrap gap-2">
-          <Link href="/dashboard/settings" className="inline-flex items-center gap-2 px-3 py-2 text-xs font-bold" style={{ background: "#10b981", color: "#000" }}>
+          <Link href="/dashboard/settings?tab=self-managed" className="inline-flex items-center gap-2 px-3 py-2 text-xs font-bold" style={{ background: "#10b981", color: "#000" }}>
             <ShieldCheck className="h-3.5 w-3.5" />
             Upload kubeconfig
-          </Link>
-          <Link href="/dashboard/self-managed" className="inline-flex items-center px-3 py-2 text-xs font-mono" style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}>
-            View clusters →
           </Link>
         </div>
       </div>
@@ -105,7 +102,9 @@ function DashboardViewSwitch({
   const items: { view: DashboardView; label: string; connected: boolean }[] = [
     { view: "gcp", label: "GCP", connected: connections.gcp },
     { view: "aws", label: "AWS", connected: connections.aws },
-    { view: "self-managed", label: "SELF-MANAGED", connected: connections.selfManaged },
+    ...(connections.selfManaged || activeView === "self-managed"
+      ? [{ view: "self-managed" as const, label: "SELF-MANAGED", connected: connections.selfManaged }]
+      : []),
   ];
 
   return (
@@ -115,7 +114,9 @@ function DashboardViewSwitch({
           // Dashboard view
         </p>
         <p className="mt-1 text-xs font-mono" style={{ color: "var(--text-muted)" }}>
-          Switch between GCP, AWS and Self-Managed without leaving the dashboard.
+          {connections.selfManaged
+            ? "Switch between GCP, AWS and Self-Managed without leaving the dashboard."
+            : "Switch between GCP and AWS without leaving the dashboard."}
         </p>
       </div>
       <div className="flex gap-2">
@@ -477,11 +478,11 @@ export default function DashboardClient({
           <div className="border p-4 space-y-3" style={{ borderColor: "rgba(16,185,129,0.28)", background: "rgba(16,185,129,0.06)" }}>
             <p className="text-[10px] uppercase tracking-widest font-mono" style={{ color: "#10b981" }}>// SELF-MANAGED KUBERNETES</p>
             <p className="text-sm font-bold text-emerald-400">Local, k3s, k0s, microk8s, kind, minikube, talos, RKE2, bare-metal or any self-hosted cluster via kubeconfig</p>
-            <p className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>Upload a kubeconfig in <Link href="/dashboard/settings" style={{ color: "#10b981", textDecoration: "underline" }}>Settings → Self-Managed</Link> and manage it here. Scan, trace and fetch pod logs without GCP/AWS.</p>
+            <p className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>Upload a kubeconfig in <Link href="/dashboard/settings?tab=self-managed" style={{ color: "#10b981", textDecoration: "underline" }}>Settings → Self-Managed</Link> and manage it here. Scan, trace and fetch pod logs without GCP/AWS.</p>
             <div className="flex flex-wrap gap-2 pt-1">
               <Link href="/dashboard/self-managed" className="px-3 py-2 text-xs font-bold" style={{ background: "#10b981", color: "#000" }}>OPEN SELF-MANAGED →</Link>
               <Link href="/dashboard/trace" className="px-3 py-2 text-xs font-mono" style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}>LIVE TRACE</Link>
-              <Link href="/dashboard/settings" className="px-3 py-2 text-xs font-mono" style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}>UPLOAD KUBECONFIG</Link>
+              <Link href="/dashboard/settings?tab=self-managed" className="px-3 py-2 text-xs font-mono" style={{ border: "1px solid var(--border-dim)", color: "var(--text-muted)" }}>UPLOAD KUBECONFIG</Link>
             </div>
           </div>
           <div className="border p-3 grid gap-2 md:grid-cols-3 text-xs font-mono" style={{ borderColor: "var(--border-dim)", background: "#050505" }}>
@@ -490,7 +491,7 @@ export default function DashboardClient({
             <Link href="/dashboard/container-scan" className="p-3 border hover:border-emerald-500/40" style={{ borderColor: "var(--border-dim)" }}><span style={{ color: "#10b981" }}>→ container scan</span><br/><span style={{ color: "var(--text-muted)" }}>same pipeline as GKE</span></Link>
           </div>
           {!effectiveConnections.selfManaged && (
-            <div className="px-3 py-2 text-xs font-mono" style={{ border: "1px solid #5c3b00", background: "#0d0905", color: "#ffb020" }}>// No kubeconfig yet — <Link href="/dashboard/settings" style={{ color: "#ffb020", textDecoration: "underline" }}>[UPLOAD IN SETTINGS]</Link></div>
+            <div className="px-3 py-2 text-xs font-mono" style={{ border: "1px solid #5c3b00", background: "#0d0905", color: "#ffb020" }}>// No kubeconfig yet — <Link href="/dashboard/settings?tab=self-managed" style={{ color: "#ffb020", textDecoration: "underline" }}>[UPLOAD IN SETTINGS]</Link></div>
           )}
         </div>
       </div>
