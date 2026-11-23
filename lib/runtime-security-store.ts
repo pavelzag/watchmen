@@ -1,5 +1,7 @@
 import { ensureAgentInstallTables, ensureRuntimeSecurityTables, sql } from "@/lib/db";
+import { isDemoMode } from "@/lib/demo-mode";
 import { enrichRuntimeEventGeo } from "@/lib/ip-geolocation";
+import { DEMO_RUNTIME_RULES, getDemoRuntimeRequestEvents } from "@/lib/mock/runtime-events";
 import {
   DEFAULT_RUNTIME_SECURITY_RULES,
   normalizeAgentEventRow,
@@ -334,7 +336,12 @@ export async function listRuntimeRequestEvents(userEmail: string, limit = 100): 
     });
   }
 
-  const merged = [...persisted.rows.map(eventFromRow), ...agentEvents]
+  const demoEvents =
+    userEmail === "demo@watchmen.dev" || isDemoMode()
+      ? getDemoRuntimeRequestEvents(rules)
+      : [];
+
+  const merged = [...persisted.rows.map(eventFromRow), ...agentEvents, ...demoEvents]
     .sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
 
   const seen = new Set<string>();
@@ -346,15 +353,21 @@ export async function listRuntimeRequestEvents(userEmail: string, limit = 100): 
 }
 
 async function seedDefaultRuntimeSecurityRules(userEmail: string): Promise<void> {
-  const existing = await sql<{ count: string }>`
-    SELECT COUNT(*)::text AS count
+  const isDemo = userEmail === "demo@watchmen.dev" || isDemoMode();
+  const seedList = isDemo ? DEMO_RUNTIME_RULES : DEFAULT_RUNTIME_SECURITY_RULES;
+
+  const existing = await sql<{ id: string }>`
+    SELECT id
     FROM runtime_security_rules
     WHERE user_email = ${userEmail}
   `;
-  if (Number(existing.rows[0]?.count ?? 0) > 0) return;
+  const existingIds = new Set(existing.rows.map((r) => r.id));
+  if (!isDemo && existingIds.size > 0) return;
 
-  for (const rule of DEFAULT_RUNTIME_SECURITY_RULES) {
-    await createRuntimeSecurityRule(userEmail, rule);
+  for (const rule of seedList) {
+    if (!existingIds.has(rule.id)) {
+      await createRuntimeSecurityRule(userEmail, rule);
+    }
   }
 }
 

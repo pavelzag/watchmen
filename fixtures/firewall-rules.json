@@ -184,5 +184,27 @@
     "targetTags": [],
     "allowed": [],
     "disabled": false
+  },
+  {
+    "name": "allow-postgres-public",
+    "projectId": "data_warehouse",
+    "network": "global/networks/default",
+    "direction": "INGRESS",
+    "priority": 900,
+    "sourceRanges": ["0.0.0.0/0"],
+    "targetTags": ["dw-db"],
+    "allowed": [{ "IPProtocol": "tcp", "ports": ["5432"] }],
+    "disabled": false
+  },
+  {
+    "name": "allow-redis-legacy",
+    "projectId": "frontend_prod",
+    "network": "global/networks/default",
+    "direction": "INGRESS",
+    "priority": 950,
+    "sourceRanges": ["0.0.0.0/0"],
+    "targetTags": ["cache-node"],
+    "allowed": [{ "IPProtocol": "tcp", "ports": ["6379"] }],
+    "disabled": false
   }
 ]

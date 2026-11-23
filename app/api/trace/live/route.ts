@@ -1,10 +1,12 @@
 import { NextRequest } from "next/server";
 import { auth } from "@/lib/auth";
+import { isDemoMode } from "@/lib/demo-mode";
 import {
   ensureLiveTraceBusListener,
   getRecentLiveTraceEventsAsync,
   subscribeLiveTraceEvents,
 } from "@/lib/live-trace-bus";
+import { getDemoLiveTraceEvents } from "@/lib/mock/runtime-events";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,7 +19,9 @@ export async function GET(req: NextRequest) {
   const email = session?.user?.email ?? "anonymous";
 
   await ensureLiveTraceBusListener();
-  const recent = await getRecentLiveTraceEventsAsync(email);
+  const isDemo = Boolean(session?.isDemoUser || isDemoMode());
+  const busRecent = await getRecentLiveTraceEventsAsync(email);
+  const recent = isDemo && busRecent.length === 0 ? getDemoLiveTraceEvents() : busRecent;
 
   const encoder = new TextEncoder();
 
@@ -85,12 +89,28 @@ export async function GET(req: NextRequest) {
         controller.enqueue(encoder.encode(": heartbeat\n\n"));
       }, 15_000);
 
+      let demoIndex = 0;
+      const demoStreamTimer = isDemo
+        ? setInterval(() => {
+            if (closed) return;
+            const samples = getDemoLiveTraceEvents();
+            const sample = samples[demoIndex % samples.length];
+            demoIndex += 1;
+            send("trace", {
+              ...sample,
+              id: `demo-live-stream-${Date.now()}-${demoIndex}`,
+              timestamp: new Date().toISOString(),
+            });
+          }, 3_500)
+        : null;
+
       let closed = false;
       const close = () => {
         if (closed) return;
         closed = true;
         console.info(`[api/trace/live:${streamId}] stream close`, { email });
         clearInterval(heartbeat);
+        if (demoStreamTimer) clearInterval(demoStreamTimer);
         clearTimeout(recycle);
         unsubscribe();
         unsubGlobal();

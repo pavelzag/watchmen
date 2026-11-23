@@ -97,5 +97,29 @@
     "encryption": "None",
     "acl": "public-read",
     "tags": { "env": "staging", "team": "ml" }
+  },
+  {
+    "bucketName": "prod-customer-exports",
+    "accountId": "111111111111",
+    "region": "us-east-1",
+    "creationDate": "2025-05-11T00:00:00Z",
+    "publicAccessBlock": {
+      "blockPublicAcls": false,
+      "ignorePublicAcls": false,
+      "blockPublicPolicy": false,
+      "restrictPublicBuckets": false
+    },
+    "bucketPolicy": [
+      {
+        "effect": "Allow",
+        "principals": ["*"],
+        "actions": ["s3:GetObject"],
+        "resources": ["arn:aws:s3:::prod-customer-exports/*"]
+      }
+    ],
+    "versioning": "Disabled",
+    "encryption": "None",
+    "acl": "public-read",
+    "tags": { "env": "prod", "team": "billing" }
   }
 ]

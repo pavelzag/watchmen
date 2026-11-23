@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { CloudWatchLogsClient, FilterLogEventsCommand } from "@aws-sdk/client-cloudwatch-logs";
 import { auth } from "@/lib/auth";
-import { getAwsClientOptions, type AwsCredentials } from "@/lib/aws/client";
+import { getAwsClientOptions, useMockAwsData, type AwsCredentials } from "@/lib/aws/client";
 import { getUserCloudCredentials } from "@/lib/credentials";
+import { getDemoCloudLogs } from "@/lib/mock/runtime-events";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -41,6 +42,29 @@ export async function GET(req: NextRequest) {
 
   if (!functionName) {
     return NextResponse.json({ error: "functionName is required" }, { status: 400 });
+  }
+
+  if (useMockAwsData() || session.isDemoUser) {
+    const demoLogs = getDemoCloudLogs({ functionName });
+    const entries = demoLogs.map((l) => ({
+      timestamp: l.timestamp,
+      severity: l.severity,
+      message: l.message,
+      httpRequest: {
+        method: l.method,
+        url: l.path,
+        status: l.status,
+        latency: l.latency,
+        remoteIp: l.remoteIp,
+        responseSize: "512",
+        userAgent: l.userAgent,
+      },
+    }));
+    return NextResponse.json({
+      entries,
+      count: entries.length,
+      logGroupName: `/aws/lambda/${functionName}`,
+    });
   }
 
   const logGroupName = `/aws/lambda/${functionName}`;

@@ -200,5 +200,33 @@
     ],
     "outboundRules": [],
     "tags": { "env": "staging", "team": "dev" }
+  },
+  {
+    "groupId": "sg-prod-redis-open-01",
+    "groupName": "prod-redis-open-sg",
+    "accountId": "111111111111",
+    "region": "us-east-1",
+    "vpcId": "vpc-aabbccdd11",
+    "description": "Redis and Elasticsearch accidentally exposed to internet",
+    "inboundRules": [
+      {
+        "protocol": "tcp",
+        "fromPort": 6379,
+        "toPort": 6379,
+        "cidrRanges": ["0.0.0.0/0"],
+        "ipv6CidrRanges": [],
+        "description": "Redis open to world"
+      },
+      {
+        "protocol": "tcp",
+        "fromPort": 9200,
+        "toPort": 9200,
+        "cidrRanges": ["0.0.0.0/0"],
+        "ipv6CidrRanges": [],
+        "description": "Elasticsearch open to world"
+      }
+    ],
+    "outboundRules": [],
+    "tags": { "env": "prod", "team": "platform" }
   }
 ]

@@ -15,8 +15,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { google } from "googleapis";
-import { initGoogleAuthForRequest } from "@/lib/gcp/client";
+import { initGoogleAuthForRequest, useMockData } from "@/lib/gcp/client";
 import { getUserCloudCredentials } from "@/lib/credentials";
+import { getDemoCloudLogs } from "@/lib/mock/runtime-events";
 
 export async function GET(req: NextRequest) {
   const session = await auth();
@@ -41,6 +42,36 @@ export async function GET(req: NextRequest) {
 
   if (!projectId) {
     return NextResponse.json({ error: "projectId is required" }, { status: 400 });
+  }
+
+  if (useMockData() || session.isDemoUser) {
+    if (searchParams.get("mode") === "containers") {
+      return NextResponse.json({ containers: ["ledger-processor", "inference-server", "web-api-gateway"] });
+    }
+    const demoLogs = getDemoCloudLogs({
+      service: searchParams.get("service") ?? undefined,
+      container: searchParams.get("container") ?? undefined,
+      instance: searchParams.get("instance") ?? undefined,
+      resourceType,
+    });
+    const entries = demoLogs.map((l) => ({
+      timestamp: l.timestamp,
+      severity: l.severity,
+      message: l.message,
+      container: searchParams.get("container") ?? "",
+      pod: `${l.resourceName}-pod-1`,
+      revision: `${l.resourceName}-00012`,
+      instanceId: l.resourceName,
+      httpRequest: {
+        method: l.method,
+        url: l.path,
+        status: l.status,
+        latency: l.latency,
+        remoteIp: l.remoteIp,
+        userAgent: l.userAgent,
+      },
+    }));
+    return NextResponse.json({ entries, count: entries.length });
   }
 
   const email = session.user.email;

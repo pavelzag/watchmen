@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { ensureAgentInstallTables, sql } from "@/lib/db";
+import { isDemoMode } from "@/lib/demo-mode";
+import { useMockData } from "@/lib/gcp/client";
+import { getDemoTraceHistory } from "@/lib/mock/runtime-events";
 
 export const dynamic = "force-dynamic";
 
@@ -40,15 +43,6 @@ export async function GET(req: NextRequest) {
 
         console.log(`[History API] Fetching from: ${historyUrl}`);
 
-        const resp = await fetch(historyUrl, {
-            method: 'GET',
-            headers: {
-                'Accept': 'application/json',
-                'Cache-Control': 'no-cache'
-            },
-            next: { revalidate: 0 }
-        });
-
         const normalizedAgentHistory = agentEvents.rows.map((row: any) => {
             const ev = row.event || {};
             const action = ev.type === "http_response"
@@ -72,6 +66,20 @@ export async function GET(req: NextRequest) {
                 agent_id: row.agent_id,
                 cluster_name: row.cluster_name,
             };
+        });
+
+        const isDemo = Boolean(session.isDemoUser || isDemoMode() || useMockData());
+        if (isDemo && !process.env["PROCESSOR_URL"]) {
+            return NextResponse.json([...normalizedAgentHistory, ...getDemoTraceHistory()]);
+        }
+
+        const resp = await fetch(historyUrl, {
+            method: 'GET',
+            headers: {
+                'Accept': 'application/json',
+                'Cache-Control': 'no-cache'
+            },
+            next: { revalidate: 0 }
         });
 
         if (resp.ok) {

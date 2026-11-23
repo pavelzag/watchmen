@@ -1,5 +1,6 @@
 const DEV_DEMO_HOSTS = new Set([
   "watchmen-dev-kappa.vercel.app",
+  "watchmen-git-dev-pavelzags-projects.vercel.app",
 ]);
 
 function normalizeHost(value: string | undefined): string {
