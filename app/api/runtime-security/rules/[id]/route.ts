@@ -6,6 +6,7 @@ import {
 } from "@/lib/runtime-security-store";
 import {
   isRuntimeSecurityAction,
+  isRuntimeSecurityRuleMode,
   isRuntimeSecuritySeverity,
   parseRuntimeRuleCondition,
 } from "@/lib/runtime-security-validation";
@@ -72,8 +73,13 @@ function parsePatchPayload(body: Record<string, unknown>):
   }
 
   if ("action" in body) {
-    if (!isRuntimeSecurityAction(body.action)) return { ok: false, error: "Action must be flag or would_block." };
+    if (!isRuntimeSecurityAction(body.action)) return { ok: false, error: "Action must be flag, would_block, alert, or block." };
     patch.action = body.action;
+  }
+
+  if ("mode" in body) {
+    if (!isRuntimeSecurityRuleMode(body.mode)) return { ok: false, error: "Mode must be detect or enforce." };
+    patch.mode = body.mode;
   }
 
   if ("severity" in body) {

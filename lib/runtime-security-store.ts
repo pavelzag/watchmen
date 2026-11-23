@@ -4,8 +4,11 @@ import {
   DEFAULT_RUNTIME_SECURITY_RULES,
   normalizeAgentEventRow,
   type RuntimeRequestEvent,
+  type RuntimeSecurityDecisionAction,
   type RuntimeSecurityRule,
   type RuntimeSecurityRuleCondition,
+  type RuntimeSecurityRuleMode,
+  type RuntimeSecuritySeverity,
 } from "@/lib/runtime-security";
 
 type RuntimeRuleRow = {
@@ -13,6 +16,7 @@ type RuntimeRuleRow = {
   name: string;
   enabled: boolean;
   action: RuntimeSecurityRule["action"];
+  mode: RuntimeSecurityRuleMode | null;
   condition_kind: RuntimeSecurityRuleCondition["kind"];
   condition_value: string;
   severity: RuntimeSecurityRule["severity"];
@@ -60,6 +64,7 @@ export async function getRuntimeSecurityRules(userEmail: string): Promise<Runtim
       r.name,
       r.enabled,
       r.action,
+      r.mode,
       r.condition_kind,
       r.condition_value,
       r.severity,
@@ -73,11 +78,16 @@ export async function getRuntimeSecurityRules(userEmail: string): Promise<Runtim
       ON e.user_email = r.user_email
      AND e.matched_rule_ids ? r.id
     WHERE r.user_email = ${userEmail}
-    GROUP BY r.id, r.name, r.enabled, r.action, r.condition_kind, r.condition_value, r.severity, r.description, r.created_at, r.updated_at
+    GROUP BY r.id, r.name, r.enabled, r.action, r.mode, r.condition_kind, r.condition_value, r.severity, r.description, r.created_at, r.updated_at
     ORDER BY r.created_at ASC
   `;
 
   return result.rows.map(ruleFromRow);
+}
+
+export async function getRuntimeSecurityRule(userEmail: string, id: string): Promise<RuntimeSecurityRule | null> {
+  const rules = await getRuntimeSecurityRules(userEmail);
+  return rules.find((r) => r.id === id) ?? null;
 }
 
 export async function getRuntimeSecurityRulesForEvaluation(userEmail: string): Promise<RuntimeSecurityRule[]> {
@@ -90,6 +100,7 @@ export async function getRuntimeSecurityRulesForEvaluation(userEmail: string): P
       name,
       enabled,
       action,
+      mode,
       condition_kind,
       condition_value,
       severity,
@@ -112,10 +123,11 @@ export async function createRuntimeSecurityRule(
 ): Promise<RuntimeSecurityRule> {
   await ensureRuntimeSecurityTables();
   const id = rule.id || `rule-${crypto.randomUUID()}`;
+  const mode: RuntimeSecurityRuleMode = rule.mode ?? "detect";
 
   await sql`
     INSERT INTO runtime_security_rules (
-      user_email, id, name, enabled, action, condition_kind, condition_value, severity, description
+      user_email, id, name, enabled, action, mode, condition_kind, condition_value, severity, description
     )
     VALUES (
       ${userEmail},
@@ -123,6 +135,7 @@ export async function createRuntimeSecurityRule(
       ${rule.name},
       ${rule.enabled},
       ${rule.action},
+      ${mode},
       ${rule.condition.kind},
       ${rule.condition.value},
       ${rule.severity},
@@ -130,7 +143,7 @@ export async function createRuntimeSecurityRule(
     )
   `;
 
-  return { ...rule, id };
+  return { ...rule, mode, id };
 }
 
 export async function updateRuntimeSecurityRule(
@@ -145,6 +158,7 @@ export async function updateRuntimeSecurityRule(
   const next: RuntimeSecurityRule = {
     ...current,
     ...patch,
+    mode: patch.mode ?? current.mode ?? "detect",
     condition: patch.condition ?? current.condition,
   };
 
@@ -154,6 +168,7 @@ export async function updateRuntimeSecurityRule(
       name = ${next.name},
       enabled = ${next.enabled},
       action = ${next.action},
+      mode = ${next.mode ?? "detect"},
       condition_kind = ${next.condition.kind},
       condition_value = ${next.condition.value},
       severity = ${next.severity},
@@ -349,6 +364,7 @@ function ruleFromRow(row: RuntimeRuleRow): RuntimeSecurityRule {
     name: row.name,
     enabled: row.enabled,
     action: row.action,
+    mode: row.mode === "enforce" ? "enforce" : "detect",
     condition: {
       kind: row.condition_kind,
       value: row.condition_value,
@@ -359,6 +375,141 @@ function ruleFromRow(row: RuntimeRuleRow): RuntimeSecurityRule {
     lastMatchedAt: row.last_matched_at?.toISOString() ?? null,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
+  };
+}
+
+export interface RuntimeRequestQueryFilters {
+  from?: string;
+  to?: string;
+  decision?: RuntimeSecurityDecisionAction;
+  method?: string;
+  pathPrefix?: string;
+  sourceIp?: string;
+  sourceIpClass?: string;
+  statusCode?: number;
+  ruleId?: string;
+  severity?: RuntimeSecuritySeverity;
+  limit?: number;
+  cursor?: number;
+  sort?: "asc" | "desc";
+}
+
+export function filterRuntimeRequestEvents(
+  events: RuntimeRequestEvent[],
+  filters: RuntimeRequestQueryFilters = {},
+): { events: RuntimeRequestEvent[]; total: number; nextCursor: number | null } {
+  const fromMs = filters.from ? Date.parse(filters.from) : NaN;
+  const toMs = filters.to ? Date.parse(filters.to) : NaN;
+  const methodUpper = filters.method?.trim().toUpperCase();
+  const pathPrefix = filters.pathPrefix?.trim();
+  const sourceIp = filters.sourceIp?.trim();
+  const sourceIpClass = filters.sourceIpClass?.trim();
+
+  let filtered = events.filter((event) => {
+    const tsMs = Date.parse(event.ts);
+    if (!Number.isNaN(fromMs) && !Number.isNaN(tsMs) && tsMs < fromMs) return false;
+    if (!Number.isNaN(toMs) && !Number.isNaN(tsMs) && tsMs > toMs) return false;
+    if (filters.decision && event.decision !== filters.decision) return false;
+    if (methodUpper && (event.method ?? "").toUpperCase() !== methodUpper) return false;
+    if (pathPrefix && !(event.path ?? "").startsWith(pathPrefix)) return false;
+    if (sourceIp && event.sourceIp !== sourceIp) return false;
+    if (sourceIpClass && event.sourceIpClass !== sourceIpClass) return false;
+    if (filters.statusCode !== undefined && event.statusCode !== filters.statusCode) return false;
+    if (filters.ruleId && !event.matchedRuleIds.includes(filters.ruleId)) return false;
+    if (filters.severity && event.highestSeverity !== filters.severity) return false;
+    return true;
+  });
+
+  filtered = [...filtered].sort((a, b) => {
+    const diff = Date.parse(b.ts) - Date.parse(a.ts);
+    return filters.sort === "asc" ? -diff : diff;
+  });
+
+  const total = filtered.length;
+  const offset = Math.max(filters.cursor ?? 0, 0);
+  const limit = Math.min(Math.max(filters.limit ?? 100, 1), 500);
+  const page = filtered.slice(offset, offset + limit);
+  const nextCursor = offset + page.length < total ? offset + page.length : null;
+
+  return { events: page, total, nextCursor };
+}
+
+export async function queryRuntimeRequestEvents(
+  userEmail: string,
+  filters: RuntimeRequestQueryFilters = {},
+): Promise<{ events: RuntimeRequestEvent[]; total: number; nextCursor: number | null }> {
+  const all = await listRuntimeRequestEvents(userEmail, 2000);
+  return filterRuntimeRequestEvents(all, filters);
+}
+
+export async function getRuntimeRequestEventById(
+  userEmail: string,
+  id: string,
+): Promise<RuntimeRequestEvent | null> {
+  const all = await listRuntimeRequestEvents(userEmail, 2000);
+  return all.find((event) => event.id === id) ?? null;
+}
+
+export async function getRuntimeSecuritySummary(
+  userEmail: string,
+  filters: Pick<RuntimeRequestQueryFilters, "from" | "to"> = {},
+) {
+  const [rules, queried] = await Promise.all([
+    getRuntimeSecurityRules(userEmail),
+    queryRuntimeRequestEvents(userEmail, { ...filters, limit: 2000 }),
+  ]);
+
+  const byDecision: Record<RuntimeSecurityDecisionAction, number> = {
+    allow: 0,
+    flagged: 0,
+    would_block: 0,
+    blocked: 0,
+  };
+  const bySeverity: Record<RuntimeSecuritySeverity, number> = {
+    low: 0,
+    medium: 0,
+    high: 0,
+    critical: 0,
+  };
+  const ruleCounts = new Map<string, number>();
+  const pathCounts = new Map<string, number>();
+
+  for (const event of queried.events) {
+    byDecision[event.decision] = (byDecision[event.decision] ?? 0) + 1;
+    if (event.highestSeverity) {
+      bySeverity[event.highestSeverity] = (bySeverity[event.highestSeverity] ?? 0) + 1;
+    }
+    for (const ruleId of event.matchedRuleIds) {
+      ruleCounts.set(ruleId, (ruleCounts.get(ruleId) ?? 0) + 1);
+    }
+    if (event.decision !== "allow" && event.path) {
+      pathCounts.set(event.path, (pathCounts.get(event.path) ?? 0) + 1);
+    }
+  }
+
+  const ruleNameById = new Map(rules.map((r) => [r.id, r.name]));
+  const topMatchedRules = [...ruleCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([ruleId, count]) => ({
+      ruleId,
+      name: ruleNameById.get(ruleId) ?? ruleId,
+      count,
+    }));
+
+  const topTargetedPaths = [...pathCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([path, count]) => ({ path, count }));
+
+  return {
+    totalRequests: queried.total,
+    byDecision,
+    bySeverity,
+    activeRuleCount: rules.filter((r) => r.enabled).length,
+    enforcingRuleCount: rules.filter((r) => r.enabled && r.mode === "enforce" && (r.action === "block" || r.action === "would_block")).length,
+    topMatchedRules,
+    topTargetedPaths,
   };
 }
 

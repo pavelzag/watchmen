@@ -1,4 +1,11 @@
 import type { HandoffTaskRecord, HandoffTaskStatus, HandoffTool, LastVerificationSummary } from "@/lib/handoff/tasks";
+import type {
+  RuntimeRequestEvent,
+  RuntimeSecurityDecisionAction,
+  RuntimeSecurityRule,
+  RuntimeSecuritySeverity,
+} from "@/lib/runtime-security";
+import type { RuntimeRequestQueryFilters } from "@/lib/runtime-security-store";
 
 export const MCP_PROTOCOL_VERSION = "2025-03-26";
 
@@ -32,6 +39,20 @@ export interface McpTaskClient {
     taskId: string;
     autoComplete?: boolean;
   }) => Promise<{ task: HandoffTaskRecord; verification: LastVerificationSummary } | null>;
+  listRuntimeRequests?: (
+    filters: RuntimeRequestQueryFilters
+  ) => Promise<{ events: RuntimeRequestEvent[]; total: number; nextCursor: number | null }>;
+  getRuntimeSummary?: (filters: { from?: string; to?: string }) => Promise<unknown>;
+  createOrUpdateRuntimeRule?: (input: {
+    id?: string;
+    name?: string;
+    enabled?: boolean;
+    action?: RuntimeSecurityRule["action"];
+    mode?: RuntimeSecurityRule["mode"];
+    condition?: RuntimeSecurityRule["condition"];
+    severity?: RuntimeSecuritySeverity;
+    description?: string;
+  }) => Promise<RuntimeSecurityRule | null>;
 }
 
 export interface JsonRpcRequest {
@@ -167,6 +188,71 @@ export const WATCHMEN_MCP_TOOLS: McpToolDefinition[] = [
         },
       },
       required: ["taskId"],
+    },
+  },
+  {
+    name: "watchmen_list_runtime_requests",
+    description:
+      "Query Watchmen runtime security request events by decision (allow, flagged, would_block, blocked), method, pathPrefix, severity, or ruleId.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        decision: { type: "string", enum: ["allow", "flagged", "would_block", "blocked"] },
+        method: { type: "string" },
+        pathPrefix: { type: "string" },
+        severity: { type: "string", enum: ["low", "medium", "high", "critical"] },
+        ruleId: { type: "string" },
+        limit: { type: "number" },
+      },
+    },
+  },
+  {
+    name: "watchmen_get_runtime_summary",
+    description:
+      "Summarize Watchmen runtime request counts by decision/severity, top matched rules, and top targeted paths.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        from: { type: "string", description: "Optional ISO timestamp lower bound." },
+        to: { type: "string", description: "Optional ISO timestamp upper bound." },
+      },
+    },
+  },
+  {
+    name: "watchmen_upsert_runtime_rule",
+    description:
+      "Create or update a Watchmen runtime security rule (supports detect vs enforce mode, block/alert actions, and attack vector templates).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Provide existing rule ID to update, or omit to create a new rule." },
+        name: { type: "string" },
+        enabled: { type: "boolean" },
+        action: { type: "string", enum: ["alert", "block", "flag", "would_block"] },
+        mode: { type: "string", enum: ["detect", "enforce"] },
+        severity: { type: "string", enum: ["low", "medium", "high", "critical"] },
+        condition: {
+          type: "object",
+          properties: {
+            kind: {
+              type: "string",
+              enum: [
+                "method",
+                "path_prefix",
+                "path_regex",
+                "content_type",
+                "body_contains",
+                "source_ip_class",
+                "status_code",
+                "known_attack_vector",
+              ],
+            },
+            value: { type: "string" },
+          },
+          required: ["kind", "value"],
+        },
+        description: { type: "string" },
+      },
     },
   },
 ];
@@ -339,6 +425,64 @@ export async function handleMcpJsonRpc(
             task: verified.task,
             verification: verified.verification,
           })
+        );
+      }
+
+      if (name === "watchmen_list_runtime_requests") {
+        if (!client.listRuntimeRequests) {
+          return okResult(id, toolText("Runtime request queries are not supported by this MCP client.", undefined, true));
+        }
+        const data = await client.listRuntimeRequests({
+          decision: typeof args.decision === "string" ? (args.decision as RuntimeSecurityDecisionAction) : undefined,
+          method: typeof args.method === "string" ? args.method : undefined,
+          pathPrefix: typeof args.pathPrefix === "string" ? args.pathPrefix : undefined,
+          severity: typeof args.severity === "string" ? (args.severity as RuntimeSecuritySeverity) : undefined,
+          ruleId: typeof args.ruleId === "string" ? args.ruleId : undefined,
+          limit: typeof args.limit === "number" && Number.isFinite(args.limit) ? args.limit : 25,
+        });
+        const text = data.events.length
+          ? `Found ${data.total} runtime request(s) (showing ${data.events.length}):\n` +
+            data.events
+              .map((e) => `- ${e.id} [${e.decision.toUpperCase()}] ${e.method ?? "HTTP"} ${e.path ?? "/"} (status=${e.statusCode ?? "-"})`)
+              .join("\n")
+          : "No matching runtime requests found.";
+        return okResult(id, toolText(text, data));
+      }
+
+      if (name === "watchmen_get_runtime_summary") {
+        if (!client.getRuntimeSummary) {
+          return okResult(id, toolText("Runtime summary is not supported by this MCP client.", undefined, true));
+        }
+        const summary = await client.getRuntimeSummary({
+          from: typeof args.from === "string" ? args.from : undefined,
+          to: typeof args.to === "string" ? args.to : undefined,
+        });
+        return okResult(id, toolText(JSON.stringify(summary, null, 2), { summary }));
+      }
+
+      if (name === "watchmen_upsert_runtime_rule") {
+        if (!client.createOrUpdateRuntimeRule) {
+          return okResult(id, toolText("Runtime rule updates are not supported by this MCP client.", undefined, true));
+        }
+        const rule = await client.createOrUpdateRuntimeRule({
+          id: typeof args.id === "string" ? args.id : undefined,
+          name: typeof args.name === "string" ? args.name : undefined,
+          enabled: typeof args.enabled === "boolean" ? args.enabled : undefined,
+          action: typeof args.action === "string" ? (args.action as RuntimeSecurityRule["action"]) : undefined,
+          mode: typeof args.mode === "string" ? (args.mode as RuntimeSecurityRule["mode"]) : undefined,
+          severity: typeof args.severity === "string" ? (args.severity as RuntimeSecuritySeverity) : undefined,
+          condition:
+            args.condition && typeof args.condition === "object"
+              ? (args.condition as RuntimeSecurityRule["condition"])
+              : undefined,
+          description: typeof args.description === "string" ? args.description : undefined,
+        });
+        if (!rule) {
+          return okResult(id, toolText("Runtime rule not found or invalid rule payload.", undefined, true));
+        }
+        return okResult(
+          id,
+          toolText(`Rule ${rule.id} (${rule.name}) saved [${rule.action}/${rule.mode ?? "detect"}].`, { rule })
         );
       }
 

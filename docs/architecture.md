@@ -416,6 +416,7 @@ All SOC 2 and ISO 27001 control checks are pure functions in `lib/compliance/che
 | `scripts/watchmen-cli.mjs` | Local CLI runner & watcher (`list`, `pull`, `run`, `watch`, `verify`) with git worktree isolation for OpenCode/Claude/Codex |
 | `app/api/handoff/tasks/route.ts` | REST API (`GET`/`POST`) for listing and pushing CLI handoff tasks via session or Bearer API token |
 | `app/api/handoff/tasks/[id]/verify/route.ts` | Closed-loop verification endpoint (`POST`) for CLI/MCP/UI task verification |
+| `app/api/watchmen/v1/runtime/` | Public v0.9 Runtime REST API (`requests`, `rules`, `alerts`, `summary`) authenticated by `wm_...` API tokens or session |
 | `app/api/settings/api-tokens/route.ts` | Personal API Token management (`GET`/`POST`/`DELETE`) for CLI & MCP access |
 | `lib/gcp/client.ts` | SA auth (`initGoogleAuth`), user OAuth auth (`initUserAuth`), org-level project enumeration |
 | `lib/gcp/index.ts` | `fetchGcpSnapshot()` — orchestrates all GCP fetchers |

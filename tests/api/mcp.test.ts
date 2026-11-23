@@ -80,6 +80,9 @@ describe("Watchmen MCP endpoint (/api/mcp)", () => {
       "watchmen_claim_task",
       "watchmen_complete_task",
       "watchmen_verify_task",
+      "watchmen_list_runtime_requests",
+      "watchmen_get_runtime_summary",
+      "watchmen_upsert_runtime_rule",
     ]);
   });
 

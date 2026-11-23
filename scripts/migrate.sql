@@ -180,6 +180,7 @@ CREATE TABLE IF NOT EXISTS runtime_security_rules (
   name             TEXT NOT NULL,
   enabled          BOOLEAN NOT NULL DEFAULT TRUE,
   action           TEXT NOT NULL,
+  mode             TEXT NOT NULL DEFAULT 'detect',
   condition_kind   TEXT NOT NULL,
   condition_value  TEXT NOT NULL,
   severity         TEXT NOT NULL,
@@ -188,6 +189,8 @@ CREATE TABLE IF NOT EXISTS runtime_security_rules (
   updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (user_email, id)
 );
+
+ALTER TABLE runtime_security_rules ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'detect';
 
 CREATE TABLE IF NOT EXISTS runtime_request_events (
   user_email              TEXT NOT NULL,

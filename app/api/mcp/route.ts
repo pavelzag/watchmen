@@ -7,6 +7,18 @@ import {
 } from "@/lib/handoff/store";
 import { verifyHandoffTask } from "@/lib/handoff/verify";
 import {
+  createRuntimeSecurityRule,
+  getRuntimeSecuritySummary,
+  queryRuntimeRequestEvents,
+  updateRuntimeSecurityRule,
+} from "@/lib/runtime-security-store";
+import {
+  isRuntimeSecurityAction,
+  isRuntimeSecurityRuleMode,
+  isRuntimeSecuritySeverity,
+  parseRuntimeRuleCondition,
+} from "@/lib/runtime-security-validation";
+import {
   handleMcpJsonRpc,
   MCP_PROTOCOL_VERSION,
   WATCHMEN_MCP_TOOLS,
@@ -41,6 +53,46 @@ function createServerTaskClient(userEmail: string): McpTaskClient {
         taskId: params.taskId,
         autoComplete: params.autoComplete,
       }),
+    listRuntimeRequests: (filters) => queryRuntimeRequestEvents(userEmail, filters),
+    getRuntimeSummary: (filters) => getRuntimeSecuritySummary(userEmail, filters),
+    createOrUpdateRuntimeRule: async (input) => {
+      const parsedCondition = input.condition !== undefined ? parseRuntimeRuleCondition(input.condition) : undefined;
+      if (input.condition !== undefined && !parsedCondition) {
+        throw new Error("Invalid runtime rule condition.");
+      }
+      if (input.action !== undefined && !isRuntimeSecurityAction(input.action)) {
+        throw new Error("Invalid runtime rule action.");
+      }
+      if (input.mode !== undefined && !isRuntimeSecurityRuleMode(input.mode)) {
+        throw new Error("Invalid runtime rule mode.");
+      }
+      if (input.severity !== undefined && !isRuntimeSecuritySeverity(input.severity)) {
+        throw new Error("Invalid runtime rule severity.");
+      }
+      if (input.id) {
+        return updateRuntimeSecurityRule(userEmail, input.id, {
+          ...(input.name ? { name: input.name } : {}),
+          ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
+          ...(input.action ? { action: input.action } : {}),
+          ...(input.mode ? { mode: input.mode } : {}),
+          ...(input.severity ? { severity: input.severity } : {}),
+          ...(parsedCondition ? { condition: parsedCondition } : {}),
+          ...(input.description !== undefined ? { description: input.description } : {}),
+        });
+      }
+      if (!input.name || !input.action || !input.severity || !parsedCondition) {
+        throw new Error("Creating a new rule requires name, action, severity, and condition.");
+      }
+      return createRuntimeSecurityRule(userEmail, {
+        name: input.name,
+        enabled: input.enabled ?? true,
+        action: input.action,
+        mode: input.mode ?? "detect",
+        severity: input.severity,
+        condition: parsedCondition,
+        description: input.description ?? "",
+      });
+    },
   };
 }
 

@@ -5,6 +5,8 @@ import {
   getRuntimeSecurityRules,
 } from "@/lib/runtime-security-store";
 import {
+  isRuntimeSecurityAction,
+  isRuntimeSecurityRuleMode,
   isRuntimeSecuritySeverity,
   parseRuntimeRuleCondition,
 } from "@/lib/runtime-security-validation";
@@ -44,8 +46,13 @@ function parseRulePayload(body: Record<string, unknown>):
   if (!name) return { ok: false, error: "Rule name is required." };
 
   const action = body.action;
-  if (action !== "flag" && action !== "would_block") {
-    return { ok: false, error: "Action must be flag or would_block." };
+  if (!isRuntimeSecurityAction(action)) {
+    return { ok: false, error: "Action must be flag, would_block, alert, or block." };
+  }
+
+  const mode = body.mode ?? "detect";
+  if (!isRuntimeSecurityRuleMode(mode)) {
+    return { ok: false, error: "Mode must be detect or enforce." };
   }
 
   const severity = body.severity;
@@ -64,6 +71,7 @@ function parseRulePayload(body: Record<string, unknown>):
       name,
       enabled: typeof body.enabled === "boolean" ? body.enabled : true,
       action,
+      mode,
       condition,
       severity,
       description: typeof body.description === "string" ? body.description : "",

@@ -71,6 +71,49 @@ const TOOLS = [
       required: ["taskId"],
     },
   },
+  {
+    name: "watchmen_list_runtime_requests",
+    description: "Query Watchmen runtime security request events via /api/watchmen/v1/runtime/requests.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        decision: { type: "string", enum: ["allow", "flagged", "would_block", "blocked"] },
+        method: { type: "string" },
+        pathPrefix: { type: "string" },
+        severity: { type: "string", enum: ["low", "medium", "high", "critical"] },
+        ruleId: { type: "string" },
+        limit: { type: "number" },
+      },
+    },
+  },
+  {
+    name: "watchmen_get_runtime_summary",
+    description: "Summarize Watchmen runtime decisions and top matched rules via /api/watchmen/v1/runtime/summary.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        from: { type: "string" },
+        to: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "watchmen_upsert_runtime_rule",
+    description: "Create or update a Watchmen runtime rule via /api/watchmen/v1/runtime/rules.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        name: { type: "string" },
+        enabled: { type: "boolean" },
+        action: { type: "string", enum: ["alert", "block", "flag", "would_block"] },
+        mode: { type: "string", enum: ["detect", "enforce"] },
+        severity: { type: "string", enum: ["low", "medium", "high", "critical"] },
+        condition: { type: "object" },
+        description: { type: "string" },
+      },
+    },
+  },
 ];
 
 async function apiFetch(path, init = {}) {
@@ -203,6 +246,48 @@ async function handleRequest(req) {
             task: data.task,
             verification: data.verification,
           }),
+        };
+      }
+
+      if (name === "watchmen_list_runtime_requests") {
+        const qs = new URLSearchParams();
+        if (args.decision) qs.set("decision", String(args.decision));
+        if (args.method) qs.set("method", String(args.method));
+        if (args.pathPrefix) qs.set("pathPrefix", String(args.pathPrefix));
+        if (args.severity) qs.set("severity", String(args.severity));
+        if (args.ruleId) qs.set("ruleId", String(args.ruleId));
+        if (args.limit) qs.set("limit", String(args.limit));
+        const data = await apiFetch(`/api/watchmen/v1/runtime/requests?${qs.toString()}`);
+        const events = data.events || [];
+        const text = events.length
+          ? `Found ${data.total ?? events.length} runtime request(s):\n` +
+            events.map((e) => `- ${e.id} [${String(e.decision).toUpperCase()}] ${e.method || "HTTP"} ${e.path || "/"}`).join("\n")
+          : "No matching runtime requests found.";
+        return { jsonrpc: "2.0", id, result: textResult(text, data) };
+      }
+
+      if (name === "watchmen_get_runtime_summary") {
+        const qs = new URLSearchParams();
+        if (args.from) qs.set("from", String(args.from));
+        if (args.to) qs.set("to", String(args.to));
+        const data = await apiFetch(`/api/watchmen/v1/runtime/summary?${qs.toString()}`);
+        return { jsonrpc: "2.0", id, result: textResult(JSON.stringify(data, null, 2), { summary: data }) };
+      }
+
+      if (name === "watchmen_upsert_runtime_rule") {
+        const data = args.id
+          ? await apiFetch(`/api/watchmen/v1/runtime/rules/${encodeURIComponent(String(args.id))}`, {
+              method: "PATCH",
+              body: JSON.stringify(args),
+            })
+          : await apiFetch(`/api/watchmen/v1/runtime/rules`, {
+              method: "POST",
+              body: JSON.stringify(args),
+            });
+        return {
+          jsonrpc: "2.0",
+          id,
+          result: textResult(`Rule ${data.rule?.id || ""} saved.`, { rule: data.rule }),
         };
       }
 

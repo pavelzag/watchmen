@@ -20,6 +20,7 @@ import type {
   RuntimeSecurityAction,
   RuntimeSecurityRule,
   RuntimeSecurityRuleCondition,
+  RuntimeSecurityRuleMode,
   RuntimeSecuritySeverity,
 } from "@/lib/runtime-security";
 import { openCommandPalette } from "@/components/CommandPalette";
@@ -87,9 +88,12 @@ type ThreeGlobeDebugState = {
 const CONDITION_LABELS: Record<RuntimeSecurityRuleCondition["kind"], string> = {
   method: "Method",
   path_prefix: "Path prefix",
+  path_regex: "Path regex",
   content_type: "Content-Type",
   body_contains: "Body contains",
   source_ip_class: "Source IP class",
+  status_code: "Status code",
+  known_attack_vector: "Attack vector",
 };
 const MAP_WINDOWS: Array<{ value: RuntimeMapWindow; label: string; ms: number | null }> = [
   { value: "1m", label: "1m", ms: 60_000 },
@@ -138,6 +142,7 @@ const GLOBE_LABELS = [
 ];
 
 function decisionClass(decision: RuntimeRequestEvent["decision"]) {
+  if (decision === "blocked") return "border-red-500/60 bg-red-500/20 text-red-200";
   if (decision === "would_block") return "border-red-500/35 bg-red-500/10 text-red-300";
   if (decision === "flagged") return "border-amber-500/35 bg-amber-500/10 text-amber-300";
   return "border-emerald-500/25 bg-emerald-500/10 text-emerald-300";
@@ -170,6 +175,7 @@ function eventTimestampMs(event: RuntimeRequestEvent) {
 }
 
 function decisionRank(decision: RuntimeRequestEvent["decision"]) {
+  if (decision === "blocked") return 3;
   if (decision === "would_block") return 2;
   if (decision === "flagged") return 1;
   return 0;
@@ -321,6 +327,7 @@ export default function RuntimeSecurityPanel() {
   const [newRule, setNewRule] = useState({
     name: "",
     action: "flag" as RuntimeSecurityAction,
+    mode: "detect" as RuntimeSecurityRuleMode,
     severity: "medium" as RuntimeSecuritySeverity,
     conditionKind: "method" as RuntimeSecurityRuleCondition["kind"],
     conditionValue: "",
@@ -434,6 +441,24 @@ export default function RuntimeSecurityPanel() {
     }
   };
 
+  const toggleRuleMode = async (rule: RuntimeSecurityRule) => {
+    setSavingRuleId(rule.id);
+    try {
+      const nextMode: RuntimeSecurityRuleMode = rule.mode === "enforce" ? "detect" : "enforce";
+      const res = await fetch(`/api/runtime-security/rules/${encodeURIComponent(rule.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: nextMode }),
+      });
+      if (!res.ok) throw new Error("Failed to update rule mode");
+      await Promise.all([loadRules(), loadEvents()]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update rule mode");
+    } finally {
+      setSavingRuleId(null);
+    }
+  };
+
   const deleteRule = async (rule: RuntimeSecurityRule) => {
     setSavingRuleId(rule.id);
     try {
@@ -463,6 +488,7 @@ export default function RuntimeSecurityPanel() {
           name,
           enabled: true,
           action: newRule.action,
+          mode: newRule.mode,
           severity: newRule.severity,
           condition: {
             kind: newRule.conditionKind,
@@ -487,7 +513,7 @@ export default function RuntimeSecurityPanel() {
           <ShieldAlert size={16} className="text-amber-300" />
           <div>
             <div className="text-xs font-bold uppercase tracking-widest text-slate-100">Runtime Security</div>
-            <div className="text-[10px] uppercase tracking-widest text-slate-600">v0.8 detect-only policy engine</div>
+            <div className="text-[10px] uppercase tracking-widest text-slate-600">v0.9 detect & enforce policy engine</div>
           </div>
         </div>
         <div className="ml-auto flex items-center gap-3">
@@ -598,7 +624,25 @@ export default function RuntimeSecurityPanel() {
                   </button>
                   <div className="min-w-0">
                     <div className="truncate font-bold text-slate-200">{rule.name}</div>
-                    <div className={cn("text-[10px] uppercase tracking-widest", severityClass(rule.severity))}>{rule.severity}</div>
+                    <div className="flex items-center gap-2">
+                      <span className={cn("text-[10px] uppercase tracking-widest", severityClass(rule.severity))}>{rule.severity}</span>
+                      {(rule.action === "block" || rule.action === "would_block") && (
+                        <button
+                          type="button"
+                          onClick={() => toggleRuleMode(rule)}
+                          disabled={savingRuleId === rule.id}
+                          className={cn(
+                            "border px-1.5 py-0 text-[9px] uppercase tracking-widest",
+                            rule.mode === "enforce"
+                              ? "border-red-500/50 bg-red-500/15 text-red-300"
+                              : "border-amber-500/40 bg-amber-500/10 text-amber-300",
+                          )}
+                          title="Toggle detect vs enforce mode"
+                        >
+                          {rule.mode === "enforce" ? "enforce" : "detect"}
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <div className="truncate font-mono text-[10px] text-slate-400">{conditionText(rule)}</div>
                   <div className="font-mono text-[10px] text-slate-500">{formatTime(rule.lastMatchedAt)}</div>
@@ -631,14 +675,23 @@ export default function RuntimeSecurityPanel() {
                   placeholder="Rule name"
                   className="h-8 border border-slate-800 bg-[#050805] px-2 text-xs text-slate-200 outline-none focus:border-emerald-800"
                 />
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-3 gap-2">
                   <select
                     value={newRule.action}
                     onChange={(event) => setNewRule((prev) => ({ ...prev, action: event.target.value as RuntimeSecurityAction }))}
                     className="h-8 border border-slate-800 bg-[#050805] px-2 text-xs text-slate-200 outline-none focus:border-emerald-800"
                   >
-                    <option value="flag">Flag</option>
+                    <option value="flag">Flag / Alert</option>
+                    <option value="block">Block</option>
                     <option value="would_block">Would-block</option>
+                  </select>
+                  <select
+                    value={newRule.mode}
+                    onChange={(event) => setNewRule((prev) => ({ ...prev, mode: event.target.value as RuntimeSecurityRuleMode }))}
+                    className="h-8 border border-slate-800 bg-[#050805] px-2 text-xs text-slate-200 outline-none focus:border-emerald-800"
+                  >
+                    <option value="detect">Detect</option>
+                    <option value="enforce">Enforce (403)</option>
                   </select>
                   <select
                     value={newRule.severity}
@@ -662,9 +715,12 @@ export default function RuntimeSecurityPanel() {
                 >
                   <option value="method">Method</option>
                   <option value="path_prefix">Path prefix</option>
+                  <option value="path_regex">Path regex</option>
                   <option value="content_type">Content-Type</option>
                   <option value="body_contains">Body contains</option>
                   <option value="source_ip_class">Source IP class</option>
+                  <option value="status_code">Status code</option>
+                  <option value="known_attack_vector">Attack vector</option>
                 </select>
                 {newRule.conditionKind === "source_ip_class" ? (
                   <select
@@ -675,6 +731,20 @@ export default function RuntimeSecurityPanel() {
                     <option value="">Select source class</option>
                     <option value="public">Public</option>
                     <option value="private">Private</option>
+                  </select>
+                ) : newRule.conditionKind === "known_attack_vector" ? (
+                  <select
+                    value={newRule.conditionValue}
+                    onChange={(event) => setNewRule((prev) => ({ ...prev, conditionValue: event.target.value }))}
+                    className="h-8 border border-slate-800 bg-[#050805] px-2 text-xs text-slate-200 outline-none focus:border-emerald-800"
+                  >
+                    <option value="">Select attack vector</option>
+                    <option value="admin_path_probe">Admin Path Probe</option>
+                    <option value="path_traversal">Path Traversal</option>
+                    <option value="sql_injection_probe">SQL Injection Probe</option>
+                    <option value="rce_probe">RCE / Command Probe</option>
+                    <option value="sensitive_file_probe">Sensitive File Probe</option>
+                    <option value="destructive_method">Destructive HTTP Method</option>
                   </select>
                 ) : (
                   <input
@@ -900,7 +970,7 @@ function RuntimeRequestGlobe({
 
       {clusters.map((cluster, index) => {
         const event = cluster.event;
-        const hot = cluster.decision === "would_block";
+        const hot = cluster.decision === "would_block" || cluster.decision === "blocked";
         const flagged = cluster.decision === "flagged";
         const age = Math.max(0, Date.now() - eventTimestampMs(event));
         const fresh = age < 15_000;
@@ -1002,7 +1072,7 @@ function RuntimeRequestGlobe({
         <div className="grid grid-cols-3 border border-slate-800/80 bg-black/60 backdrop-blur-sm">
           <Metric label="allow" value={visiblePoints.filter((point) => point.event.decision === "allow").length} />
           <Metric label="flagged" value={visiblePoints.filter((point) => point.event.decision === "flagged").length} />
-          <Metric label="would block" value={visiblePoints.filter((point) => point.event.decision === "would_block").length} />
+          <Metric label="blocked / would block" value={visiblePoints.filter((point) => point.event.decision === "would_block" || point.event.decision === "blocked").length} />
         </div>
       </div>
 
@@ -1269,7 +1339,7 @@ function ThreeRequestGlobe({
           label: cluster.count > 99 ? "99+" : String(cluster.count),
         }));
         const clusterElement = (cluster: ThreeGlobeClusterDatum) => {
-          const hot = cluster.decision === "would_block";
+          const hot = cluster.decision === "would_block" || cluster.decision === "blocked";
           const flagged = cluster.decision === "flagged";
           const size = Math.min(34, (hot ? 18 : flagged ? 15 : 12) + Math.floor(Math.log2(cluster.count) * 4));
           const element = document.createElement("button");

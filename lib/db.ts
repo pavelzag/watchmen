@@ -295,7 +295,7 @@ export async function ensureTraceSourceConfigsTable(): Promise<void> {
 }
 
 /**
- * Ensures tables for v0.8 runtime request security rules and request decisions.
+ * Ensures tables for v0.8/v0.9 runtime request security rules and request decisions.
  */
 export async function ensureRuntimeSecurityTables(): Promise<void> {
   if (!runtimeSecurityTablesReady) {
@@ -307,6 +307,7 @@ export async function ensureRuntimeSecurityTables(): Promise<void> {
           name             TEXT NOT NULL,
           enabled          BOOLEAN NOT NULL DEFAULT TRUE,
           action           TEXT NOT NULL,
+          mode             TEXT NOT NULL DEFAULT 'detect',
           condition_kind   TEXT NOT NULL,
           condition_value  TEXT NOT NULL,
           severity         TEXT NOT NULL,
@@ -316,6 +317,7 @@ export async function ensureRuntimeSecurityTables(): Promise<void> {
           PRIMARY KEY (user_email, id)
         )
       `;
+      await sql`ALTER TABLE runtime_security_rules ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'detect'`;
       await sql`
         CREATE TABLE IF NOT EXISTS runtime_request_events (
           user_email              TEXT NOT NULL,

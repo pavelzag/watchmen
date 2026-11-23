@@ -1,22 +1,71 @@
 import type { LiveTraceIngressEvent } from "@/lib/live-trace-bus";
 
-export type RuntimeSecurityAction = "flag" | "would_block";
-export type RuntimeSecurityDecisionAction = "allow" | "flagged" | "would_block";
+export type RuntimeSecurityAction = "flag" | "would_block" | "alert" | "block";
+export type RuntimeSecurityRuleMode = "detect" | "enforce";
+export type RuntimeSecurityDecisionAction = "allow" | "flagged" | "would_block" | "blocked";
 export type RuntimeSecuritySeverity = "low" | "medium" | "high" | "critical";
 export type SourceIpClass = "public" | "private" | "loopback" | "link_local" | "unknown";
+
+export type KnownAttackVectorId =
+  | "admin_path_probe"
+  | "path_traversal"
+  | "sql_injection_probe"
+  | "rce_probe"
+  | "sensitive_file_probe"
+  | "destructive_method";
+
+export const KNOWN_ATTACK_VECTORS: Record<
+  KnownAttackVectorId,
+  { label: string; description: string; indicators: string[] }
+> = {
+  admin_path_probe: {
+    label: "Admin Path Probe",
+    description: "Matches probes targeting administrative panels (/admin, /wp-admin, /phpmyadmin).",
+    indicators: ["/admin", "/wp-admin", "/phpmyadmin"],
+  },
+  path_traversal: {
+    label: "Path Traversal",
+    description: "Matches directory traversal sequences (../, %2e%2e) in path or body.",
+    indicators: ["../", "%2e%2e", "..\\"],
+  },
+  sql_injection_probe: {
+    label: "SQL Injection Probe",
+    description: "Matches common SQL injection markers in path or body.",
+    indicators: ["union select", "' or 1=1", "1=1--", "drop table"],
+  },
+  rce_probe: {
+    label: "RCE / Command Probe",
+    description: "Matches common remote command execution / JNDI markers.",
+    indicators: ["/cgi-bin", "${jndi:", ";wget", ";curl"],
+  },
+  sensitive_file_probe: {
+    label: "Sensitive File Probe",
+    description: "Matches requests probing /.env, /etc/passwd, /config.json, or /.git/.",
+    indicators: ["/.env", "/etc/passwd", "/config.json", "/.git/"],
+  },
+  destructive_method: {
+    label: "Destructive HTTP Method",
+    description: "Matches DELETE, PUT, or PATCH requests.",
+    indicators: ["DELETE", "PUT", "PATCH"],
+  },
+};
 
 export type RuntimeSecurityRuleCondition =
   | { kind: "method"; value: string }
   | { kind: "path_prefix"; value: string }
+  | { kind: "path_regex"; value: string }
   | { kind: "content_type"; value: string }
   | { kind: "body_contains"; value: string }
-  | { kind: "source_ip_class"; value: "public" | "private" };
+  | { kind: "source_ip_class"; value: "public" | "private" }
+  | { kind: "status_code"; value: string }
+  | { kind: "known_attack_vector"; value: KnownAttackVectorId };
 
 export interface RuntimeSecurityRule {
   id: string;
   name: string;
   enabled: boolean;
   action: RuntimeSecurityAction;
+  mode?: RuntimeSecurityRuleMode;
   condition: RuntimeSecurityRuleCondition;
   severity: RuntimeSecuritySeverity;
   description?: string;
@@ -152,7 +201,10 @@ export function evaluateRuntimeRules(
   rules: RuntimeSecurityRule[],
 ): RuntimeSecurityDecision {
   const matchedRules = rules.filter((rule) => rule.enabled && ruleMatchesEvent(rule, event));
-  const hasWouldBlock = matchedRules.some((rule) => rule.action === "would_block");
+  const isBlockingRule = (rule: RuntimeSecurityRule) =>
+    rule.action === "block" || rule.action === "would_block";
+  const hasBlocked = matchedRules.some((rule) => isBlockingRule(rule) && rule.mode === "enforce");
+  const hasWouldBlock = matchedRules.some((rule) => isBlockingRule(rule));
 
   const highestSeverity = matchedRules.reduce<RuntimeSecuritySeverity | undefined>((highest, rule) => {
     if (!highest || SEVERITY_RANK[rule.severity] > SEVERITY_RANK[highest]) {
@@ -163,7 +215,14 @@ export function evaluateRuntimeRules(
 
   return {
     requestId: event.id,
-    action: matchedRules.length === 0 ? "allow" : hasWouldBlock ? "would_block" : "flagged",
+    action:
+      matchedRules.length === 0
+        ? "allow"
+        : hasBlocked
+          ? "blocked"
+          : hasWouldBlock
+            ? "would_block"
+            : "flagged",
     matchedRuleIds: matchedRules.map((rule) => rule.id),
     reasons: matchedRules.map((rule) => reasonForMatch(rule, event)),
     highestSeverity,
@@ -264,6 +323,14 @@ function ruleMatchesEvent(rule: RuntimeSecurityRule, event: RuntimeRequestEvent)
       return normalizeMethod(event.method) === condition.value.trim().toUpperCase();
     case "path_prefix":
       return Boolean(event.path?.startsWith(condition.value));
+    case "path_regex": {
+      if (!event.path) return false;
+      try {
+        return new RegExp(condition.value, "i").test(event.path);
+      } catch {
+        return false;
+      }
+    }
     case "content_type":
       return normalizeContentType(event.contentType) === normalizeContentType(condition.value);
     case "body_contains":
@@ -275,6 +342,31 @@ function ruleMatchesEvent(rule: RuntimeSecurityRule, event: RuntimeRequestEvent)
       }
       return sourceClass === "public";
     }
+    case "status_code": {
+      if (event.statusCode === undefined) return false;
+      const codeStr = String(event.statusCode);
+      const targets = condition.value.split(",").map((v) => v.trim().toLowerCase()).filter(Boolean);
+      return targets.some((t) => {
+        if (/^[1-5]xx$/.test(t)) return codeStr.startsWith(t[0]);
+        return codeStr === t;
+      });
+    }
+    case "known_attack_vector": {
+      const vector = KNOWN_ATTACK_VECTORS[condition.value];
+      if (!vector) return false;
+      if (condition.value === "destructive_method") {
+        const method = normalizeMethod(event.method);
+        return Boolean(method && vector.indicators.includes(method));
+      }
+      const pathLower = (event.path ?? "").toLowerCase();
+      const bodyLower = (event.bodySample ?? "").toLowerCase();
+      if (condition.value === "admin_path_probe" || condition.value === "sensitive_file_probe") {
+        return vector.indicators.some((ind) => pathLower.includes(ind.toLowerCase()));
+      }
+      return vector.indicators.some(
+        (ind) => pathLower.includes(ind.toLowerCase()) || bodyLower.includes(ind.toLowerCase())
+      );
+    }
   }
 }
 
@@ -285,12 +377,18 @@ function reasonForMatch(rule: RuntimeSecurityRule, event: RuntimeRequestEvent): 
       return `${rule.name}: method ${event.method ?? "unknown"} matched ${condition.value}`;
     case "path_prefix":
       return `${rule.name}: path ${event.path ?? "unknown"} matched prefix ${condition.value}`;
+    case "path_regex":
+      return `${rule.name}: path ${event.path ?? "unknown"} matched pattern ${condition.value}`;
     case "content_type":
       return `${rule.name}: content-type ${event.contentType ?? "unknown"} matched ${condition.value}`;
     case "body_contains":
       return `${rule.name}: body sample contained configured marker`;
     case "source_ip_class":
       return `${rule.name}: source IP ${event.sourceIp ?? "unknown"} classified as ${event.sourceIpClass ?? classifySourceIp(event.sourceIp)}`;
+    case "status_code":
+      return `${rule.name}: status code ${event.statusCode ?? "unknown"} matched ${condition.value}`;
+    case "known_attack_vector":
+      return `${rule.name}: matched attack vector ${KNOWN_ATTACK_VECTORS[condition.value]?.label ?? condition.value}`;
   }
 }
 

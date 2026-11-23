@@ -11,11 +11,58 @@ export async function POST(req: NextRequest) {
 
     try {
         const body = await req.json();
-        const { data: payloadData, id: requestId } = body;
+        const { data: payloadData, id: requestId, path: bodyPath, method: bodyMethod } = body;
         const sourceIp = getSourceIp(req);
+        const contentType = req.headers.get("content-type") ?? undefined;
         const bodySample = shouldStoreBodySample()
             ? JSON.stringify(body).slice(0, 512)
             : undefined;
+        const rawBodySample = JSON.stringify(body).slice(0, 512);
+        const bodySize = Number(req.headers.get("content-length")) || rawBodySample.length;
+        const requestMethod = typeof bodyMethod === "string" && bodyMethod.trim()
+            ? bodyMethod.trim().toUpperCase()
+            : "POST";
+        const requestPath = typeof bodyPath === "string" && bodyPath.trim()
+            ? bodyPath.trim()
+            : "/process";
+
+        // Evaluate runtime security rules before forwarding/processing
+        const rules = session.user.email
+            ? await getRuntimeSecurityRulesForEvaluation(session.user.email).catch(() => [])
+            : [];
+        const preEvent = applyRuntimeDecision({
+            id: requestId || `trace-${crypto.randomUUID()}`,
+            ts: new Date().toISOString(),
+            sourceIp,
+            method: requestMethod,
+            path: requestPath,
+            contentType,
+            bodySize,
+            bodySample: rawBodySample,
+            destinationService: process.env['PROCESSOR_URL'] || "Mock",
+        }, rules);
+
+        if (preEvent.decision === "blocked") {
+            const blockedEvent = {
+                ...preEvent,
+                bodySample: shouldStoreBodySample() ? rawBodySample : undefined,
+                statusCode: 403,
+            };
+            if (session.user.email) {
+                await saveRuntimeRequestEvent(session.user.email, blockedEvent).catch(() => {});
+            }
+            return NextResponse.json(
+                {
+                    ok: false,
+                    blocked: true,
+                    error: "Request blocked by Watchmen runtime policy.",
+                    decision: blockedEvent.decision,
+                    matchedRuleIds: blockedEvent.matchedRuleIds,
+                    reasons: blockedEvent.reasons ?? [],
+                },
+                { status: 403 },
+            );
+        }
 
         // Only use the server-configured PROCESSOR_URL — never a client-supplied URL.
         const finalTargetUrl = process.env['PROCESSOR_URL'];
@@ -36,12 +83,14 @@ export async function POST(req: NextRequest) {
                     const result = await resp.json();
                     await saveTraceRuntimeEvent({
                         userEmail: session.user.email,
-                        requestId,
+                        requestId: preEvent.id,
                         sourceIp,
+                        method: requestMethod,
+                        path: requestPath,
                         statusCode: resp.status,
                         targetUrl: endpoint,
-                        contentType: req.headers.get("content-type") ?? undefined,
-                        bodySize: Number(req.headers.get("content-length")) || JSON.stringify(body).length,
+                        contentType,
+                        bodySize,
                         bodySample,
                     });
                     return NextResponse.json({
@@ -83,12 +132,14 @@ export async function POST(req: NextRequest) {
 
         await saveTraceRuntimeEvent({
             userEmail: session.user.email,
-            requestId,
+            requestId: preEvent.id,
             sourceIp,
+            method: requestMethod,
+            path: requestPath,
             statusCode: 200,
             targetUrl: "Mock",
-            contentType: req.headers.get("content-type") ?? undefined,
-            bodySize: Number(req.headers.get("content-length")) || JSON.stringify(body).length,
+            contentType,
+            bodySize,
             bodySample,
         });
 
@@ -109,6 +160,8 @@ async function saveTraceRuntimeEvent(input: {
     userEmail?: string | null;
     requestId?: string;
     sourceIp?: string;
+    method?: string;
+    path?: string;
     statusCode: number;
     targetUrl: string;
     contentType?: string;
@@ -123,8 +176,8 @@ async function saveTraceRuntimeEvent(input: {
             id: input.requestId || `trace-${crypto.randomUUID()}`,
             ts: new Date().toISOString(),
             sourceIp: input.sourceIp,
-            method: "POST",
-            path: "/process",
+            method: input.method || "POST",
+            path: input.path || "/process",
             contentType: input.contentType,
             bodySize: input.bodySize,
             bodySample: input.bodySample,

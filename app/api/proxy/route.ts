@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { publishLiveTraceEvent, type LiveTraceIngressEvent } from "@/lib/live-trace-bus";
+import { applyRuntimeDecision, DEFAULT_RUNTIME_SECURITY_RULES } from "@/lib/runtime-security";
+import { getRuntimeSecurityRulesForEvaluation, saveRuntimeRequestEvent } from "@/lib/runtime-security-store";
 
 // Blocked headers — never forward credentials or host overrides to upstream.
 const BLOCKED_HEADERS = new Set(["authorization", "cookie", "host", "x-forwarded-for", "x-real-ip"]);
@@ -136,6 +138,51 @@ export async function POST(req: NextRequest) {
     publishLiveTraceEvent(email, event);
   };
 
+  let targetPath = "/";
+  try {
+    targetPath = new URL(url).pathname || "/";
+  } catch {}
+  const contentType = safeHeaders["Content-Type"] ?? safeHeaders["content-type"] ?? req.headers.get("content-type") ?? "application/json";
+  const bodySample = body === undefined
+    ? undefined
+    : (typeof body === "string" ? body : JSON.stringify(body)).slice(0, 512);
+  const bodySize = bodySample ? Buffer.byteLength(bodySample, "utf8") : undefined;
+  const sourceIp = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || req.headers.get("x-real-ip") || undefined;
+
+  const rules = session?.user?.email
+    ? await getRuntimeSecurityRulesForEvaluation(session.user.email).catch(() => DEFAULT_RUNTIME_SECURITY_RULES)
+    : DEFAULT_RUNTIME_SECURITY_RULES;
+  const preEvent = applyRuntimeDecision({
+    id: `proxy-${requestId}`,
+    ts: new Date().toISOString(),
+    sourceIp,
+    method: requestMethod,
+    path: targetPath,
+    contentType,
+    bodySize,
+    bodySample,
+    destinationService: hostname,
+  }, rules);
+
+  if (preEvent.decision === "blocked") {
+    const blockedEvent = { ...preEvent, statusCode: 403 };
+    if (session?.user?.email) {
+      await saveRuntimeRequestEvent(session.user.email, blockedEvent).catch(() => {});
+    }
+    publishTraceEvent(403, 0);
+    return NextResponse.json(
+      {
+        ok: false,
+        blocked: true,
+        error: "Request blocked by Watchmen runtime policy.",
+        decision: blockedEvent.decision,
+        matchedRuleIds: blockedEvent.matchedRuleIds,
+        reasons: blockedEvent.reasons ?? [],
+      },
+      { status: 403 },
+    );
+  }
+
   try {
     const fetchOptions: RequestInit = {
       method: requestMethod,
@@ -157,6 +204,13 @@ export async function POST(req: NextRequest) {
       bodyBytes: responseText.length,
     });
     publishTraceEvent(res.status, timing);
+    if (session?.user?.email) {
+      const postEvent = applyRuntimeDecision({
+        ...preEvent,
+        statusCode: res.status,
+      }, rules);
+      await saveRuntimeRequestEvent(session.user.email, postEvent).catch(() => {});
+    }
 
     return NextResponse.json({
       ok: true,

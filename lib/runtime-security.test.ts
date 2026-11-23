@@ -265,4 +265,80 @@ describe("runtime security rule engine", () => {
       country: "Australia",
     });
   });
+
+  it("enforces block rules in enforce mode while keeping detect mode non-blocking", () => {
+    const enforceRules: RuntimeSecurityRule[] = [
+      {
+        id: "enforce-admin",
+        name: "Block admin paths",
+        enabled: true,
+        action: "block",
+        mode: "enforce",
+        condition: { kind: "path_prefix", value: "/admin" },
+        severity: "critical",
+      },
+      {
+        id: "detect-sqli",
+        name: "Detect SQLi",
+        enabled: true,
+        action: "block",
+        mode: "detect",
+        condition: { kind: "known_attack_vector", value: "sql_injection_probe" },
+        severity: "high",
+      },
+    ];
+
+    const blocked = evaluateRuntimeRules({ ...baseEvent, path: "/admin/users" }, enforceRules);
+    expect(blocked.action).toBe("blocked");
+    expect(blocked.matchedRuleIds).toContain("enforce-admin");
+
+    const detectOnly = evaluateRuntimeRules(
+      { ...baseEvent, path: "/search?q=' or 1=1" },
+      enforceRules,
+    );
+    expect(detectOnly.action).toBe("would_block");
+    expect(detectOnly.matchedRuleIds).toContain("detect-sqli");
+  });
+
+  it("supports path_regex, status_code, and known_attack_vector conditions", () => {
+    const advancedRules: RuntimeSecurityRule[] = [
+      {
+        id: "regex-v1",
+        name: "Regex rule",
+        enabled: true,
+        action: "alert",
+        condition: { kind: "path_regex", value: "^/api/v\\d+/secrets" },
+        severity: "high",
+      },
+      {
+        id: "status-5xx",
+        name: "5xx status",
+        enabled: true,
+        action: "alert",
+        condition: { kind: "status_code", value: "5xx" },
+        severity: "medium",
+      },
+      {
+        id: "traversal",
+        name: "Traversal",
+        enabled: true,
+        action: "block",
+        mode: "enforce",
+        condition: { kind: "known_attack_vector", value: "path_traversal" },
+        severity: "critical",
+      },
+    ];
+
+    const regexMatch = evaluateRuntimeRules({ ...baseEvent, path: "/api/v2/secrets" }, advancedRules);
+    expect(regexMatch.action).toBe("flagged");
+    expect(regexMatch.matchedRuleIds).toContain("regex-v1");
+
+    const statusMatch = evaluateRuntimeRules({ ...baseEvent, statusCode: 503 }, advancedRules);
+    expect(statusMatch.action).toBe("flagged");
+    expect(statusMatch.matchedRuleIds).toContain("status-5xx");
+
+    const traversalMatch = evaluateRuntimeRules({ ...baseEvent, path: "/files/../../etc/passwd" }, advancedRules);
+    expect(traversalMatch.action).toBe("blocked");
+    expect(traversalMatch.matchedRuleIds).toContain("traversal");
+  });
 });

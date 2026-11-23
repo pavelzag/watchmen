@@ -19,6 +19,7 @@ export async function GET(req: NextRequest) {
       total: events.length,
       flagged: events.filter((event) => event.decision === "flagged").length,
       wouldBlock: events.filter((event) => event.decision === "would_block").length,
+      blocked: events.filter((event) => event.decision === "blocked").length,
     },
   });
 }

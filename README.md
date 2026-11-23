@@ -8,8 +8,13 @@ Watchmen scans your cloud infrastructure for misconfigurations, runs SOC 2 Type 
 
 ---
 
-## v0.9.0 — CLI Task Handoff (Phases 1–3) & Dependency Modernization
+## v0.9.0 — API & Runtime Enforcement, CLI Task Handoff, and Dependency Modernization
 
+- **API & Runtime Enforcement Core**:
+  - Public Watchmen v1 Runtime REST API (`/api/watchmen/v1/runtime/requests`, `/requests/:id`, `/rules`, `/rules/:id`, `/alerts`, `/summary`) authenticated via scoped Personal API Tokens (`wm_...`) or browser session.
+  - Explicit `mode: detect | enforce` on runtime rules, `blocked` decision, `path_regex` / `status_code` / `known_attack_vector` templates (`admin_path_probe`, `path_traversal`, `sql_injection_probe`, `rce_probe`, `sensitive_file_probe`, `destructive_method`).
+  - Inline HTTP `403` enforcement in `/api/proxy` and `/api/trace` plus runtime query/rule MCP tools (`watchmen_list_runtime_requests`, `watchmen_get_runtime_summary`, `watchmen_upsert_runtime_rule`).
+  - See [Watchmen v0.9 API and Runtime Enforcement Plan](docs/v0.9-api-runtime-enforcement-plan.md).
 - **CLI Task Handoff (Phases 1–3)**: Push findings and attack paths from Watchmen into open tasks for **OpenCode**, **Claude Code**, and **Codex**:
   - Canonical task normalization, category batching, deterministic deduplication, and secret redaction (`lib/handoff/tasks.ts`).
   - Postgres-backed handoff queue (`cli_handoff_tasks`) and scoped Personal API Tokens (`user_api_tokens`, `wm_...`) in `lib/db.ts` and `/api/handoff/tasks`.
