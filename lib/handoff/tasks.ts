@@ -7,6 +7,7 @@ import {
 } from "@/lib/github/remediation-targets";
 import type { AttackPath } from "@/lib/gcp/attack-paths";
 import type { SecurityFinding, SecurityFindingSeverity } from "@/lib/gcp/types";
+import type { ControlResult } from "@/lib/compliance/types";
 
 export type HandoffTool = "any" | "opencode" | "claude" | "codex";
 export type HandoffBatchMode = "grouped" | "combined" | "individual";
@@ -14,7 +15,7 @@ export type HandoffTaskStatus = "open" | "claimed" | "in_progress" | "completed"
 
 export interface HandoffIssueItem {
   id: string;
-  kind: "finding" | "attack_path";
+  kind: "finding" | "attack_path" | "compliance_control";
   cloud: "gcp" | "aws";
   severity: SecurityFindingSeverity;
   title: string;
@@ -180,11 +181,43 @@ export function handoffIssueFromAttackPath(
   });
 }
 
+export function handoffIssueFromComplianceControl(
+  control: ControlResult,
+  opts?: { standard?: string; categoryName?: string; aiRecommendation?: string }
+): HandoffIssueItem {
+  const cloud: "gcp" | "aws" = control.id.startsWith("aws:") ? "aws" : "gcp";
+  const rawControlId = control.id.replace(/^(gcp|aws):/, "");
+  const projects = [...new Set(control.evidence.map((e) => e.projectId).filter(Boolean))];
+  const evidencePreview = control.evidence
+    .slice(0, 12)
+    .map((e) => (e.projectId ? `${e.name} (${e.projectId})` : e.name))
+    .join(", ");
+  const extraCount = control.evidence.length > 12 ? ` (+${control.evidence.length - 12} more)` : "";
+  const standardPrefix = opts?.standard ? `[${opts.standard}${opts.categoryName ? ` · ${opts.categoryName}` : ""}] ` : "";
+
+  return sanitizeHandoffIssue({
+    id: control.id,
+    kind: "compliance_control",
+    cloud,
+    severity: control.impact,
+    title: `${rawControlId}: ${control.title}`,
+    description: evidencePreview
+      ? `${standardPrefix}${control.description} Failing/warning resources: ${evidencePreview}${extraCount}.`
+      : `${standardPrefix}${control.description}`,
+    resourceName: control.evidence[0]?.name ?? rawControlId,
+    resourceType: "compliance_control",
+    projectId: projects[0] ?? "unknown",
+    remediationHint: control.remediationHint,
+    mitigations: control.remediationHint ? [control.remediationHint] : [],
+    proposedPlan: opts?.aiRecommendation,
+  });
+}
+
 export function issueToRemediationTarget(issue: HandoffIssueItem): RemediationTarget {
-  if (issue.kind === "attack_path") {
+  if (issue.kind === "attack_path" || issue.kind === "compliance_control") {
     return {
       id: issue.id,
-      kind: "attack_path",
+      kind: issue.kind === "attack_path" ? "attack_path" : "finding",
       severity: issue.severity,
       title: issue.title,
       description: issue.description,

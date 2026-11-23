@@ -3,6 +3,10 @@ import { completeAgentRun, createAgentRun } from "@/lib/agent/store";
 import { verifyFix } from "@/lib/agent/verify-fix";
 import { computeAwsFindings } from "@/lib/aws-findings";
 import type { AwsSnapshot } from "@/lib/aws/types";
+import { runAwsIso27001 } from "@/lib/compliance/aws-iso27001";
+import { runAwsSoc2 } from "@/lib/compliance/aws-soc2";
+import { runIso27001 } from "@/lib/compliance/iso27001";
+import { runSoc2 } from "@/lib/compliance/soc2";
 import { ensureAwsSnapshotTable, ensureGcpSnapshotTable, sql } from "@/lib/db";
 import { computeFindings } from "@/lib/findings";
 import { computeAttackPaths } from "@/lib/gcp/attack-paths";
@@ -41,6 +45,16 @@ async function loadLatestStoredIds(userEmail: string): Promise<{
     for (const ap of computeAttackPaths(gcpSnapshot)) {
       activeIds.add(ap.id);
     }
+    for (const report of [runSoc2(gcpSnapshot), runIso27001(gcpSnapshot)]) {
+      for (const category of report.categories) {
+        for (const control of category.controls) {
+          if (control.status === "fail" || control.status === "warning") {
+            activeIds.add(control.id);
+            activeIds.add(`gcp:${control.id}`);
+          }
+        }
+      }
+    }
   }
 
   await ensureAwsSnapshotTable();
@@ -53,6 +67,16 @@ async function loadLatestStoredIds(userEmail: string): Promise<{
     const awsSnapshot = awsRes.rows[0].snapshot as AwsSnapshot;
     for (const f of computeAwsFindings(awsSnapshot)) {
       activeIds.add(`aws:${f.id}`);
+    }
+    for (const report of [runAwsSoc2(awsSnapshot), runAwsIso27001(awsSnapshot)]) {
+      for (const category of report.categories) {
+        for (const control of category.controls) {
+          if (control.status === "fail" || control.status === "warning") {
+            activeIds.add(control.id);
+            activeIds.add(`aws:${control.id}`);
+          }
+        }
+      }
     }
   }
 

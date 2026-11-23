@@ -4,9 +4,11 @@ import {
   buildTasksMarkdownPack,
   computeTaskFingerprint,
   handoffIssueFromAttackPath,
+  handoffIssueFromComplianceControl,
   handoffIssueFromFinding,
   redactHandoffText,
 } from "@/lib/handoff/tasks";
+import type { ControlResult } from "@/lib/compliance/types";
 import type { SecurityFinding } from "@/lib/gcp/types";
 import type { AttackPath } from "@/lib/gcp/attack-paths";
 
@@ -124,5 +126,34 @@ describe("lib/handoff/tasks", () => {
     ]);
     expect(pack).toContain("Watchmen Security Task Pack (v0.9)");
     expect(pack).toContain("wm_tsk_abc123");
+  });
+
+  it("converts compliance controls with evidence and AI recommendations into handoff issues", () => {
+    const control: ControlResult = {
+      id: "gcp:CC6.7.a",
+      title: "Restrict public firewall ingress",
+      description: "Firewall rules should not expose sensitive ports to 0.0.0.0/0.",
+      status: "fail",
+      impact: "critical",
+      evidence: [{ name: "allow-ssh", projectId: "proj-1" }],
+      remediationHint: "Restrict sourceRanges on allow-ssh",
+    };
+
+    const issue = handoffIssueFromComplianceControl(control, {
+      standard: "SOC 2 Type II",
+      categoryName: "CC6.7 Network Security",
+      aiRecommendation: "Use IAP TCP forwarding instead of 0.0.0.0/0",
+    });
+
+    expect(issue.kind).toBe("compliance_control");
+    expect(issue.cloud).toBe("gcp");
+    expect(issue.projectId).toBe("proj-1");
+    expect(issue.resourceName).toBe("allow-ssh");
+    expect(issue.description).toContain("SOC 2 Type II");
+    expect(issue.proposedPlan).toContain("IAP TCP forwarding");
+
+    const drafts = buildHandoffTaskDrafts({ issues: [issue], batchMode: "grouped", targetTool: "opencode" });
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0].promptMarkdown).toContain("allow-ssh");
   });
 });

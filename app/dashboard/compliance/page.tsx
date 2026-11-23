@@ -17,14 +17,17 @@ import {
   X,
   ExternalLink,
   PanelRight,
+  Terminal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ComplianceReport, ComplianceCategory, ControlResult, ControlStatus, ControlImpact } from "@/lib/compliance/types";
 import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
 import { linkifyText } from "@/lib/utils/linkify";
 import CopyAiResponseButton from "@/components/CopyAiResponseButton";
+import PushToCliModal from "@/components/PushToCliModal";
 import ScanCloudButton from "@/components/ScanCloudButton";
 import { useDemoMode } from "@/components/DemoModeProvider";
+import { handoffIssueFromComplianceControl, type HandoffIssueItem } from "@/lib/handoff/tasks";
 import type { ResourceItem } from "@/lib/claude/query-processor";
 
 // ── Config ────────────────────────────────────────────────────────────────
@@ -651,15 +654,19 @@ interface SuppressState { open: boolean; justification: string; saving: boolean 
 function ControlCard({
   control,
   standard,
+  categoryName,
   onSuppressed,
   onRevoked,
   onOpenDrawer,
+  onSendToCli,
 }: {
   control: ControlResult;
   standard: Standard;
+  categoryName: string;
   onSuppressed: (id: string, justification: string) => void;
   onRevoked: (id: string) => void;
   onOpenDrawer: (control: ControlResult) => void;
+  onSendToCli: (issue: HandoffIssueItem) => void;
 }) {
   const demoMode = useDemoMode();
   const [rec, setRec] = useState<RecState>({ loading: false, text: null, error: null });
@@ -909,26 +916,47 @@ function ControlCard({
         )}
       </div>
 
-      {/* AI section */}
+      {/* AI & CLI handoff section */}
       <div className="border-t border-slate-700/50">
-        <div className="px-4 py-2 flex items-center justify-between gap-2">
-          <button
-            onClick={rec.text ? () => setOpen((o) => !o) : askAI}
-            disabled={rec.loading || demoMode}
-            className={cn(
-              "flex items-center gap-1.5 text-xs font-medium transition-all duration-150 rounded-lg px-2.5 py-1",
-              rec.loading
-                ? "text-slate-500 cursor-not-allowed"
-                : demoMode
-                  ? "text-slate-500 cursor-not-allowed bg-slate-500/5"
-                : rec.text
-                  ? "text-violet-400 hover:text-violet-300 bg-violet-500/10 hover:bg-violet-500/15"
-                  : "text-slate-400 hover:text-violet-400 hover:bg-violet-500/10"
+        <div className="px-4 py-2 flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={rec.text ? () => setOpen((o) => !o) : askAI}
+              disabled={rec.loading || demoMode}
+              className={cn(
+                "flex items-center gap-1.5 text-xs font-medium transition-all duration-150 rounded-lg px-2.5 py-1",
+                rec.loading
+                  ? "text-slate-500 cursor-not-allowed"
+                  : demoMode
+                    ? "text-slate-500 cursor-not-allowed bg-slate-500/5"
+                  : rec.text
+                    ? "text-violet-400 hover:text-violet-300 bg-violet-500/10 hover:bg-violet-500/15"
+                    : "text-slate-400 hover:text-violet-400 hover:bg-violet-500/10"
+              )}
+            >
+              {rec.loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+              {rec.loading ? "Asking AI…" : demoMode ? "Disabled in demo" : rec.text ? "AI Recommendation" : "Ask AI"}
+            </button>
+            {control.status !== "pass" && (
+              <button
+                type="button"
+                onClick={() =>
+                  onSendToCli(
+                    handoffIssueFromComplianceControl(control, {
+                      standard: standard === "iso27001" ? "ISO 27001:2022" : "SOC 2 Type II",
+                      categoryName,
+                      aiRecommendation: rec.text ?? undefined,
+                    })
+                  )
+                }
+                className="flex items-center gap-1.5 text-xs font-medium transition-all duration-150 rounded-lg px-2.5 py-1 border border-emerald-500/35 text-emerald-300 hover:bg-emerald-500/10"
+                title="Send this compliance control to OpenCode, Claude Code, or Codex"
+              >
+                <Terminal className="w-3 h-3" />
+                Send to CLI
+              </button>
             )}
-          >
-            {rec.loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-            {rec.loading ? "Asking AI…" : demoMode ? "Disabled in demo" : rec.text ? "AI Recommendation" : "Ask AI"}
-          </button>
+          </div>
           {rec.text && (
             <button onClick={() => setOpen((o) => !o)} className="text-slate-500 hover:text-slate-300 transition-colors">
               {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
@@ -981,6 +1009,7 @@ function CategorySection({
   onSuppressed,
   onRevoked,
   onOpenDrawer,
+  onSendToCli,
 }: {
   category: ComplianceCategory;
   standard: Standard;
@@ -989,6 +1018,7 @@ function CategorySection({
   onSuppressed: (id: string, justification: string) => void;
   onRevoked: (id: string) => void;
   onOpenDrawer: (control: ControlResult) => void;
+  onSendToCli: (issue: HandoffIssueItem) => void;
 }) {
   const visibleControls = (forceExpand || filter === "all")
     ? category.controls
@@ -1056,9 +1086,11 @@ function CategorySection({
               key={control.id}
               control={control}
               standard={standard}
+              categoryName={category.name}
               onSuppressed={onSuppressed}
               onRevoked={onRevoked}
               onOpenDrawer={onOpenDrawer}
+              onSendToCli={onSendToCli}
             />
           ))}
         </div>
@@ -1086,6 +1118,7 @@ export default function CompliancePage() {
   const [history, setHistory] = useState<HistoryPoint[]>([]);
   const [isPrinting, setIsPrinting] = useState(false);
   const [drawerControl, setDrawerControl] = useState<ControlResult | null>(null);
+  const [cliModalIssues, setCliModalIssues] = useState<HandoffIssueItem[] | null>(null);
 
   async function load(std: Standard = standard) {
     setLoading(true);
@@ -1203,6 +1236,20 @@ export default function CompliancePage() {
     }))
     .filter((category) => category.controls.length > 0);
 
+  const actionableComplianceIssues: HandoffIssueItem[] = cloudFilteredCategories.flatMap((category) =>
+    category.controls
+      .filter((control) => {
+        if (filter !== "all") return control.status === filter;
+        return control.status === "fail" || control.status === "warning";
+      })
+      .map((control) =>
+        handoffIssueFromComplianceControl(control, {
+          standard: standard === "iso27001" ? "ISO 27001:2022" : "SOC 2 Type II",
+          categoryName: category.name,
+        })
+      )
+  );
+
   const scoreColor = report
     ? visibleScore >= 80 ? "text-emerald-400" : visibleScore >= 60 ? "text-amber-400" : "text-red-400"
     : "text-slate-400";
@@ -1239,7 +1286,17 @@ export default function CompliancePage() {
             </span>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {report && actionableComplianceIssues.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setCliModalIssues(actionableComplianceIssues)}
+              className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 transition-colors"
+            >
+              <Terminal className="w-3.5 h-3.5" />
+              Send to CLI
+            </button>
+          )}
           {report && (
             <>
               <button
@@ -1429,6 +1486,7 @@ export default function CompliancePage() {
               onSuppressed={handleSuppressed}
               onRevoked={handleRevoked}
               onOpenDrawer={setDrawerControl}
+              onSendToCli={(issue) => setCliModalIssues([issue])}
             />
           ))}
           {!hasVisibleCategories && (
@@ -1467,6 +1525,13 @@ export default function CompliancePage() {
         onClose={() => setDrawerControl(null)}
       />
     )}
+
+    <PushToCliModal
+      isOpen={Boolean(cliModalIssues)}
+      onClose={() => setCliModalIssues(null)}
+      issues={cliModalIssues ?? []}
+      contextLabel={`${standard === "iso27001" ? "ISO 27001" : "SOC 2"} Compliance Controls`}
+    />
     </>
   );
 }
