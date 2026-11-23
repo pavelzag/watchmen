@@ -1,5 +1,6 @@
 /** @jest-environment node */
 
+const mockLocationsList = jest.fn();
 const mockRepositoriesList = jest.fn();
 const mockDockerImagesList = jest.fn();
 const mockOccurrencesList = jest.fn();
@@ -16,6 +17,7 @@ jest.mock("googleapis", () => ({
     artifactregistry: jest.fn(() => ({
       projects: {
         locations: {
+          list: mockLocationsList,
           repositories: {
             list: mockRepositoriesList,
             dockerImages: {
@@ -67,20 +69,35 @@ describe("GCP Artifact Registry & Container Analysis scanning", () => {
     else process.env.GCP_SERVICE_ACCOUNT_KEY = originalSaKey;
   });
 
-  it("discovers Artifact Registry Docker images even when Container Analysis has zero vulnerabilities", async () => {
-    mockRepositoriesList.mockResolvedValue({
+  it("enumerates Artifact Registry locations first (never locations/-) and discovers Docker images even with zero CVEs", async () => {
+    mockLocationsList.mockResolvedValue({
       data: {
-        repositories: [
-          {
-            name: "projects/theinsite-prod/locations/europe-west3/repositories/cms",
-            format: "DOCKER",
-          },
-          {
-            name: "projects/theinsite-prod/locations/europe-west3/repositories/npm-libs",
-            format: "NPM",
-          },
+        locations: [
+          { name: "projects/theinsite-prod/locations/europe-west3", locationId: "europe-west3" },
+          { name: "projects/theinsite-prod/locations/us-central1", locationId: "us-central1" },
         ],
       },
+    });
+
+    mockRepositoriesList.mockImplementation(async ({ parent }: { parent: string }) => {
+      expect(parent).not.toContain("locations/-");
+      if (parent.endsWith("/europe-west3")) {
+        return {
+          data: {
+            repositories: [
+              {
+                name: "projects/theinsite-prod/locations/europe-west3/repositories/cms",
+                format: "DOCKER",
+              },
+              {
+                name: "projects/theinsite-prod/locations/europe-west3/repositories/npm-libs",
+                format: "NPM",
+              },
+            ],
+          },
+        };
+      }
+      return { data: { repositories: [] } };
     });
 
     mockDockerImagesList.mockResolvedValue({
@@ -120,6 +137,10 @@ describe("GCP Artifact Registry & Container Analysis scanning", () => {
 
     const results = await getGcpContainerVulnerabilities("theinsite-prod");
 
+    expect(mockLocationsList).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "projects/theinsite-prod" })
+    );
+    expect(mockRepositoriesList).toHaveBeenCalledTimes(2);
     expect(mockDockerImagesList).toHaveBeenCalledTimes(1);
     expect(mockDockerImagesList).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -150,6 +171,11 @@ describe("GCP Artifact Registry & Container Analysis scanning", () => {
   });
 
   it("merges Artifact Registry images with Container Analysis vulnerabilities by normalizing https:// URIs", async () => {
+    mockLocationsList.mockResolvedValue({
+      data: {
+        locations: [{ name: "projects/theinsite-prod/locations/us-central1" }],
+      },
+    });
     mockRepositoriesList.mockResolvedValue({
       data: {
         repositories: [
@@ -252,6 +278,11 @@ describe("GCP Artifact Registry & Container Analysis scanning", () => {
   });
 
   it("still returns Artifact Registry images and records a warning when Container Analysis API is disabled or denied", async () => {
+    mockLocationsList.mockResolvedValue({
+      data: {
+        locations: [{ name: "projects/theinsite-dev/locations/europe-west3" }],
+      },
+    });
     mockRepositoriesList.mockResolvedValue({
       data: {
         repositories: [
@@ -297,9 +328,9 @@ describe("GCP Artifact Registry & Container Analysis scanning", () => {
   });
 
   it("records a permission warning for Artifact Registry while still returning Container Analysis results", async () => {
-    mockRepositoriesList.mockRejectedValue({
+    mockLocationsList.mockRejectedValue({
       code: 403,
-      message: "Permission 'artifactregistry.repositories.list' denied on resource",
+      message: "Permission 'artifactregistry.locations.list' denied on resource",
     });
     mockOccurrencesList
       .mockResolvedValueOnce({

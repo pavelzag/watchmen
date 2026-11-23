@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
 import { linkifyText } from "@/lib/utils/linkify";
 import CopyAiResponseButton from "@/components/CopyAiResponseButton";
+import CopyTextButton from "@/components/CopyTextButton";
 import { useDemoMode } from "@/components/DemoModeProvider";
 
 const DEMO_AI_DISABLED_MESSAGE =
@@ -298,9 +299,15 @@ function ImageCard({ result, filter }: { result: ImageScanResult; filter: string
                 {result.scanStatusMessage ?? "No vulnerabilities found."}
               </p>
               {result.cloud === "gcp" && result.scanStatus === "unscanned" && result.accountId && (
-                <pre className="bg-slate-900/80 border border-slate-800 rounded px-3 py-2 text-[10px] font-mono text-slate-300 overflow-x-auto">
-                  {`gcloud services enable containerscanning.googleapis.com --project=${result.accountId}`}
-                </pre>
+                <div className="flex items-center justify-between gap-2 bg-slate-900/80 border border-slate-800 rounded px-3 py-2">
+                  <pre className="text-[10px] font-mono text-slate-300 overflow-x-auto select-text">
+                    {`gcloud services enable containerscanning.googleapis.com --project=${result.accountId}`}
+                  </pre>
+                  <CopyTextButton
+                    text={`gcloud services enable containerscanning.googleapis.com --project=${result.accountId}`}
+                    className="flex items-center gap-1 px-2 py-0.5 text-[10px] font-mono border border-slate-700 rounded text-slate-300 hover:text-white shrink-0"
+                  />
+                </div>
               )}
             </div>
           ) : (
@@ -401,30 +408,86 @@ export default function ContainerScanPage() {
 
       {!loading && warnings.length > 0 && (
         <div
-          className="px-4 py-3 space-y-2.5 text-xs font-mono"
+          className="px-4 py-3 space-y-2.5 text-xs font-mono select-text"
           style={{ border: "1px solid #f59e0b55", background: "#1a1006", color: "#fbbf24" }}
         >
-          <div className="flex items-center gap-2 font-bold uppercase tracking-wider">
-            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-            <span>GCP Container Scan Diagnostics ({warnings.length})</span>
+          <div className="flex items-center justify-between gap-2 font-bold uppercase tracking-wider">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+              <span>GCP Container Scan Diagnostics ({warnings.length})</span>
+            </div>
+            <CopyTextButton
+              text={warnings
+                .map((w) => {
+                  const lines = [w.message];
+                  if (w.detail) lines.push(w.detail);
+                  if (w.code === "api_not_enabled") {
+                    const m = w.detail?.match(/in project ([a-z0-9-]+)/i);
+                    if (m?.[1] && m[1] !== w.projectId && w.requiredApi) {
+                      lines.push(`gcloud services enable ${w.requiredApi} --project=${m[1]}`);
+                    }
+                    if (w.enableApiCommand) lines.push(w.enableApiCommand);
+                  }
+                  if (w.code === "permission_denied" && w.grantCommands?.length) {
+                    lines.push(...w.grantCommands);
+                  }
+                  return lines.join("\n");
+                })
+                .join("\n\n")}
+              label="Copy all"
+              className="flex items-center gap-1 px-2 py-0.5 text-[10px] font-normal normal-case tracking-normal border border-amber-500/30 rounded text-amber-200 hover:bg-amber-500/10 transition-colors shrink-0"
+            />
           </div>
           <div className="space-y-2">
-            {warnings.map((w, idx) => (
-              <div key={`${w.service}-${w.projectId}-${idx}`} className="border-t border-amber-500/20 pt-2 space-y-1">
-                <div className="text-amber-200">{w.message}</div>
-                {w.detail && <div className="text-[10px] text-amber-300/70 break-all">{w.detail}</div>}
-                {w.code === "api_not_enabled" && w.enableApiCommand && (
-                  <pre className="bg-black/40 border border-amber-500/20 rounded px-2.5 py-1.5 text-[10px] text-slate-200 overflow-x-auto">
-                    {w.enableApiCommand}
-                  </pre>
-                )}
-                {w.code === "permission_denied" && w.grantCommands && w.grantCommands.length > 0 && (
-                  <pre className="bg-black/40 border border-amber-500/20 rounded px-2.5 py-1.5 text-[10px] text-slate-200 overflow-x-auto">
-                    {w.grantCommands.join("\n")}
-                  </pre>
-                )}
-              </div>
-            ))}
+            {warnings.map((w, idx) => {
+              const callerProjectMatch = w.detail?.match(/in project ([a-z0-9-]+)/i);
+              const callerProject =
+                callerProjectMatch?.[1] && callerProjectMatch[1] !== w.projectId
+                  ? callerProjectMatch[1]
+                  : null;
+              const apiCommands =
+                w.code === "api_not_enabled"
+                  ? [
+                      ...(callerProject && w.requiredApi
+                        ? [`gcloud services enable ${w.requiredApi} --project=${callerProject}`]
+                        : []),
+                      ...(w.enableApiCommand ? [w.enableApiCommand] : []),
+                    ]
+                  : [];
+              const warningCommand =
+                apiCommands.length > 0
+                  ? apiCommands.join("\n")
+                  : w.code === "permission_denied" && w.grantCommands && w.grantCommands.length > 0
+                    ? w.grantCommands.join("\n")
+                    : null;
+              const fullWarningText = [w.message, w.detail, warningCommand].filter(Boolean).join("\n");
+
+              return (
+                <div key={`${w.service}-${w.projectId}-${idx}`} className="border-t border-amber-500/20 pt-2 space-y-1.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="text-amber-200">{w.message}</div>
+                    <CopyTextButton
+                      text={fullWarningText}
+                      label="Copy"
+                      className="flex items-center gap-1 px-2 py-0.5 text-[10px] border border-amber-500/30 rounded text-amber-200 hover:bg-amber-500/10 transition-colors shrink-0"
+                    />
+                  </div>
+                  {w.detail && <div className="text-[10px] text-amber-300/70 break-all">{w.detail}</div>}
+                  {warningCommand && (
+                    <div className="flex items-center justify-between gap-2 bg-black/40 border border-amber-500/20 rounded px-2.5 py-1.5">
+                      <pre className="text-[10px] text-slate-200 overflow-x-auto select-text">
+                        {warningCommand}
+                      </pre>
+                      <CopyTextButton
+                        text={warningCommand}
+                        label="Copy cmd"
+                        className="flex items-center gap-1 px-2 py-0.5 text-[10px] border border-amber-500/30 rounded text-amber-200 hover:bg-amber-500/10 transition-colors shrink-0"
+                      />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

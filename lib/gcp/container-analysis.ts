@@ -65,23 +65,74 @@ async function listArtifactRegistryDockerImages(projectId: string): Promise<{
   }
 
   const ar = google.artifactregistry("v1");
-  const repositories: Array<{ name?: string | null; format?: string | null }> = [];
-  let pageToken: string | undefined = undefined;
+  const locations: string[] = [];
+  let locPageToken: string | undefined = undefined;
 
   try {
     do {
-      const res: any = await withProjectRetry("artifactregistry", projectId, () =>
-        ar.projects.locations.repositories.list({
-          parent: `projects/${projectId}/locations/-`,
-          pageSize: 1000,
-          pageToken,
+      const locRes: any = await withProjectRetry("artifactregistry", projectId, () =>
+        ar.projects.locations.list({
+          name: `projects/${projectId}`,
+          pageSize: 100,
+          pageToken: locPageToken,
         })
       );
-      repositories.push(...(res.data?.repositories ?? []));
-      pageToken = res.data?.nextPageToken ?? undefined;
-    } while (pageToken);
+      for (const loc of locRes.data?.locations ?? []) {
+        if (loc.name) {
+          locations.push(loc.name);
+        } else if (loc.locationId) {
+          locations.push(`projects/${projectId}/locations/${loc.locationId}`);
+        }
+      }
+      locPageToken = locRes.data?.nextPageToken ?? undefined;
+    } while (locPageToken);
   } catch (error) {
     logFetchWarning("artifactregistry", projectId, error);
+    return { images: [], failed: true };
+  }
+
+  if (locations.length === 0) {
+    return { images: [], failed: false };
+  }
+
+  const repositories: Array<{ name?: string | null; format?: string | null }> = [];
+  let firstRepoListError: unknown = null;
+  let repoListSuccessCount = 0;
+
+  const BATCH_SIZE = 10;
+  for (let i = 0; i < locations.length; i += BATCH_SIZE) {
+    const batch = locations.slice(i, i + BATCH_SIZE);
+    const batchResults = await Promise.allSettled(
+      batch.map(async (locationName) => {
+        const locRepos: Array<{ name?: string | null; format?: string | null }> = [];
+        let pageToken: string | undefined = undefined;
+        do {
+          const res: any = await withProjectRetry("artifactregistry", projectId, () =>
+            ar.projects.locations.repositories.list({
+              parent: locationName,
+              pageSize: 1000,
+              pageToken,
+            })
+          );
+          locRepos.push(...(res.data?.repositories ?? []));
+          pageToken = res.data?.nextPageToken ?? undefined;
+        } while (pageToken);
+        return locRepos;
+      })
+    );
+
+    for (const res of batchResults) {
+      if (res.status === "fulfilled") {
+        repoListSuccessCount += 1;
+        repositories.push(...res.value);
+      } else if (!firstRepoListError) {
+        firstRepoListError = res.reason;
+      }
+    }
+  }
+
+  if (repoListSuccessCount === 0 && firstRepoListError) {
+    logFetchWarning("artifactregistry", projectId, firstRepoListError);
     return { images: [], failed: true };
   }
 
