@@ -1,7 +1,11 @@
+import { auth } from "@/lib/auth";
+import { isDemoMode } from "@/lib/demo-mode";
 import RequestTracer from "./RequestTracer";
 
-export default function TracePage() {
-  const demoMode = process.env.DEMO_MODE === "true";
+export default async function TracePage() {
+  const session = await auth();
+  const demoMode = isDemoMode() || Boolean(session?.isDemoUser);
+
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-[#02040a]">
       <div className="flex-1 flex flex-col p-6 overflow-hidden">

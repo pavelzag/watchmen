@@ -1,6 +1,8 @@
 import {
   DEMO_RUNTIME_RULES,
   getDemoCloudLogs,
+  getDemoKubernetesCluster,
+  getDemoKubernetesResources,
   getDemoLiveTraceEvents,
   getDemoRuntimeRequestEvents,
   getDemoTraceHistory,
@@ -19,7 +21,7 @@ describe("Extended demo runtime data & fake problems", () => {
     expect(events.every((e) => Boolean(e.sourceGeo?.lat && e.sourceGeo?.lon))).toBe(true);
   });
 
-  it("provides demo live trace events, trace history, and cloud logs", () => {
+  it("provides demo live trace events, trace history, cloud logs, and kubernetes resources", () => {
     const live = getDemoLiveTraceEvents();
     expect(live.length).toBeGreaterThanOrEqual(4);
     expect(live.some((e) => e.status === 403)).toBe(true);
@@ -30,5 +32,13 @@ describe("Extended demo runtime data & fake problems", () => {
     const logs = getDemoCloudLogs({ service: "web-api-gateway" });
     expect(logs.length).toBeGreaterThanOrEqual(4);
     expect(logs.some((l) => l.path === "/admin/export-users" && l.status === 403)).toBe(true);
+
+    const cluster = getDemoKubernetesCluster();
+    expect(cluster.id).toBe("demo-minikube");
+    const k8sRes = getDemoKubernetesResources(cluster.name);
+    expect(k8sRes.cluster.ok).toBe(true);
+    expect(k8sRes.resources.some((r) => r.kind === "service")).toBe(true);
+    expect(k8sRes.resources.some((r) => r.kind === "deployment")).toBe(true);
+    expect(k8sRes.resources.some((r) => r.kind === "pod")).toBe(true);
   });
 });

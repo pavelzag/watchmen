@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { fetchAwsSnapshot } from "@/lib/aws";
+import { useMockAwsData } from "@/lib/aws/client";
 import { sql, ensureAgentInstallTables, ensureGcpSnapshotTable, ensureAwsSnapshotTable } from "@/lib/db";
+import { fetchGcpSnapshot } from "@/lib/gcp";
+import { useMockData } from "@/lib/gcp/client";
 import type { GcpSnapshot } from "@/lib/gcp/types";
 import type { AwsSnapshot } from "@/lib/aws/types";
 
@@ -76,13 +80,21 @@ export async function GET(req: NextRequest) {
             });
         });
 
-        await ensureGcpSnapshotTable();
-        const gcpResult = await sql`
-            SELECT snapshot FROM user_snapshots WHERE user_email = ${email}
-        `;
+        let gcpSnapshot: GcpSnapshot | null = null;
+        if (useMock || useMockData()) {
+            gcpSnapshot = await fetchGcpSnapshot({ forceMock: true });
+        } else {
+            await ensureGcpSnapshotTable();
+            const gcpResult = await sql`
+                SELECT snapshot FROM user_snapshots WHERE user_email = ${email}
+            `;
+            if (gcpResult.rows.length > 0) {
+                gcpSnapshot = gcpResult.rows[0].snapshot as GcpSnapshot;
+            }
+        }
 
-        if (gcpResult.rows.length > 0) {
-            const snapshot = gcpResult.rows[0].snapshot as GcpSnapshot;
+        if (gcpSnapshot) {
+            const snapshot = gcpSnapshot;
 
             // Extract Cloud Run Services
             if (snapshot.cloudRunServices) {
@@ -134,13 +146,21 @@ export async function GET(req: NextRequest) {
         }
 
         // 2. Fetch AWS Endpoints
-        await ensureAwsSnapshotTable();
-        const awsResult = await sql`
-            SELECT snapshot FROM aws_snapshots WHERE user_email = ${email}
-        `;
+        let awsSnapshot: AwsSnapshot | null = null;
+        if (useMock || useMockAwsData()) {
+            awsSnapshot = await fetchAwsSnapshot({ forceMock: true });
+        } else {
+            await ensureAwsSnapshotTable();
+            const awsResult = await sql`
+                SELECT snapshot FROM aws_snapshots WHERE user_email = ${email}
+            `;
+            if (awsResult.rows.length > 0) {
+                awsSnapshot = awsResult.rows[0].snapshot as AwsSnapshot;
+            }
+        }
 
-        if (awsResult.rows.length > 0) {
-            const snapshot = awsResult.rows[0].snapshot as AwsSnapshot;
+        if (awsSnapshot) {
+            const snapshot = awsSnapshot;
 
             // Extract Lambda Function URLs. These URLs contain AWS-generated URL IDs;
             // do not synthesize them from function names.

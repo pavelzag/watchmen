@@ -13,7 +13,38 @@ export async function GET() {
   }
 
   if (useMockData() || session.isDemoUser) {
-    return NextResponse.json({ entryPoints: [] });
+    return NextResponse.json({
+      entryPoints: [
+        {
+          clusterName: "accounting-k8s-cluster",
+          projectId: "accounting_project",
+          location: "us-central1",
+          type: "ingress",
+          ip: "34.120.45.67",
+          k8sService: "watchmen/ledger-gateway",
+          isPublic: true,
+        },
+        {
+          clusterName: "frontend-cluster",
+          projectId: "frontend_prod",
+          location: "us-central1",
+          type: "loadbalancer",
+          ip: "35.244.11.22",
+          k8sService: "prod/web-ingress",
+          isPublic: true,
+        },
+        {
+          clusterName: "prod-infra-cluster",
+          projectId: "infra_core",
+          location: "us-central1",
+          type: "loadbalancer",
+          ip: "34.132.88.10",
+          k8sService: "watchmen/request-processor",
+          isPublic: true,
+        },
+      ],
+      clusterCount: 3,
+    });
   }
 
   const email = session.user.email;

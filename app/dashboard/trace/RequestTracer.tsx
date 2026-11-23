@@ -4031,7 +4031,6 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
 
   // Fetch clusters list for kubernetes picker
   useEffect(() => {
-    if (demoMode) return;
     fetch("/api/kubernetes/clusters", { cache: "no-store" })
       .then((r) => r.json())
       .then((d) => {
@@ -4040,7 +4039,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
         if (list.length > 0 && !selectedK8sClusterId) setSelectedK8sClusterId(list[0].id);
       })
       .catch(() => {});
-  }, [demoMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchLocalKubernetes = useCallback(async (clusterId: string | null) => {
     setLoadingLocalKubernetes(true);
@@ -4098,9 +4097,8 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
   // Refetch k8s resources when selected cluster changes (while on kubernetes tab)
   useEffect(() => {
     if (endpointCloud !== "kubernetes") return;
-    if (demoMode) return;
     void fetchLocalKubernetes(selectedK8sClusterId);
-  }, [selectedK8sClusterId, endpointCloud, demoMode, fetchLocalKubernetes]);
+  }, [selectedK8sClusterId, endpointCloud, fetchLocalKubernetes]);
 
   const triggerTraceScan = useCallback(() => {
     if (endpointCloud === "kubernetes") {
@@ -4156,13 +4154,6 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
     setLoadingSnapshot(false);
     setLoadingEntryPoints(false);
   }, [tasks, traceScanTaskId]);
-
-  // Pre-fill URL in demo mode once snapshot is loaded
-  useEffect(() => {
-    if (!demoMode || !snapshot || url) return;
-    const firstRun = (snapshot.cloudRunServices ?? []).find(s => s.url);
-    if (firstRun) setUrl(firstRun.url!);
-  }, [demoMode, snapshot]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -6372,10 +6363,11 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
               const pulseGlowWidth = useIntensityStyling ? 5 + lineActivity * 2.5 : 6;
               const pulseCoreWidth = useIntensityStyling ? 1.8 + lineActivity * 0.85 : 2;
               const pulseDuration = useIntensityStyling ? Math.max(0.22, 0.38 - lineActivity * 0.12) : 0.38;
-              const lineVisible = !url.trim() || isPath || concurrentBursts.length > 0;
+              const lineVisible = true;
+              const lineDimmed = Boolean(url.trim() && !isPath && concurrentBursts.length === 0);
 
               return (
-                <g key={line.id} opacity={lineVisible ? 1 : 0}>
+                <g key={line.id} opacity={lineVisible ? (lineDimmed ? 0.2 : 1) : 0}>
                   {/* Base path */}
                   <path
                     d={bezierPath(line)}
@@ -6505,7 +6497,7 @@ export default function RequestTracer({ demoMode = false }: { demoMode?: boolean
                   height: NODE_H,
                 }}
                 animate={{
-                  opacity: inPath ? 1 : (url.trim() ? 0 : 0.58),
+                  opacity: inPath ? 1 : (url.trim() ? 0.25 : 0.78),
                   scale: status === "active" ? 1.04 : isBeingDragged ? 1.06 : isSelected ? 1.01 : 1,
                 }}
                 transition={{ duration: isSelected ? 0.3 : 0.15, ease: "easeOut" }}

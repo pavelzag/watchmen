@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { isDemoMode } from "@/lib/demo-mode";
 import { listUserClusters, createUserCluster } from "@/lib/kubernetes/clusters";
+import { getDemoKubernetesCluster } from "@/lib/mock/runtime-events";
 
 export async function GET() {
   const session = await auth();
   if (!session?.user?.email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (session.isDemoUser || isDemoMode()) {
+    return NextResponse.json({ clusters: [getDemoKubernetesCluster()] });
+  }
   const clusters = await listUserClusters(session.user.email);
   const safe = clusters.map((c) => ({ ...c, kubeconfigContent: undefined }));
   return NextResponse.json({ clusters: safe });
