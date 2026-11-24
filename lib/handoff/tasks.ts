@@ -10,14 +10,17 @@ import type { SecurityFinding, SecurityFindingSeverity } from "@/lib/gcp/types";
 import type { ControlResult } from "@/lib/compliance/types";
 import type { ContainerVulnerability, ImageRegistry } from "@/lib/container-scanning";
 import type { DriftItem } from "@/lib/iac-drift";
+import type { RuntimeRequestEvent, RuntimeSecurityRule } from "@/lib/runtime-security";
+import { renderShirudoShieldInstructions } from "@/lib/handoff/shirudo";
 
 export type HandoffTool = "any" | "opencode" | "claude" | "codex";
 export type HandoffBatchMode = "grouped" | "combined" | "individual";
 export type HandoffTaskStatus = "open" | "claimed" | "in_progress" | "completed" | "dismissed";
+export type HandoffRemediationMode = "iac" | "shirudo_shield";
 
 export interface HandoffIssueItem {
   id: string;
-  kind: "finding" | "attack_path" | "compliance_control" | "container_cve";
+  kind: "finding" | "attack_path" | "compliance_control" | "container_cve" | "runtime_alert";
   cloud: ImageRegistry;
   severity: SecurityFindingSeverity;
   title: string;
@@ -46,6 +49,7 @@ export interface LastVerificationSummary {
 
 export interface HandoffTaskPayload {
   version: "0.9";
+  remediationMode?: HandoffRemediationMode;
   category: RemediationBatchCategory | "combined" | "individual";
   batchMode: HandoffBatchMode;
   targetTool: HandoffTool;
@@ -267,7 +271,73 @@ export function handoffIssueFromDriftItem(item: DriftItem): HandoffIssueItem {
   });
 }
 
+export function handoffIssueFromRuntimeAlert(params: {
+  event: RuntimeRequestEvent;
+  matchedRules?: RuntimeSecurityRule[];
+  cloud?: ImageRegistry;
+  projectId?: string;
+}): HandoffIssueItem {
+  const { event, matchedRules = [], cloud = "gcp", projectId = "runtime" } = params;
+  const severity: SecurityFindingSeverity = event.highestSeverity ?? matchedRules[0]?.severity ?? "high";
+  const workload =
+    event.destinationWorkload ??
+    event.destinationService ??
+    event.destinationPod ??
+    "runtime-workload";
+  const methodPath = [event.method, event.path].filter(Boolean).join(" ") || "HTTP request";
+  const ruleNames = matchedRules.map((r) => r.name);
+  const reasons = event.reasons ?? [];
+  const detailsParts = [
+    `Decision: ${event.decision} (${event.ts}).`,
+    event.sourceIp ? `Source IP: ${event.sourceIp}${event.sourceIpClass ? ` (${event.sourceIpClass})` : ""}.` : "",
+    ruleNames.length > 0 ? `Matched rules: ${ruleNames.join(", ")}.` : "",
+    reasons.length > 0 ? `Reasons: ${reasons.join("; ")}.` : "",
+    event.bodySample ? `Sample payload: ${event.bodySample.slice(0, 240)}` : "",
+  ].filter(Boolean);
+
+  const remediationHint =
+    ruleNames.length > 0
+      ? `Mitigate attack pattern matched by ${ruleNames.join(", ")} on ${workload} without disrupting legitimate traffic.`
+      : `Investigate and shield ${methodPath} on ${workload}.`;
+
+  return sanitizeHandoffIssue({
+    id: `runtime-alert:${event.id}`,
+    kind: "runtime_alert",
+    cloud,
+    severity,
+    title: `Runtime Alert (${event.decision}): ${methodPath} -> ${workload}`,
+    description: detailsParts.join(" "),
+    resourceName: workload,
+    resourceType: "runtime_workload",
+    projectId: event.destinationNamespace ? `${projectId}/${event.destinationNamespace}` : projectId,
+    remediationHint,
+    mitigations: [
+      remediationHint,
+      ...(matchedRules.map((r) => r.description).filter((d): d is string => Boolean(d))),
+    ],
+  });
+}
+
 export function issueToRemediationTarget(issue: HandoffIssueItem): RemediationTarget {
+  if (issue.kind === "runtime_alert") {
+    return {
+      id: issue.id,
+      kind: "finding",
+      severity: issue.severity,
+      title: issue.title,
+      description: issue.description,
+      mitigations: issue.mitigations ?? (issue.remediationHint ? [issue.remediationHint] : []),
+      projectIds: [issue.projectId],
+      resourceType: issue.resourceType ?? "runtime_workload",
+      resourceName: issue.resourceName,
+      searchTerms: [issue.resourceName, issue.projectId, issue.title].filter(Boolean),
+      promptDetails: [
+        `- [RUNTIME] ${issue.title} (${issue.severity})`,
+        `- Target Workload: ${issue.resourceName} (${issue.projectId})`,
+        ...(issue.remediationHint ? [`- Action: ${issue.remediationHint}`] : []),
+      ],
+    };
+  }
   if (issue.kind === "container_cve") {
     return {
       id: issue.id,
@@ -322,9 +392,14 @@ export function issueToRemediationTarget(issue: HandoffIssueItem): RemediationTa
 /**
  * Pure-TS deterministic 128-bit FNV-1a hex fingerprint (works identically in browser & Node).
  */
-export function computeTaskFingerprint(batchMode: HandoffBatchMode, issueIds: string[]): string {
+export function computeTaskFingerprint(
+  batchMode: HandoffBatchMode,
+  issueIds: string[],
+  remediationMode: HandoffRemediationMode = "iac"
+): string {
   const sorted = [...issueIds].sort().join("|");
-  const input = `v0.9:${batchMode}:${sorted}`;
+  const prefix = remediationMode === "shirudo_shield" ? "v0.10:shirudo_shield" : "v0.9";
+  const input = `${prefix}:${batchMode}:${sorted}`;
 
   let h1 = 0x811c9dc5;
   let h2 = 0x01000193;
@@ -344,13 +419,18 @@ export function renderTaskPromptMarkdown(params: {
   issues: HandoffIssueItem[];
   taskId?: string;
   watchmenUrl?: string;
+  remediationMode?: HandoffRemediationMode;
 }): string {
   const clouds = [...new Set(params.issues.map((i) => i.cloud.toUpperCase()))].join(", ");
   const projects = [...new Set(params.issues.map((i) => i.projectId).filter(Boolean))];
+  const mode: HandoffRemediationMode = params.remediationMode ?? "iac";
 
   const lines: string[] = [
-    `# Watchmen Security Task: ${params.title}`,
+    mode === "shirudo_shield"
+      ? `# Watchmen Shirudo Shield Task: ${params.title}`
+      : `# Watchmen Security Task: ${params.title}`,
     "",
+    `- **Mode**: ${mode === "shirudo_shield" ? "Shirudo Live Shield (upatch)" : "IaC / Code Remediation"}`,
     `- **Highest Severity**: ${params.severity.toUpperCase()}`,
     `- **Clouds**: ${clouds || "GCP/AWS"}`,
     `- **Projects / Accounts**: ${projects.join(", ") || "N/A"}`,
@@ -364,17 +444,27 @@ export function renderTaskPromptMarkdown(params: {
     lines.push(`- **Watchmen Task Endpoint**: \`${params.watchmenUrl}/api/handoff/tasks/${params.taskId}\``);
   }
 
-  lines.push(
-    "",
-    "## Instructions for Coding Agent",
-    "1. Inspect the repository (Terraform / IaC / Kubernetes / application config) for the affected resources listed below.",
-    "2. Propose and implement minimal, least-privilege fixes without breaking legitimate service dependencies.",
-    "3. Run relevant validation checks (`terraform fmt -check`, `terraform validate`, tests, or linters) before finishing.",
-    "4. Summarize each modified file and any manual cloud console steps that cannot be expressed in code.",
-    "",
-    "## Issues to Remediate",
-    ""
-  );
+  if (mode === "shirudo_shield") {
+    lines.push(
+      "",
+      ...renderShirudoShieldInstructions({ title: params.title, issues: params.issues }),
+      "",
+      "## Issues to Shield",
+      ""
+    );
+  } else {
+    lines.push(
+      "",
+      "## Instructions for Coding Agent",
+      "1. Inspect the repository (Terraform / IaC / Kubernetes / application config) for the affected resources listed below.",
+      "2. Propose and implement minimal, least-privilege fixes without breaking legitimate service dependencies.",
+      "3. Run relevant validation checks (`terraform fmt -check`, `terraform validate`, tests, or linters) before finishing.",
+      "4. Summarize each modified file and any manual cloud console steps that cannot be expressed in code.",
+      "",
+      "## Issues to Remediate",
+      ""
+    );
+  }
 
   params.issues.forEach((issue, index) => {
     lines.push(`### ${index + 1}. [${issue.severity.toUpperCase()}] ${issue.title}`);
@@ -410,22 +500,25 @@ export function buildHandoffTaskDrafts(params: {
   issues: HandoffIssueItem[];
   batchMode?: HandoffBatchMode;
   targetTool?: HandoffTool;
+  remediationMode?: HandoffRemediationMode;
 }): HandoffTaskDraft[] {
   const sanitized = params.issues.map(sanitizeHandoffIssue);
   if (sanitized.length === 0) return [];
 
   const batchMode: HandoffBatchMode = params.batchMode ?? "grouped";
   const targetTool: HandoffTool = params.targetTool ?? "any";
+  const remediationMode: HandoffRemediationMode = params.remediationMode ?? "iac";
 
   const makeDraft = (
-    title: string,
+    rawTitle: string,
     category: HandoffTaskPayload["category"],
     groupIssues: HandoffIssueItem[]
   ): HandoffTaskDraft => {
+    const title = remediationMode === "shirudo_shield" ? `[Shirudo Shield] ${rawTitle}` : rawTitle;
     const severity = maxSeverity(groupIssues.map((i) => i.severity));
     const clouds = [...new Set(groupIssues.map((i) => i.cloud))];
     const projectIds = [...new Set(groupIssues.map((i) => i.projectId).filter(Boolean))];
-    const fingerprint = computeTaskFingerprint(batchMode, groupIssues.map((i) => i.id));
+    const fingerprint = computeTaskFingerprint(batchMode, groupIssues.map((i) => i.id), remediationMode);
     return {
       fingerprint,
       title,
@@ -435,6 +528,7 @@ export function buildHandoffTaskDrafts(params: {
       issueCount: groupIssues.length,
       payload: {
         version: "0.9",
+        remediationMode,
         category,
         batchMode,
         targetTool,
@@ -446,6 +540,7 @@ export function buildHandoffTaskDrafts(params: {
         title,
         severity,
         issues: groupIssues,
+        remediationMode,
       }),
     };
   };

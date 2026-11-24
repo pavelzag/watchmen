@@ -243,6 +243,11 @@ export default function CliHandoffQueue() {
                       <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 border border-slate-700 text-slate-300">
                         {task.severity}
                       </span>
+                      {task.payload?.remediationMode === "shirudo_shield" && (
+                        <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 border border-violet-500/40 bg-violet-500/10 text-violet-300">
+                          Shirudo Shield
+                        </span>
+                      )}
                       <span className="text-[10px] font-mono text-slate-400">
                         tool={task.targetTool} · {task.issueCount} issue{task.issueCount === 1 ? "" : "s"}
                       </span>

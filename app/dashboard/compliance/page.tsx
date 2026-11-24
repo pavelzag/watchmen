@@ -26,6 +26,7 @@ import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
 import { linkifyText } from "@/lib/utils/linkify";
 import CopyAiResponseButton from "@/components/CopyAiResponseButton";
 import PushToCliModal from "@/components/PushToCliModal";
+import ShirudoFleetPanel from "@/components/ShirudoFleetPanel";
 import RemediateModal from "@/app/dashboard/attack-paths/RemediateModal";
 import ScanCloudButton from "@/components/ScanCloudButton";
 import { useDemoMode } from "@/components/DemoModeProvider";
@@ -1549,6 +1550,9 @@ export default function CompliancePage() {
 
       {/* Per-project breakdown */}
       {!loading && visibleReport && <ProjectBreakdown report={visibleReport} />}
+
+      {/* Shirudo runtime shielding & attestation evidence */}
+      {!loading && visibleReport && <ShirudoFleetPanel compact />}
 
       {/* Skeleton for categories */}
       {loading && (

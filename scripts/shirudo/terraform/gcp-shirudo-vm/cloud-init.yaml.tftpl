@@ -1,0 +1,20 @@
+#cloud-config
+write_files:
+  - path: /etc/shirudo/map-export.env
+    permissions: "0600"
+    owner: root:root
+    content: |
+      OTEL_EXPORTER_OTLP_ENDPOINT=${watchmen_otlp_endpoint}
+      OTEL_EXPORTER_OTLP_HEADERS=authorization=Bearer%20${watchmen_api_token}
+      OTEL_EXPORTER_OTLP_COMPRESSION=gzip
+      OTEL_EXPORTER_OTLP_PROTOCOL=http/json
+
+runcmd:
+  - |
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl enable --now shirudo-keepalive.timer || true
+      systemctl enable --now shirudo-map-export.timer || true
+      if [ -n "${shirudo_oci_tree}" ]; then
+        systemctl enable --now shirudo-bpm-tree-sync.timer || true
+      fi
+    fi

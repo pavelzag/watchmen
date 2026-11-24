@@ -5,6 +5,15 @@
 
 export type CveSeverity = "critical" | "high" | "medium" | "low" | "negligible";
 
+export interface VulnerabilityShieldStatus {
+  status: "shielded" | "shield_pending" | "tampered";
+  upatchId: string;
+  shieldKind: "bpf_upatch" | "java_agent";
+  activeNodes: number;
+  hitCount: number;
+  quotePresent: boolean;
+}
+
 export interface ContainerVulnerability {
   /** CVE or vulnerability ID */
   cveId: string;
@@ -17,6 +26,8 @@ export interface ContainerVulnerability {
   fixedVersion?: string;
   description: string;
   cvssScore?: number;
+  /** Live Shirudo shield coverage (Watchmen v0.10 Phase 2) */
+  shieldStatus?: VulnerabilityShieldStatus;
 }
 
 export type ImageRegistry = "gcp" | "aws" | "ghcr" | "dockerhub";

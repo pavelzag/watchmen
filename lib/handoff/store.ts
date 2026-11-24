@@ -200,6 +200,7 @@ export async function pushHandoffTasks(params: {
       issues: draft.payload.issues,
       taskId,
       watchmenUrl: params.watchmenUrl,
+      remediationMode: draft.payload.remediationMode,
     });
 
     if (existingId) {

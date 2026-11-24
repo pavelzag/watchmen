@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Terminal, X, Download, Send, CheckCircle2, AlertCircle, Loader2, ShieldCheck, KeyRound } from "lucide-react";
+import { Terminal, X, Download, Send, CheckCircle2, AlertCircle, Loader2, ShieldCheck, Shield, KeyRound } from "lucide-react";
 import { cn } from "@/lib/utils";
 import CopyTextButton from "@/components/CopyTextButton";
 import { useDemoMode } from "@/components/DemoModeProvider";
@@ -12,6 +12,7 @@ import {
   buildTasksMarkdownPack,
   type HandoffBatchMode,
   type HandoffIssueItem,
+  type HandoffRemediationMode,
   type HandoffTaskRecord,
   type HandoffTool,
 } from "@/lib/handoff/tasks";
@@ -21,7 +22,13 @@ interface PushToCliModalProps {
   onClose: () => void;
   issues: HandoffIssueItem[];
   contextLabel?: string;
+  defaultRemediationMode?: HandoffRemediationMode;
 }
+
+const REMEDIATION_MODE_OPTIONS: Array<{ id: HandoffRemediationMode; label: string; desc: string }> = [
+  { id: "iac", label: "IaC / Code Fix", desc: "Terraform, Kubernetes manifests, or Dockerfile updates" },
+  { id: "shirudo_shield", label: "Shirudo Live Shield", desc: "Signed eBPF / Java upatch + Beefile (no restart)" },
+];
 
 const TOOL_OPTIONS: Array<{ id: HandoffTool; label: string; hint: string }> = [
   { id: "opencode", label: "OpenCode", hint: "opencode run" },
@@ -51,10 +58,12 @@ export default function PushToCliModal({
   onClose,
   issues,
   contextLabel = "Security Issues",
+  defaultRemediationMode = "iac",
 }: PushToCliModalProps) {
   const demoMode = useDemoMode();
   const [targetTool, setTargetTool] = useState<HandoffTool>("opencode");
   const [batchMode, setBatchMode] = useState<HandoffBatchMode>("grouped");
+  const [remediationMode, setRemediationMode] = useState<HandoffRemediationMode>(defaultRemediationMode);
   const [commandMode, setCommandMode] = useState<"mcp" | "api" | "inline">("mcp");
   const [pushing, setPushing] = useState(false);
   const [pushError, setPushError] = useState<string | null>(null);
@@ -63,14 +72,19 @@ export default function PushToCliModal({
 
   useEffect(() => {
     if (!isOpen) return;
+    setRemediationMode(defaultRemediationMode);
+  }, [isOpen, defaultRemediationMode]);
+
+  useEffect(() => {
+    if (!isOpen) return;
     setPushError(null);
     setPushedTasks(null);
     setPushStats(null);
-  }, [isOpen, issues.length, batchMode, targetTool]);
+  }, [isOpen, issues.length, batchMode, targetTool, remediationMode]);
 
   const drafts = useMemo(
-    () => buildHandoffTaskDrafts({ issues, batchMode, targetTool }),
-    [issues, batchMode, targetTool]
+    () => buildHandoffTaskDrafts({ issues, batchMode, targetTool, remediationMode }),
+    [issues, batchMode, targetTool, remediationMode]
   );
 
   if (!isOpen) return null;
@@ -93,7 +107,7 @@ export default function PushToCliModal({
       const res = await fetch("/api/handoff/tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ issues, batchMode, targetTool }),
+        body: JSON.stringify({ issues, batchMode, targetTool, remediationMode }),
       });
       const data = (await res.json().catch(() => ({}))) as {
         error?: string;
@@ -178,6 +192,39 @@ export default function PushToCliModal({
               <KeyRound className="w-3 h-3" />
               Manage CLI API Tokens
             </Link>
+          </div>
+
+          {/* Remediation Mode */}
+          <div className="space-y-2">
+            <p className="text-[10px] uppercase tracking-widest font-mono text-slate-400">Remediation Mode</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              {REMEDIATION_MODE_OPTIONS.map((modeOpt) => (
+                <button
+                  key={modeOpt.id}
+                  type="button"
+                  onClick={() => setRemediationMode(modeOpt.id)}
+                  className={cn(
+                    "text-left px-3 py-2 rounded-lg border transition-colors",
+                    remediationMode === modeOpt.id
+                      ? modeOpt.id === "shirudo_shield"
+                        ? "border-violet-500/60 bg-violet-500/10 text-violet-200"
+                        : "border-emerald-500/60 bg-emerald-500/10 text-emerald-200"
+                      : "border-slate-800 bg-slate-900/50 text-slate-300 hover:border-slate-700"
+                  )}
+                >
+                  <div className="text-xs font-medium flex items-center gap-1.5">
+                    {modeOpt.id === "shirudo_shield" && <Shield className="w-3.5 h-3.5 text-violet-400" />}
+                    {modeOpt.label}
+                  </div>
+                  <div className="text-[10px] text-slate-400">{modeOpt.desc}</div>
+                </button>
+              ))}
+            </div>
+            {remediationMode === "shirudo_shield" && (
+              <div className="px-3 py-2 rounded-lg border border-violet-500/30 bg-violet-500/10 text-[11px] text-violet-200">
+                Shirudo mode generates an eBPF or Java-agent <code>upatch</code> + <code>Beefile</code> task. ML-DSA-87 signing keys stay on your operator/CI host, and targets require a Shirudo-enabled Linux kernel + TPM 2.0.
+              </div>
+            )}
           </div>
 
           {/* Target CLI & Grouping */}

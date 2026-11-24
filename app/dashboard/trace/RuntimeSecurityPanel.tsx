@@ -9,12 +9,19 @@ import {
   Maximize2,
   Plus,
   RefreshCw,
+  Shield,
   ShieldAlert,
   ShieldCheck,
   Trash2,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import PushToCliModal from "@/components/PushToCliModal";
+import {
+  handoffIssueFromRuntimeAlert,
+  type HandoffIssueItem,
+  type HandoffRemediationMode,
+} from "@/lib/handoff/tasks";
 import type {
   RuntimeRequestEvent,
   RuntimeSecurityAction,
@@ -319,6 +326,11 @@ export default function RuntimeSecurityPanel() {
   const [globeExpanded, setGlobeExpanded] = useState(false);
   const [minimizedGlobeHeight, setMinimizedGlobeHeight] = useState<number | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<RuntimeRequestEvent | null>(null);
+  const [cliModalState, setCliModalState] = useState<{
+    issues: HandoffIssueItem[];
+    contextLabel: string;
+    defaultRemediationMode?: HandoffRemediationMode;
+  } | null>(null);
   const [rules, setRules] = useState<RuntimeSecurityRule[]>([]);
   const [events, setEvents] = useState<RuntimeRequestEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -579,6 +591,30 @@ export default function RuntimeSecurityPanel() {
             <RefreshCw size={11} className={loading ? "animate-spin" : ""} />
             Refresh
           </button>
+          {tab === "alerts" && matchedEvents.length > 0 && (
+            <button
+              type="button"
+              onClick={() =>
+                setCliModalState({
+                  issues: matchedEvents.slice(0, 20).map((ev) =>
+                    handoffIssueFromRuntimeAlert({
+                      event: ev,
+                      matchedRules: ev.matchedRuleIds
+                        .map((id) => ruleById.get(id))
+                        .filter((r): r is RuntimeSecurityRule => Boolean(r)),
+                    })
+                  ),
+                  contextLabel: "Runtime Alerts",
+                  defaultRemediationMode: "shirudo_shield",
+                })
+              }
+              className="flex h-7 items-center gap-1.5 border border-violet-500/40 bg-violet-950/25 px-2.5 text-[10px] font-bold uppercase tracking-widest text-violet-300 transition-colors hover:bg-violet-900/35"
+              title="Generate Shirudo eBPF / Java upatch shields for matched runtime alerts via CLI"
+            >
+              <Shield size={11} />
+              Shield Alerts (CLI)
+            </button>
+          )}
         </div>
       </div>
 
@@ -773,8 +809,24 @@ export default function RuntimeSecurityPanel() {
           event={selectedEvent}
           rules={ruleById}
           onClose={() => setSelectedEvent(null)}
+          onShieldWithCli={(ev, matchedRules) => {
+            setSelectedEvent(null);
+            setCliModalState({
+              issues: [handoffIssueFromRuntimeAlert({ event: ev, matchedRules })],
+              contextLabel: "Runtime Alert",
+              defaultRemediationMode: "shirudo_shield",
+            });
+          }}
         />
       )}
+
+      <PushToCliModal
+        isOpen={Boolean(cliModalState)}
+        onClose={() => setCliModalState(null)}
+        issues={cliModalState?.issues ?? []}
+        contextLabel={cliModalState?.contextLabel ?? "Runtime Alerts"}
+        defaultRemediationMode={cliModalState?.defaultRemediationMode ?? "shirudo_shield"}
+      />
     </div>
   );
 }
@@ -1959,10 +2011,12 @@ function RuntimeEventDetailModal({
   event,
   rules,
   onClose,
+  onShieldWithCli,
 }: {
   event: RuntimeRequestEvent;
   rules: Map<string, RuntimeSecurityRule>;
   onClose: () => void;
+  onShieldWithCli?: (event: RuntimeRequestEvent, matchedRules: RuntimeSecurityRule[]) => void;
 }) {
   const matchedRules = event.matchedRuleIds.map((id) => rules.get(id)).filter((rule): rule is RuntimeSecurityRule => Boolean(rule));
 
@@ -1985,10 +2039,24 @@ function RuntimeEventDetailModal({
               {sourceLabel(event)} {"->"} {event.destinationService ?? event.destinationWorkload ?? "unknown destination"}
             </div>
           </div>
+          {onShieldWithCli && (event.decision !== "allow" || matchedRules.length > 0) && (
+            <button
+              type="button"
+              onClick={() => onShieldWithCli(event, matchedRules)}
+              className="ml-auto flex items-center gap-1.5 border border-violet-500/40 bg-violet-950/30 px-2.5 py-1 text-[10px] font-bold uppercase tracking-widest text-violet-300 transition-colors hover:bg-violet-900/40"
+              title="Generate a Shirudo live shield via CLI Handoff"
+            >
+              <Shield size={12} />
+              Shield with Shirudo
+            </button>
+          )}
           <button
             type="button"
             onClick={onClose}
-            className="ml-auto p-1.5 text-slate-500 transition-colors hover:text-slate-200"
+            className={cn(
+              "p-1.5 text-slate-500 transition-colors hover:text-slate-200",
+              !(onShieldWithCli && (event.decision !== "allow" || matchedRules.length > 0)) && "ml-auto"
+            )}
             title="Close"
           >
             <X size={16} />

@@ -1,10 +1,25 @@
 # Watchmen
 
-Current version: **v0.9.0**
+Current version: **v0.10.0**
 
 Cloud security posture management, compliance, and live request tracing — for AWS and GCP — in a single dashboard.
 
 Watchmen scans your cloud infrastructure for misconfigurations, runs SOC 2 Type II and ISO 27001:2022 compliance checks, answers natural-language questions about your environment, and lets you watch live Kubernetes request traffic flow in real time.
+
+---
+
+## v0.10.0 — Shirudo Live-Shield Integration (Phases 1–3)
+
+- **Phase 1 — Shirudo Auto-Shield via CLI Handoff (`lib/handoff/shirudo.ts`, `lib/handoff/tasks.ts`, `components/PushToCliModal.tsx`)**:
+  - Added `remediationMode: "iac" | "shirudo_shield"` with namespaced fingerprints (`v0.10:shirudo_shield:...`), `Beefile` starter templates, BPF C vs. Java agent `upatch` prompt scaffolding, and `"runtime_alert"` issue normalization (`handoffIssueFromRuntimeAlert`).
+  - Added **Shield (Shirudo)** triggers on Container Scan and **Shield Alerts (CLI)** / **Shield with Shirudo** actions on Runtime Security alerts, while keeping ML-DSA-87 signing keys on the operator/CI host.
+- **Phase 2 — OTLP Telemetry Ingest & Shield-Aware Exposure (`lib/shirudo/`, `/api/ingest/shirudo/v1/*`, `/api/shirudo`)**:
+  - Added OTLP/HTTP JSON + `gzip` receivers for `shirudo.keepalive` and `shirudo.bpf.map.snapshot` / shield hit metrics backed by Postgres tables (`shirudo_nodes`, `shirudo_upatch_fixes`, `shirudo_shield_hits`).
+  - Enriched Container Scan CVEs with live `SHIELDED (<upatch> · N hits)` badges, updated closed-loop verification (`lib/handoff/verify.ts`), and added the **Shirudo Fleet & Live Shields** panel on `/dashboard/runtime` and compensating-controls summary on `/dashboard/compliance`.
+- **Phase 3 — Cryptographic TPM 2.0 Verification & Hardened VM Blueprints (`lib/shirudo/tpm-verify.ts`, `/api/shirudo/attest`, `scripts/shirudo/`)**:
+  - Native Node.js ECDSA NIST P-256 TPM quote verification (`TPMS_ATTEST` / `TPMT_SIGNATURE` / `TPMT_PUBLIC`) with monotonic `(resetCount, clock)` replay/rollback contradiction detection and on-demand nonce challenge attestation (`shirudo attest --nonce=<hex>`).
+  - Added OTel Collector PQC TLS config and Shielded GCE vTPM Terraform blueprints in `scripts/shirudo/`.
+- See [Watchmen v0.10 Shirudo Rollout Plan](docs/v0.10-shirudo-rollout-plan.md) and [Visual Integration Guide](docs/shirudo-integration-options.html).
 
 ---
 

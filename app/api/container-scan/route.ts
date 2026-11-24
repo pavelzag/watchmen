@@ -14,6 +14,8 @@ import { getGhcrVulnerabilities } from "@/lib/github/ghcr-scanning";
 import { getDockerHubVulnerabilities } from "@/lib/dockerhub/dockerhub-scanning";
 import { mergeCachedTrivyScans } from "@/lib/container-scan-cache";
 import { isTrivyAvailable } from "@/lib/trivy/scanner";
+import { enrichContainerResultsWithShields, getMockShirudoOverview } from "@/lib/shirudo/exposure";
+import { getShirudoOverview } from "@/lib/shirudo/store";
 
 function sortScanResults(results: ImageScanResult[]): ImageScanResult[] {
   return [...results].sort((a, b) => {
@@ -37,7 +39,10 @@ export async function GET() {
 
   // Full demo/mock mode
   if (isGcpMock && isAwsMock) {
-    const results = sortScanResults(getMockScanResults());
+    const results = enrichContainerResultsWithShields(
+      sortScanResults(getMockScanResults()),
+      getMockShirudoOverview()
+    );
     return NextResponse.json({
       results,
       warnings: [],
@@ -84,19 +89,23 @@ export async function GET() {
       ? Promise.resolve(getMockScanResults().filter((r) => r.cloud === "aws"))
       : Promise.all(awsRegions.map((region) => getAwsContainerVulnerabilities(region))).then((lists) => lists.flat());
 
-    const [gcpResults, awsResults, ghcrResults, dockerHubResults] = await Promise.all([
+    const [gcpResults, awsResults, ghcrResults, dockerHubResults, shirudoOverview] = await Promise.all([
       gcpPromise,
       awsPromise,
       getGhcrVulnerabilities(email),
       getDockerHubVulnerabilities(email),
+      getShirudoOverview(email).catch(() => null),
     ]);
 
-    const results = sortScanResults([
+    const sortedResults = sortScanResults([
       ...gcpResults,
       ...awsResults,
       ...ghcrResults,
       ...dockerHubResults,
     ]);
+    const results = shirudoOverview
+      ? enrichContainerResultsWithShields(sortedResults, shirudoOverview)
+      : sortedResults;
 
     const warnings = getGcpScanWarnings().filter(
       (w) =>

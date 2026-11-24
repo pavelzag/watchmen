@@ -1,4 +1,5 @@
 import RuntimeSecurityPanel from "../trace/RuntimeSecurityPanel";
+import ShirudoFleetPanel from "@/components/ShirudoFleetPanel";
 
 export default function RuntimePage() {
   return (
@@ -11,7 +12,7 @@ export default function RuntimePage() {
               RUNTIME SECURITY
             </h1>
             <p className="text-slate-400 text-sm mt-1">
-              Review live request decisions, matched alerts, and detect-only runtime policy rules.
+              Review live request decisions, matched alerts, detect-only policy rules, and Shirudo live shields.
             </p>
           </div>
           <div className="px-3 py-1 bg-amber-500/10 border border-amber-500/20 text-[10px] uppercase tracking-widest text-amber-300">
@@ -20,6 +21,7 @@ export default function RuntimePage() {
         </div>
 
         <RuntimeSecurityPanel />
+        <ShirudoFleetPanel />
       </div>
     </div>
   );

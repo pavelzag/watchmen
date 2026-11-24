@@ -8,11 +8,13 @@ import {
   buildHandoffTaskDrafts,
   type HandoffBatchMode,
   type HandoffIssueItem,
+  type HandoffRemediationMode,
   type HandoffTool,
 } from "@/lib/handoff/tasks";
 
 const VALID_TOOLS = new Set<HandoffTool>(["any", "opencode", "claude", "codex"]);
 const VALID_BATCH_MODES = new Set<HandoffBatchMode>(["grouped", "combined", "individual"]);
+const VALID_REMEDIATION_MODES = new Set<HandoffRemediationMode>(["iac", "shirudo_shield"]);
 
 export async function GET(req: NextRequest) {
   const actor = await resolveHandoffActor(req);
@@ -63,6 +65,7 @@ export async function POST(req: NextRequest) {
       issues?: HandoffIssueItem[];
       batchMode?: HandoffBatchMode;
       targetTool?: HandoffTool;
+      remediationMode?: HandoffRemediationMode;
     };
 
     const issues = Array.isArray(body.issues)
@@ -77,8 +80,10 @@ export async function POST(req: NextRequest) {
       body.batchMode && VALID_BATCH_MODES.has(body.batchMode) ? body.batchMode : "grouped";
     const targetTool: HandoffTool =
       body.targetTool && VALID_TOOLS.has(body.targetTool) ? body.targetTool : "any";
+    const remediationMode: HandoffRemediationMode =
+      body.remediationMode && VALID_REMEDIATION_MODES.has(body.remediationMode) ? body.remediationMode : "iac";
 
-    const drafts = buildHandoffTaskDrafts({ issues, batchMode, targetTool });
+    const drafts = buildHandoffTaskDrafts({ issues, batchMode, targetTool, remediationMode });
     const origin = new URL(req.url).origin;
 
     const result = await pushHandoffTasks({

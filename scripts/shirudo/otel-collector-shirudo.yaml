@@ -1,0 +1,39 @@
+# OpenTelemetry Collector configuration for Shirudo -> Watchmen (v0.10)
+# Requires Go 1.24+ build of otelcol-contrib for TLS 1.3 X25519MLKEM768 support.
+#
+# IMPORTANT: Do NOT add processors that parse or re-encode log record body strings;
+# Shirudo's TPM quote (shirudo.quote) covers the exact UTF-8 bytes of body.stringValue.
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+        tls:
+          cert_file: /etc/otelcol/collector.crt
+          key_file: /etc/otelcol/collector.key
+          min_version: "1.3"
+
+processors:
+  batch:
+    timeout: 2s
+    send_batch_size: 64
+
+exporters:
+  otlphttp/watchmen:
+    endpoint: ${env:WATCHMEN_BASE_URL}/api/ingest/shirudo
+    encoding: json
+    compression: gzip
+    headers:
+      Authorization: "Bearer ${env:WATCHMEN_API_TOKEN}"
+
+service:
+  pipelines:
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp/watchmen]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp/watchmen]

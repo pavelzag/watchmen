@@ -95,4 +95,59 @@ describe("PushToCliModal", () => {
     fireEvent.click(screen.getByText("REST API"));
     expect(screen.getByText(/\/api\/handoff\/tasks\/wm_tsk_fw/i)).toBeInTheDocument();
   });
+
+  it("supports switching to Shirudo Live Shield mode and sends remediationMode to /api/handoff/tasks", async () => {
+    const fetchMock = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        createdCount: 1,
+        updatedCount: 0,
+        tasks: [
+          {
+            id: "wm_tsk_shld",
+            title: "[Shirudo Shield] Container image vulnerabilities",
+            severity: "critical",
+            issueCount: 1,
+            promptMarkdown: "# Watchmen Shirudo Shield Task",
+          },
+        ],
+      }),
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    render(
+      <PushToCliModal
+        isOpen
+        onClose={jest.fn()}
+        issues={[
+          {
+            id: "container-cve:gcp:proj-1:api:CVE-2026-1234:openssl",
+            kind: "container_cve",
+            cloud: "gcp",
+            severity: "critical",
+            title: "CVE-2026-1234: openssl 3.5.1 -> 3.5.2",
+            description: "Buffer overflow in TLS parser",
+            resourceName: "api",
+            resourceType: "container_image",
+            projectId: "proj-1",
+          },
+        ]}
+        contextLabel="Container CVEs"
+      />
+    );
+
+    fireEvent.click(screen.getByText("Shirudo Live Shield"));
+    expect(screen.getByText(/ML-DSA-87 signing keys stay on your operator\/CI host/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Push to Watchmen Queue"));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    const [, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const sentBody = JSON.parse(String(requestInit.body)) as { remediationMode?: string };
+    expect(sentBody.remediationMode).toBe("shirudo_shield");
+  });
 });

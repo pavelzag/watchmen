@@ -131,6 +131,15 @@ export default function CliApiTokensCard({ isDemoUser }: { isDemoUser: boolean }
     2
   );
 
+  const shirudoOtlpSnippet = [
+    `# 1. In Shirudo signed config (etc/shirudo/shirudo.conf):`,
+    `map_export.otel_endpoint = ${origin}/api/ingest/shirudo`,
+    ``,
+    `# 2. On Shirudo target (/etc/shirudo/map-export.env):`,
+    `OTEL_EXPORTER_OTLP_HEADERS=authorization=Bearer%20${tokenPlaceholder}`,
+    `OTEL_EXPORTER_OTLP_COMPRESSION=gzip`,
+  ].join("\n");
+
   return (
     <div className="space-y-4">
       <div>
@@ -321,6 +330,22 @@ export default function CliApiTokensCard({ isDemoUser }: { isDemoUser: boolean }
                     </div>
                     <pre className="text-[11px] font-mono text-slate-400 bg-[#04060a] border border-slate-800 rounded p-2.5 overflow-x-auto">
                       {stdioSnippet}
+                    </pre>
+                  </div>
+
+                  <div className="space-y-1.5 pt-2 border-t border-slate-800">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-mono uppercase tracking-wider text-violet-300">
+                        Shirudo OTLP Telemetry Ingest (v0.10)
+                      </span>
+                      <CopyTextButton
+                        text={shirudoOtlpSnippet}
+                        label="Copy Shirudo OTLP"
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] border border-violet-500/40 text-violet-300 hover:bg-violet-500/10"
+                      />
+                    </div>
+                    <pre className="text-[11px] font-mono text-slate-400 bg-[#04060a] border border-slate-800 rounded p-2.5 overflow-x-auto">
+                      {shirudoOtlpSnippet}
                     </pre>
                   </div>
                 </div>

@@ -292,3 +292,89 @@ CREATE TABLE IF NOT EXISTS container_scan_cache (
   summary          JSONB NOT NULL DEFAULT '{}',
   scanned_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS shirudo_nodes (
+  user_email               TEXT NOT NULL,
+  node_key                 TEXT NOT NULL,
+  host_name                TEXT NOT NULL DEFAULT '',
+  ak_name                  TEXT,
+  quote_present            BOOLEAN NOT NULL DEFAULT FALSE,
+  quote_verified           BOOLEAN NOT NULL DEFAULT FALSE,
+  tpm_reset_count          BIGINT,
+  tpm_clock                BIGINT,
+  history_contradiction    BOOLEAN NOT NULL DEFAULT FALSE,
+  quote_verification_error TEXT,
+  verdict                  TEXT NOT NULL DEFAULT 'unknown',
+  cond                     INT NOT NULL DEFAULT 0,
+  flags                    INT NOT NULL DEFAULT 0,
+  tamper_total             INT NOT NULL DEFAULT 0,
+  integrity_total          INT NOT NULL DEFAULT 0,
+  kernel_release           TEXT NOT NULL DEFAULT '',
+  image_id                 TEXT,
+  image_version            TEXT,
+  image_root               TEXT,
+  tree_id                  TEXT,
+  last_seq                 INT,
+  loaded_count             INT NOT NULL DEFAULT 0,
+  set_sha256               TEXT,
+  loaded_upatches          JSONB NOT NULL DEFAULT '[]',
+  raw_keepalive            JSONB NOT NULL DEFAULT '{}',
+  last_seen_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_email, node_key)
+);
+
+ALTER TABLE shirudo_nodes ADD COLUMN IF NOT EXISTS quote_verified BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE shirudo_nodes ADD COLUMN IF NOT EXISTS tpm_reset_count BIGINT;
+ALTER TABLE shirudo_nodes ADD COLUMN IF NOT EXISTS tpm_clock BIGINT;
+ALTER TABLE shirudo_nodes ADD COLUMN IF NOT EXISTS history_contradiction BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE shirudo_nodes ADD COLUMN IF NOT EXISTS quote_verification_error TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_shirudo_nodes_lookup
+  ON shirudo_nodes (user_email, last_seen_at DESC);
+
+CREATE TABLE IF NOT EXISTS shirudo_attestation_challenges (
+  id          TEXT PRIMARY KEY,
+  user_email  TEXT NOT NULL,
+  node_key    TEXT NOT NULL,
+  nonce       TEXT NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'pending',
+  error       TEXT,
+  expires_at  TIMESTAMPTZ NOT NULL,
+  verified_at TIMESTAMPTZ,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_shirudo_attestation_lookup
+  ON shirudo_attestation_challenges (user_email, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS shirudo_upatch_fixes (
+  user_email    TEXT NOT NULL,
+  upatch_id     TEXT NOT NULL,
+  advisory_id   TEXT NOT NULL,
+  tree_id       TEXT NOT NULL DEFAULT '',
+  shield_kind   TEXT NOT NULL DEFAULT 'bpf_upatch',
+  source        TEXT NOT NULL DEFAULT 'manual',
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_email, upatch_id, advisory_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_shirudo_upatch_fixes_advisory
+  ON shirudo_upatch_fixes (user_email, advisory_id);
+
+CREATE TABLE IF NOT EXISTS shirudo_shield_hits (
+  id           BIGSERIAL PRIMARY KEY,
+  user_email   TEXT NOT NULL,
+  node_key     TEXT NOT NULL,
+  host_name    TEXT NOT NULL DEFAULT '',
+  upatch_id    TEXT NOT NULL,
+  map_name     TEXT NOT NULL DEFAULT '',
+  advisory_id  TEXT,
+  hit_count    BIGINT NOT NULL DEFAULT 1,
+  payload      JSONB NOT NULL DEFAULT '{}',
+  observed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_shirudo_shield_hits_lookup
+  ON shirudo_shield_hits (user_email, upatch_id, observed_at DESC);

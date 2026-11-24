@@ -17,6 +17,9 @@ import {
   type HandoffTaskRecord,
   type LastVerificationSummary,
 } from "@/lib/handoff/tasks";
+import { extractAdvisoryIds } from "@/lib/handoff/shirudo";
+import { buildAdvisoryShieldMap } from "@/lib/shirudo/exposure";
+import { getShirudoOverview } from "@/lib/shirudo/store";
 
 async function loadLatestStoredIds(userEmail: string): Promise<{
   hasGcpSnapshot: boolean;
@@ -93,6 +96,58 @@ export async function verifyHandoffTask(params: {
 
   const issues = task.payload?.issues ?? [];
   const targets = issues.map(issueToRemediationTarget);
+
+  if (task.payload?.remediationMode === "shirudo_shield") {
+    const overview = await getShirudoOverview(params.userEmail);
+    const shieldMap = buildAdvisoryShieldMap(overview);
+    const healthyNodes = overview.nodes.filter((n) => n.verdict === "ok" || n.verdict === "degraded");
+
+    const resolvedIds: string[] = [];
+    const remainingIds: string[] = [];
+
+    for (const issue of issues) {
+      const advisories = extractAdvisoryIds([issue]);
+      const coveredByAdvisory = advisories.some((adv) => shieldMap.get(adv)?.status === "shielded");
+      const coveredByLoadedNode =
+        advisories.length === 0 &&
+        healthyNodes.some((n) => n.loadedCount > 0 || n.loadedUpatches.length > 0);
+      if (coveredByAdvisory || coveredByLoadedNode) {
+        resolvedIds.push(issue.id);
+      } else {
+        remainingIds.push(issue.id);
+      }
+    }
+
+    const allResolved = issues.length > 0 && remainingIds.length === 0;
+    const summary =
+      overview.nodes.length === 0
+        ? "Cannot verify Shirudo shield: no Shirudo nodes have reported keepalives to Watchmen yet."
+        : allResolved
+          ? `Verified ${resolvedIds.length} issue${resolvedIds.length === 1 ? "" : "s"} shielded by active Shirudo upatches (${healthyNodes.length} healthy node${healthyNodes.length === 1 ? "" : "s"}).`
+          : `${resolvedIds.length} issue${resolvedIds.length === 1 ? "" : "s"} shielded; ${remainingIds.length} awaiting active Shirudo shield deployment.`;
+
+    const verification: LastVerificationSummary = {
+      verifiedAt: new Date().toISOString(),
+      allResolved,
+      resolvedCount: resolvedIds.length,
+      remainingCount: remainingIds.length,
+      resolvedIds,
+      remainingIds,
+      summary,
+    };
+
+    const updated = await saveHandoffTaskVerification({
+      userEmail: params.userEmail,
+      taskId: task.id,
+      verification,
+      autoComplete: params.autoComplete,
+    });
+
+    return {
+      task: updated ?? task,
+      verification,
+    };
+  }
 
   const snapshotInfo = await loadLatestStoredIds(params.userEmail);
   const needsGcp = issues.some((i) => i.cloud === "gcp");

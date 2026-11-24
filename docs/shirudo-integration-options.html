@@ -1,0 +1,772 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Watchmen × Shirudo — Integration Options &amp; Product Impact</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --surface: #121931;
+      --surface-2: #182242;
+      --border: #27345f;
+      --text: #e8eefc;
+      --muted: #9fb0db;
+      --accent: #60a5fa;
+      --accent-2: #34d399;
+      --warn: #fbbf24;
+      --danger: #f87171;
+      --purple: #a78bfa;
+      --orange: #fb923c;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, Helvetica, Arial, sans-serif;
+      background: radial-gradient(circle at top right, #162147 0%, var(--bg) 55%);
+      color: var(--text);
+      line-height: 1.6;
+    }
+
+    .container {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 40px 24px 80px;
+    }
+
+    header {
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 28px;
+      margin-bottom: 36px;
+    }
+
+    .eyebrow {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+      background: rgba(96, 165, 250, 0.12);
+      border: 1px solid rgba(96, 165, 250, 0.3);
+      padding: 4px 10px;
+      border-radius: 999px;
+      margin-bottom: 14px;
+    }
+
+    h1 {
+      font-size: clamp(28px, 4vw, 40px);
+      line-height: 1.15;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+
+    .subtitle {
+      font-size: 17px;
+      color: var(--muted);
+      max-width: 780px;
+      margin: 0;
+    }
+
+    h2 {
+      font-size: 24px;
+      margin: 48px 0 16px;
+      letter-spacing: -0.01em;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    h3 {
+      font-size: 18px;
+      margin: 0 0 8px;
+    }
+
+    p { margin: 0 0 12px; }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 18px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 18px;
+    }
+
+    .grid-4 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px 22px;
+    }
+
+    .card.highlight {
+      border-color: rgba(52, 211, 153, 0.45);
+      background: linear-gradient(180deg, rgba(52, 211, 153, 0.06), var(--surface));
+    }
+
+    .card.warn-box {
+      border-color: rgba(251, 191, 36, 0.45);
+      background: linear-gradient(180deg, rgba(251, 191, 36, 0.07), var(--surface));
+    }
+
+    .badge {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 3px 9px;
+      border-radius: 999px;
+      margin-right: 6px;
+    }
+    .b-green { background: rgba(52, 211, 153, 0.14); color: var(--accent-2); border: 1px solid rgba(52, 211, 153, 0.35); }
+    .b-blue { background: rgba(96, 165, 250, 0.14); color: var(--accent); border: 1px solid rgba(96, 165, 250, 0.35); }
+    .b-yellow { background: rgba(251, 191, 36, 0.14); color: var(--warn); border: 1px solid rgba(251, 191, 36, 0.35); }
+    .b-purple { background: rgba(167, 139, 250, 0.14); color: var(--purple); border: 1px solid rgba(167, 139, 250, 0.35); }
+    .b-red { background: rgba(248, 113, 113, 0.14); color: var(--danger); border: 1px solid rgba(248, 113, 113, 0.35); }
+
+    .diagram-wrap {
+      background: #0d1429;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      margin: 16px 0;
+      overflow-x: auto;
+    }
+
+    svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+    }
+
+    .option-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+
+    .option-header {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .option-title {
+      font-size: 20px;
+      font-weight: 700;
+      margin: 0;
+    }
+
+    .muted { color: var(--muted); font-size: 14px; }
+
+    ul {
+      margin: 8px 0 0;
+      padding-left: 18px;
+    }
+
+    li {
+      margin-bottom: 6px;
+      color: var(--text);
+      font-size: 14.5px;
+    }
+
+    li span.muted { font-size: 14px; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      font-size: 14px;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+
+    th {
+      background: var(--surface-2);
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    tr:last-child td { border-bottom: none; }
+
+    .kpi-num {
+      font-size: 22px;
+      font-weight: 800;
+      margin: 4px 0 6px;
+    }
+
+    .toc {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .toc a {
+      text-decoration: none;
+      color: var(--text);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 13px;
+    }
+
+    .toc a:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12.5px;
+      background: rgba(255,255,255,0.07);
+      padding: 2px 6px;
+      border-radius: 5px;
+      color: #c7d7fe;
+    }
+
+    .footer-note {
+      margin-top: 48px;
+      padding-top: 20px;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <span class="eyebrow">Architecture &amp; Product Strategy Guide</span>
+      <h1>Integrating OpenAI + Cisco Shirudo into Watchmen</h1>
+      <p class="subtitle">
+        A plain-English visual guide to what Shirudo does, how it fits alongside Watchmen v0.9, your 5 integration options, and what each choice means for marketing, costs, and startup adoption.
+      </p>
+      <div class="toc">
+        <a href="#tldr">1. The 30-Second Idea</a>
+        <a href="#fit">2. Watchmen vs. Shirudo Today</a>
+        <a href="#catch">3. The Big Catch</a>
+        <a href="#options">4. Your 5 Options (with Diagrams)</a>
+        <a href="#compare">5. Side-by-Side Comparison</a>
+        <a href="#impact">6. Product Impact (Marketing, Costs, Pricing)</a>
+        <a href="#roadmap">7. Recommended Rollout</a>
+      </div>
+    </header>
+
+    <!-- SECTION 1 -->
+    <section id="tldr">
+      <h2>1. The 30-Second Idea</h2>
+      <div class="grid-2">
+        <div class="card">
+          <span class="badge b-blue">Watchmen Today (v0.9)</span>
+          <h3>Finds problems &amp; watches traffic</h3>
+          <p class="muted">
+            Watchmen scans AWS/GCP configs, container images (Trivy), SOC 2 / ISO 27001 controls, and Kubernetes/VM traffic using a read-only eBPF sensor. It also sends remediation tasks to coding agents (OpenCode, Claude Code, Codex) to open Terraform PRs.
+          </p>
+        </div>
+        <div class="card">
+          <span class="badge b-purple">Shirudo (OpenAI + Cisco)</span>
+          <h3>Drops a live "shield" on Linux without a restart</h3>
+          <p class="muted">
+            When a scary zero-day drops (like Log4Shell / Java4Shell), patching and rebooting servers can take days. Shirudo lets an AI agent write a tiny signed eBPF or Java-bytecode "shield" (<code>upatch</code>) that blocks only the exploit path on the running Linux machine—verified by a hardware TPM chip.
+          </p>
+        </div>
+      </div>
+
+      <div class="diagram-wrap">
+        <svg viewBox="0 0 960 190" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 1 L 10 5 L 0 9 z" fill="#60a5fa"/>
+            </marker>
+            <marker id="arr-g" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 1 L 10 5 L 0 9 z" fill="#34d399"/>
+            </marker>
+          </defs>
+
+          <rect x="18" y="34" width="200" height="118" rx="12" fill="#162244" stroke="#60a5fa" stroke-width="1.5"/>
+          <text x="118" y="64" text-anchor="middle" fill="#60a5fa" font-size="12" font-weight="700">STEP 1 · WATCHMEN</text>
+          <text x="118" y="90" text-anchor="middle" fill="#e8eefc" font-size="15" font-weight="700">Spots Risk</text>
+          <text x="118" y="112" text-anchor="middle" fill="#9fb0db" font-size="12">CVE in container / VM</text>
+          <text x="118" y="130" text-anchor="middle" fill="#9fb0db" font-size="12">or live exploit probe</text>
+
+          <line x1="224" y1="93" x2="270" y2="93" stroke="#60a5fa" stroke-width="2" marker-end="url(#arr)"/>
+
+          <rect x="278" y="34" width="200" height="118" rx="12" fill="#1b1c3f" stroke="#a78bfa" stroke-width="1.5"/>
+          <text x="378" y="64" text-anchor="middle" fill="#a78bfa" font-size="12" font-weight="700">STEP 2 · AI AGENT + CLI</text>
+          <text x="378" y="90" text-anchor="middle" fill="#e8eefc" font-size="15" font-weight="700">Builds Shield</text>
+          <text x="378" y="112" text-anchor="middle" fill="#9fb0db" font-size="12">Codex / Claude / OpenCode</text>
+          <text x="378" y="130" text-anchor="middle" fill="#9fb0db" font-size="12">writes &amp; tests a upatch</text>
+
+          <line x1="484" y1="93" x2="530" y2="93" stroke="#60a5fa" stroke-width="2" marker-end="url(#arr)"/>
+
+          <rect x="538" y="34" width="190" height="118" rx="12" fill="#13292f" stroke="#34d399" stroke-width="1.5"/>
+          <text x="633" y="64" text-anchor="middle" fill="#34d399" font-size="12" font-weight="700">STEP 3 · SHIRUDO</text>
+          <text x="633" y="90" text-anchor="middle" fill="#e8eefc" font-size="15" font-weight="700">Protects Live</text>
+          <text x="633" y="112" text-anchor="middle" fill="#9fb0db" font-size="12">Signed .bee shield pulled</text>
+          <text x="633" y="130" text-anchor="middle" fill="#9fb0db" font-size="12">no reboot, TPM-verified</text>
+
+          <line x1="734" y1="93" x2="778" y2="93" stroke="#34d399" stroke-width="2" marker-end="url(#arr-g)"/>
+
+          <rect x="786" y="34" width="156" height="118" rx="12" fill="#162244" stroke="#60a5fa" stroke-width="1.5"/>
+          <text x="864" y="64" text-anchor="middle" fill="#60a5fa" font-size="12" font-weight="700">STEP 4 · WATCHMEN</text>
+          <text x="864" y="90" text-anchor="middle" fill="#e8eefc" font-size="15" font-weight="700">Proves Safety</text>
+          <text x="864" y="112" text-anchor="middle" fill="#9fb0db" font-size="12">Shows "Shielded" badge</text>
+          <text x="864" y="130" text-anchor="middle" fill="#9fb0db" font-size="12">+ SOC 2 audit proof</text>
+        </svg>
+      </div>
+    </section>
+
+    <!-- SECTION 2 -->
+    <section id="fit">
+      <h2>2. How Your Existing Codebase Lines Up</h2>
+      <p class="muted">You don't need to reinvent Watchmen. Three Watchmen subsystems already map directly to Shirudo:</p>
+      <div class="grid-3">
+        <div class="card">
+          <span class="badge b-green">Already Built</span>
+          <h3>CLI Task Handoff + MCP</h3>
+          <p class="muted">
+            <code>lib/handoff/</code> + <code>scripts/watchmen-cli.mjs</code> already push security tasks to Codex, Claude Code, and OpenCode. Today they fix Terraform; they can just as easily generate Shirudo shields.
+          </p>
+        </div>
+        <div class="card">
+          <span class="badge b-green">Already Built</span>
+          <h3>Trivy + Runtime API v1</h3>
+          <p class="muted">
+            <code>lib/trivy/scanner.ts</code> finds container CVEs and <code>/api/watchmen/v1/runtime/*</code> tracks live attack probes. Shirudo tells you which of those CVEs now have an active shield.
+          </p>
+        </div>
+        <div class="card">
+          <span class="badge b-blue">Sensor Only Today</span>
+          <h3>Watchmen eBPF Agent</h3>
+          <p class="muted">
+            <code>services/ebpf-agent/</code> observes HTTP, TCP, and <code>execve</code> on standard VMs/GKE. It is a passive camera—Shirudo is an active, tamper-proof lock.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 3 -->
+    <section id="catch">
+      <h2>3. The Big Catch (Read Before Building!)</h2>
+      <div class="card warn-box">
+        <p><strong>Shirudo is currently pre-release and picky about the Linux machine it runs on.</strong></p>
+        <div class="grid-3" style="margin-top: 12px;">
+          <div>
+            <span class="badge b-yellow">Catch #1</span>
+            <h3>Needs a Custom Kernel</h3>
+            <p class="muted">
+              Shirudo requires a patched <code>bpf-next</code> Linux kernel + systemd 256+ initrd boot. Standard GKE, Cloud Run, and normal Ubuntu/Debian cloud VMs <strong>cannot run it out of the box</strong>.
+            </p>
+          </div>
+          <div>
+            <span class="badge b-yellow">Catch #2</span>
+            <h3>Needs TPM 2.0 Hardware</h3>
+            <p class="muted">
+              Production targets require a real TPM 2.0 chip (or cloud vTPM) to prove shields weren't tampered with. Local dev VMs can fake it with a software TPM.
+            </p>
+          </div>
+          <div>
+            <span class="badge b-yellow">Catch #3</span>
+            <h3>Keys Stay With the Customer</h3>
+            <p class="muted">
+              Shirudo's security promise breaks if Watchmen's cloud server holds the private ML-DSA-87 signing key. Keep signing on the customer's laptop or CI/CD runner.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 4 -->
+    <section id="options">
+      <h2>4. Your 5 Integration Options</h2>
+
+      <!-- OPTION 1 -->
+      <div class="option-card">
+        <div class="option-header">
+          <div>
+            <span class="badge b-green">Recommended First</span>
+            <span class="badge b-blue">Low Infra Risk</span>
+            <h3 class="option-title" style="margin-top: 8px;">Option 1: "Auto-Shield" via Watchmen CLI Handoff</h3>
+          </div>
+          <div class="muted">Effort: <strong>2–3 weeks</strong> · Hosting cost: <strong>~$0</strong></div>
+        </div>
+        <p>
+          Use Watchmen's existing <strong>Send to CLI</strong> + MCP flow so when Watchmen spots an unpatched CVE or live attack probe, it dispatches a task to Codex / Claude Code / OpenCode on the operator's side to write, test, and sign a Shirudo shield.
+        </p>
+        <div class="diagram-wrap">
+          <svg viewBox="0 0 920 155" xmlns="http://www.w3.org/2000/svg">
+            <rect x="15" y="25" width="185" height="100" rx="10" fill="#162244" stroke="#60a5fa" stroke-width="1.5"/>
+            <text x="107" y="55" text-anchor="middle" fill="#60a5fa" font-size="11" font-weight="700">WATCHMEN CLOUD</text>
+            <text x="107" y="78" text-anchor="middle" fill="#e8eefc" font-size="14" font-weight="700">Detects CVE / Attack</text>
+            <text x="107" y="99" text-anchor="middle" fill="#9fb0db" font-size="11.5">Queues task in</text>
+            <text x="107" y="114" text-anchor="middle" fill="#9fb0db" font-size="11.5">cli_handoff_tasks</text>
+
+            <line x1="204" y1="75" x2="256" y2="75" stroke="#60a5fa" stroke-width="2" marker-end="url(#arr)"/>
+            <text x="230" y="64" text-anchor="middle" fill="#9fb0db" font-size="10.5">MCP</text>
+
+            <rect x="262" y="25" width="215" height="100" rx="10" fill="#1b1c3f" stroke="#a78bfa" stroke-width="1.5"/>
+            <text x="369" y="55" text-anchor="middle" fill="#a78bfa" font-size="11" font-weight="700">CUSTOMER OPERATOR / CI</text>
+            <text x="369" y="78" text-anchor="middle" fill="#e8eefc" font-size="14" font-weight="700">watchmen-cli + AI Agent</text>
+            <text x="369" y="99" text-anchor="middle" fill="#9fb0db" font-size="11.5">Writes upatch + exploit test</text>
+            <text x="369" y="114" text-anchor="middle" fill="#9fb0db" font-size="11.5">Tests in Shirudo VM</text>
+
+            <line x1="481" y1="75" x2="533" y2="75" stroke="#34d399" stroke-width="2" marker-end="url(#arr-g)"/>
+            <text x="507" y="64" text-anchor="middle" fill="#34d399" font-size="10.5">Approve</text>
+
+            <rect x="539" y="25" width="175" height="100" rx="10" fill="#13292f" stroke="#34d399" stroke-width="1.5"/>
+            <text x="626" y="55" text-anchor="middle" fill="#34d399" font-size="11" font-weight="700">SIGN &amp; PUBLISH</text>
+            <text x="626" y="78" text-anchor="middle" fill="#e8eefc" font-size="14" font-weight="700">OCI Registry</text>
+            <text x="626" y="99" text-anchor="middle" fill="#9fb0db" font-size="11.5">Customer key signs</text>
+            <text x="626" y="114" text-anchor="middle" fill="#9fb0db" font-size="11.5">.bee shield package</text>
+
+            <line x1="718" y1="75" x2="762" y2="75" stroke="#34d399" stroke-width="2" marker-end="url(#arr-g)"/>
+
+            <rect x="768" y="25" width="138" height="100" rx="10" fill="#13292f" stroke="#34d399" stroke-width="1.5"/>
+            <text x="837" y="55" text-anchor="middle" fill="#34d399" font-size="11" font-weight="700">LINUX TARGETS</text>
+            <text x="837" y="78" text-anchor="middle" fill="#e8eefc" font-size="14" font-weight="700">Pull &amp; Shield</text>
+            <text x="837" y="99" text-anchor="middle" fill="#9fb0db" font-size="11.5">Live protection</text>
+            <text x="837" y="114" text-anchor="middle" fill="#9fb0db" font-size="11.5">without restart</text>
+          </svg>
+        </div>
+        <ul>
+          <li><strong>Pros:</strong> Zero private-key risk on Watchmen; almost zero Watchmen server cost; instant demo story ("Watchmen + Codex live-patches a server").</li>
+          <li><strong>Cons:</strong> Targets still need Shirudo's Linux image to actually apply the shield.</li>
+        </ul>
+      </div>
+
+      <!-- OPTION 2 -->
+      <div class="option-card">
+        <div class="option-header">
+          <div>
+            <span class="badge b-green">Recommended Second</span>
+            <span class="badge b-blue">Telemetry Only</span>
+            <h3 class="option-title" style="margin-top: 8px;">Option 2: Ingest Shirudo Telemetry &amp; TPM Alerts</h3>
+          </div>
+          <div class="muted">Effort: <strong>2–4 weeks</strong> · Hosting cost: <strong>Low</strong></div>
+        </div>
+        <p>
+          Shirudo targets automatically push two OTLP/HTTP JSON streams every minute: a <strong>heartbeat (<code>shirudo.keepalive</code>)</strong> with tamper status + active shields, and <strong>eBPF map logs (<code>shirudo.bpf.map.snapshot</code>)</strong> showing blocked attacks. Watchmen ingests them just like it ingests <code>ebpf-agent</code> events.
+        </p>
+        <div class="diagram-wrap">
+          <svg viewBox="0 0 920 155" xmlns="http://www.w3.org/2000/svg">
+            <rect x="15" y="25" width="210" height="100" rx="10" fill="#13292f" stroke="#34d399" stroke-width="1.5"/>
+            <text x="120" y="54" text-anchor="middle" fill="#34d399" font-size="11" font-weight="700">SHIRUDO LINUX NODE</text>
+            <text x="120" y="76" text-anchor="middle" fill="#e8eefc" font-size="13.5" font-weight="700">1. Keepalive + TPM Quote</text>
+            <text x="120" y="97" text-anchor="middle" fill="#9fb0db" font-size="11.5">2. Blocked Attack Hits</text>
+            <text x="120" y="113" text-anchor="middle" fill="#9fb0db" font-size="11.5">(OTLP/HTTP every 5–60s)</text>
+
+            <line x1="229" y1="75" x2="295" y2="75" stroke="#60a5fa" stroke-width="2" marker-end="url(#arr)"/>
+            <text x="262" y="63" text-anchor="middle" fill="#9fb0db" font-size="10.5">TLS 1.3</text>
+
+            <rect x="301" y="25" width="205" height="100" rx="10" fill="#162244" stroke="#60a5fa" stroke-width="1.5"/>
+            <text x="403" y="54" text-anchor="middle" fill="#60a5fa" font-size="11" font-weight="700">GATEWAY / COLLECTOR</text>
+            <text x="403" y="76" text-anchor="middle" fill="#e8eefc" font-size="13.5" font-weight="700">OTel Collector / Proxy</text>
+            <text x="403" y="97" text-anchor="middle" fill="#9fb0db" font-size="11.5">Handles PQC TLS + optional</text>
+            <text x="403" y="113" text-anchor="middle" fill="#9fb0db" font-size="11.5">TPM signature check</text>
+
+            <line x1="510" y1="75" x2="572" y2="75" stroke="#60a5fa" stroke-width="2" marker-end="url(#arr)"/>
+
+            <rect x="578" y="25" width="325" height="100" rx="10" fill="#162244" stroke="#60a5fa" stroke-width="1.5"/>
+            <text x="740" y="54" text-anchor="middle" fill="#60a5fa" font-size="11" font-weight="700">WATCHMEN DASHBOARD</text>
+            <text x="740" y="76" text-anchor="middle" fill="#e8eefc" font-size="13.5" font-weight="700">Live Trace · Alerts · Node Status</text>
+            <text x="740" y="97" text-anchor="middle" fill="#9fb0db" font-size="11.5">Shows tampered nodes, shield hit counts,</text>
+            <text x="740" y="113" text-anchor="middle" fill="#9fb0db" font-size="11.5">and blocked exploit attempts in real time</text>
+          </svg>
+        </div>
+        <ul>
+          <li><strong>Pros:</strong> Works cleanly with Watchmen's existing Postgres + Runtime UI; doesn't force Watchmen to replace its current eBPF agent.</li>
+          <li><strong>Cons:</strong> Needs a small TLS 1.3 PQC / OTel proxy (or <code>tls.classical_hosts</code> config) and an attestation verifier worker if you want cryptographic TPM verification.</li>
+        </ul>
+      </div>
+
+      <!-- OPTION 3 -->
+      <div class="option-card">
+        <div class="option-header">
+          <div>
+            <span class="badge b-purple">High Business Value</span>
+            <h3 class="option-title" style="margin-top: 8px;">Option 3: "Shielded" CVE &amp; Compliance Badges</h3>
+          </div>
+          <div class="muted">Effort: <strong>2–3 weeks</strong> · Hosting cost: <strong>Low</strong></div>
+        </div>
+        <p>
+          Combine Watchmen's Trivy CVE scans + SOC 2 / ISO 27001 checks with Shirudo's shield status. Instead of showing a scary red "Unpatched Critical CVE", Watchmen shows: <strong>"Unpatched in image — Shielded at runtime by signed upatch (TPM verified)"</strong>.
+        </p>
+        <div class="diagram-wrap">
+          <svg viewBox="0 0 920 140" xmlns="http://www.w3.org/2000/svg">
+            <rect x="20" y="20" width="240" height="95" rx="10" fill="#162244" stroke="#60a5fa" stroke-width="1.5"/>
+            <text x="140" y="50" text-anchor="middle" fill="#60a5fa" font-size="11" font-weight="700">TRIVY / WATCHMEN FINDINGS</text>
+            <text x="140" y="74" text-anchor="middle" fill="#e8eefc" font-size="14" font-weight="700">CVE-2026-XXXX (Critical)</text>
+            <text x="140" y="95" text-anchor="middle" fill="#f87171" font-size="12">Package not upgraded yet</text>
+
+            <text x="292" y="74" text-anchor="middle" fill="#9fb0db" font-size="22" font-weight="700">+</text>
+
+            <rect x="324" y="20" width="250" height="95" rx="10" fill="#13292f" stroke="#34d399" stroke-width="1.5"/>
+            <text x="449" y="50" text-anchor="middle" fill="#34d399" font-size="11" font-weight="700">SHIRUDO SHIELD RECORD</text>
+            <text x="449" y="74" text-anchor="middle" fill="#e8eefc" font-size="14" font-weight="700">upatch active on 12/12 nodes</text>
+            <text x="449" y="95" text-anchor="middle" fill="#34d399" font-size="12">Links upatch → CVE + TPM proof</text>
+
+            <line x1="582" y1="68" x2="634" y2="68" stroke="#34d399" stroke-width="2" marker-end="url(#arr-g)"/>
+
+            <rect x="642" y="20" width="258" height="95" rx="10" fill="#1b1c3f" stroke="#a78bfa" stroke-width="1.5"/>
+            <text x="771" y="50" text-anchor="middle" fill="#a78bfa" font-size="11" font-weight="700">WATCHMEN EXPOSURE &amp; SOC 2</text>
+            <text x="771" y="74" text-anchor="middle" fill="#e8eefc" font-size="14" font-weight="700">Status: Shielded (Low Risk)</text>
+            <text x="771" y="95" text-anchor="middle" fill="#9fb0db" font-size="12">Exports compensating control proof</text>
+          </svg>
+        </div>
+        <ul>
+          <li><strong>Pros:</strong> Huge value for founders doing SOC 2 / ISO 27001 audits—proves compensating controls when a vendor patch isn't out yet.</li>
+          <li><strong>Cons:</strong> Depends on Option 2 telemetry (or reading Shirudo's ClickHouse tables).</li>
+        </ul>
+      </div>
+
+      <!-- OPTION 4 -->
+      <div class="option-card">
+        <div class="option-header">
+          <div>
+            <span class="badge b-yellow">Architectural Fork</span>
+            <h3 class="option-title" style="margin-top: 8px;">Option 4: Dual-Mode Agents vs. Borrowing Shirudo Ideas</h3>
+          </div>
+          <div class="muted">Effort: <strong>4–8+ weeks</strong> · Hosting cost: <strong>Medium</strong></div>
+        </div>
+        <p>
+          Decide how Shirudo relates to Watchmen's existing <code>services/ebpf-agent</code>:
+        </p>
+        <div class="diagram-wrap">
+          <svg viewBox="0 0 920 185" xmlns="http://www.w3.org/2000/svg">
+            <rect x="18" y="18" width="425" height="145" rx="12" fill="#162244" stroke="#60a5fa" stroke-width="1.5"/>
+            <text x="230" y="46" text-anchor="middle" fill="#60a5fa" font-size="12" font-weight="700">PATH 4A · DUAL-MODE FLEET (RECOMMENDED)</text>
+            <rect x="38" y="64" width="180" height="80" rx="8" fill="#121931" stroke="#27345f"/>
+            <text x="128" y="90" text-anchor="middle" fill="#e8eefc" font-size="13" font-weight="700">Standard Cloud / GKE</text>
+            <text x="128" y="110" text-anchor="middle" fill="#9fb0db" font-size="11.5">Runs Watchmen</text>
+            <text x="128" y="126" text-anchor="middle" fill="#9fb0db" font-size="11.5">ebpf-agent (works today)</text>
+
+            <rect x="242" y="64" width="180" height="80" rx="8" fill="#13292f" stroke="#34d399"/>
+            <text x="332" y="90" text-anchor="middle" fill="#e8eefc" font-size="13" font-weight="700">Hardened Linux VMs</text>
+            <text x="332" y="110" text-anchor="middle" fill="#34d399" font-size="11.5">Runs Shirudo Runtime</text>
+            <text x="332" y="126" text-anchor="middle" fill="#9fb0db" font-size="11.5">(custom kernel + TPM)</text>
+
+            <rect x="475" y="18" width="425" height="145" rx="12" fill="#1b1c3f" stroke="#a78bfa" stroke-width="1.5"/>
+            <text x="687" y="46" text-anchor="middle" fill="#a78bfa" font-size="12" font-weight="700">PATH 4B · UPGRADE WATCHMEN'S AGENT INSTEAD</text>
+            <text x="687" y="78" text-anchor="middle" fill="#e8eefc" font-size="14" font-weight="700">Keep stock GKE / EC2 compatibility</text>
+            <text x="687" y="104" text-anchor="middle" fill="#9fb0db" font-size="12">Add BPF LSM / cgroup blocking + OTLP</text>
+            <text x="687" y="124" text-anchor="middle" fill="#9fb0db" font-size="12">directly inside Watchmen's Go ebpf-agent</text>
+            <text x="687" y="144" text-anchor="middle" fill="#fbbf24" font-size="11.5">(No custom kernel or TPM required, less tamper-proof)</text>
+          </svg>
+        </div>
+        <ul>
+          <li><strong>Takeaway:</strong> Never delete <code>services/ebpf-agent</code> in favor of Shirudo right now—you would lock out every customer on standard GKE, EKS, or Ubuntu VMs.</li>
+        </ul>
+      </div>
+
+      <!-- OPTION 5 -->
+      <div class="option-card">
+        <div class="option-header">
+          <div>
+            <span class="badge b-red">Heavy Lift</span>
+            <h3 class="option-title" style="margin-top: 8px;">Option 5: Full Shirudo Web Console + Managed Backend</h3>
+          </div>
+          <div class="muted">Effort: <strong>2–4 months</strong> · Hosting cost: <strong>High</strong></div>
+        </div>
+        <p>
+          Shirudo only ships a terminal viewer (<code>xtop</code>) and ClickHouse SQL tables. Watchmen could become the official web SaaS console on top of Shirudo—managing fleet labels, OCI upatch trees, ClickHouse ingestion, and remote TPM challenge-response attestation.
+        </p>
+        <div class="diagram-wrap">
+          <svg viewBox="0 0 920 130" xmlns="http://www.w3.org/2000/svg">
+            <rect x="20" y="20" width="210" height="86" rx="10" fill="#13292f" stroke="#34d399" stroke-width="1.5"/>
+            <text x="125" y="54" text-anchor="middle" fill="#e8eefc" font-size="14" font-weight="700">Customer Fleet</text>
+            <text x="125" y="76" text-anchor="middle" fill="#9fb0db" font-size="11.5">100s–1000s Shirudo nodes</text>
+
+            <line x1="236" y1="63" x2="292" y2="63" stroke="#60a5fa" stroke-width="2" marker-end="url(#arr)"/>
+
+            <rect x="298" y="20" width="265" height="86" rx="10" fill="#2a1d28" stroke="#f87171" stroke-width="1.5"/>
+            <text x="430" y="48" text-anchor="middle" fill="#f87171" font-size="11" font-weight="700">WATCHMEN HOSTED INFRA</text>
+            <text x="430" y="70" text-anchor="middle" fill="#e8eefc" font-size="14" font-weight="700">OTel + ClickHouse + Attestor</text>
+            <text x="430" y="90" text-anchor="middle" fill="#9fb0db" font-size="11.5">~23 GB / 10k nodes + build/OCI</text>
+
+            <line x1="569" y1="63" x2="625" y2="63" stroke="#60a5fa" stroke-width="2" marker-end="url(#arr)"/>
+
+            <rect x="631" y="20" width="268" height="86" rx="10" fill="#162244" stroke="#60a5fa" stroke-width="1.5"/>
+            <text x="765" y="48" text-anchor="middle" fill="#60a5fa" font-size="11" font-weight="700">WATCHMEN WEB UI</text>
+            <text x="765" y="70" text-anchor="middle" fill="#e8eefc" font-size="14" font-weight="700">Replaces xtop CLI</text>
+            <text x="765" y="90" text-anchor="middle" fill="#9fb0db" font-size="11.5">Multi-tenant SaaS for Shirudo</text>
+          </svg>
+        </div>
+        <ul>
+          <li><strong>Pros:</strong> Could position Watchmen as the "Wiz/UI for Shirudo" if Shirudo takes off across enterprises.</li>
+          <li><strong>Cons:</strong> High ops burden (ClickHouse, OTel, custom VM images) and pulls Watchmen away from its simple startup-friendly single-Postgres stack.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- SECTION 5 -->
+    <section id="compare">
+      <h2>5. Side-by-Side Comparison</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Option</th>
+            <th>What Watchmen Gains</th>
+            <th>Build Effort</th>
+            <th>Infra Cost</th>
+            <th>Startup Fit</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>1. Auto-Shield CLI Handoff</strong></td>
+            <td>AI writes &amp; tests Shirudo shields from Watchmen findings</td>
+            <td>Low (2–3 wks)</td>
+            <td>~$0 (uses customer AI keys)</td>
+            <td><span class="badge b-green">Great</span></td>
+          </tr>
+          <tr>
+            <td><strong>2. OTLP Telemetry Ingest</strong></td>
+            <td>Live node tamper alerts &amp; blocked-exploit counts</td>
+            <td>Low-Med (2–4 wks)</td>
+            <td>Low (Postgres + proxy)</td>
+            <td><span class="badge b-blue">Good</span></td>
+          </tr>
+          <tr>
+            <td><strong>3. Shielded CVE Badges</strong></td>
+            <td>"Mitigated at runtime" status + SOC 2 proof</td>
+            <td>Low-Med (2–3 wks)</td>
+            <td>Low</td>
+            <td><span class="badge b-green">Great</span></td>
+          </tr>
+          <tr>
+            <td><strong>4. Dual-Mode Agent</strong></td>
+            <td>Keep stock cloud support + add Shirudo tier</td>
+            <td>Medium (4–8 wks)</td>
+            <td>Medium (VM/Packer images)</td>
+            <td><span class="badge b-yellow">Enterprise</span></td>
+          </tr>
+          <tr>
+            <td><strong>5. Full Shirudo SaaS UI</strong></td>
+            <td>Become the commercial web console for Shirudo</td>
+            <td>High (2–4 mos)</td>
+            <td>High (ClickHouse + OTel)</td>
+            <td><span class="badge b-red">Too Heavy Now</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- SECTION 6 -->
+    <section id="impact">
+      <h2>6. Product Impact: Marketing, Costs, Friction &amp; Pricing</h2>
+      <p class="muted">
+        Per <code>pitch.md</code>, Watchmen wins by giving startups enterprise security without six-figure Wiz/Prisma budgets or complex setup. Here is how Shirudo affects the business:
+      </p>
+
+      <div class="grid-2" style="margin-top: 16px;">
+        <div class="card">
+          <span class="badge b-green">Marketing &amp; Positioning</span>
+          <div class="kpi-num" style="color: var(--accent-2);">Huge Early-Mover Halo</div>
+          <ul>
+            <li><strong>Ride the OpenAI + Cisco wave:</strong> Shirudo just launched (Nov 23, 2026). Being the first open/startup CSPM with a working <em>"Detect in Watchmen → Shield with Shirudo"</em> demo is prime material for HN, LinkedIn, Product Hunt, and OpenAI/Isovalent community showcases.</li>
+            <li><strong>New category story:</strong> Shifts Watchmen from <em>"we tell you what's broken"</em> (like every CSPM) to <em>"we help your AI coding agent shield it live before you even reboot."</em></li>
+            <li><strong>Enterprise credibility:</strong> TPM hardware attestation + post-quantum TLS 1.3 gives Watchmen serious security-team street cred when startups grow into mid-market buyers.</li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <span class="badge b-yellow">Customer Friction &amp; Churn Risk</span>
+          <div class="kpi-num" style="color: var(--warn);">Must Stay Optional</div>
+          <ul>
+            <li><strong>The Startup Paradox:</strong> Early-stage teams use Vercel, Cloud Run, standard GKE, or plain Ubuntu EC2—none of which support Shirudo's custom kernel + TPM today.</li>
+            <li><strong>Don't break onboarding:</strong> Watchmen's superpower is <em>5-minute Docker/mock onboarding with zero dedicated security hire</em>. Making Shirudo mandatory would crush activation.</li>
+            <li><strong>Best framing:</strong> Offer Shirudo as an <strong>opt-in "Shielded Mode / Lab"</strong> or a 1-click local VM demo, while keeping standard Watchmen agentless + <code>ebpf-agent</code> as the default.</li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <span class="badge b-blue">Your Engineering &amp; Hosting Costs</span>
+          <div class="kpi-num" style="color: var(--accent);">Low if Scoped Smartly</div>
+          <ul>
+            <li><strong>Options 1–3 (Watchmen server):</strong> Almost free. AI shield generation uses the customer's own OpenAI/Claude/OpenCode CLI keys; small telemetry fits right in your existing Neon/Postgres DB.</li>
+            <li><strong>If you build shields in Watchmen Cloud (avoid):</strong> Requires heavy Linux build workers (<code>clang 23</code>, <code>veritysetup</code>, OCI storage) and creates key-custody liability.</li>
+            <li><strong>If you host ClickHouse (Option 5):</strong> Adds real cloud bills (~$150–$600+/mo baseline cluster) and ops complexity; only do this if paying enterprise customers demand 1,000+ node fleets.</li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <span class="badge b-purple">Monetization &amp; Tiering</span>
+          <div class="kpi-num" style="color: var(--purple);">Natural Pro / Enterprise Upsell</div>
+          <ul>
+            <li><strong>Free / Startup Tier:</strong> AWS/GCP posture + SOC 2 / ISO 27001 + Trivy scans + standard <code>ebpf-agent</code> sensor + Terraform PR handoff.</li>
+            <li><strong>Pro Tier ($):</strong> <em>AI Auto-Shield</em> templates in CLI Handoff + "Shielded at Runtime" CVE badges for auditors.</li>
+            <li><strong>Enterprise / Regulated Tier ($$$):</strong> Hardened Linux VM blueprints (Terraform/Packer), OTLP ingest, and TPM-verified fleet attestation reports.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 7 -->
+    <section id="roadmap">
+      <h2>7. Recommended 3-Step Rollout</h2>
+      <div class="diagram-wrap">
+        <svg viewBox="0 0 920 145" xmlns="http://www.w3.org/2000/svg">
+          <rect x="16" y="20" width="275" height="104" rx="12" fill="#13292f" stroke="#34d399" stroke-width="1.5"/>
+          <text x="34" y="46" fill="#34d399" font-size="11.5" font-weight="700">PHASE 1 · NOW (2–3 WEEKS)</text>
+          <text x="34" y="70" fill="#e8eefc" font-size="15" font-weight="700">Option 1 + Demo Video</text>
+          <text x="34" y="92" fill="#9fb0db" font-size="12">Add "Generate Shirudo Shield" to</text>
+          <text x="34" y="110" fill="#9fb0db" font-size="12">CLI Handoff + test in a local Shirudo VM</text>
+
+          <line x1="297" y1="72" x2="333" y2="72" stroke="#34d399" stroke-width="2" marker-end="url(#arr-g)"/>
+
+          <rect x="339" y="20" width="275" height="104" rx="12" fill="#162244" stroke="#60a5fa" stroke-width="1.5"/>
+          <text x="357" y="46" fill="#60a5fa" font-size="11.5" font-weight="700">PHASE 2 · NEXT (3–4 WEEKS)</text>
+          <text x="357" y="70" fill="#e8eefc" font-size="15" font-weight="700">Options 2 + 3</text>
+          <text x="357" y="92" fill="#9fb0db" font-size="12">Ingest OTLP keepalives &amp; shield hits;</text>
+          <text x="357" y="110" fill="#9fb0db" font-size="12">show "Shielded" badges in Findings/SOC 2</text>
+
+          <line x1="620" y1="72" x2="656" y2="72" stroke="#60a5fa" stroke-width="2" marker-end="url(#arr)"/>
+
+          <rect x="662" y="20" width="242" height="104" rx="12" fill="#1b1c3f" stroke="#a78bfa" stroke-width="1.5"/>
+          <text x="680" y="46" fill="#a78bfa" font-size="11.5" font-weight="700">PHASE 3 · WHEN CUSTOMERS ASK</text>
+          <text x="680" y="70" fill="#e8eefc" font-size="15" font-weight="700">Option 4a (Enterprise)</text>
+          <text x="680" y="92" fill="#9fb0db" font-size="12">Ship Terraform/Packer GCE &amp; EC2</text>
+          <text x="680" y="110" fill="#9fb0db" font-size="12">hardened images + ClickHouse scale</text>
+        </svg>
+      </div>
+      <div class="card highlight">
+        <strong>Bottom Line:</strong> Integrate Shirudo as an <strong>AI-assisted shield workflow (Option 1) + telemetry/compliance layer (Options 2 &amp; 3)</strong> first. You get 90% of the marketing upside and enterprise differentiation for near-zero server cost, without breaking Watchmen's frictionless startup experience.
+      </div>
+    </section>
+
+    <div class="footer-note">
+      Generated for the Watchmen repository (<code>v0.9.0</code>) based on Watchmen's existing <code>lib/handoff/</code>, <code>services/ebpf-agent/</code>, <code>lib/trivy/</code>, and Shirudo's public release specs (<code>github.com/shirudo-dev/shirudo</code>).
+    </div>
+  </div>
+</body>
+</html>

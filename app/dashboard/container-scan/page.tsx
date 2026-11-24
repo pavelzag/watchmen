@@ -14,6 +14,7 @@ import {
   AlertCircle,
   ShieldCheck,
   Search,
+  Shield,
   X,
   GitPullRequest,
   Terminal,
@@ -33,7 +34,11 @@ import {
   remediationTargetsFromContainerImage,
   type RemediationTarget,
 } from "@/lib/github/remediation-targets";
-import { handoffIssueFromContainerCve, type HandoffIssueItem } from "@/lib/handoff/tasks";
+import {
+  handoffIssueFromContainerCve,
+  type HandoffIssueItem,
+  type HandoffRemediationMode,
+} from "@/lib/handoff/tasks";
 import { useDemoMode } from "@/components/DemoModeProvider";
 
 const DEMO_AI_DISABLED_MESSAGE =
@@ -216,6 +221,26 @@ function CveRow({
                 CVSS {cve.cvssScore.toFixed(1)}
               </span>
             )}
+            {cve.shieldStatus && (
+              <span
+                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider border"
+                style={
+                  cve.shieldStatus.status === "shielded"
+                    ? { color: "#c4b5fd", borderColor: "rgba(139,92,246,0.45)", background: "rgba(139,92,246,0.12)" }
+                    : cve.shieldStatus.status === "tampered"
+                      ? { color: "#fca5a5", borderColor: "rgba(239,68,68,0.45)", background: "rgba(239,68,68,0.12)" }
+                      : { color: "#fcd34d", borderColor: "rgba(245,158,11,0.45)", background: "rgba(245,158,11,0.10)" }
+                }
+                title={`Shirudo ${cve.shieldStatus.upatchId} (${cve.shieldStatus.shieldKind}) · ${cve.shieldStatus.activeNodes} active node(s) · ${cve.shieldStatus.hitCount} blocked hit(s)${cve.shieldStatus.quotePresent ? " · TPM-quoted" : ""}`}
+              >
+                <Shield className="w-2.5 h-2.5" />
+                {cve.shieldStatus.status === "shielded"
+                  ? `SHIELDED (${cve.shieldStatus.upatchId}${cve.shieldStatus.hitCount > 0 ? ` · ${cve.shieldStatus.hitCount} hits` : ""})`
+                  : cve.shieldStatus.status === "tampered"
+                    ? `SHIELD TAMPERED (${cve.shieldStatus.upatchId})`
+                    : `SHIELD PENDING (${cve.shieldStatus.upatchId})`}
+              </span>
+            )}
           </div>
           <p style={{ fontSize: 10, color: "#e5e7eb", fontFamily: "monospace", marginBottom: 2 }}>
             {cve.packageName} {cve.installedVersion}
@@ -365,7 +390,7 @@ function ImageCard({
   demoMode: boolean;
   onScanImage: (imageRef: string, force: boolean) => void;
   onCreatePr: (targets: RemediationTarget[]) => void;
-  onSendToCli: (issues: HandoffIssueItem[]) => void;
+  onSendToCli: (issues: HandoffIssueItem[], defaultMode?: HandoffRemediationMode) => void;
 }) {
   const imageLevelMatch =
     !searchNeedle ||
@@ -472,6 +497,21 @@ function ImageCard({
                   TRIVY
                 </span>
               )}
+              {(() => {
+                const shieldedCount = result.vulnerabilities.filter(
+                  (v) => v.shieldStatus?.status === "shielded"
+                ).length;
+                if (shieldedCount === 0) return null;
+                return (
+                  <span
+                    className="inline-flex items-center gap-1"
+                    style={{ fontSize: 9, color: "#c4b5fd", fontFamily: "monospace", border: "1px solid rgba(139,92,246,0.45)", background: "rgba(139,92,246,0.12)", padding: "0 5px" }}
+                  >
+                    <Shield className="w-2.5 h-2.5" />
+                    {shieldedCount} SHIELDED
+                  </span>
+                );
+              })()}
               <span style={{ fontSize: 9, color: "#4b5563", fontFamily: "monospace" }}>
                 · {result.scanStatus === "unscanned" ? "updated" : "scanned"} {new Date(result.scannedAt).toLocaleString()}
               </span>
@@ -496,27 +536,51 @@ function ImageCard({
             </button>
           )}
           {sortedVulns.length > 0 && (
-            <button
-              type="button"
-              onClick={() =>
-                onSendToCli(
-                  sortedVulns.map((cve) =>
-                    handoffIssueFromContainerCve({
-                      imageRef: result.imageRef,
-                      imageName: result.imageName,
-                      cloud: result.cloud,
-                      accountId: result.accountId,
-                      cve,
-                    })
+            <>
+              <button
+                type="button"
+                onClick={() =>
+                  onSendToCli(
+                    sortedVulns.map((cve) =>
+                      handoffIssueFromContainerCve({
+                        imageRef: result.imageRef,
+                        imageName: result.imageName,
+                        cloud: result.cloud,
+                        accountId: result.accountId,
+                        cve,
+                      })
+                    )
                   )
-                )
-              }
-              className="flex items-center gap-1 px-2 py-1 text-[10px] font-mono uppercase tracking-wider border border-emerald-500/35 text-emerald-300 rounded hover:bg-emerald-500/10 transition-colors"
-              title="Send this image's CVEs to AI / CLI Queue"
-            >
-              <Terminal className="w-3 h-3" />
-              Send to CLI
-            </button>
+                }
+                className="flex items-center gap-1 px-2 py-1 text-[10px] font-mono uppercase tracking-wider border border-emerald-500/35 text-emerald-300 rounded hover:bg-emerald-500/10 transition-colors"
+                title="Send this image's CVEs to AI / CLI Queue"
+              >
+                <Terminal className="w-3 h-3" />
+                Send to CLI
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  onSendToCli(
+                    sortedVulns.map((cve) =>
+                      handoffIssueFromContainerCve({
+                        imageRef: result.imageRef,
+                        imageName: result.imageName,
+                        cloud: result.cloud,
+                        accountId: result.accountId,
+                        cve,
+                      })
+                    ),
+                    "shirudo_shield"
+                  )
+                }
+                className="flex items-center gap-1 px-2 py-1 text-[10px] font-mono uppercase tracking-wider border border-violet-500/35 text-violet-300 rounded hover:bg-violet-500/10 transition-colors"
+                title="Generate a Shirudo live shield (upatch) for this image's CVEs via CLI"
+              >
+                <Shield className="w-3 h-3" />
+                Shield
+              </button>
+            </>
           )}
           {canTrivyScan && (
             <button
@@ -637,7 +701,10 @@ export default function ContainerScanPage() {
 
   // PR & CLI handoff modals
   const [remediateTargets, setRemediateTargets] = useState<RemediationTarget[] | null>(null);
-  const [cliModalIssues, setCliModalIssues] = useState<HandoffIssueItem[] | null>(null);
+  const [cliModalState, setCliModalState] = useState<{
+    issues: HandoffIssueItem[];
+    defaultRemediationMode?: HandoffRemediationMode;
+  } | null>(null);
 
   async function load() {
     setLoading(true);
@@ -910,27 +977,52 @@ export default function ContainerScanPage() {
             </button>
           )}
           {visibleCvePairs.length > 0 && (
-            <button
-              type="button"
-              onClick={() =>
-                setCliModalIssues(
-                  visibleCvePairs.map(({ result, cve }) =>
-                    handoffIssueFromContainerCve({
-                      imageRef: result.imageRef,
-                      imageName: result.imageName,
-                      cloud: result.cloud,
-                      accountId: result.accountId,
-                      cve,
-                    })
-                  )
-                )
-              }
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs uppercase tracking-widest border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 transition-all"
-              title="Send visible CVEs to OpenCode, Claude Code, or Codex"
-            >
-              <Terminal className="w-3.5 h-3.5" />
-              Send to CLI
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() =>
+                  setCliModalState({
+                    issues: visibleCvePairs.map(({ result, cve }) =>
+                      handoffIssueFromContainerCve({
+                        imageRef: result.imageRef,
+                        imageName: result.imageName,
+                        cloud: result.cloud,
+                        accountId: result.accountId,
+                        cve,
+                      })
+                    ),
+                    defaultRemediationMode: "iac",
+                  })
+                }
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs uppercase tracking-widest border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 transition-all"
+                title="Send visible CVEs to OpenCode, Claude Code, or Codex"
+              >
+                <Terminal className="w-3.5 h-3.5" />
+                Send to CLI
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  setCliModalState({
+                    issues: visibleCvePairs.map(({ result, cve }) =>
+                      handoffIssueFromContainerCve({
+                        imageRef: result.imageRef,
+                        imageName: result.imageName,
+                        cloud: result.cloud,
+                        accountId: result.accountId,
+                        cve,
+                      })
+                    ),
+                    defaultRemediationMode: "shirudo_shield",
+                  })
+                }
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs uppercase tracking-widest border border-violet-500/40 text-violet-300 hover:bg-violet-500/10 transition-all"
+                title="Generate Shirudo live shields (upatch) for visible CVEs via CLI"
+              >
+                <Shield className="w-3.5 h-3.5" />
+                Shield (Shirudo)
+              </button>
+            </>
           )}
           {trivyAvailable && unscannedGcpCount > 0 && (
             <button
@@ -1210,7 +1302,9 @@ export default function ContainerScanPage() {
                   demoMode={demoMode}
                   onScanImage={(ref, force) => void runTrivyScan([ref], force)}
                   onCreatePr={(targets) => setRemediateTargets(targets)}
-                  onSendToCli={(issues) => setCliModalIssues(issues)}
+                  onSendToCli={(issues, defaultRemediationMode = "iac") =>
+                    setCliModalState({ issues, defaultRemediationMode })
+                  }
                 />
               ))}
             </div>
@@ -1300,10 +1394,11 @@ export default function ContainerScanPage() {
       )}
 
       <PushToCliModal
-        isOpen={Boolean(cliModalIssues)}
-        onClose={() => setCliModalIssues(null)}
-        issues={cliModalIssues ?? []}
+        isOpen={Boolean(cliModalState)}
+        onClose={() => setCliModalState(null)}
+        issues={cliModalState?.issues ?? []}
         contextLabel="Container CVEs"
+        defaultRemediationMode={cliModalState?.defaultRemediationMode ?? "iac"}
       />
     </div>
   );
