@@ -525,7 +525,7 @@ export default function RuntimeSecurityPanel() {
           <ShieldAlert size={16} className="text-amber-300" />
           <div>
             <div className="text-xs font-bold uppercase tracking-widest text-slate-100">Runtime Security</div>
-            <div className="text-[10px] uppercase tracking-widest text-slate-600">v0.9 detect & enforce policy engine</div>
+            <div className="text-[10px] uppercase tracking-widest text-slate-600">v0.10 detect, enforce &amp; Shirudo live-shield engine</div>
           </div>
         </div>
         <div className="ml-auto flex items-center gap-3">

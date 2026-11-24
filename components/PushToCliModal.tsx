@@ -163,7 +163,7 @@ export default function PushToCliModal({
                 Send {contextLabel} to CLI Task Queue
               </h2>
               <p className="text-[11px] font-mono text-slate-400">
-                {issues.length} issue{issues.length === 1 ? "" : "s"} → {drafts.length} task{drafts.length === 1 ? "" : "s"} · Watchmen v0.9
+                {issues.length} issue{issues.length === 1 ? "" : "s"} → {drafts.length} task{drafts.length === 1 ? "" : "s"} · Watchmen v0.10
               </p>
             </div>
           </div>

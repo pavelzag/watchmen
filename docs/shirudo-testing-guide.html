@@ -1,0 +1,972 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Watchmen × Shirudo (v0.10.0) — Complete Testing &amp; Verification Guide</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --surface: #121931;
+      --surface-2: #182242;
+      --code-bg: #090e1d;
+      --border: #27345f;
+      --text: #e8eefc;
+      --muted: #9fb0db;
+      --accent: #60a5fa;
+      --accent-2: #34d399;
+      --warn: #fbbf24;
+      --danger: #f87171;
+      --purple: #a78bfa;
+      --orange: #fb923c;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, Helvetica, Arial, sans-serif;
+      background: radial-gradient(circle at top right, #162147 0%, var(--bg) 55%);
+      color: var(--text);
+      line-height: 1.62;
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .container {
+      max-width: 1140px;
+      margin: 0 auto;
+      padding: 40px 24px 88px;
+    }
+
+    header {
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 28px;
+      margin-bottom: 36px;
+    }
+
+    .eyebrow {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent-2);
+      background: rgba(52, 211, 153, 0.12);
+      border: 1px solid rgba(52, 211, 153, 0.32);
+      padding: 4px 10px;
+      border-radius: 999px;
+      margin-bottom: 14px;
+    }
+
+    h1 {
+      font-size: clamp(28px, 4vw, 40px);
+      line-height: 1.15;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+
+    .subtitle {
+      font-size: 16.5px;
+      color: var(--muted);
+      max-width: 820px;
+      margin: 0;
+    }
+
+    h2 {
+      font-size: 23px;
+      margin: 48px 0 14px;
+      letter-spacing: -0.01em;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-bottom: 1px solid rgba(39, 52, 95, 0.7);
+      padding-bottom: 8px;
+    }
+
+    h3 {
+      font-size: 17.5px;
+      margin: 22px 0 8px;
+      color: #f1f5ff;
+    }
+
+    p { margin: 0 0 12px; }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 0.88em;
+      background: rgba(96, 165, 250, 0.11);
+      border: 1px solid rgba(96, 165, 250, 0.2);
+      color: #dbeafe;
+      padding: 1px 6px;
+      border-radius: 5px;
+    }
+
+    .code-wrap {
+      position: relative;
+      margin: 12px 0 18px;
+    }
+
+    .code-wrap pre {
+      margin: 0;
+      padding-top: 38px;
+    }
+
+    .copy-btn {
+      position: absolute;
+      top: 8px;
+      right: 10px;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 10px;
+      border-radius: 7px;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--muted);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+      font-size: 11.5px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+      z-index: 2;
+    }
+
+    .copy-btn:hover {
+      border-color: var(--accent);
+      color: var(--text);
+      background: #1f2b52;
+    }
+
+    .copy-btn.copied {
+      border-color: rgba(52, 211, 153, 0.55);
+      color: var(--accent-2);
+      background: rgba(52, 211, 153, 0.12);
+    }
+
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px 18px;
+      overflow-x: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 12.8px;
+      line-height: 1.55;
+      color: #dbeafe;
+      margin: 12px 0 18px;
+    }
+
+    pre code {
+      background: transparent;
+      border: none;
+      padding: 0;
+      font-size: inherit;
+      color: inherit;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
+      gap: 18px;
+      margin-bottom: 18px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 18px;
+      margin-bottom: 18px;
+    }
+
+    .grid-4 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px 22px;
+      margin-bottom: 18px;
+    }
+
+    .card.highlight {
+      border-color: rgba(52, 211, 153, 0.45);
+      background: linear-gradient(180deg, rgba(52, 211, 153, 0.06), var(--surface));
+    }
+
+    .card.warn-box {
+      border-color: rgba(251, 191, 36, 0.45);
+      background: linear-gradient(180deg, rgba(251, 191, 36, 0.07), var(--surface));
+    }
+
+    .card.purple-box {
+      border-color: rgba(167, 139, 250, 0.45);
+      background: linear-gradient(180deg, rgba(167, 139, 250, 0.07), var(--surface));
+    }
+
+    .badge {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 3px 9px;
+      border-radius: 999px;
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+    .b-green { background: rgba(52, 211, 153, 0.14); color: var(--accent-2); border: 1px solid rgba(52, 211, 153, 0.35); }
+    .b-blue { background: rgba(96, 165, 250, 0.14); color: var(--accent); border: 1px solid rgba(96, 165, 250, 0.35); }
+    .b-yellow { background: rgba(251, 191, 36, 0.14); color: var(--warn); border: 1px solid rgba(251, 191, 36, 0.35); }
+    .b-purple { background: rgba(167, 139, 250, 0.14); color: var(--purple); border: 1px solid rgba(167, 139, 250, 0.35); }
+    .b-red { background: rgba(248, 113, 113, 0.14); color: var(--danger); border: 1px solid rgba(248, 113, 113, 0.35); }
+
+    .toc {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 20px;
+    }
+
+    .toc a {
+      display: inline-block;
+      padding: 7px 13px;
+      border-radius: 8px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .toc a:hover {
+      border-color: var(--accent);
+      text-decoration: none;
+    }
+
+    .muted { color: var(--muted); font-size: 14px; }
+
+    ul, ol {
+      margin: 8px 0 12px;
+      padding-left: 20px;
+    }
+
+    li {
+      margin-bottom: 6px;
+      font-size: 14.5px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      font-size: 13.8px;
+      margin: 14px 0 20px;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 11px 14px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+
+    th {
+      background: var(--surface-2);
+      color: var(--muted);
+      font-size: 11.5px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    tr:last-child td { border-bottom: none; }
+
+    .kpi-label {
+      font-size: 11.5px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+
+    .kpi-num {
+      font-size: 20px;
+      font-weight: 800;
+      margin: 4px 0 6px;
+    }
+
+    .diagram-wrap {
+      background: #0d1429;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      margin: 16px 0 22px;
+      overflow-x: auto;
+    }
+
+    svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+    }
+
+    .step-num {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: rgba(96, 165, 250, 0.16);
+      border: 1px solid rgba(96, 165, 250, 0.45);
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 700;
+      margin-right: 6px;
+    }
+
+    .check { color: var(--accent-2); font-weight: 700; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <span class="eyebrow">Watchmen v0.10.0 · Shirudo Subsystem Testing Guide</span>
+      <h1>Testing &amp; Verifying the Watchmen × Shirudo Live-Shield Subsystem</h1>
+      <p class="subtitle">
+        Complete operational guide for inspecting the UI in Demo Mode, running automated Jest verification,
+        exercising live OTLP telemetry ingestion and CVE shield mapping against Postgres, testing native TPM 2.0
+        ECDSA-P256 quote &amp; replay protection, and deploying hardened Shirudo VMs with PQC TLS OTel Collectors.
+      </p>
+
+      <nav class="toc" aria-label="Table of Contents">
+        <a href="#where-it-lives">1. Subsystem Map</a>
+        <a href="#track-demo">2. Track A: Demo Mode UI Tour</a>
+        <a href="#track-tests">3. Track B: Automated Tests</a>
+        <a href="#track-live">4. Track C: Live End-to-End API &amp; DB</a>
+        <a href="#track-tpm">5. Track D: Cryptographic TPM 2.0 &amp; Replay Tests</a>
+        <a href="#track-vm">6. Track E: Real Shirudo VM &amp; OTel Collector</a>
+        <a href="#reference">7. Reference &amp; Troubleshooting</a>
+      </nav>
+    </header>
+
+    <!-- SUMMARY CARDS -->
+    <div class="grid-4">
+      <div class="card highlight">
+        <div class="kpi-label">Repository &amp; Version</div>
+        <div class="kpi-num">watchmen v0.10.0</div>
+        <div class="muted">Implemented in <code>/Users/pavel/Projects/watchmen</code> (commit <code>19c1c93</code>), not <code>watchmen-infra</code>.</div>
+      </div>
+      <div class="card">
+        <div class="kpi-label">Fastest Visual Preview</div>
+        <div class="kpi-num">Demo Mode UI</div>
+        <div class="muted">Pre-seeded mock fleet + <code>CVE-2024-3094</code> &amp; <code>CVE-2023-44487</code> <code>SHIELDED</code> badges.</div>
+      </div>
+      <div class="card">
+        <div class="kpi-label">Unit &amp; Component Suite</div>
+        <div class="kpi-num">5 Suites · 16 Tests</div>
+        <div class="muted">Covers OTLP parsing, TPM P-256 quotes, exposure badges, handoff tasks, and modal UI.</div>
+      </div>
+      <div class="card">
+        <div class="kpi-label">Live Ingest &amp; Verification</div>
+        <div class="kpi-num">OTLP + TPM 2.0</div>
+        <div class="muted">HTTP JSON/gzip receivers + auto-created Postgres tables + <code>wm_...</code> token auth.</div>
+      </div>
+    </div>
+
+    <!-- SECTION 1: SUBSYSTEM MAP -->
+    <section id="where-it-lives">
+      <h2>1. Subsystem Map &amp; End-to-End Architecture</h2>
+      <p>
+        The Shirudo integration spans three rollout phases—all implemented in <code>/Users/pavel/Projects/watchmen</code>:
+        <strong>Phase 1</strong> (CLI Handoff in <code>shirudo_shield</code> mode), <strong>Phase 2</strong> (OTLP telemetry ingest + live <code>SHIELDED</code> CVE badges), and
+        <strong>Phase 3</strong> (native Node.js TPM 2.0 quote verification, challenge/nonce attestation, and hardened VM blueprints).
+      </p>
+
+      <div class="diagram-wrap">
+        <svg viewBox="0 0 1060 250" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Watchmen Shirudo Testing Architecture">
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 1 L 10 5 L 0 9 z" fill="#60a5fa" />
+            </marker>
+            <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 1 L 10 5 L 0 9 z" fill="#34d399" />
+            </marker>
+          </defs>
+
+          <!-- Box 1: UI / CLI Handoff -->
+          <rect x="16" y="24" width="230" height="200" rx="12" fill="#121931" stroke="#a78bfa" stroke-width="1.5" />
+          <text x="32" y="50" fill="#a78bfa" font-size="12" font-weight="700">PHASE 1 · CLI HANDOFF</text>
+          <text x="32" y="74" fill="#e8eefc" font-size="14" font-weight="700">Dashboard &amp; Modal</text>
+          <text x="32" y="98" fill="#9fb0db" font-size="12">• /dashboard/container-scan</text>
+          <text x="32" y="118" fill="#9fb0db" font-size="12">• /dashboard/runtime</text>
+          <text x="32" y="138" fill="#9fb0db" font-size="12">• /dashboard/tasks</text>
+          <text x="32" y="162" fill="#dbeafe" font-size="11.5">POST /api/handoff/tasks</text>
+          <text x="32" y="180" fill="#dbeafe" font-size="11.5">remediationMode:</text>
+          <text x="32" y="196" fill="#34d399" font-size="11.5">"shirudo_shield" + Beefile</text>
+
+          <!-- Box 2: OTLP Ingest -->
+          <rect x="292" y="24" width="248" height="200" rx="12" fill="#121931" stroke="#60a5fa" stroke-width="1.5" />
+          <text x="308" y="50" fill="#60a5fa" font-size="12" font-weight="700">PHASE 2 · OTLP INGEST</text>
+          <text x="308" y="74" fill="#e8eefc" font-size="14" font-weight="700">Logs &amp; Metrics Receivers</text>
+          <text x="308" y="98" fill="#dbeafe" font-size="11.5">POST /api/ingest/shirudo/v1/logs</text>
+          <text x="308" y="116" fill="#9fb0db" font-size="12">  ↳ shirudo.keepalive</text>
+          <text x="308" y="134" fill="#9fb0db" font-size="12">  ↳ shirudo.bpf.map.snapshot</text>
+          <text x="308" y="158" fill="#dbeafe" font-size="11.5">POST /api/ingest/shirudo/v1/metrics</text>
+          <text x="308" y="178" fill="#9fb0db" font-size="12">  ↳ sum / gauge hit counters</text>
+          <text x="308" y="200" fill="#fbbf24" font-size="11.5">Auth: Bearer wm_... (JSON + gzip)</text>
+
+          <!-- Box 3: TPM Verifier & Postgres -->
+          <rect x="586" y="24" width="224" height="200" rx="12" fill="#121931" stroke="#34d399" stroke-width="1.5" />
+          <text x="602" y="50" fill="#34d399" font-size="12" font-weight="700">PHASE 3 · TPM 2.0 &amp; DB</text>
+          <text x="602" y="74" fill="#e8eefc" font-size="14" font-weight="700">Quote &amp; State Store</text>
+          <text x="602" y="98" fill="#9fb0db" font-size="12">• ECDSA NIST P-256 verify</text>
+          <text x="602" y="118" fill="#9fb0db" font-size="12">• (resetCount, clock) monotonic</text>
+          <text x="602" y="142" fill="#dbeafe" font-size="11.5">shirudo_nodes</text>
+          <text x="602" y="160" fill="#dbeafe" font-size="11.5">shirudo_upatch_fixes</text>
+          <text x="602" y="178" fill="#dbeafe" font-size="11.5">shirudo_shield_hits</text>
+          <text x="602" y="196" fill="#dbeafe" font-size="11.5">shirudo_attestation_challenges</text>
+
+          <!-- Box 4: Exposure & Attest API -->
+          <rect x="856" y="24" width="188" height="200" rx="12" fill="#121931" stroke="#fb923c" stroke-width="1.5" />
+          <text x="872" y="50" fill="#fb923c" font-size="12" font-weight="700">UI &amp; VERIFY</text>
+          <text x="872" y="74" fill="#e8eefc" font-size="14" font-weight="700">Fleet &amp; CVEs</text>
+          <text x="872" y="98" fill="#9fb0db" font-size="12">• GET/POST/DEL</text>
+          <text x="872" y="114" fill="#dbeafe" font-size="11.5">  /api/shirudo</text>
+          <text x="872" y="136" fill="#9fb0db" font-size="12">• GET/POST</text>
+          <text x="872" y="152" fill="#dbeafe" font-size="11.5">  /api/shirudo/attest</text>
+          <text x="872" y="176" fill="#34d399" font-size="12">• SHIELDED CVE badges</text>
+          <text x="872" y="196" fill="#34d399" font-size="12">• watchmen_verify_task</text>
+
+          <line x1="246" y1="124" x2="290" y2="124" stroke="#60a5fa" stroke-width="2" marker-end="url(#arrow)" />
+          <line x1="540" y1="124" x2="584" y2="124" stroke="#34d399" stroke-width="2" marker-end="url(#arrow-green)" />
+          <line x1="810" y1="124" x2="854" y2="124" stroke="#34d399" stroke-width="2" marker-end="url(#arrow-green)" />
+        </svg>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Layer</th>
+            <th>Key Files in <code>/Users/pavel/Projects/watchmen</code></th>
+            <th>Responsibility</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="badge b-purple">Phase 1</span> CLI Handoff</td>
+            <td>
+              <code>lib/handoff/shirudo.ts</code>, <code>lib/handoff/tasks.ts</code>,<br />
+              <code>components/PushToCliModal.tsx</code>, <code>components/CliHandoffQueue.tsx</code>
+            </td>
+            <td>Generates BPF C / Java agent <code>upatch</code> + <code>Beefile</code> tasks with <code>v0.10:shirudo_shield:...</code> fingerprints; enforces operator ML-DSA-87 signing key boundary.</td>
+          </tr>
+          <tr>
+            <td><span class="badge b-blue">Phase 2</span> OTLP &amp; Store</td>
+            <td>
+              <code>app/api/ingest/shirudo/v1/logs/route.ts</code>,<br />
+              <code>app/api/ingest/shirudo/v1/metrics/route.ts</code>,<br />
+              <code>lib/shirudo/otlp.ts</code>, <code>lib/shirudo/http.ts</code>, <code>lib/shirudo/store.ts</code>
+            </td>
+            <td>Parses OTLP/HTTP JSON (raw &amp; <code>gzip</code>) keepalives, BPF map snapshots, and hit metrics; auto-creates Postgres schema in <code>lib/db.ts</code>.</td>
+          </tr>
+          <tr>
+            <td><span class="badge b-green">Phase 2</span> Shielded Exposure</td>
+            <td>
+              <code>lib/shirudo/exposure.ts</code>, <code>app/api/container-scan/route.ts</code>,<br />
+              <code>lib/handoff/verify.ts</code>, <code>components/ShirudoFleetPanel.tsx</code>
+            </td>
+            <td>Enriches Container Scan CVEs with <code>SHIELDED</code> / <code>SHIELD TAMPERED</code> / <code>SHIELD PENDING</code> badges; verifies handoff tasks against live node state.</td>
+          </tr>
+          <tr>
+            <td><span class="badge b-yellow">Phase 3</span> TPM &amp; Infra</td>
+            <td>
+              <code>lib/shirudo/tpm-verify.ts</code>, <code>app/api/shirudo/attest/route.ts</code>,<br />
+              <code>scripts/shirudo/otel-collector-shirudo.yaml</code>,<br />
+              <code>scripts/shirudo/terraform/gcp-shirudo-vm/</code>
+            </td>
+            <td>Verifies ECDSA NIST P-256 TPM quotes (<code>TPMS_ATTEST</code>/<code>TPMT_PUBLIC</code>/<code>TPMT_SIGNATURE</code>), detects monotonic clock/reset rollbacks, issues nonce challenges.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- SECTION 2: DEMO MODE TOUR -->
+    <section id="track-demo">
+      <h2>2. Track A: Fastest Visual Inspection (Demo Mode)</h2>
+      <p>
+        Demo Mode requires <strong>no Shirudo kernel, no TPM hardware, and no database writes</strong>. Watchmen's mock container scan
+        contains <code>CVE-2024-3094</code> and <code>CVE-2023-44487</code>, which match the mock Shirudo fleet's active <code>upatch</code>es
+        (<code>xz-lzma-guard</code> and <code>http2-rst-limit</code>).
+      </p>
+
+      <div class="card highlight">
+        <h3><span class="step-num">1</span> Start the Watchmen Dev Server</h3>
+        <pre><code>cd /Users/pavel/Projects/watchmen
+npm run dev</code></pre>
+        <p class="muted">
+          Open <code>http://localhost:3000</code> and click <strong>Demo Mode</strong> on the login screen (or set <code>USE_MOCK_DATA=true</code> in <code>.env.local</code>).
+        </p>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3><span class="step-num">2</span> Inspect <code>/dashboard/runtime</code></h3>
+          <ul>
+            <li><strong>Runtime Security Alerts tab:</strong> Click <strong>Shield Alerts (CLI)</strong> to open the CLI handoff modal pre-set to <code>Shirudo Live Shield</code>.</li>
+            <li><strong>Event detail modal:</strong> Click any runtime request event → click <strong>Shield with Shirudo</strong>.</li>
+            <li><strong>Shirudo Fleet &amp; Live Shields panel</strong> (below Runtime Security):
+              <ul>
+                <li>2 healthy nodes: <code>prod-api-shield-01</code> &amp; <code>prod-worker-shield-02</code></li>
+                <li>Kernel: <code>7.4.0-bpf-next+shirudo</code>, Image: <code>watchmen-hardened-os</code></li>
+                <li>TPM status: <code>TPM Verified</code> (<code>reset=4, clock=184200</code> / <code>reset=2, clock=91400</code>)</li>
+                <li>7 decoded condition bits (<code>cond = 5461</code> → all 7 <code>ok</code>)</li>
+                <li>2 active CVE mappings &amp; 16 total blocked hits (14 + 2)</li>
+              </ul>
+            </li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <h3><span class="step-num">3</span> Inspect <code>/dashboard/container-scan</code></h3>
+          <ul>
+            <li>Look at the image summary pill showing <strong><code>2 SHIELDED</code></strong>.</li>
+            <li>Expand image CVEs to inspect live runtime mitigation badges:
+              <ul>
+                <li><code>CVE-2024-3094</code> → <span class="badge b-green">SHIELDED (xz-lzma-guard · 2 hits)</span></li>
+                <li><code>CVE-2023-44487</code> → <span class="badge b-green">SHIELDED (http2-rst-limit · 14 hits)</span></li>
+              </ul>
+            </li>
+            <li>Click <strong>Shield (Shirudo)</strong> at the top or per-image row to preview the <code>PushToCliModal</code> mode toggle (<code>IaC / Code Fix</code> vs <code>Shirudo Live Shield</code>) and the ML-DSA-87 key boundary warning.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3><span class="step-num">4</span> Inspect <code>/dashboard/compliance</code> &amp; <code>/dashboard/settings</code></h3>
+        <ul>
+          <li><strong><code>/dashboard/compliance</code>:</strong> Renders the compact <strong>Shirudo Fleet &amp; Live Shields</strong> compensating-controls panel directly inside the SOC 2 / ISO 27001 compliance view.</li>
+          <li><strong><code>/dashboard/settings</code> (when signed in as non-demo user):</strong> Scroll to <strong>CLI / API Tokens</strong> (<code>components/CliApiTokensCard.tsx</code>) to create a <code>wm_...</code> token and copy the pre-populated <strong>Shirudo OTLP Telemetry Ingest (v0.10)</strong> snippet.</li>
+        </ul>
+      </div>
+
+      <div class="card warn-box">
+        <strong>Expected Demo Mode Guardrails:</strong> In Demo Mode, submitting <code>PushToCliModal</code>, saving/deleting CVE mappings (<code>POST/DELETE /api/shirudo</code>), sending OTLP telemetry (<code>/api/ingest/shirudo/v1/*</code>), and issuing/verifying TPM challenges (<code>POST /api/shirudo/attest</code>) all return <code>403</code> intentionally. Use Track C below to test live writes.
+      </div>
+    </section>
+
+    <!-- SECTION 3: AUTOMATED JEST TESTS -->
+    <section id="track-tests">
+      <h2>3. Track B: Automated Unit &amp; Component Tests</h2>
+      <p>
+        Run the dedicated Shirudo and CLI Handoff test suites with Jest. No running server or Postgres database is required.
+      </p>
+
+      <pre><code>cd /Users/pavel/Projects/watchmen
+npx jest lib/shirudo/exposure.test.ts lib/shirudo/otlp.test.ts lib/shirudo/tpm-verify.test.ts lib/handoff/tasks.test.ts components/PushToCliModal.test.tsx</code></pre>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Test File</th>
+            <th>What It Verifies</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>lib/shirudo/otlp.test.ts</code></td>
+            <td>Parses <code>shirudo.quote</code> (<code>attest=...;sig=...;ak=...</code>), computes <code>000b + sha256(ak)</code> node key, decodes all 7 <code>cond</code> bit-pairs, parses OTLP keepalives, <code>shirudo.bpf.map.snapshot</code> logs, and metric hit counters.</td>
+          </tr>
+          <tr>
+            <td><code>lib/shirudo/tpm-verify.test.ts</code></td>
+            <td>Generates live ECDSA NIST P-256 keys, builds binary <code>TPMT_PUBLIC</code> + <code>TPMS_ATTEST</code> + <code>TPMT_SIGNATURE</code> buffers, verifies valid quotes, rejects tampered bodies (<code>extraData</code> mismatch) &amp; bad signatures, and tests PCR-selected nonce challenge quotes.</td>
+          </tr>
+          <tr>
+            <td><code>lib/shirudo/exposure.test.ts</code></td>
+            <td>Builds advisory-to-shield status maps (<code>shielded</code>, <code>tampered</code>, <code>shield_pending</code>), aggregates hit counts, and enriches <code>ImageScanResult</code> CVEs with <code>shieldStatus</code>.</td>
+          </tr>
+          <tr>
+            <td><code>lib/handoff/tasks.test.ts</code></td>
+            <td>Tests <code>handoffIssueFromRuntimeAlert</code>, namespaced <code>v0.10:shirudo_shield:...</code> fingerprints (no collision with IaC tasks), BPF C vs Java agent strategy inference, and <code>Beefile</code> scaffold output.</td>
+          </tr>
+          <tr>
+            <td><code>components/PushToCliModal.test.tsx</code></td>
+            <td>Renders the modal, switches between <code>IaC / Code Fix</code> and <code>Shirudo Live Shield</code>, and verifies <code>remediationMode: "shirudo_shield"</code> is posted to <code>/api/handoff/tasks</code>.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p class="muted">
+        To run the full repository check (types + lint + all tests): <code>npm run type-check &amp;&amp; npm run lint &amp;&amp; npm test</code>.
+      </p>
+    </section>
+
+    <!-- SECTION 4: LIVE END-TO-END -->
+    <section id="track-live">
+      <h2>4. Track C: Live End-to-End Testing (Postgres + API + OTLP + CLI Handoff)</h2>
+      <p>
+        To exercise persistence, live telemetry ingestion, closed-loop task verification, and real UI updates:
+      </p>
+
+      <div class="card">
+        <h3><span class="step-num">1</span> Prerequisites: Real Auth + Postgres + API Token</h3>
+        <ol>
+          <li>Ensure <code>POSTGRES_URL</code> (or Neon DB) is configured in <code>/Users/pavel/Projects/watchmen/.env.local</code> and <code>USE_MOCK_DATA</code> is <strong>not</strong> <code>"true"</code>.</li>
+          <li>Start the server (<code>npm run dev</code>) and sign in with a real user account (not Demo Mode).</li>
+          <li>Database tables auto-migrate on first request via <code>ensureShirudoTables()</code> in <code>lib/db.ts</code> (or you can inspect/apply <code>scripts/migrate.sql</code> manually).</li>
+          <li>Go to <strong><code>/dashboard/settings</code> → CLI / API Tokens</strong>, create a Personal API Token (<code>wm_...</code>), and export it in your shell:
+            <pre><code>export WATCHMEN_URL="http://localhost:3000"
+export WM_TOKEN="wm_paste_your_token_here"</code></pre>
+          </li>
+        </ol>
+      </div>
+
+      <div class="card">
+        <h3><span class="step-num">2</span> Test Phase 1: Create &amp; Inspect a <code>shirudo_shield</code> Handoff Task</h3>
+        <p>Either use the UI (click <strong>Shield (Shirudo)</strong> on <code>/dashboard/container-scan</code> or <strong>Shield Alerts (CLI)</strong> on <code>/dashboard/runtime</code>) OR push via API:</p>
+        <pre><code>curl -sS -X POST "$WATCHMEN_URL/api/handoff/tasks" \
+  -H "Authorization: Bearer $WM_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "[Shirudo Shield] Guard CVE-2024-3094 in prod-api",
+    "targetTool": "opencode",
+    "remediationMode": "shirudo_shield",
+    "issues": [{
+      "id": "CVE-2024-3094",
+      "source": "container_scan",
+      "severity": "critical",
+      "title": "CVE-2024-3094 (liblzma backdoor)",
+      "description": "Block anomalous sshd/liblzma RSA_public_decrypt hook path without restarting container.",
+      "resourceName": "ghcr.io/example/api:1.4.2",
+      "resourceType": "container_image"
+    }]
+  }' | jq .</code></pre>
+        <ul>
+          <li>Check <strong><code>/dashboard/tasks</code></strong>: you should see the task with a <span class="badge b-purple">SHIRUDO SHIELD</span> badge.</li>
+          <li>Expand the task prompt to inspect the generated <strong><code>Beefile</code></strong> TOML scaffold (<code>fixes = ["CVE-2024-3094"]</code>, <code>type = bpf_upatch</code> or <code>java-agent</code> if Java keywords appear) and the ML-DSA-87 operator approval instruction.</li>
+          <li>Optional: run <code>npm run cli -- list</code> (with <code>WATCHMEN_API_TOKEN=$WM_TOKEN</code>) to confirm the CLI client pulls the task.</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h3><span class="step-num">3</span> Test Phase 2A: Ingest a <code>shirudo.keepalive</code> Log (Unsigned Host-Keyed Mode)</h3>
+        <p>
+          When <code>shirudo.quote</code> is omitted, Watchmen keys the node as <code>host:&lt;host.name&gt;</code> (<code>quotePresent: false</code>).
+          This tests basic node registration, verdict parsing, and <code>cond</code> bitmask decoding:
+        </p>
+        <pre><code>curl -sS -X POST "$WATCHMEN_URL/api/ingest/shirudo/v1/logs" \
+  -H "Authorization: Bearer $WM_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "resourceLogs": [{
+      "resource": {
+        "attributes": [
+          { "key": "host.name", "value": { "stringValue": "local-shirudo-sim-01" } },
+          { "key": "service.version", "value": { "stringValue": "0.10.0-sim" } }
+        ]
+      },
+      "scopeLogs": [{
+        "scope": { "name": "shirudo.keepalive" },
+        "logRecords": [{
+          "eventName": "shirudo.keepalive",
+          "body": {
+            "stringValue": "{\"schema\":\"shirudo.keepalive/1\",\"boot_id\":\"11111111-2222-3333-4444-555555555555\",\"kernel_release\":\"7.4.0-bpf-next+shirudo\",\"image_id\":\"watchmen-hardened-os\",\"image_version\":\"2026.11.24\",\"verdict\":\"ok\",\"cond\":5461,\"flags\":0,\"tamper\":[0,0,0],\"integrity\":[0,0],\"tree_id\":\"local-test\",\"last_seq\":1,\"count\":1}"
+          }
+        }]
+      }]
+    }]
+  }' | jq .</code></pre>
+        <p class="muted">Expected response: <code>{"partialSuccess":{},"watchmen":{"totalRecords":1,"keepalivesProcessed":1,"mapSnapshotsProcessed":0,"nodesUpdated":["host:local-shirudo-sim-01"]}}</code>. Also test <code>Content-Encoding: gzip</code> by piping the JSON through <code>gzip -c</code> with <code>--data-binary @-</code>.</p>
+      </div>
+
+      <div class="card">
+        <h3><span class="step-num">4</span> Test Phase 2B: Ingest BPF Map Snapshots &amp; Metric Hit Counters</h3>
+        <p>
+          Note an important implementation detail in <code>lib/shirudo/store.ts</code>: sending a <code>shirudo.bpf.map.snapshot</code> log record with
+          <code>shirudo.upatch</code> both records a hit in <code>shirudo_shield_hits</code> <strong>and</strong> appends that <code>upatchId</code> to the matching node's
+          <code>loaded_upatches</code> array (and auto-registers <code>shirudo_upatch_fixes</code> if a CVE is present).
+        </p>
+        <pre><code># 1. Send a BPF map snapshot log (records hit + attaches upatch to node)
+curl -sS -X POST "$WATCHMEN_URL/api/ingest/shirudo/v1/logs" \
+  -H "Authorization: Bearer $WM_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "resourceLogs": [{
+      "resource": { "attributes": [{ "key": "host.name", "value": { "stringValue": "local-shirudo-sim-01" } }] },
+      "scopeLogs": [{
+        "scope": { "name": "shirudo.upatch.maps" },
+        "logRecords": [{
+          "eventName": "shirudo.bpf.map.snapshot",
+          "body": { "stringValue": "{\"upatch\":\"xz-lzma-guard\",\"map\":\"sshd_hook_guard\",\"advisory\":\"CVE-2024-3094\",\"hits\":5}" },
+          "attributes": [
+            { "key": "shirudo.upatch", "value": { "stringValue": "xz-lzma-guard" } },
+            { "key": "shirudo.map", "value": { "stringValue": "sshd_hook_guard" } }
+          ]
+        }]
+      }]
+    }]
+  }' | jq .
+
+# 2. Send OTLP metrics (sum/gauge dataPoints -> shirudo_shield_hits)
+curl -sS -X POST "$WATCHMEN_URL/api/ingest/shirudo/v1/metrics" \
+  -H "Authorization: Bearer $WM_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "resourceMetrics": [{
+      "resource": { "attributes": [{ "key": "host.name", "value": { "stringValue": "local-shirudo-sim-01" } }] },
+      "scopeMetrics": [{
+        "metrics": [{
+          "name": "shirudo.upatch.blocks",
+          "sum": {
+            "dataPoints": [{
+              "asInt": 3,
+              "attributes": [
+                { "key": "shirudo.upatch", "value": { "stringValue": "xz-lzma-guard" } },
+                { "key": "shirudo.map", "value": { "stringValue": "sshd_hook_guard" } },
+                { "key": "advisory", "value": { "stringValue": "CVE-2024-3094" } }
+              ]
+            }]
+          }
+        }]
+      }]
+    }]
+  }' | jq .</code></pre>
+      </div>
+
+      <div class="card">
+        <h3><span class="step-num">5</span> Test Shield Mapping API, Tamper Alerts, &amp; Closed-Loop Task Verification</h3>
+        <ul>
+          <li><strong>Verify UI:</strong> Reload <code>/dashboard/runtime</code> to see <code>local-shirudo-sim-01</code>, <code>xz-lzma-guard</code>, <code>CVE-2024-3094</code>, and <code>8</code> blocked hits (5 + 3).</li>
+          <li><strong>Manage CVE mappings via API:</strong>
+            <pre><code># Add/update a manual mapping
+curl -sS -X POST "$WATCHMEN_URL/api/shirudo" \
+  -H "Authorization: Bearer $WM_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"upatchId":"http2-rst-limit","advisoryId":"CVE-2023-44487","shieldKind":"bpf_upatch"}' | jq .
+
+# Read full overview
+curl -sS "$WATCHMEN_URL/api/shirudo" -H "Authorization: Bearer $WM_TOKEN" | jq .summary
+
+# Delete a mapping
+curl -sS -X DELETE "$WATCHMEN_URL/api/shirudo?upatchId=http2-rst-limit&amp;advisoryId=CVE-2023-44487" \
+  -H "Authorization: Bearer $WM_TOKEN" | jq .</code></pre>
+          </li>
+          <li><strong>Test <code>SHIELD TAMPERED</code> state:</strong> Re-send the keepalive from Step 3 with <code>"verdict":"tampered"</code>, <code>"tamper":[1,0,0]</code>, and <code>"cond":12357</code> (sets <code>ChainIntact</code> to <code>alert</code>). Verify the node turns red in <code>ShirudoFleetPanel</code> and any mapped CVE flips to <code>SHIELD TAMPERED</code>.</li>
+          <li><strong>Test closed-loop verification:</strong> With the node back to <code>"verdict":"ok"</code> and <code>CVE-2024-3094</code> mapped, run Watchmen's <code>watchmen_verify_task</code> MCP tool (or click Verify in the UI) on the task created in Step 2—<code>lib/handoff/verify.ts</code> checks <code>buildAdvisoryShieldMap()</code> and marks the <code>shirudo_shield</code> task <code>completed</code>.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- SECTION 5: CRYPTOGRAPHIC TPM 2.0 & REPLAY TESTS -->
+    <section id="track-tpm">
+      <h2>5. Track D: Testing Cryptographic TPM 2.0 Quotes, Replay Detection &amp; Attestation</h2>
+      <p>
+        Watchmen implements a native Node.js binary parser in <code>lib/shirudo/tpm-verify.ts</code> that checks:
+        (1) <code>TPMT_PUBLIC</code> (ECC NIST P-256 + SHA-256), (2) <code>TPMS_ATTEST</code> magic (<code>0xff544347</code>) &amp; type (<code>0x8018</code>),
+        (3) <code>extraData === SHA256(keepaliveBody)</code> (or exact 32-byte nonce for challenges), (4) ECDSA-SHA256 signature, and
+        (5) monotonic <code>(resetCount, clock)</code> counters to detect VM snapshot rollbacks or replayed keepalives (<code>historyContradiction</code>).
+      </p>
+
+      <div class="card purple-box">
+        <h3>Synthetic TPM 2.0 Quote Generator Script (No Hardware TPM Required)</h3>
+        <p>Save or run this one-liner script against your local Watchmen server to test <strong>(a) valid TPM quote verification</strong>, <strong>(b) monotonic rollback detection</strong>, and <strong>(c) on-demand challenge attestation</strong>:</p>
+        <pre><code>node --input-type=module -e '
+import { createHash, generateKeyPairSync, sign as cryptoSign } from "crypto";
+
+const WATCHMEN_URL = process.env.WATCHMEN_URL || "http://localhost:3000";
+const WM_TOKEN = process.env.WM_TOKEN;
+if (!WM_TOKEN) throw new Error("Set WM_TOKEN=wm_... first");
+
+const u8 = (n) => Buffer.from([n]);
+const u16 = (n) => { const b = Buffer.alloc(2); b.writeUInt16BE(n); return b; };
+const u32 = (n) => { const b = Buffer.alloc(4); b.writeUInt32BE(n); return b; };
+const u64 = (n) => { const b = Buffer.alloc(8); b.writeBigUInt64BE(n); return b; };
+
+function buildTpmtPublic(x, y) {
+  return Buffer.concat([
+    u16(0x0023), u16(0x000b), u32(0x00030072), u16(0),
+    u16(0x0010), u16(0x0010), u16(0x0003), u16(0x0010),
+    u16(x.length), x, u16(y.length), y,
+  ]);
+}
+function buildTpmsAttest(extraData, resetCount, clock, pcrMask = 0) {
+  const qs = Buffer.from("signer");
+  return Buffer.concat([
+    u32(0xff544347), u16(0x8018), u16(qs.length), qs,
+    u16(extraData.length), extraData,
+    u64(BigInt(clock)), u32(resetCount), u32(0), u8(1), u64(1n),
+    u32(1), u16(0x000b), u8(3), Buffer.from([pcrMask, 0, 0]),
+    u16(32), Buffer.alloc(32, 0xaa),
+  ]);
+}
+function makeQuote(privateKey, akBytes, extraData, resetCount, clock, pcrMask = 0) {
+  const attest = buildTpmsAttest(extraData, resetCount, clock, pcrMask);
+  const sig = cryptoSign("sha256", attest, { key: privateKey, dsaEncoding: "ieee-p1363" });
+  const tpmtSig = Buffer.concat([u16(0x0018), u16(0x000b), u16(32), sig.subarray(0, 32), u16(32), sig.subarray(32, 64)]);
+  return `attest=${attest.toString("base64")};sig=${tpmtSig.toString("base64")};ak=${akBytes.toString("base64")}`;
+}
+
+const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+const jwk = publicKey.export({ format: "jwk" });
+const akBytes = buildTpmtPublic(Buffer.from(jwk.x, "base64url"), Buffer.from(jwk.y, "base64url"));
+const akName = "000b" + createHash("sha256").update(akBytes).digest("hex");
+
+async function postJson(path, body) {
+  const res = await fetch(`${WATCHMEN_URL}${path}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${WM_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return res.json();
+}
+
+// 1) Valid keepalive with TPM quote (resetCount=5, clock=10000)
+const bodyStr1 = JSON.stringify({ schema: "shirudo.keepalive/1", kernel_release: "7.4.0-bpf-next+shirudo", verdict: "ok", cond: 5461, flags: 0, count: 1 });
+const q1 = makeQuote(privateKey, akBytes, createHash("sha256").update(bodyStr1).digest(), 5, 10000);
+console.log("1. Valid quote ingest:", await postJson("/api/ingest/shirudo/v1/logs", {
+  resourceLogs: [{ resource: { attributes: [{ key: "host.name", value: { stringValue: "tpm-sim-node" } }] },
+    scopeLogs: [{ logRecords: [{ eventName: "shirudo.keepalive", body: { stringValue: bodyStr1 }, attributes: [{ key: "shirudo.quote", value: { stringValue: q1 } }] }] }] }]
+}));
+
+// 2) Issue & verify an on-demand nonce challenge
+const issued = await postJson("/api/shirudo/attest", { action: "issue", nodeKey: akName });
+console.log("2a. Issued challenge:", issued.command);
+const qChal = makeQuote(privateKey, akBytes, Buffer.from(issued.challenge.nonce, "hex"), 5, 11000, 0x02);
+console.log("2b. Verified challenge:", await postJson("/api/shirudo/attest", { action: "verify", challengeId: issued.challenge.id, quote: qChal }));
+
+// 3) Replay / Rollback contradiction test (clock=9000 < previous 10000)
+const bodyStrRollback = JSON.stringify({ schema: "shirudo.keepalive/1", kernel_release: "7.4.0-bpf-next+shirudo", verdict: "ok", cond: 5461, flags: 0, count: 1 });
+const qRollback = makeQuote(privateKey, akBytes, createHash("sha256").update(bodyStrRollback).digest(), 5, 9000);
+console.log("3. Rollback keepalive:", await postJson("/api/ingest/shirudo/v1/logs", {
+  resourceLogs: [{ resource: { attributes: [{ key: "host.name", value: { stringValue: "tpm-sim-node" } }] },
+    scopeLogs: [{ logRecords: [{ eventName: "shirudo.keepalive", body: { stringValue: bodyStrRollback }, attributes: [{ key: "shirudo.quote", value: { stringValue: qRollback } }] }] }] }]
+}));
+'</code></pre>
+        <p class="muted">
+          After running step 1 &amp; 2, <code>tpm-sim-node</code> appears on <code>/dashboard/runtime</code> with a <strong><code>TPM Verified</code></strong> badge and <code>akName</code> node key (<code>000b...</code>).
+          After step 3, the node flips to <strong><code>Replay / Rollback</code></strong> (<code>historyContradiction: true</code>), and stays flagged on subsequent updates.
+        </p>
+      </div>
+    </section>
+
+    <!-- SECTION 6: REAL SHIRUDO VM & OTEL COLLECTOR -->
+    <section id="track-vm">
+      <h2>6. Track E: Real Hardened VM &amp; PQC TLS OTel Collector Testing</h2>
+      <p>
+        Production Shirudo targets require a custom-patched <code>bpf-next</code> Linux kernel (<code>CONFIG_CRYPTO_MLDSA</code>, signed-loader ABI,
+        <code>tpm_command</code> / <code>mm_read_access</code> LSM hooks), <code>systemd</code> 256+ UKI boot, and a hardware TPM 2.0 or GCE vTPM.
+      </p>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3>OpenTelemetry Collector (Hybrid PQC TLS)</h3>
+          <p class="muted">Config: <code>/Users/pavel/Projects/watchmen/scripts/shirudo/otel-collector-shirudo.yaml</code></p>
+          <pre><code>export WATCHMEN_BASE_URL="https://your-watchmen-host.example"
+export WATCHMEN_API_TOKEN="wm_..."
+otelcol-contrib --config=scripts/shirudo/otel-collector-shirudo.yaml</code></pre>
+          <ul>
+            <li>Requires an <code>otelcol-contrib</code> binary built with <strong>Go 1.24+</strong> so TLS 1.3 supports <code>X25519MLKEM768</code>.</li>
+            <li>Forwards OTLP/HTTP JSON (with <code>gzip</code>) without modifying <code>body.stringValue</code>, preserving exact SHA-256 digests for <code>shirudo.quote</code>.</li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <h3>Shielded GCE vTPM VM Blueprint</h3>
+          <p class="muted">Terraform: <code>/Users/pavel/Projects/watchmen/scripts/shirudo/terraform/gcp-shirudo-vm/</code></p>
+          <ul>
+            <li>Provisions a GCP instance with <code>enable_vtpm = true</code>, <code>enable_secure_boot = true</code>, and <code>enable_integrity_monitoring = true</code>.</li>
+            <li>Renders <code>cloud-init.yaml.tftpl</code> with <code>watchmen_otlp_endpoint</code>, <code>watchmen_api_token</code>, and optional <code>shirudo_oci_tree</code>.</li>
+            <li>On the target VM, configure <code>etc/shirudo/shirudo.conf</code> with <code>map_export.otel_endpoint</code> pointing to the collector or Watchmen endpoint.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 7: REFERENCE & TROUBLESHOOTING -->
+    <section id="reference">
+      <h2>7. Reference Tables &amp; Troubleshooting</h2>
+
+      <h3>Condition Bitmask (<code>cond</code>) — 7 Bit-Pairs (LSB First)</h3>
+      <p class="muted">Each condition uses 2 bits: <code>00 = unset</code>, <code>01 = ok</code>, <code>10 = warn</code>, <code>11 = alert</code>. Value <code>5461</code> (<code>0b01_01_01_01_01_01_01</code>) means all 7 conditions are <code>ok</code>.</p>
+      <table>
+        <thead>
+          <tr>
+            <th>Bit Pair</th>
+            <th>Condition Name</th>
+            <th>Meaning</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>Bits 0–1</td><td><code>LsmAttached</code></td><td>Shirudo kernel LSM hooks attached</td></tr>
+          <tr><td>Bits 2–3</td><td><code>KeyringSealed</code></td><td>ML-DSA-87 / verification keyring sealed</td></tr>
+          <tr><td>Bits 4–5</td><td><code>ChainIntact</code></td><td>Boot/loader integrity chain intact</td></tr>
+          <tr><td>Bits 6–7</td><td><code>UpatchesMeasured</code></td><td>Loaded <code>upatch</code>es measured into TPM/state</td></tr>
+          <tr><td>Bits 8–9</td><td><code>TpmMeasured</code></td><td>TPM quote / measurement subsystem active</td></tr>
+          <tr><td>Bits 10–11</td><td><code>ConfigActive</code></td><td>Signed <code>shirudo.conf</code> active</td></tr>
+          <tr><td>Bits 12–13</td><td><code>XdpCovered</code></td><td>XDP network guard coverage active</td></tr>
+        </tbody>
+      </table>
+
+      <h3>API Endpoints Summary</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Endpoint</th>
+            <th>Methods</th>
+            <th>Auth</th>
+            <th>Purpose</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>/api/shirudo</code></td>
+            <td><code>GET</code>, <code>POST</code>, <code>DELETE</code></td>
+            <td>Session or <code>wm_...</code></td>
+            <td>Fetch fleet overview (returns mock data in Demo Mode); add or delete <code>upatchId ↔ advisoryId</code> mappings.</td>
+          </tr>
+          <tr>
+            <td><code>/api/shirudo/attest</code></td>
+            <td><code>GET</code>, <code>POST</code></td>
+            <td>Session or <code>wm_...</code></td>
+            <td>List TPM challenges; issue 32-byte nonce (<code>action: "issue"</code>) or verify signed quote (<code>action: "verify"</code>).</td>
+          </tr>
+          <tr>
+            <td><code>/api/ingest/shirudo/v1/logs</code></td>
+            <td><code>POST</code></td>
+            <td><code>wm_...</code> / Session</td>
+            <td>Ingest OTLP/HTTP JSON (or <code>gzip</code>) <code>shirudo.keepalive</code> and <code>shirudo.bpf.map.snapshot</code> records.</td>
+          </tr>
+          <tr>
+            <td><code>/api/ingest/shirudo/v1/metrics</code></td>
+            <td><code>POST</code></td>
+            <td><code>wm_...</code> / Session</td>
+            <td>Ingest OTLP/HTTP JSON (or <code>gzip</code>) <code>sum</code> / <code>gauge</code> hit counters into <code>shirudo_shield_hits</code>.</td>
+          </tr>
+          <tr>
+            <td><code>/api/handoff/tasks</code></td>
+            <td><code>GET</code>, <code>POST</code></td>
+            <td>Session or <code>wm_...</code></td>
+            <td>Create/list CLI handoff tasks supporting <code>remediationMode: "shirudo_shield"</code>.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>Common Gotchas During Testing</h3>
+      <ul>
+        <li><strong>Why does <code>SHIELDED</code> not appear on my CVE yet?</strong> A CVE shows <code>SHIELDED</code> only when (1) a mapping exists in <code>shirudo_upatch_fixes</code> for that exact uppercase CVE ID, AND (2) at least one node with <code>verdict: "ok"</code> or <code>"degraded"</code> reports that <code>upatchId</code> in <code>loaded_upatches</code> (populated via <code>shirudo.bpf.map.snapshot</code>) OR has <code>loaded_upatches = []</code> with keepalive <code>count &gt; 0</code>.</li>
+        <li><strong>Why did my keepalive quote fail with <code>extraData</code> mismatch?</strong> Keepalive quote verification hashes the <em>exact UTF-8 bytes</em> of <code>body.stringValue</code> (<code>SHA-256</code>). Re-serializing or pretty-printing the JSON string after signing invalidates the quote.</li>
+        <li><strong>Why did my keepalive quote fail with PCR bits error?</strong> Keepalive quotes expect empty PCR selection (<code>requireEmptyPcrSelect: true</code>); only on-demand challenge quotes allow non-empty PCR selection bits.</li>
+        <li><strong>Why is <code>historyContradiction</code> stuck <code>true</code>?</strong> Once a node reports a lower <code>(tpmResetCount, tpmClock)</code> than previously recorded, <code>shirudo_nodes.history_contradiction</code> latches to <code>TRUE</code> (<code>OR EXCLUDED.history_contradiction</code>) until the row is cleared or reset by an operator.</li>
+      </ul>
+    </section>
+  </div>
+</body>
+</html>

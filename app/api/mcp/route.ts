@@ -116,7 +116,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     name: "watchmen",
-    version: "0.9.0",
+    version: "0.10.0",
     transport: "streamable-http",
     protocolVersion: MCP_PROTOCOL_VERSION,
     tools: WATCHMEN_MCP_TOOLS.map((t) => t.name),

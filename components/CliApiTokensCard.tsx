@@ -163,7 +163,7 @@ export default function CliApiTokensCard({ isDemoUser }: { isDemoUser: boolean }
             <div>
               <span className="text-sm font-bold text-emerald-400">Watchmen Handoff API</span>
               <p className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>
-                GET / POST / PATCH /api/handoff/tasks · v0.9
+                GET / POST / PATCH /api/handoff/tasks · v0.10
               </p>
             </div>
           </div>
