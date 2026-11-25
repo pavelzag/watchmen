@@ -54,30 +54,18 @@ const SEV_STYLES: Record<CveSeverity, { label: string; color: string; border: st
 
 const SEVERITY_ORDER: CveSeverity[] = ["critical", "high", "medium", "low", "negligible"];
 
-type SeverityFilter = "all" | "critical_high_medium" | "critical_medium" | "critical" | "high" | "medium" | "low";
+type SelectableSeverity = "critical" | "high" | "medium" | "low";
 
-function severityMatchesFilter(severity: CveSeverity, filter: SeverityFilter): boolean {
-  if (filter === "all") return true;
-  if (filter === "critical_high_medium") {
-    return severity === "critical" || severity === "high" || severity === "medium";
-  }
-  if (filter === "critical_medium") {
-    return severity === "critical" || severity === "medium";
-  }
-  return severity === filter;
+function severityMatchesFilter(severity: CveSeverity, selectedSeverities: SelectableSeverity[]): boolean {
+  if (selectedSeverities.length === 0) return true;
+  return selectedSeverities.includes(severity as SelectableSeverity);
 }
 
-function summaryCountForFilter(summary: ImageScanResult["summary"], filter: SeverityFilter): number {
-  if (filter === "all") {
+function summaryCountForFilter(summary: ImageScanResult["summary"], selectedSeverities: SelectableSeverity[]): number {
+  if (selectedSeverities.length === 0) {
     return summary.critical + summary.high + summary.medium + summary.low + summary.negligible;
   }
-  if (filter === "critical_high_medium") {
-    return summary.critical + summary.high + summary.medium;
-  }
-  if (filter === "critical_medium") {
-    return summary.critical + summary.medium;
-  }
-  return summary[filter];
+  return selectedSeverities.reduce((sum, sev) => sum + summary[sev], 0);
 }
 type CloudFilter = "all" | ImageRegistry;
 type StatusFilter = "all" | "vulnerable" | "clean" | "unscanned";
@@ -146,10 +134,10 @@ function matchesSearchText(text: string | undefined, needle: string): boolean {
 
 function cveMatchesFilters(
   cve: ContainerVulnerability,
-  severityFilter: SeverityFilter,
+  selectedSeverities: SelectableSeverity[],
   searchNeedle: string
 ): boolean {
-  if (!severityMatchesFilter(cve.severity, severityFilter)) {
+  if (!severityMatchesFilter(cve.severity, selectedSeverities)) {
     return false;
   }
   if (!searchNeedle) return true;
@@ -397,7 +385,7 @@ function CveRow({
 
 function ImageCard({
   result,
-  severityFilter,
+  selectedSeverities,
   searchNeedle,
   trivyAvailable,
   scanningRef,
@@ -407,7 +395,7 @@ function ImageCard({
   onSendToCli,
 }: {
   result: ImageScanResult;
-  severityFilter: SeverityFilter;
+  selectedSeverities: SelectableSeverity[];
   searchNeedle: string;
   trivyAvailable: boolean;
   scanningRef: boolean;
@@ -423,26 +411,26 @@ function ImageCard({
     matchesSearchText(result.accountId, searchNeedle);
 
   const filteredVulns = result.vulnerabilities.filter((v) =>
-    cveMatchesFilters(v, severityFilter, imageLevelMatch ? "" : searchNeedle)
+    cveMatchesFilters(v, selectedSeverities, imageLevelMatch ? "" : searchNeedle)
   );
 
   const sortedVulns = [...filteredVulns].sort(
     (a, b) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity)
   );
 
-  const [open, setOpen] = useState(severityFilter !== "all" || Boolean(searchNeedle && !imageLevelMatch));
+  const [open, setOpen] = useState(selectedSeverities.length > 0 || Boolean(searchNeedle && !imageLevelMatch));
   const [cvePage, setCvePage] = useState(1);
   const CVE_PAGE_SIZE = 25;
 
   useEffect(() => {
     setCvePage(1);
-  }, [severityFilter, searchNeedle, result.imageRef]);
+  }, [selectedSeverities, searchNeedle, result.imageRef]);
 
   useEffect(() => {
-    if (severityFilter !== "all" || (searchNeedle && !imageLevelMatch && sortedVulns.length > 0)) {
+    if (selectedSeverities.length > 0 || (searchNeedle && !imageLevelMatch && sortedVulns.length > 0)) {
       setOpen(true);
     }
-  }, [severityFilter, searchNeedle, imageLevelMatch, sortedVulns.length]);
+  }, [selectedSeverities, searchNeedle, imageLevelMatch, sortedVulns.length]);
 
   const totalCvePages = Math.max(1, Math.ceil(sortedVulns.length / CVE_PAGE_SIZE));
   const safeCvePage = Math.min(cvePage, totalCvePages);
@@ -712,7 +700,7 @@ export default function ContainerScanPage() {
 
   // Filters, sorting, pagination
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<SeverityFilter>("all");
+  const [selectedSeverities, setSelectedSeverities] = useState<SelectableSeverity[]>([]);
   const [cloudFilter, setCloudFilter] = useState<CloudFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [latestOnly, setLatestOnly] = useState(false);
@@ -812,7 +800,7 @@ export default function ContainerScanPage() {
   // Reset to page 1 when filters or sort change
   useEffect(() => {
     setPage(1);
-  }, [search, filter, cloudFilter, statusFilter, latestOnly, dateRange, dateFrom, dateTo, sortBy, pageSize]);
+  }, [search, selectedSeverities, cloudFilter, statusFilter, latestOnly, dateRange, dateFrom, dateTo, sortBy, pageSize]);
 
   // When Trivy is active, managed Container Analysis 403/disabled is optional non-blocking noise.
   const actionableWarnings = useMemo(() => {
@@ -865,7 +853,7 @@ export default function ContainerScanPage() {
         }
       }
 
-      if (filter !== "all" && summaryCountForFilter(r.summary, filter) === 0) return false;
+      if (selectedSeverities.length > 0 && summaryCountForFilter(r.summary, selectedSeverities) === 0) return false;
 
       if (searchNeedle) {
         const imageMatch =
@@ -873,7 +861,7 @@ export default function ContainerScanPage() {
           matchesSearchText(r.imageRef, searchNeedle) ||
           matchesSearchText(r.accountId, searchNeedle);
         const cveMatch = r.vulnerabilities.some((v) =>
-          cveMatchesFilters(v, filter, searchNeedle)
+          cveMatchesFilters(v, selectedSeverities, searchNeedle)
         );
         if (!imageMatch && !cveMatch) return false;
       }
@@ -901,7 +889,7 @@ export default function ContainerScanPage() {
       if (b.summary.low !== a.summary.low) return b.summary.low - a.summary.low;
       return b.vulnerabilities.length - a.vulnerabilities.length;
     });
-  }, [scopedResults, cloudFilter, statusFilter, dateRange, dateFrom, dateTo, filter, searchNeedle, sortBy]);
+  }, [scopedResults, cloudFilter, statusFilter, dateRange, dateFrom, dateTo, selectedSeverities, searchNeedle, sortBy]);
 
   const totalPages = Math.max(1, Math.ceil(filteredAndSorted.length / pageSize));
   const safePage = Math.min(page, totalPages);
@@ -928,13 +916,13 @@ export default function ContainerScanPage() {
         matchesSearchText(r.imageRef, searchNeedle) ||
         matchesSearchText(r.accountId, searchNeedle);
       for (const cve of r.vulnerabilities) {
-        if (cveMatchesFilters(cve, filter, imageMatch ? "" : searchNeedle)) {
+        if (cveMatchesFilters(cve, selectedSeverities, imageMatch ? "" : searchNeedle)) {
           pairs.push({ result: r, cve });
         }
       }
     }
     return pairs;
-  }, [filteredAndSorted, filter, searchNeedle]);
+  }, [filteredAndSorted, selectedSeverities, searchNeedle]);
 
   const unscannedGcpCount = scopedResults.filter(
     (r) => r.cloud === "gcp" && r.scanStatus === "unscanned"
@@ -942,7 +930,7 @@ export default function ContainerScanPage() {
 
   const hasActiveFilters =
     Boolean(search) ||
-    filter !== "all" ||
+    selectedSeverities.length > 0 ||
     cloudFilter !== "all" ||
     statusFilter !== "all" ||
     latestOnly ||
@@ -950,7 +938,7 @@ export default function ContainerScanPage() {
 
   function clearFilters() {
     setSearch("");
-    setFilter("all");
+    setSelectedSeverities([]);
     setCloudFilter("all");
     setStatusFilter("all");
     setLatestOnly(false);
@@ -1279,29 +1267,49 @@ export default function ContainerScanPage() {
             {/* Severity Pills */}
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="flex gap-1 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setSelectedSeverities([])}
+                  aria-pressed={selectedSeverities.length === 0}
+                  style={{
+                    fontFamily: "monospace", fontSize: 10, letterSpacing: 1.5, padding: "4px 12px",
+                    border: selectedSeverities.length === 0 ? "1px solid var(--green)" : "1px solid var(--border-dim)",
+                    color: selectedSeverities.length === 0 ? "var(--green)" : "var(--text-muted)",
+                    background: "transparent", textTransform: "uppercase",
+                  }}
+                >
+                  All ({totalVulns})
+                </button>
                 {([
-                  { id: "all", label: "All", count: totalVulns },
-                  { id: "critical_high_medium", label: "Crit + High + Med", count: totalCritical + totalHigh + totalMedium },
-                  { id: "critical_medium", label: "Crit + Med", count: totalCritical + totalMedium },
                   { id: "critical", label: "Critical", count: totalCritical },
                   { id: "high", label: "High", count: totalHigh },
                   { id: "medium", label: "Medium", count: totalMedium },
                   { id: "low", label: "Low", count: totalLow },
-                ] as const).map((item) => (
-                  <button
-                    type="button"
-                    key={item.id}
-                    onClick={() => setFilter(item.id)}
-                    style={{
-                      fontFamily: "monospace", fontSize: 10, letterSpacing: 1.5, padding: "4px 12px",
-                      border: filter === item.id ? "1px solid var(--green)" : "1px solid var(--border-dim)",
-                      color: filter === item.id ? "var(--green)" : "var(--text-muted)",
-                      background: "transparent", textTransform: "uppercase",
-                    }}
-                  >
-                    {item.label} ({item.count})
-                  </button>
-                ))}
+                ] as const).map((item) => {
+                  const active = selectedSeverities.includes(item.id);
+                  return (
+                    <button
+                      type="button"
+                      key={item.id}
+                      onClick={() =>
+                        setSelectedSeverities((prev) =>
+                          prev.includes(item.id)
+                            ? prev.filter((sev) => sev !== item.id)
+                            : [...prev, item.id]
+                        )
+                      }
+                      aria-pressed={active}
+                      style={{
+                        fontFamily: "monospace", fontSize: 10, letterSpacing: 1.5, padding: "4px 12px",
+                        border: active ? "1px solid var(--green)" : "1px solid var(--border-dim)",
+                        color: active ? "var(--green)" : "var(--text-muted)",
+                        background: "transparent", textTransform: "uppercase",
+                      }}
+                    >
+                      {item.label} ({item.count})
+                    </button>
+                  );
+                })}
               </div>
               <span className="text-[11px] font-mono text-slate-500">
                 {filteredAndSorted.length} image{filteredAndSorted.length === 1 ? "" : "s"} · {visibleCvePairs.length} matching CVE{visibleCvePairs.length === 1 ? "" : "s"}
@@ -1320,7 +1328,7 @@ export default function ContainerScanPage() {
                 <ImageCard
                   key={result.imageRef}
                   result={result}
-                  severityFilter={filter}
+                  selectedSeverities={selectedSeverities}
                   searchNeedle={searchNeedle}
                   trivyAvailable={trivyAvailable}
                   scanningRef={Boolean(scanningRefs[result.imageRef])}

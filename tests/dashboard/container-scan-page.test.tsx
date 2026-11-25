@@ -341,4 +341,97 @@ describe("ContainerScanPage", () => {
     expect(screen.getByText("web:v2.0.0")).toBeInTheDocument();
     expect(screen.queryByText("web:dev-latest")).not.toBeInTheDocument();
   });
+
+  it("allows multi-selecting Critical, High, and Medium severities without extra preset buttons", async () => {
+    mockFetchByRoute({
+      containerScan: () => ({
+        results: [
+          {
+            imageRef: "europe-west3-docker.pkg.dev/theinsite-prod/cms/crit-img@sha256:1",
+            imageName: "crit-img:1.0",
+            cloud: "gcp",
+            accountId: "theinsite-prod",
+            scannedAt: "2026-11-24T10:00:00.000Z",
+            scanner: "trivy",
+            scanStatus: "scanned",
+            vulnerabilities: [
+              {
+                cveId: "CVE-2026-1001",
+                severity: "critical",
+                packageName: "openssl",
+                installedVersion: "3.0.0",
+                description: "Crit vuln",
+              },
+            ],
+            summary: { critical: 1, high: 0, medium: 0, low: 0, negligible: 0 },
+          },
+          {
+            imageRef: "europe-west3-docker.pkg.dev/theinsite-prod/cms/med-img@sha256:2",
+            imageName: "med-img:1.0",
+            cloud: "gcp",
+            accountId: "theinsite-prod",
+            scannedAt: "2026-11-24T10:00:00.000Z",
+            scanner: "trivy",
+            scanStatus: "scanned",
+            vulnerabilities: [
+              {
+                cveId: "CVE-2026-2002",
+                severity: "medium",
+                packageName: "zlib",
+                installedVersion: "1.2.0",
+                description: "Med vuln",
+              },
+            ],
+            summary: { critical: 0, high: 0, medium: 1, low: 0, negligible: 0 },
+          },
+          {
+            imageRef: "europe-west3-docker.pkg.dev/theinsite-prod/cms/low-img@sha256:3",
+            imageName: "low-img:1.0",
+            cloud: "gcp",
+            accountId: "theinsite-prod",
+            scannedAt: "2026-11-24T10:00:00.000Z",
+            scanner: "trivy",
+            scanStatus: "scanned",
+            vulnerabilities: [
+              {
+                cveId: "CVE-2026-3003",
+                severity: "low",
+                packageName: "busybox",
+                installedVersion: "1.35.0",
+                description: "Low vuln",
+              },
+            ],
+            summary: { critical: 0, high: 0, medium: 0, low: 1, negligible: 0 },
+          },
+        ],
+        warnings: [],
+        gcpProjects: ["theinsite-prod"],
+        gcpAuthConfigured: true,
+        trivyAvailable: true,
+        scannedAt: "2026-11-24T10:00:00.000Z",
+      }),
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("crit-img:1.0")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText(/Crit \+ High \+ Med/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Crit \+ Med/i)).not.toBeInTheDocument();
+
+    // Select Critical + Medium
+    fireEvent.click(screen.getByRole("button", { name: /^Critical \(1\)/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Medium \(1\)/i }));
+
+    expect(screen.getByText("crit-img:1.0")).toBeInTheDocument();
+    expect(screen.getByText("med-img:1.0")).toBeInTheDocument();
+    expect(screen.queryByText("low-img:1.0")).not.toBeInTheDocument();
+    expect(screen.getByText(/2 images · 2 matching CVEs/i)).toBeInTheDocument();
+
+    // Reset via All
+    fireEvent.click(screen.getByRole("button", { name: /^All \(3\)/i }));
+    expect(screen.getByText("low-img:1.0")).toBeInTheDocument();
+  });
 });

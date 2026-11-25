@@ -29,10 +29,7 @@ const STATUS_FILTERS: Array<{ id: string; label: string }> = [
   { id: "all", label: "All" },
 ];
 
-const SEVERITY_FILTERS: Array<{ id: string; label: string }> = [
-  { id: "all", label: "All Severities" },
-  { id: "critical,high,medium", label: "Crit + High + Med" },
-  { id: "critical,medium", label: "Crit + Med" },
+const SEVERITY_LEVELS: Array<{ id: "critical" | "high" | "medium" | "low"; label: string }> = [
   { id: "critical", label: "Critical" },
   { id: "high", label: "High" },
   { id: "medium", label: "Medium" },
@@ -68,7 +65,14 @@ export default function CliHandoffQueue() {
   const [tasks, setTasks] = useState<HandoffTaskRecord[]>([]);
   const [summary, setSummary] = useState<QueueSummary | null>(null);
   const [statusFilter, setStatusFilter] = useState("open,claimed,in_progress");
-  const [severityFilter, setSeverityFilter] = useState("all");
+  const [selectedSeverities, setSelectedSeverities] = useState<Array<"critical" | "high" | "medium" | "low">>([]);
+  const severityFilter = selectedSeverities.length === 0 ? "all" : selectedSeverities.join(",");
+
+  function toggleSeverity(sev: "critical" | "high" | "medium" | "low") {
+    setSelectedSeverities((prev) =>
+      prev.includes(sev) ? prev.filter((item) => item !== sev) : [...prev, sev]
+    );
+  }
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [clearingLow, setClearingLow] = useState(false);
@@ -255,25 +259,37 @@ export default function CliHandoffQueue() {
         </div>
 
         <div className="flex items-center gap-1.5 flex-wrap">
-          {SEVERITY_FILTERS.map((f) => (
-            <button
-              key={f.id}
-              type="button"
-              onClick={() => setSeverityFilter(f.id)}
-              className={`px-2 py-0.5 text-[10px] font-mono border transition-colors ${
-                severityFilter === f.id
-                  ? "border-sky-500/50 bg-sky-500/15 text-sky-300"
-                  : "border-slate-800 text-slate-400 hover:text-slate-200"
-              }`}
-            >
-              {f.label}
-              {f.id === "all" && summary ? ` (${summary.total})` : ""}
-              {f.id === "critical" && summary ? ` (${summary.countsBySeverity.critical})` : ""}
-              {f.id === "high" && summary ? ` (${summary.countsBySeverity.high})` : ""}
-              {f.id === "medium" && summary ? ` (${summary.countsBySeverity.medium})` : ""}
-              {f.id === "low" && summary ? ` (${summary.countsBySeverity.low})` : ""}
-            </button>
-          ))}
+          <button
+            type="button"
+            onClick={() => setSelectedSeverities([])}
+            aria-pressed={selectedSeverities.length === 0}
+            className={`px-2 py-0.5 text-[10px] font-mono border transition-colors ${
+              selectedSeverities.length === 0
+                ? "border-sky-500/50 bg-sky-500/15 text-sky-300"
+                : "border-slate-800 text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            All Severities{summary ? ` (${summary.total})` : ""}
+          </button>
+          {SEVERITY_LEVELS.map((f) => {
+            const active = selectedSeverities.includes(f.id);
+            return (
+              <button
+                key={f.id}
+                type="button"
+                onClick={() => toggleSeverity(f.id)}
+                aria-pressed={active}
+                className={`px-2 py-0.5 text-[10px] font-mono border transition-colors ${
+                  active
+                    ? "border-sky-500/50 bg-sky-500/15 text-sky-300"
+                    : "border-slate-800 text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                {f.label}
+                {summary ? ` (${summary.countsBySeverity[f.id]})` : ""}
+              </button>
+            );
+          })}
         </div>
       </div>
 

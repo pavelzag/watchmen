@@ -229,8 +229,8 @@ describe("PushToCliModal", () => {
     expect(screen.getByText(/Large batch: 105 low-severity issues excluded by default/i)).toBeInTheDocument();
     expect(screen.getByText(/3 of 108 issues/i)).toBeInTheDocument();
 
-    // Pick Critical + Medium only
-    fireEvent.click(screen.getByText("Crit + Med"));
+    // Deselect High so only Critical + Medium remain
+    fireEvent.click(screen.getByRole("button", { name: /^High \(1\)/i }));
     expect(screen.getByText(/2 of 108 issues/i)).toBeInTheDocument();
 
     fireEvent.click(screen.getByText("Push to Watchmen Queue"));

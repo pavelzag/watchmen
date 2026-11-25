@@ -246,41 +246,9 @@ export default function PushToCliModal({
 
           {/* Severity Filter */}
           <div className="space-y-2">
-            <div className="flex items-center justify-between gap-2 flex-wrap">
-              <p className="text-[10px] uppercase tracking-widest font-mono text-slate-400">
-                Include Severities ({filteredIssues.length}/{issues.length} selected)
-              </p>
-              <div className="flex items-center gap-1.5 text-[10px] font-mono flex-wrap">
-                <button
-                  type="button"
-                  onClick={() => setSelectedSeverities([...SEVERITY_LEVELS])}
-                  className="px-2 py-0.5 rounded border border-slate-800 text-slate-300 hover:border-slate-600"
-                >
-                  All
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSelectedSeverities(["critical", "high", "medium"])}
-                  className="px-2 py-0.5 rounded border border-slate-800 text-amber-300 hover:border-amber-500/50"
-                >
-                  Crit + High + Med
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSelectedSeverities(["critical", "medium"])}
-                  className="px-2 py-0.5 rounded border border-slate-800 text-sky-300 hover:border-sky-500/50"
-                >
-                  Crit + Med
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSelectedSeverities(["critical"])}
-                  className="px-2 py-0.5 rounded border border-slate-800 text-red-300 hover:border-red-500/50"
-                >
-                  Critical Only
-                </button>
-              </div>
-            </div>
+            <p className="text-[10px] uppercase tracking-widest font-mono text-slate-400">
+              Include Severities ({filteredIssues.length}/{issues.length} selected)
+            </p>
             <div className="flex items-center gap-2 flex-wrap">
               {SEVERITY_LEVELS.map((sev) => {
                 const count = severityCounts[sev];
@@ -306,7 +274,7 @@ export default function PushToCliModal({
             </div>
             {issues.length > 100 && !selectedSeverities.includes("low") && severityCounts.low > 0 && (
               <div className="px-3 py-1.5 rounded border border-amber-500/30 bg-amber-500/10 text-[11px] text-amber-200 font-mono">
-                Large batch: {severityCounts.low} low-severity issues excluded by default so your MCP queue stays focused. Click &ldquo;Low ({severityCounts.low})&rdquo; or &ldquo;All&rdquo; to include them.
+                Large batch: {severityCounts.low} low-severity issues excluded by default so your MCP queue stays focused. Click &ldquo;Low ({severityCounts.low})&rdquo; to include them.
               </div>
             )}
           </div>
