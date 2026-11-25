@@ -19,7 +19,7 @@ import {
   GitPullRequest,
   Terminal,
 } from "lucide-react";
-import { filterLatestPerApplication, type ImageScanResult, type ContainerVulnerability, type CveSeverity, type ImageRegistry } from "@/lib/container-scanning";
+import { filterLatestPerApplication, getApplicationKey, type ImageScanResult, type ContainerVulnerability, type CveSeverity, type ImageRegistry } from "@/lib/container-scanning";
 import type { GcpScanWarning } from "@/lib/gcp/types";
 import { cn } from "@/lib/utils";
 import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
@@ -53,6 +53,15 @@ const SEV_STYLES: Record<CveSeverity, { label: string; color: string; border: st
 };
 
 const SEVERITY_ORDER: CveSeverity[] = ["critical", "high", "medium", "low", "negligible"];
+
+function getApplicationShortName(
+  result: Pick<ImageScanResult, "imageRef" | "imageName">
+): string {
+  const ref = (result.imageRef || result.imageName || "").trim().replace(/^https?:\/\//i, "");
+  const parts = ref.split("/").filter(Boolean);
+  const last = parts[parts.length - 1] ?? result.imageName ?? "";
+  return last.split("@")[0].split(":")[0] || last || result.imageName;
+}
 
 type SelectableSeverity = "critical" | "high" | "medium" | "low";
 
@@ -469,22 +478,22 @@ function ImageCard({
               {result.imageRef}
             </p>
             <div className="flex items-center gap-2 flex-wrap">
-              {result.summary.critical > 0 && (
+              {result.summary.critical > 0 && (selectedSeverities.length === 0 || selectedSeverities.includes("critical")) && (
                 <span style={{ fontSize: 9, color: "#f87171", fontFamily: "monospace", border: "1px solid #ef444433", padding: "0 5px" }}>
                   {result.summary.critical} CRITICAL
                 </span>
               )}
-              {result.summary.high > 0 && (
+              {result.summary.high > 0 && (selectedSeverities.length === 0 || selectedSeverities.includes("high")) && (
                 <span style={{ fontSize: 9, color: "#fb923c", fontFamily: "monospace", border: "1px solid #f59e0b33", padding: "0 5px" }}>
                   {result.summary.high} HIGH
                 </span>
               )}
-              {result.summary.medium > 0 && (
+              {result.summary.medium > 0 && (selectedSeverities.length === 0 || selectedSeverities.includes("medium")) && (
                 <span style={{ fontSize: 9, color: "#fbbf24", fontFamily: "monospace", border: "1px solid #d9770633", padding: "0 5px" }}>
                   {result.summary.medium} MEDIUM
                 </span>
               )}
-              {result.summary.low > 0 && (
+              {result.summary.low > 0 && (selectedSeverities.length === 0 || selectedSeverities.includes("low")) && (
                 <span style={{ fontSize: 9, color: "#94a3b8", fontFamily: "monospace", border: "1px solid #47556933", padding: "0 5px" }}>
                   {result.summary.low} LOW
                 </span>
@@ -702,6 +711,7 @@ export default function ContainerScanPage() {
   const [search, setSearch] = useState("");
   const [selectedSeverities, setSelectedSeverities] = useState<SelectableSeverity[]>([]);
   const [cloudFilter, setCloudFilter] = useState<CloudFilter>("all");
+  const [appFilter, setAppFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [latestOnly, setLatestOnly] = useState(false);
   const [dateRange, setDateRange] = useState<DateRangeFilter>("all");
@@ -800,7 +810,7 @@ export default function ContainerScanPage() {
   // Reset to page 1 when filters or sort change
   useEffect(() => {
     setPage(1);
-  }, [search, selectedSeverities, cloudFilter, statusFilter, latestOnly, dateRange, dateFrom, dateTo, sortBy, pageSize]);
+  }, [search, selectedSeverities, cloudFilter, appFilter, statusFilter, latestOnly, dateRange, dateFrom, dateTo, sortBy, pageSize]);
 
   // When Trivy is active, managed Container Analysis 403/disabled is optional non-blocking noise.
   const actionableWarnings = useMemo(() => {
@@ -817,9 +827,61 @@ export default function ContainerScanPage() {
   const latestResults = useMemo(() => filterLatestPerApplication(results), [results]);
   const scopedResults = latestOnly ? latestResults : results;
 
+  const appPool = useMemo(
+    () => (cloudFilter === "all" ? scopedResults : scopedResults.filter((r) => r.cloud === cloudFilter)),
+    [scopedResults, cloudFilter]
+  );
+
+  const appOptions = useMemo(() => {
+    const byKey = new Map<
+      string,
+      { key: string; shortName: string; accountId: string; cloud: ImageRegistry; count: number }
+    >();
+    for (const r of appPool) {
+      const key = getApplicationKey(r);
+      const existing = byKey.get(key);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        byKey.set(key, {
+          key,
+          shortName: getApplicationShortName(r),
+          accountId: r.accountId,
+          cloud: r.cloud,
+          count: 1,
+        });
+      }
+    }
+
+    const nameCounts = new Map<string, number>();
+    for (const entry of byKey.values()) {
+      nameCounts.set(entry.shortName, (nameCounts.get(entry.shortName) ?? 0) + 1);
+    }
+
+    return Array.from(byKey.values())
+      .map((entry) => {
+        const hasDuplicateName = (nameCounts.get(entry.shortName) ?? 0) > 1;
+        const scopeLabel = entry.accountId || entry.cloud.toUpperCase();
+        const baseLabel = hasDuplicateName ? `${entry.shortName} (${scopeLabel})` : entry.shortName;
+        return {
+          value: entry.key,
+          label: `${baseLabel} (${entry.count})`,
+          sortKey: baseLabel.toLowerCase(),
+        };
+      })
+      .sort((a, b) => a.sortKey.localeCompare(b.sortKey))
+      .map(({ value, label }) => ({ value, label }));
+  }, [appPool]);
+
+  useEffect(() => {
+    if (appFilter !== "all" && !appOptions.some((opt) => opt.value === appFilter)) {
+      setAppFilter("all");
+    }
+  }, [appFilter, appOptions]);
+
   const searchNeedle = search.trim().toLowerCase();
 
-  const filteredAndSorted = useMemo(() => {
+  const nonSeverityFiltered = useMemo(() => {
     const now = Date.now();
     const minTs =
       dateRange === "24h"
@@ -836,8 +898,9 @@ export default function ContainerScanPage() {
         ? new Date(`${dateTo}T23:59:59.999`).getTime()
         : null;
 
-    const filtered = scopedResults.filter((r) => {
+    return scopedResults.filter((r) => {
       if (cloudFilter !== "all" && r.cloud !== cloudFilter) return false;
+      if (appFilter !== "all" && getApplicationKey(r) !== appFilter) return false;
 
       if (statusFilter === "vulnerable" && r.vulnerabilities.length === 0) return false;
       if (statusFilter === "clean" && !(r.scanStatus === "clean" || (r.scanStatus !== "unscanned" && r.vulnerabilities.length === 0))) {
@@ -853,6 +916,12 @@ export default function ContainerScanPage() {
         }
       }
 
+      return true;
+    });
+  }, [scopedResults, cloudFilter, appFilter, statusFilter, dateRange, dateFrom, dateTo]);
+
+  const filteredAndSorted = useMemo(() => {
+    const filtered = nonSeverityFiltered.filter((r) => {
       if (selectedSeverities.length > 0 && summaryCountForFilter(r.summary, selectedSeverities) === 0) return false;
 
       if (searchNeedle) {
@@ -889,19 +958,19 @@ export default function ContainerScanPage() {
       if (b.summary.low !== a.summary.low) return b.summary.low - a.summary.low;
       return b.vulnerabilities.length - a.vulnerabilities.length;
     });
-  }, [scopedResults, cloudFilter, statusFilter, dateRange, dateFrom, dateTo, selectedSeverities, searchNeedle, sortBy]);
+  }, [nonSeverityFiltered, selectedSeverities, searchNeedle, sortBy]);
 
   const totalPages = Math.max(1, Math.ceil(filteredAndSorted.length / pageSize));
   const safePage = Math.min(page, totalPages);
   const pageStart = (safePage - 1) * pageSize;
   const paginated = filteredAndSorted.slice(pageStart, pageStart + pageSize);
 
-  // Totals across active scope (all images or latest per app)
-  const totalCritical = scopedResults.reduce((s, r) => s + r.summary.critical, 0);
-  const totalHigh = scopedResults.reduce((s, r) => s + r.summary.high, 0);
-  const totalMedium = scopedResults.reduce((s, r) => s + r.summary.medium, 0);
-  const totalLow = scopedResults.reduce((s, r) => s + r.summary.low, 0);
-  const totalVulns = scopedResults.reduce(
+  // Totals across active non-severity scope (registry, app, status, date, latest-only)
+  const totalCritical = nonSeverityFiltered.reduce((s, r) => s + r.summary.critical, 0);
+  const totalHigh = nonSeverityFiltered.reduce((s, r) => s + r.summary.high, 0);
+  const totalMedium = nonSeverityFiltered.reduce((s, r) => s + r.summary.medium, 0);
+  const totalLow = nonSeverityFiltered.reduce((s, r) => s + r.summary.low, 0);
+  const totalVulns = nonSeverityFiltered.reduce(
     (s, r) => s + r.summary.critical + r.summary.high + r.summary.medium + r.summary.low + r.summary.negligible,
     0
   );
@@ -932,6 +1001,7 @@ export default function ContainerScanPage() {
     Boolean(search) ||
     selectedSeverities.length > 0 ||
     cloudFilter !== "all" ||
+    appFilter !== "all" ||
     statusFilter !== "all" ||
     latestOnly ||
     dateRange !== "all";
@@ -940,6 +1010,7 @@ export default function ContainerScanPage() {
     setSearch("");
     setSelectedSeverities([]);
     setCloudFilter("all");
+    setAppFilter("all");
     setStatusFilter("all");
     setLatestOnly(false);
     setDateRange("all");
@@ -1170,6 +1241,18 @@ export default function ContainerScanPage() {
                   { value: "aws", label: "AWS ECR" },
                   { value: "ghcr", label: "GitHub (GHCR)" },
                   { value: "dockerhub", label: "Docker Hub" },
+                ]}
+              />
+
+              <TerminalSelect
+                value={appFilter}
+                onChange={setAppFilter}
+                ariaLabel="Filter by image app"
+                prefix="APP:"
+                active={appFilter !== "all"}
+                options={[
+                  { value: "all", label: `All apps (${appOptions.length})` },
+                  ...appOptions,
                 ]}
               />
 

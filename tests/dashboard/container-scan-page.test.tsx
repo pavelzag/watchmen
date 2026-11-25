@@ -342,6 +342,89 @@ describe("ContainerScanPage", () => {
     expect(screen.queryByText("web:dev-latest")).not.toBeInTheDocument();
   });
 
+  it("provides an APP dropdown with all available image apps and filters cleanly", async () => {
+    mockFetchByRoute({
+      containerScan: () => ({
+        results: [
+          {
+            imageRef: "europe-west3-docker.pkg.dev/theinsite-prod/cms/api-gateway@sha256:1",
+            imageName: "api-gateway:1.0.0",
+            cloud: "gcp",
+            accountId: "theinsite-prod",
+            scannedAt: "2026-11-24T10:00:00.000Z",
+            scanner: "trivy",
+            scanStatus: "scanned",
+            vulnerabilities: [
+              {
+                cveId: "CVE-2026-1001",
+                severity: "critical",
+                packageName: "openssl",
+                installedVersion: "3.0.0",
+                description: "Crit vuln",
+              },
+            ],
+            summary: { critical: 1, high: 0, medium: 0, low: 0, negligible: 0 },
+          },
+          {
+            imageRef: "europe-west3-docker.pkg.dev/theinsite-prod/cms/worker@sha256:2",
+            imageName: "worker:2.0.0",
+            cloud: "gcp",
+            accountId: "theinsite-prod",
+            scannedAt: "2026-11-24T10:00:00.000Z",
+            scanner: "trivy",
+            scanStatus: "scanned",
+            vulnerabilities: [
+              {
+                cveId: "CVE-2026-2002",
+                severity: "high",
+                packageName: "zlib",
+                installedVersion: "1.2.0",
+                description: "High vuln",
+              },
+            ],
+            summary: { critical: 0, high: 1, medium: 0, low: 0, negligible: 0 },
+          },
+          {
+            imageRef: "europe-west3-docker.pkg.dev/theinsite-dev/cms/worker@sha256:3",
+            imageName: "worker:dev",
+            cloud: "gcp",
+            accountId: "theinsite-dev",
+            scannedAt: "2026-11-24T10:00:00.000Z",
+            scanner: "trivy",
+            scanStatus: "clean",
+            vulnerabilities: [],
+            summary: { critical: 0, high: 0, medium: 0, low: 0, negligible: 0 },
+          },
+        ],
+        warnings: [],
+        gcpProjects: ["theinsite-prod", "theinsite-dev"],
+        gcpAuthConfigured: true,
+        trivyAvailable: true,
+        scannedAt: "2026-11-24T10:00:00.000Z",
+      }),
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("api-gateway:1.0.0")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Filter by image app" }));
+    expect(screen.getByRole("option", { name: "All apps (3)" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "api-gateway (1)" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "worker (theinsite-prod) (1)" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "worker (theinsite-dev) (1)" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("option", { name: "worker (theinsite-prod) (1)" }));
+    expect(screen.getByText("worker:2.0.0")).toBeInTheDocument();
+    expect(screen.queryByText("api-gateway:1.0.0")).not.toBeInTheDocument();
+    expect(screen.queryByText("worker:dev")).not.toBeInTheDocument();
+    // Severity count pills scope to the selected app
+    expect(screen.getByRole("button", { name: /^High \(1\)/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Critical \(0\)/i })).toBeInTheDocument();
+  });
+
   it("allows multi-selecting Critical, High, and Medium severities without extra preset buttons", async () => {
     mockFetchByRoute({
       containerScan: () => ({
@@ -362,8 +445,15 @@ describe("ContainerScanPage", () => {
                 installedVersion: "3.0.0",
                 description: "Crit vuln",
               },
+              {
+                cveId: "CVE-2026-1002",
+                severity: "low",
+                packageName: "curl",
+                installedVersion: "8.0.0",
+                description: "Low vuln inside crit-img",
+              },
             ],
-            summary: { critical: 1, high: 0, medium: 0, low: 0, negligible: 0 },
+            summary: { critical: 1, high: 0, medium: 0, low: 1, negligible: 0 },
           },
           {
             imageRef: "europe-west3-docker.pkg.dev/theinsite-prod/cms/med-img@sha256:2",
@@ -429,9 +519,12 @@ describe("ContainerScanPage", () => {
     expect(screen.getByText("med-img:1.0")).toBeInTheDocument();
     expect(screen.queryByText("low-img:1.0")).not.toBeInTheDocument();
     expect(screen.getByText(/2 images · 2 matching CVEs/i)).toBeInTheDocument();
+    // Unselected Low badge and Low CVE inside crit-img are hidden
+    expect(screen.queryByText("1 LOW")).not.toBeInTheDocument();
+    expect(screen.queryByText("CVE-2026-1002")).not.toBeInTheDocument();
 
     // Reset via All
-    fireEvent.click(screen.getByRole("button", { name: /^All \(3\)/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^All \(4\)/i }));
     expect(screen.getByText("low-img:1.0")).toBeInTheDocument();
   });
 });
