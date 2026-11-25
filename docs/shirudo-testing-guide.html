@@ -311,7 +311,7 @@
       overflow-x: auto;
     }
 
-    svg {
+    .diagram-wrap svg {
       display: block;
       width: 100%;
       height: auto;
@@ -353,8 +353,9 @@
         <a href="#track-tests">3. Track B: Automated Tests</a>
         <a href="#track-live">4. Track C: Live End-to-End API &amp; DB</a>
         <a href="#track-tpm">5. Track D: Cryptographic TPM 2.0 &amp; Replay Tests</a>
-        <a href="#track-vm">6. Track E: Real Shirudo VM &amp; OTel Collector</a>
-        <a href="#reference">7. Reference &amp; Troubleshooting</a>
+        <a href="#track-static-studio">6. Track E: Live Demo on Static-Studio Dev</a>
+        <a href="#track-vm">7. Track F: Real Shirudo VM &amp; OTel Collector</a>
+        <a href="#reference">8. Reference &amp; Troubleshooting</a>
       </nav>
     </header>
 
@@ -857,9 +858,184 @@ console.log("3. Rollback keepalive:", await postJson("/api/ingest/shirudo/v1/log
       </div>
     </section>
 
-    <!-- SECTION 6: REAL SHIRUDO VM & OTEL COLLECTOR -->
+    <!-- SECTION 6: STATIC-STUDIO DEV LIVE DEMO -->
+    <section id="track-static-studio">
+      <h2>6. Track E: Live Demo on Static-Studio Dev (<code>theinsite-dev</code> + <code>theinsite-watchmen</code>)</h2>
+      <p>
+        To run a real live-patching demo on Static-Studio's GCP dev environment—where you reproduce an actual kernel vulnerability,
+        patch it live with zero reboot, and see Watchmen reflect the shield—use a dedicated <strong>nested-KVM GCE VM</strong> in
+        <code>theinsite-dev</code> reporting to Watchmen hosted in <code>theinsite-watchmen</code> (<code>https://watchmen.theinsite.dev</code>).
+      </p>
+
+      <div class="card warn-box">
+        <strong>Do not modify <code>cms-dev-vm</code> or <code>cms-dev-lior-vm</code>:</strong>
+        Shirudo requires a custom-patched <code>bpf-next</code> kernel (<code>tpm_command</code> &amp; <code>mm_read_access</code> LSM hooks,
+        <code>CONFIG_CRYPTO_MLDSA</code>, signed-loader ABI), <code>systemd</code> 256+ initrd boot, and TPM 2.0. Stock Ubuntu/Debian GCE VMs
+        cannot run Shirudo enforcement in place. Spin up a dedicated demo VM and delete it when finished.
+      </div>
+
+      <div class="card highlight">
+        <h3><span class="step-num">1</span> Deploy Watchmen <code>v0.10.0</code> to <code>theinsite-watchmen</code></h3>
+        <p>Ensure the live Watchmen host in <code>theinsite-watchmen</code> is running commit <code>19c1c93</code> (<code>v0.10.0</code>) and has the Shirudo Postgres tables:</p>
+        <pre><code>cd /Users/pavel/Projects/watchmen-infra
+export GOOGLE_OAUTH_ACCESS_TOKEN=$(gcloud auth print-access-token --configuration=theinsite-dev)
+
+# 1. Build &amp; push Watchmen v0.10.0 image to Artifact Registry
+stacks/static-studio-host/build-image.sh /Users/pavel/Projects/watchmen
+
+# 2. Apply DB migrations (creates shirudo_nodes, shirudo_upatch_fixes, shirudo_shield_hits, shirudo_attestation_challenges)
+stacks/static-studio-host/migrate-db.sh /Users/pavel/Projects/watchmen
+
+# 3. Redeploy Cloud Run service in theinsite-watchmen
+IMAGE="$(gcloud artifacts docker images list europe-west3-docker.pkg.dev/theinsite-watchmen/watchmen/app --format='value(package,tags)' --limit=1 | awk '{print $1":"$2}')"
+terraform -chdir=stacks/static-studio-host apply \
+  -var="image=$IMAGE" \
+  -var="enable_google_oauth=true"</code></pre>
+        <p class="muted">
+          Sign in at <code>https://watchmen.theinsite.dev</code> → go to <strong>Settings → CLI / API Tokens</strong> → generate a Personal API Token (<code>wm_...</code>).
+        </p>
+      </div>
+
+      <div class="card">
+        <h3><span class="step-num">2</span> Create a Nested-KVM Demo VM in <code>theinsite-dev</code></h3>
+        <p>
+          Shirudo's built-in test VM uses QEMU + KVM + <code>swtpm</code> to boot the prebuilt vulnerable <code>bpf-next</code> kernel artifact.
+          In GCP, nested virtualization requires an <strong>N2/N2D/C2/C3</strong> machine type (<code>e2-standard-*</code> does not support nested KVM):
+        </p>
+        <pre><code>gcloud compute instances create shirudo-demo-vm \
+  --project=theinsite-dev \
+  --zone=europe-west3-b \
+  --machine-type=n2-standard-4 \
+  --enable-nested-virtualization \
+  --image-family=ubuntu-2404-lts-amd64 \
+  --image-project=ubuntu-os-cloud \
+  --boot-disk-size=60GB \
+  --boot-disk-type=pd-ssd \
+  --tags=shirudo-demo
+
+# SSH into the demo host
+gcloud compute ssh shirudo-demo-vm --project=theinsite-dev --zone=europe-west3-b</code></pre>
+      </div>
+
+      <div class="card">
+        <h3><span class="step-num">3</span> Bootstrap Shirudo &amp; Boot the Vulnerable Target VM (Inside <code>shirudo-demo-vm</code>)</h3>
+        <p>
+          Inside the GCE VM, verify <code>/dev/kvm</code> exists, install Shirudo's prerequisites (Clang/LLVM 23, OpenSSL 3.5+, QEMU, <code>swtpm</code>, Docker, dracut),
+          stage the prebuilt vulnerable kernel artifact, and boot the target VM:
+        </p>
+        <pre><code># 1. Confirm nested KVM is active
+ls -l /dev/kvm
+
+# 2. Unlock memlock for this shell (required by shirudo binaries)
+sudo prlimit --pid $$ --memlock=unlimited:unlimited
+ulimit -l  # should print "unlimited"
+
+# 3. Install base packages (add apt.llvm.org for clang-23 / llvm-23 and OpenSSL 3.5+ per docs.shirudo.dev/start/quickstart.html)
+sudo apt-get update &amp;&amp; sudo apt-get install -y \
+  build-essential pkg-config git curl jq python3 dpkg-deb docker.io \
+  qemu-system-x86 qemu-utils swtpm swtpm-tools tpm2-tools libtss2-tcti-swtpm0t64 \
+  cloud-image-utils libguestfs-tools dracut-core cryptsetup-bin e2fsprogs \
+  libelf-dev zlib1g-dev libzstd-dev libcurl4-openssl-dev libluajit-5.1-dev \
+  libtss2-dev autoconf automake libtool autoconf-archive
+
+# 4. Clone Shirudo, fetch prebuilt CI kernel (contains CVE-2026-31431 AF_ALG flaw), build &amp; boot
+git clone https://github.com/shirudo-dev/shirudo.git
+cd shirudo
+testing/vm/kernel-artifact.sh fetch
+make &amp;&amp; make shirudo-build
+export PATH="$PWD:$PWD/tools/shirudo-build:$PATH"
+
+# 5. Start local OCI registry / OTel stack &amp; boot the target VM ("static-studio-demo")
+make stack-up &amp;&amp; make vm VM_NAME=static-studio-demo
+. build/test-vm/stack/env
+make vm-enroll VM_NAME=static-studio-demo</code></pre>
+        <p class="muted">
+          If Ubuntu 24.04 ships OpenSSL &lt; 3.5 or older clang, follow <code>docs.shirudo.dev/contribute/code/developer-guide.html#dev-openssl</code> and <code>apt.llvm.org</code> (clang-23) before running <code>make</code>.
+        </p>
+      </div>
+
+      <div class="card">
+        <h3><span class="step-num">4</span> Forward Telemetry from the Demo Host to <code>https://watchmen.theinsite.dev</code></h3>
+        <p>
+          The Shirudo test VM sends OTLP keepalives and BPF map snapshots every 10 seconds to <code>https://10.0.2.2:14319</code> using
+          hybrid PQC TLS (<code>X25519MLKEM768</code>). Bridge that stream to your hosted Watchmen instance in two ways:
+        </p>
+        <ul>
+          <li><strong>Option 1 (Recommended — OTel Collector bridge):</strong> Run Watchmen's Go 1.24+ collector config (<code>scripts/shirudo/otel-collector-shirudo.yaml</code>) or add an <code>otlphttp/watchmen</code> exporter to the stack collector pointing at <code>https://watchmen.theinsite.dev/api/ingest/shirudo</code> with <code>Authorization: Bearer wm_...</code>.</li>
+          <li><strong>Option 2 (Direct from target config):</strong> If pointing a Shirudo target directly at <code>https://watchmen.theinsite.dev/api/ingest/shirudo</code> without a PQC proxy, add <code>tls.classical_hosts = watchmen.theinsite.dev</code> in <code>runtime.conf</code> so standard TLS 1.3 (<code>X25519</code>/<code>secp256r1</code>) is permitted.</li>
+        </ul>
+        <pre><code>export WATCHMEN_BASE_URL="https://watchmen.theinsite.dev"
+export WATCHMEN_API_TOKEN="wm_paste_your_token_here"
+
+# Optional: map CVE-2026-31431 in Watchmen so shielded badges render immediately
+curl -sS -X POST "$WATCHMEN_BASE_URL/api/shirudo" \
+  -H "Authorization: Bearer $WATCHMEN_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"upatchId":"cve-2026-31431-alg-splice-block","advisoryId":"CVE-2026-31431","shieldKind":"bpf_upatch"}' | jq .</code></pre>
+      </div>
+
+      <div class="card highlight">
+        <h3><span class="step-num">5</span> Live Demo Script: Exploit → Live Shield → Zero-Reboot Fix</h3>
+        <p>Use two terminals on <code>shirudo-demo-vm</code> (one <strong>Operator</strong> shell, one <strong>Target</strong> shell via <code>make -C testing vm-ssh VM_NAME=static-studio-demo</code>) alongside <code>https://watchmen.theinsite.dev</code>:</p>
+        <ol>
+          <li>
+            <strong>Act 1 — Reproduce the Kernel Vulnerability (<code>CVE-2026-31431</code> Copy Fail):</strong>
+            <pre><code># Target shell: splice a page into an AF_ALG socket (vulnerable kernel accepts it)
+target# python3 /workspace/shirudo/upatches/kernel-cve/sources/cve-2026-31431-crypto-algif-aead-copy-fail/reproducer/cve-2026-31431-splice-probe.py
+# Output: SPLICE_OK</code></pre>
+          </li>
+          <li>
+            <strong>Act 2 — Dispatch &amp; Build the Signed Shirudo Shield (Operator):</strong>
+            <p class="muted">
+              In Watchmen (<code>/dashboard/container-scan</code> or <code>/dashboard/runtime</code>), push a <strong>Shirudo Live Shield</strong> task (<code>shirudo_shield</code>) to OpenCode/Claude/Codex, or build and push the shield on the Operator shell (keeping ML-DSA-87 keys off Watchmen):
+            </p>
+            <pre><code># Operator shell: build, sign with ML-DSA-87, push to local OCI registry, and append to tree
+operator$ mkdir -p build/demo
+operator$ tools/put-shields --version 1.0.0 --keys-dir "$KEYS" \
+  --catalog build/demo/shields.json \
+  --new-index oci://127.0.0.1:15444/live-patching \
+  upatches/kernel-cve/cve-2026-31431-alg-splice-block.bee
+
+operator$ CVE_DIGEST=$(jq -r 'first(.shields[] | select(.package == "cve-2026-31431-alg-splice-block")).manifest_digest' build/demo/shields.json)
+operator$ shirudo bpm tree append oci://127.0.0.1:15444/live-patching/cve-2026-31431-alg-splice-block:1.0.0 \
+  --package-digest "$CVE_DIGEST" "$TREE" --tree-id local-tree --keys-dir "$KEYS"</code></pre>
+          </li>
+          <li>
+            <strong>Act 3 — Verify Zero-Reboot Live Patch on the Running Kernel:</strong>
+            <pre><code># Wait ≤10s for shirudo-bpm-tree-sync.timer on the target, then confirm it loaded:
+target# shirudo upatch list
+# NAME: cve-2026-31431-alg-splice-block | LOADED: yes | TYPE: load | KIND: bpf
+
+# Re-run the exact same exploit reproducer (no reboot occurred):
+target# python3 /workspace/shirudo/upatches/kernel-cve/sources/cve-2026-31431-crypto-algif-aead-copy-fail/reproducer/cve-2026-31431-splice-probe.py
+# Output: SPLICE_BLOCKED</code></pre>
+          </li>
+          <li>
+            <strong>Act 4 — Show Live Shield Telemetry &amp; Verification in Watchmen:</strong>
+            <ul>
+              <li>Open <strong><code>https://watchmen.theinsite.dev/dashboard/runtime</code></strong> → show the live <code>TPM Verified</code> node, loaded <code>cve-2026-31431-alg-splice-block</code> upatch, and blocked hit counter.</li>
+              <li>Open <strong><code>https://watchmen.theinsite.dev/dashboard/container-scan</code></strong> / <strong><code>/dashboard/compliance</code></strong> → show the <code>SHIELDED</code> mitigation status.</li>
+              <li>Optionally roll back live without rebooting using <code>shirudo bpm tree append ... --op delete</code> to show the probe return to <code>SPLICE_OK</code>.</li>
+            </ul>
+          </li>
+        </ol>
+      </div>
+
+      <div class="card">
+        <h3><span class="step-num">6</span> Cleanup After the Demo</h3>
+        <pre><code># Inside shirudo-demo-vm:
+make -C testing vm-stop VM_NAME=static-studio-demo
+make -C testing vm-clean VM_NAME=static-studio-demo
+make stack-down
+
+# From your local workstation (delete the GCE VM in theinsite-dev to stop billing):
+gcloud compute instances delete shirudo-demo-vm --project=theinsite-dev --zone=europe-west3-b --quiet</code></pre>
+      </div>
+    </section>
+
+    <!-- SECTION 7: REAL SHIRUDO VM & OTEL COLLECTOR -->
     <section id="track-vm">
-      <h2>6. Track E: Real Hardened VM &amp; PQC TLS OTel Collector Testing</h2>
+      <h2>7. Track F: Real Hardened VM &amp; PQC TLS OTel Collector Testing</h2>
       <p>
         Production Shirudo targets require a custom-patched <code>bpf-next</code> Linux kernel (<code>CONFIG_CRYPTO_MLDSA</code>, signed-loader ABI,
         <code>tpm_command</code> / <code>mm_read_access</code> LSM hooks), <code>systemd</code> 256+ UKI boot, and a hardware TPM 2.0 or GCE vTPM.
@@ -869,7 +1045,7 @@ console.log("3. Rollback keepalive:", await postJson("/api/ingest/shirudo/v1/log
         <div class="card">
           <h3>OpenTelemetry Collector (Hybrid PQC TLS)</h3>
           <p class="muted">Config: <code>/Users/pavel/Projects/watchmen/scripts/shirudo/otel-collector-shirudo.yaml</code></p>
-          <pre><code>export WATCHMEN_BASE_URL="https://your-watchmen-host.example"
+          <pre><code>export WATCHMEN_BASE_URL="https://watchmen.theinsite.dev"
 export WATCHMEN_API_TOKEN="wm_..."
 otelcol-contrib --config=scripts/shirudo/otel-collector-shirudo.yaml</code></pre>
           <ul>
@@ -882,17 +1058,17 @@ otelcol-contrib --config=scripts/shirudo/otel-collector-shirudo.yaml</code></pre
           <h3>Shielded GCE vTPM VM Blueprint</h3>
           <p class="muted">Terraform: <code>/Users/pavel/Projects/watchmen/scripts/shirudo/terraform/gcp-shirudo-vm/</code></p>
           <ul>
-            <li>Provisions a GCP instance with <code>enable_vtpm = true</code>, <code>enable_secure_boot = true</code>, and <code>enable_integrity_monitoring = true</code>.</li>
+            <li>Provisions a GCP instance in <code>theinsite-dev</code> (or any project) with <code>enable_vtpm = true</code>, <code>enable_secure_boot = true</code>, and <code>enable_integrity_monitoring = true</code>.</li>
+            <li>Requires a custom GCE image (<code>var.shirudo_image</code>) containing the <code>shirudo-dev/kernel</code> build, dracut <code>90shirudo</code>, dm-verity images, and a signed UKI (<code>systemd-stub</code>).</li>
             <li>Renders <code>cloud-init.yaml.tftpl</code> with <code>watchmen_otlp_endpoint</code>, <code>watchmen_api_token</code>, and optional <code>shirudo_oci_tree</code>.</li>
-            <li>On the target VM, configure <code>etc/shirudo/shirudo.conf</code> with <code>map_export.otel_endpoint</code> pointing to the collector or Watchmen endpoint.</li>
           </ul>
         </div>
       </div>
     </section>
 
-    <!-- SECTION 7: REFERENCE & TROUBLESHOOTING -->
+    <!-- SECTION 8: REFERENCE & TROUBLESHOOTING -->
     <section id="reference">
-      <h2>7. Reference Tables &amp; Troubleshooting</h2>
+      <h2>8. Reference Tables &amp; Troubleshooting</h2>
 
       <h3>Condition Bitmask (<code>cond</code>) — 7 Bit-Pairs (LSB First)</h3>
       <p class="muted">Each condition uses 2 bits: <code>00 = unset</code>, <code>01 = ok</code>, <code>10 = warn</code>, <code>11 = alert</code>. Value <code>5461</code> (<code>0b01_01_01_01_01_01_01</code>) means all 7 conditions are <code>ok</code>.</p>
@@ -968,5 +1144,69 @@ otelcol-contrib --config=scripts/shirudo/otel-collector-shirudo.yaml</code></pre
       </ul>
     </section>
   </div>
+
+  <script>
+    (function () {
+      const COPY_ICON =
+        '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+      const CHECK_ICON =
+        '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+
+      async function copyText(text) {
+        if (navigator.clipboard && window.isSecureContext) {
+          try {
+            await navigator.clipboard.writeText(text);
+            return true;
+          } catch (_) {}
+        }
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        ta.style.pointerEvents = "none";
+        document.body.appendChild(ta);
+        ta.select();
+        let ok = false;
+        try {
+          ok = document.execCommand("copy");
+        } catch (_) {
+          ok = false;
+        }
+        document.body.removeChild(ta);
+        return ok;
+      }
+
+      document.querySelectorAll("pre").forEach((pre) => {
+        const wrap = document.createElement("div");
+        wrap.className = "code-wrap";
+        pre.parentNode.insertBefore(wrap, pre);
+        wrap.appendChild(pre);
+
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "copy-btn";
+        btn.setAttribute("aria-label", "Copy command to clipboard");
+        btn.innerHTML = COPY_ICON + "<span>Copy</span>";
+
+        let resetTimer = null;
+        btn.addEventListener("click", async () => {
+          const code = pre.querySelector("code");
+          const text = (code ? code.innerText : pre.innerText).replace(/\n+$/, "");
+          const ok = await copyText(text);
+          if (!ok) return;
+          btn.classList.add("copied");
+          btn.innerHTML = CHECK_ICON + "<span>Copied!</span>";
+          if (resetTimer) clearTimeout(resetTimer);
+          resetTimer = setTimeout(() => {
+            btn.classList.remove("copied");
+            btn.innerHTML = COPY_ICON + "<span>Copy</span>";
+          }, 1800);
+        });
+
+        wrap.appendChild(btn);
+      });
+    })();
+  </script>
 </body>
 </html>

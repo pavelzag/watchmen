@@ -252,6 +252,27 @@ export async function pushHandoffTasks(params: {
   return { tasks, createdCount, updatedCount };
 }
 
+function normalizeCsvFilter(value: string | undefined): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.toLowerCase() === "all") return null;
+  const parts = trimmed
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  return parts.length > 0 ? parts.join(",") : null;
+}
+
+export interface HandoffTaskSummary {
+  total: number;
+  countsBySeverity: {
+    critical: number;
+    high: number;
+    medium: number;
+    low: number;
+  };
+}
+
 export async function listHandoffTasks(params: {
   userEmail: string;
   status?: string;
@@ -261,27 +282,66 @@ export async function listHandoffTasks(params: {
 }): Promise<HandoffTaskRecord[]> {
   await ensureHandoffTables();
   const limit = Math.min(Math.max(params.limit ?? 50, 1), 200);
+  const statusCsv = normalizeCsvFilter(params.status);
+  const severityCsv = normalizeCsvFilter(params.severity);
+  const toolFilter =
+    params.tool && params.tool.trim().toLowerCase() !== "all" ? params.tool.trim().toLowerCase() : null;
+
   const res = await sql`
     SELECT *
     FROM cli_handoff_tasks
     WHERE user_email = ${params.userEmail}
-    ORDER BY updated_at DESC
+      AND (${statusCsv === null} OR status = ANY(string_to_array(${statusCsv ?? ""}, ',')))
+      AND (${severityCsv === null} OR severity = ANY(string_to_array(${severityCsv ?? ""}, ',')))
+      AND (${toolFilter === null} OR target_tool = ${toolFilter ?? ""} OR target_tool = 'any')
+    ORDER BY
+      CASE severity
+        WHEN 'critical' THEN 4
+        WHEN 'high' THEN 3
+        WHEN 'medium' THEN 2
+        ELSE 1
+      END DESC,
+      updated_at DESC
     LIMIT ${limit}
   `;
 
-  let rows = res.rows.map(mapTaskRow);
-  if (params.status && params.status !== "all") {
-    const allowed = new Set(params.status.split(",").map((s) => s.trim()));
-    rows = rows.filter((t) => allowed.has(t.status));
+  return res.rows.map(mapTaskRow);
+}
+
+export async function getHandoffTaskSummary(params: {
+  userEmail: string;
+  status?: string;
+  severity?: string;
+  tool?: string;
+}): Promise<HandoffTaskSummary> {
+  await ensureHandoffTables();
+  const statusCsv = normalizeCsvFilter(params.status);
+  const severityCsv = normalizeCsvFilter(params.severity);
+  const toolFilter =
+    params.tool && params.tool.trim().toLowerCase() !== "all" ? params.tool.trim().toLowerCase() : null;
+
+  const res = await sql<{ severity: string; count: string | number }>`
+    SELECT severity, COUNT(*)::int AS count
+    FROM cli_handoff_tasks
+    WHERE user_email = ${params.userEmail}
+      AND (${statusCsv === null} OR status = ANY(string_to_array(${statusCsv ?? ""}, ',')))
+      AND (${severityCsv === null} OR severity = ANY(string_to_array(${severityCsv ?? ""}, ',')))
+      AND (${toolFilter === null} OR target_tool = ${toolFilter ?? ""} OR target_tool = 'any')
+    GROUP BY severity
+  `;
+
+  const countsBySeverity = { critical: 0, high: 0, medium: 0, low: 0 };
+  let total = 0;
+  for (const row of res.rows) {
+    const count = Number(row.count ?? 0);
+    total += count;
+    if (row.severity === "critical") countsBySeverity.critical += count;
+    else if (row.severity === "high") countsBySeverity.high += count;
+    else if (row.severity === "medium") countsBySeverity.medium += count;
+    else countsBySeverity.low += count;
   }
-  if (params.severity && params.severity !== "all") {
-    const allowed = new Set(params.severity.split(",").map((s) => s.trim()));
-    rows = rows.filter((t) => allowed.has(t.severity));
-  }
-  if (params.tool && params.tool !== "all") {
-    rows = rows.filter((t) => t.targetTool === params.tool || t.targetTool === "any");
-  }
-  return rows;
+
+  return { total, countsBySeverity };
 }
 
 export async function getHandoffTask(userEmail: string, taskId: string): Promise<HandoffTaskRecord | null> {
@@ -382,4 +442,22 @@ export async function deleteHandoffTask(userEmail: string, taskId: string): Prom
     RETURNING id
   `;
   return res.rows.length > 0;
+}
+
+export async function bulkDeleteHandoffTasks(params: {
+  userEmail: string;
+  status?: string;
+  severity?: string;
+}): Promise<number> {
+  await ensureHandoffTables();
+  const statusCsv = normalizeCsvFilter(params.status);
+  const severityCsv = normalizeCsvFilter(params.severity);
+  const res = await sql`
+    DELETE FROM cli_handoff_tasks
+    WHERE user_email = ${params.userEmail}
+      AND (${statusCsv === null} OR status = ANY(string_to_array(${statusCsv ?? ""}, ',')))
+      AND (${severityCsv === null} OR severity = ANY(string_to_array(${severityCsv ?? ""}, ',')))
+    RETURNING id
+  `;
+  return res.rows.length;
 }

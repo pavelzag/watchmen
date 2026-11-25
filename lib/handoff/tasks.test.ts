@@ -242,4 +242,63 @@ describe("lib/handoff/tasks", () => {
     expect(bpfDrafts[0].promptMarkdown).toContain("BPF C upatch");
     expect(bpfDrafts[0].promptMarkdown).toContain("checkout-api");
   });
+
+  it("sorts mixed-severity container CVEs highest-first across batches and prints Severity Breakdown", () => {
+    const lowIssues = Array.from({ length: 10 }, (_, idx) =>
+      handoffIssueFromContainerCve({
+        imageRef: "europe-west3-docker.pkg.dev/theinsite-dev/app/sneakpeek-processor:e9b3fe3e",
+        imageName: "sneakpeek-processor:e9b3fe3e",
+        cloud: "gcp",
+        accountId: "theinsite-dev",
+        cve: {
+          cveId: `CVE-2026-00${idx}`,
+          packageName: `pkg-low-${idx}`,
+          installedVersion: "1.0.0",
+          severity: "low",
+          description: "Minor issue",
+        },
+      })
+    );
+    const critIssue = handoffIssueFromContainerCve({
+      imageRef: "europe-west3-docker.pkg.dev/theinsite-dev/app/sneakpeek-processor:e9b3fe3e",
+      imageName: "sneakpeek-processor:e9b3fe3e",
+      cloud: "gcp",
+      accountId: "theinsite-dev",
+      cve: {
+        cveId: "CVE-2026-9999",
+        packageName: "openssl",
+        installedVersion: "3.0.0",
+        fixedVersion: "3.0.1",
+        severity: "critical",
+        description: "Critical RCE",
+      },
+    });
+    const medIssue = handoffIssueFromContainerCve({
+      imageRef: "europe-west3-docker.pkg.dev/theinsite-dev/app/sneakpeek-processor:e9b3fe3e",
+      imageName: "sneakpeek-processor:e9b3fe3e",
+      cloud: "gcp",
+      accountId: "theinsite-dev",
+      cve: {
+        cveId: "CVE-2026-5555",
+        packageName: "curl",
+        installedVersion: "8.0.0",
+        severity: "medium",
+        description: "Medium flaw",
+      },
+    });
+
+    // Pass low issues BEFORE critical/medium to ensure batching still prioritizes critical first
+    const drafts = buildHandoffTaskDrafts({
+      issues: [...lowIssues, medIssue, critIssue],
+      batchMode: "grouped",
+      targetTool: "opencode",
+    });
+
+    expect(drafts).toHaveLength(2);
+    expect(drafts[0].severity).toBe("critical");
+    expect(drafts[0].payload.issues[0].id).toContain("CVE-2026-9999");
+    expect(drafts[0].promptMarkdown).toContain("- **Severity Breakdown**: 1 critical, 1 medium, 6 low");
+    expect(drafts[0].promptMarkdown).toContain("- **Severity**: CRITICAL");
+    expect(drafts[1].severity).toBe("low");
+  });
 });

@@ -16,6 +16,26 @@ import {
   type HandoffTaskRecord,
   type HandoffTool,
 } from "@/lib/handoff/tasks";
+import type { SecurityFindingSeverity } from "@/lib/gcp/types";
+
+const SEVERITY_LEVELS: SecurityFindingSeverity[] = ["critical", "high", "medium", "low"];
+
+const SEVERITY_CHIP_STYLE: Record<SecurityFindingSeverity, { active: string; label: string }> = {
+  critical: { active: "border-red-500/60 bg-red-500/15 text-red-300", label: "Critical" },
+  high: { active: "border-orange-500/60 bg-orange-500/15 text-orange-300", label: "High" },
+  medium: { active: "border-amber-500/60 bg-amber-500/15 text-amber-300", label: "Medium" },
+  low: { active: "border-slate-500/60 bg-slate-500/15 text-slate-200", label: "Low" },
+};
+
+function defaultSelectedSeverities(issues: HandoffIssueItem[]): SecurityFindingSeverity[] {
+  const hasHighImpact = issues.some(
+    (i) => i.severity === "critical" || i.severity === "high" || i.severity === "medium"
+  );
+  if (issues.length > 100 && hasHighImpact) {
+    return ["critical", "high", "medium"];
+  }
+  return [...SEVERITY_LEVELS];
+}
 
 interface PushToCliModalProps {
   isOpen: boolean;
@@ -64,6 +84,9 @@ export default function PushToCliModal({
   const [targetTool, setTargetTool] = useState<HandoffTool>("opencode");
   const [batchMode, setBatchMode] = useState<HandoffBatchMode>("grouped");
   const [remediationMode, setRemediationMode] = useState<HandoffRemediationMode>(defaultRemediationMode);
+  const [selectedSeverities, setSelectedSeverities] = useState<SecurityFindingSeverity[]>(() =>
+    defaultSelectedSeverities(issues)
+  );
   const [commandMode, setCommandMode] = useState<"mcp" | "api" | "inline">("mcp");
   const [pushing, setPushing] = useState(false);
   const [pushError, setPushError] = useState<string | null>(null);
@@ -77,17 +100,41 @@ export default function PushToCliModal({
 
   useEffect(() => {
     if (!isOpen) return;
+    setSelectedSeverities(defaultSelectedSeverities(issues));
+  }, [isOpen, issues]);
+
+  useEffect(() => {
+    if (!isOpen) return;
     setPushError(null);
     setPushedTasks(null);
     setPushStats(null);
-  }, [isOpen, issues.length, batchMode, targetTool, remediationMode]);
+  }, [isOpen, issues.length, batchMode, targetTool, remediationMode, selectedSeverities]);
+
+  const severityCounts = useMemo(() => {
+    const counts: Record<SecurityFindingSeverity, number> = { critical: 0, high: 0, medium: 0, low: 0 };
+    for (const issue of issues) {
+      counts[issue.severity] = (counts[issue.severity] ?? 0) + 1;
+    }
+    return counts;
+  }, [issues]);
+
+  const filteredIssues = useMemo(
+    () => issues.filter((issue) => selectedSeverities.includes(issue.severity)),
+    [issues, selectedSeverities]
+  );
 
   const drafts = useMemo(
-    () => buildHandoffTaskDrafts({ issues, batchMode, targetTool, remediationMode }),
-    [issues, batchMode, targetTool, remediationMode]
+    () => buildHandoffTaskDrafts({ issues: filteredIssues, batchMode, targetTool, remediationMode }),
+    [filteredIssues, batchMode, targetTool, remediationMode]
   );
 
   if (!isOpen) return null;
+
+  function toggleSeverity(sev: SecurityFindingSeverity) {
+    setSelectedSeverities((prev) =>
+      prev.includes(sev) ? prev.filter((item) => item !== sev) : [...prev, sev]
+    );
+  }
 
   const origin = typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
   const activeTasks = pushedTasks ?? drafts.map((d, idx) => ({
@@ -100,14 +147,14 @@ export default function PushToCliModal({
   }));
 
   async function handlePushToQueue() {
-    if (issues.length === 0 || pushing) return;
+    if (filteredIssues.length === 0 || pushing) return;
     setPushing(true);
     setPushError(null);
     try {
       const res = await fetch("/api/handoff/tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ issues, batchMode, targetTool, remediationMode }),
+        body: JSON.stringify({ issues: filteredIssues, batchMode, targetTool, remediationMode }),
       });
       const data = (await res.json().catch(() => ({}))) as {
         error?: string;
@@ -163,7 +210,10 @@ export default function PushToCliModal({
                 Send {contextLabel} to CLI Task Queue
               </h2>
               <p className="text-[11px] font-mono text-slate-400">
-                {issues.length} issue{issues.length === 1 ? "" : "s"} → {drafts.length} task{drafts.length === 1 ? "" : "s"} · Watchmen v0.10
+                {filteredIssues.length === issues.length
+                  ? `${issues.length} issue${issues.length === 1 ? "" : "s"}`
+                  : `${filteredIssues.length} of ${issues.length} issues`}{" "}
+                → {drafts.length} task{drafts.length === 1 ? "" : "s"} · Watchmen v0.10
               </p>
             </div>
           </div>
@@ -192,6 +242,73 @@ export default function PushToCliModal({
               <KeyRound className="w-3 h-3" />
               Manage CLI API Tokens
             </Link>
+          </div>
+
+          {/* Severity Filter */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <p className="text-[10px] uppercase tracking-widest font-mono text-slate-400">
+                Include Severities ({filteredIssues.length}/{issues.length} selected)
+              </p>
+              <div className="flex items-center gap-1.5 text-[10px] font-mono flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setSelectedSeverities([...SEVERITY_LEVELS])}
+                  className="px-2 py-0.5 rounded border border-slate-800 text-slate-300 hover:border-slate-600"
+                >
+                  All
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedSeverities(["critical", "high", "medium"])}
+                  className="px-2 py-0.5 rounded border border-slate-800 text-amber-300 hover:border-amber-500/50"
+                >
+                  Crit + High + Med
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedSeverities(["critical", "medium"])}
+                  className="px-2 py-0.5 rounded border border-slate-800 text-sky-300 hover:border-sky-500/50"
+                >
+                  Crit + Med
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedSeverities(["critical"])}
+                  className="px-2 py-0.5 rounded border border-slate-800 text-red-300 hover:border-red-500/50"
+                >
+                  Critical Only
+                </button>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              {SEVERITY_LEVELS.map((sev) => {
+                const count = severityCounts[sev];
+                const active = selectedSeverities.includes(sev);
+                const cfg = SEVERITY_CHIP_STYLE[sev];
+                return (
+                  <button
+                    key={sev}
+                    type="button"
+                    onClick={() => toggleSeverity(sev)}
+                    aria-pressed={active}
+                    className={cn(
+                      "px-2.5 py-1 rounded border text-[11px] font-mono transition-colors",
+                      active
+                        ? cfg.active
+                        : "border-slate-800 bg-slate-900/40 text-slate-500 hover:text-slate-300"
+                    )}
+                  >
+                    {cfg.label} ({count})
+                  </button>
+                );
+              })}
+            </div>
+            {issues.length > 100 && !selectedSeverities.includes("low") && severityCounts.low > 0 && (
+              <div className="px-3 py-1.5 rounded border border-amber-500/30 bg-amber-500/10 text-[11px] text-amber-200 font-mono">
+                Large batch: {severityCounts.low} low-severity issues excluded by default so your MCP queue stays focused. Click &ldquo;Low ({severityCounts.low})&rdquo; or &ldquo;All&rdquo; to include them.
+              </div>
+            )}
           </div>
 
           {/* Remediation Mode */}
@@ -280,10 +397,10 @@ export default function PushToCliModal({
               <button
                 type="button"
                 onClick={handlePushToQueue}
-                disabled={demoMode || pushing || issues.length === 0}
+                disabled={demoMode || pushing || filteredIssues.length === 0}
                 className={cn(
                   "flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold transition-colors",
-                  demoMode || pushing || issues.length === 0
+                  demoMode || pushing || filteredIssues.length === 0
                     ? "bg-slate-800 text-slate-500 cursor-not-allowed"
                     : "bg-emerald-500 text-slate-950 hover:bg-emerald-400"
                 )}

@@ -150,4 +150,98 @@ describe("PushToCliModal", () => {
     const sentBody = JSON.parse(String(requestInit.body)) as { remediationMode?: string };
     expect(sentBody.remediationMode).toBe("shirudo_shield");
   });
+
+  it("allows filtering by Critical / Medium severities before pushing and excludes Low by default for huge batches", async () => {
+    const fetchMock = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        createdCount: 1,
+        updatedCount: 0,
+        tasks: [
+          {
+            id: "wm_tsk_crit_med",
+            title: "Container image vulnerabilities",
+            severity: "critical",
+            issueCount: 2,
+            promptMarkdown: "# Critical and Medium",
+          },
+        ],
+      }),
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const manyLow = Array.from({ length: 105 }, (_, i) => ({
+      id: `container-cve:gcp:p:img:CVE-2026-0${i}:pkg${i}`,
+      kind: "container_cve" as const,
+      cloud: "gcp" as const,
+      severity: "low" as const,
+      title: `CVE-2026-0${i}`,
+      description: "Low issue",
+      resourceName: "img",
+      resourceType: "container_image",
+      projectId: "p",
+    }));
+    const highIssue = {
+      id: "container-cve:gcp:p:img:CVE-2026-8888:libssl",
+      kind: "container_cve" as const,
+      cloud: "gcp" as const,
+      severity: "high" as const,
+      title: "CVE-2026-8888",
+      description: "High issue",
+      resourceName: "img",
+      resourceType: "container_image",
+      projectId: "p",
+    };
+    const medIssue = {
+      id: "container-cve:gcp:p:img:CVE-2026-7777:zlib",
+      kind: "container_cve" as const,
+      cloud: "gcp" as const,
+      severity: "medium" as const,
+      title: "CVE-2026-7777",
+      description: "Medium issue",
+      resourceName: "img",
+      resourceType: "container_image",
+      projectId: "p",
+    };
+    const critIssue = {
+      id: "container-cve:gcp:p:img:CVE-2026-9999:openssl",
+      kind: "container_cve" as const,
+      cloud: "gcp" as const,
+      severity: "critical" as const,
+      title: "CVE-2026-9999",
+      description: "Critical issue",
+      resourceName: "img",
+      resourceType: "container_image",
+      projectId: "p",
+    };
+
+    render(
+      <PushToCliModal
+        isOpen
+        onClose={jest.fn()}
+        issues={[...manyLow, highIssue, medIssue, critIssue]}
+        contextLabel="Container CVEs"
+      />
+    );
+
+    // Low (105) is excluded by default for >100 issues
+    expect(screen.getByText(/Large batch: 105 low-severity issues excluded by default/i)).toBeInTheDocument();
+    expect(screen.getByText(/3 of 108 issues/i)).toBeInTheDocument();
+
+    // Pick Critical + Medium only
+    fireEvent.click(screen.getByText("Crit + Med"));
+    expect(screen.getByText(/2 of 108 issues/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Push to Watchmen Queue"));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    const [, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const sentBody = JSON.parse(String(requestInit.body)) as { issues: Array<{ severity: string }> };
+    expect(sentBody.issues).toHaveLength(2);
+    expect(sentBody.issues.map((i) => i.severity).sort()).toEqual(["critical", "medium"]);
+  });
 });

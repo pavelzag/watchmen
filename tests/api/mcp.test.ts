@@ -4,6 +4,7 @@ import { NextRequest } from "next/server";
 
 const mockResolveHandoffActor = jest.fn();
 const mockListHandoffTasks = jest.fn();
+const mockGetHandoffTaskSummary = jest.fn();
 const mockGetHandoffTask = jest.fn();
 const mockUpdateHandoffTask = jest.fn();
 const mockVerifyHandoffTask = jest.fn();
@@ -16,6 +17,7 @@ const mockTriggerGcpScanForMcp = jest.fn();
 jest.mock("@/lib/handoff/store", () => ({
   resolveHandoffActor: mockResolveHandoffActor,
   listHandoffTasks: mockListHandoffTasks,
+  getHandoffTaskSummary: mockGetHandoffTaskSummary,
   getHandoffTask: mockGetHandoffTask,
   updateHandoffTask: mockUpdateHandoffTask,
 }));
@@ -122,6 +124,10 @@ describe("Watchmen MCP endpoint (/api/mcp)", () => {
     };
 
     mockListHandoffTasks.mockResolvedValueOnce([sampleTask]);
+    mockGetHandoffTaskSummary.mockResolvedValueOnce({
+      total: 42,
+      countsBySeverity: { critical: 2, high: 5, medium: 10, low: 25 },
+    });
     mockGetHandoffTask.mockResolvedValueOnce(sampleTask);
     mockUpdateHandoffTask
       .mockResolvedValueOnce({ ...sampleTask, status: "in_progress", claimedBy: "opencode" })
@@ -145,7 +151,10 @@ describe("Watchmen MCP endpoint (/api/mcp)", () => {
     );
     const listJson = await listCall.json();
     expect(listJson.result.content[0].text).toContain("wm_tsk_123");
+    expect(listJson.result.content[0].text).toContain("1 of 42");
+    expect(listJson.result.content[0].text).toContain("critical=2");
     expect(listJson.result.structuredContent.tasks).toHaveLength(1);
+    expect(listJson.result.structuredContent.total).toBe(42);
 
     const getCall = await postMcp(
       new NextRequest("http://localhost:3000/api/mcp", {

@@ -27,6 +27,14 @@ export interface McpTaskClient {
     tool?: string;
     limit?: number;
   }): Promise<HandoffTaskRecord[]>;
+  getTaskSummary?: (params: {
+    status?: string;
+    severity?: string;
+    tool?: string;
+  }) => Promise<{
+    total: number;
+    countsBySeverity: { critical: number; high: number; medium: number; low: number };
+  }>;
   getTask(taskId: string): Promise<HandoffTaskRecord | null>;
   updateTask(params: {
     taskId: string;
@@ -500,11 +508,22 @@ export async function handleMcpJsonRpc(
         const tool = typeof args.tool === "string" ? args.tool : "all";
         const limit = typeof args.limit === "number" && Number.isFinite(args.limit) ? Math.min(Math.max(args.limit, 1), 100) : 25;
 
-        const tasks = await client.listTasks({ status, severity, tool, limit });
+        const [tasks, taskSummary] = await Promise.all([
+          client.listTasks({ status, severity, tool, limit }),
+          client.getTaskSummary ? client.getTaskSummary({ status, severity, tool }) : Promise.resolve(null),
+        ]);
+        const total = taskSummary?.total ?? tasks.length;
+        const counts = taskSummary?.countsBySeverity ?? {
+          critical: tasks.filter((t) => t.severity === "critical").length,
+          high: tasks.filter((t) => t.severity === "high").length,
+          medium: tasks.filter((t) => t.severity === "medium").length,
+          low: tasks.filter((t) => t.severity === "low").length,
+        };
+        const breakdownStr = `critical=${counts.critical}, high=${counts.high}, medium=${counts.medium}, low=${counts.low}`;
         const summary = tasks.length
-          ? `Found ${tasks.length} Watchmen task(s):\n${tasks.map(formatTaskSummaryLine).join("\n")}`
+          ? `Showing ${tasks.length} of ${total} matching Watchmen task(s) (${breakdownStr}, sorted highest severity first):\n${tasks.map(formatTaskSummaryLine).join("\n")}`
           : "No matching Watchmen tasks found.";
-        return okResult(id, toolText(summary, { tasks }));
+        return okResult(id, toolText(summary, { tasks, total, countsBySeverity: counts }));
       }
 
       if (name === "watchmen_get_task") {

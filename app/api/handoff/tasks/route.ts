@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  bulkDeleteHandoffTasks,
+  getHandoffTaskSummary,
   listHandoffTasks,
   pushHandoffTasks,
   resolveHandoffActor,
@@ -33,15 +35,23 @@ export async function GET(req: NextRequest) {
     const limitParam = Number(searchParams.get("limit") ?? "50");
     const limit = Number.isFinite(limitParam) ? limitParam : 50;
 
-    const tasks = await listHandoffTasks({
-      userEmail: actor.email,
-      status,
-      severity,
-      tool,
-      limit,
-    });
+    const [tasks, summary] = await Promise.all([
+      listHandoffTasks({
+        userEmail: actor.email,
+        status,
+        severity,
+        tool,
+        limit,
+      }),
+      getHandoffTaskSummary({
+        userEmail: actor.email,
+        status,
+        severity,
+        tool,
+      }),
+    ]);
 
-    return NextResponse.json({ tasks });
+    return NextResponse.json({ tasks, summary });
   } catch (err) {
     console.error("[api/handoff/tasks] GET error:", err);
     return NextResponse.json({ error: "Failed to load CLI handoff tasks." }, { status: 500 });
@@ -99,5 +109,30 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     console.error("[api/handoff/tasks] POST error:", err);
     return NextResponse.json({ error: "Failed to push tasks to CLI queue." }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  const actor = await resolveHandoffActor(req);
+  if (!actor) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (actor.isDemoUser) {
+    return NextResponse.json({ error: "Disabled in Demo mode." }, { status: 403 });
+  }
+
+  try {
+    const { searchParams } = new URL(req.url);
+    const status = searchParams.get("status") ?? "open";
+    const severity = searchParams.get("severity") ?? "all";
+    const deletedCount = await bulkDeleteHandoffTasks({
+      userEmail: actor.email,
+      status,
+      severity,
+    });
+    return NextResponse.json({ ok: true, deletedCount });
+  } catch (err) {
+    console.error("[api/handoff/tasks] DELETE error:", err);
+    return NextResponse.json({ error: "Failed to clear CLI handoff tasks." }, { status: 500 });
   }
 }

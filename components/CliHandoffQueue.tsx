@@ -29,6 +29,26 @@ const STATUS_FILTERS: Array<{ id: string; label: string }> = [
   { id: "all", label: "All" },
 ];
 
+const SEVERITY_FILTERS: Array<{ id: string; label: string }> = [
+  { id: "all", label: "All Severities" },
+  { id: "critical,high,medium", label: "Crit + High + Med" },
+  { id: "critical,medium", label: "Crit + Med" },
+  { id: "critical", label: "Critical" },
+  { id: "high", label: "High" },
+  { id: "medium", label: "Medium" },
+  { id: "low", label: "Low" },
+];
+
+interface QueueSummary {
+  total: number;
+  countsBySeverity: {
+    critical: number;
+    high: number;
+    medium: number;
+    low: number;
+  };
+}
+
 function statusStyle(status: HandoffTaskStatus): { color: string; border: string; bg: string } {
   switch (status) {
     case "completed":
@@ -46,24 +66,35 @@ function statusStyle(status: HandoffTaskStatus): { color: string; border: string
 export default function CliHandoffQueue() {
   const demoMode = useDemoMode();
   const [tasks, setTasks] = useState<HandoffTaskRecord[]>([]);
+  const [summary, setSummary] = useState<QueueSummary | null>(null);
   const [statusFilter, setStatusFilter] = useState("open,claimed,in_progress");
+  const [severityFilter, setSeverityFilter] = useState("all");
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [clearingLow, setClearingLow] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function loadTasks(filter = statusFilter) {
+  async function loadTasks(status = statusFilter, severity = severityFilter) {
     if (demoMode) {
       setTasks([]);
+      setSummary(null);
       setLoading(false);
       return;
     }
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/handoff/tasks?status=${encodeURIComponent(filter)}&limit=50`);
-      const data = (await res.json().catch(() => ({}))) as { tasks?: HandoffTaskRecord[]; error?: string };
+      const res = await fetch(
+        `/api/handoff/tasks?status=${encodeURIComponent(status)}&severity=${encodeURIComponent(severity)}&limit=50`
+      );
+      const data = (await res.json().catch(() => ({}))) as {
+        tasks?: HandoffTaskRecord[];
+        summary?: QueueSummary;
+        error?: string;
+      };
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
       setTasks(data.tasks ?? []);
+      setSummary(data.summary ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load CLI handoff queue.");
     } finally {
@@ -71,10 +102,28 @@ export default function CliHandoffQueue() {
     }
   }
 
+  async function clearLowOpenTasks() {
+    if (demoMode || clearingLow) return;
+    setClearingLow(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/handoff/tasks?status=open&severity=low", {
+        method: "DELETE",
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      await loadTasks(statusFilter, severityFilter);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to clear low-severity open tasks.");
+    } finally {
+      setClearingLow(false);
+    }
+  }
+
   useEffect(() => {
-    void loadTasks(statusFilter);
+    void loadTasks(statusFilter, severityFilter);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusFilter, demoMode]);
+  }, [statusFilter, severityFilter, demoMode]);
 
   async function updateStatus(taskId: string, status: HandoffTaskStatus) {
     setBusyId(taskId);
@@ -87,7 +136,7 @@ export default function CliHandoffQueue() {
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
-      await loadTasks(statusFilter);
+      await loadTasks(statusFilter, severityFilter);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update task.");
     } finally {
@@ -106,7 +155,7 @@ export default function CliHandoffQueue() {
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
-      await loadTasks(statusFilter);
+      await loadTasks(statusFilter, severityFilter);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to verify task.");
     } finally {
@@ -161,7 +210,7 @@ export default function CliHandoffQueue() {
           </Link>
           <button
             type="button"
-            onClick={() => void loadTasks(statusFilter)}
+            onClick={() => void loadTasks(statusFilter, severityFilter)}
             disabled={loading}
             className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-mono border border-slate-700 text-slate-300 hover:bg-slate-800 disabled:opacity-50"
           >
@@ -172,21 +221,60 @@ export default function CliHandoffQueue() {
       </div>
 
       {/* Filter pills */}
-      <div className="flex items-center gap-1.5 flex-wrap">
-        {STATUS_FILTERS.map((f) => (
-          <button
-            key={f.id}
-            type="button"
-            onClick={() => setStatusFilter(f.id)}
-            className={`px-2.5 py-1 text-[11px] font-mono border transition-colors ${
-              statusFilter === f.id
-                ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-300"
-                : "border-slate-800 text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            {f.label}
-          </button>
-        ))}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {STATUS_FILTERS.map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                onClick={() => setStatusFilter(f.id)}
+                className={`px-2.5 py-1 text-[11px] font-mono border transition-colors ${
+                  statusFilter === f.id
+                    ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-300"
+                    : "border-slate-800 text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+
+          {!demoMode && (summary?.countsBySeverity.low ?? 0) > 0 && (
+            <button
+              type="button"
+              onClick={() => void clearLowOpenTasks()}
+              disabled={clearingLow}
+              className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-mono border border-slate-700 text-slate-300 hover:border-red-500/40 hover:text-red-300 disabled:opacity-50"
+              title="Remove open low-severity tasks from the queue"
+            >
+              <Trash2 className="w-3 h-3" />
+              {clearingLow ? "Clearing..." : `Clear Open Low (${summary?.countsBySeverity.low ?? 0})`}
+            </button>
+          )}
+        </div>
+
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {SEVERITY_FILTERS.map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              onClick={() => setSeverityFilter(f.id)}
+              className={`px-2 py-0.5 text-[10px] font-mono border transition-colors ${
+                severityFilter === f.id
+                  ? "border-sky-500/50 bg-sky-500/15 text-sky-300"
+                  : "border-slate-800 text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              {f.label}
+              {f.id === "all" && summary ? ` (${summary.total})` : ""}
+              {f.id === "critical" && summary ? ` (${summary.countsBySeverity.critical})` : ""}
+              {f.id === "high" && summary ? ` (${summary.countsBySeverity.high})` : ""}
+              {f.id === "medium" && summary ? ` (${summary.countsBySeverity.medium})` : ""}
+              {f.id === "low" && summary ? ` (${summary.countsBySeverity.low})` : ""}
+            </button>
+          ))}
+        </div>
       </div>
 
       {error && (

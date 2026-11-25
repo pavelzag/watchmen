@@ -54,7 +54,31 @@ const SEV_STYLES: Record<CveSeverity, { label: string; color: string; border: st
 
 const SEVERITY_ORDER: CveSeverity[] = ["critical", "high", "medium", "low", "negligible"];
 
-type SeverityFilter = "all" | "critical" | "high" | "medium" | "low";
+type SeverityFilter = "all" | "critical_high_medium" | "critical_medium" | "critical" | "high" | "medium" | "low";
+
+function severityMatchesFilter(severity: CveSeverity, filter: SeverityFilter): boolean {
+  if (filter === "all") return true;
+  if (filter === "critical_high_medium") {
+    return severity === "critical" || severity === "high" || severity === "medium";
+  }
+  if (filter === "critical_medium") {
+    return severity === "critical" || severity === "medium";
+  }
+  return severity === filter;
+}
+
+function summaryCountForFilter(summary: ImageScanResult["summary"], filter: SeverityFilter): number {
+  if (filter === "all") {
+    return summary.critical + summary.high + summary.medium + summary.low + summary.negligible;
+  }
+  if (filter === "critical_high_medium") {
+    return summary.critical + summary.high + summary.medium;
+  }
+  if (filter === "critical_medium") {
+    return summary.critical + summary.medium;
+  }
+  return summary[filter];
+}
 type CloudFilter = "all" | ImageRegistry;
 type StatusFilter = "all" | "vulnerable" | "clean" | "unscanned";
 type DateRangeFilter = "all" | "24h" | "7d" | "30d" | "custom";
@@ -125,7 +149,7 @@ function cveMatchesFilters(
   severityFilter: SeverityFilter,
   searchNeedle: string
 ): boolean {
-  if (severityFilter !== "all" && cve.severity !== severityFilter) {
+  if (!severityMatchesFilter(cve.severity, severityFilter)) {
     return false;
   }
   if (!searchNeedle) return true;
@@ -841,7 +865,7 @@ export default function ContainerScanPage() {
         }
       }
 
-      if (filter !== "all" && r.summary[filter] === 0) return false;
+      if (filter !== "all" && summaryCountForFilter(r.summary, filter) === 0) return false;
 
       if (searchNeedle) {
         const imageMatch =
@@ -1255,28 +1279,29 @@ export default function ContainerScanPage() {
             {/* Severity Pills */}
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="flex gap-1 flex-wrap">
-                {(["all", "critical", "high", "medium", "low"] as const).map((f) => {
-                  const count = f === "all" ? totalVulns :
-                                f === "critical" ? totalCritical :
-                                f === "high" ? totalHigh :
-                                f === "medium" ? totalMedium :
-                                totalLow;
-                  return (
-                    <button
-                      type="button"
-                      key={f}
-                      onClick={() => setFilter(f)}
-                      style={{
-                        fontFamily: "monospace", fontSize: 10, letterSpacing: 2, padding: "4px 14px",
-                        border: filter === f ? "1px solid var(--green)" : "1px solid var(--border-dim)",
-                        color: filter === f ? "var(--green)" : "var(--text-muted)",
-                        background: "transparent", textTransform: "uppercase",
-                      }}
-                    >
-                      {f} ({count})
-                    </button>
-                  );
-                })}
+                {([
+                  { id: "all", label: "All", count: totalVulns },
+                  { id: "critical_high_medium", label: "Crit + High + Med", count: totalCritical + totalHigh + totalMedium },
+                  { id: "critical_medium", label: "Crit + Med", count: totalCritical + totalMedium },
+                  { id: "critical", label: "Critical", count: totalCritical },
+                  { id: "high", label: "High", count: totalHigh },
+                  { id: "medium", label: "Medium", count: totalMedium },
+                  { id: "low", label: "Low", count: totalLow },
+                ] as const).map((item) => (
+                  <button
+                    type="button"
+                    key={item.id}
+                    onClick={() => setFilter(item.id)}
+                    style={{
+                      fontFamily: "monospace", fontSize: 10, letterSpacing: 1.5, padding: "4px 12px",
+                      border: filter === item.id ? "1px solid var(--green)" : "1px solid var(--border-dim)",
+                      color: filter === item.id ? "var(--green)" : "var(--text-muted)",
+                      background: "transparent", textTransform: "uppercase",
+                    }}
+                  >
+                    {item.label} ({item.count})
+                  </button>
+                ))}
               </div>
               <span className="text-[11px] font-mono text-slate-500">
                 {filteredAndSorted.length} image{filteredAndSorted.length === 1 ? "" : "s"} · {visibleCvePairs.length} matching CVE{visibleCvePairs.length === 1 ? "" : "s"}

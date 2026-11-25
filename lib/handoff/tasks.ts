@@ -424,6 +424,22 @@ export function renderTaskPromptMarkdown(params: {
   const clouds = [...new Set(params.issues.map((i) => i.cloud.toUpperCase()))].join(", ");
   const projects = [...new Set(params.issues.map((i) => i.projectId).filter(Boolean))];
   const mode: HandoffRemediationMode = params.remediationMode ?? "iac";
+  const sortedIssues = [...params.issues].sort(
+    (a, b) => (SEVERITY_RANK[b.severity] ?? 0) - (SEVERITY_RANK[a.severity] ?? 0)
+  );
+  const sevCounts: Record<SecurityFindingSeverity, number> = {
+    critical: 0,
+    high: 0,
+    medium: 0,
+    low: 0,
+  };
+  for (const item of sortedIssues) {
+    sevCounts[item.severity] = (sevCounts[item.severity] ?? 0) + 1;
+  }
+  const breakdownText = (["critical", "high", "medium", "low"] as const)
+    .filter((sev) => sevCounts[sev] > 0)
+    .map((sev) => `${sevCounts[sev]} ${sev}`)
+    .join(", ");
 
   const lines: string[] = [
     mode === "shirudo_shield"
@@ -432,9 +448,10 @@ export function renderTaskPromptMarkdown(params: {
     "",
     `- **Mode**: ${mode === "shirudo_shield" ? "Shirudo Live Shield (upatch)" : "IaC / Code Remediation"}`,
     `- **Highest Severity**: ${params.severity.toUpperCase()}`,
+    ...(breakdownText ? [`- **Severity Breakdown**: ${breakdownText}`] : []),
     `- **Clouds**: ${clouds || "GCP/AWS"}`,
     `- **Projects / Accounts**: ${projects.join(", ") || "N/A"}`,
-    `- **Issue Count**: ${params.issues.length}`,
+    `- **Issue Count**: ${sortedIssues.length}`,
   ];
 
   if (params.taskId) {
@@ -466,9 +483,10 @@ export function renderTaskPromptMarkdown(params: {
     );
   }
 
-  params.issues.forEach((issue, index) => {
+  sortedIssues.forEach((issue, index) => {
     lines.push(`### ${index + 1}. [${issue.severity.toUpperCase()}] ${issue.title}`);
     lines.push(`- **ID**: \`${issue.id}\``);
+    lines.push(`- **Severity**: ${issue.severity.toUpperCase()}`);
     lines.push(`- **Cloud / Project**: ${issue.cloud.toUpperCase()} / \`${issue.projectId}\`${issue.region ? ` (${issue.region})` : ""}`);
     lines.push(`- **Resource**: \`${issue.resourceName}\`${issue.resourceType ? ` (${issue.resourceType})` : ""}`);
     lines.push(`- **Details**: ${issue.description}`);
@@ -514,18 +532,21 @@ export function buildHandoffTaskDrafts(params: {
     category: HandoffTaskPayload["category"],
     groupIssues: HandoffIssueItem[]
   ): HandoffTaskDraft => {
+    const sortedGroup = [...groupIssues].sort(
+      (a, b) => (SEVERITY_RANK[b.severity] ?? 0) - (SEVERITY_RANK[a.severity] ?? 0)
+    );
     const title = remediationMode === "shirudo_shield" ? `[Shirudo Shield] ${rawTitle}` : rawTitle;
-    const severity = maxSeverity(groupIssues.map((i) => i.severity));
-    const clouds = [...new Set(groupIssues.map((i) => i.cloud))];
-    const projectIds = [...new Set(groupIssues.map((i) => i.projectId).filter(Boolean))];
-    const fingerprint = computeTaskFingerprint(batchMode, groupIssues.map((i) => i.id), remediationMode);
+    const severity = maxSeverity(sortedGroup.map((i) => i.severity));
+    const clouds = [...new Set(sortedGroup.map((i) => i.cloud))];
+    const projectIds = [...new Set(sortedGroup.map((i) => i.projectId).filter(Boolean))];
+    const fingerprint = computeTaskFingerprint(batchMode, sortedGroup.map((i) => i.id), remediationMode);
     return {
       fingerprint,
       title,
       targetTool,
       batchMode,
       severity,
-      issueCount: groupIssues.length,
+      issueCount: sortedGroup.length,
       payload: {
         version: "0.9",
         remediationMode,
@@ -534,12 +555,12 @@ export function buildHandoffTaskDrafts(params: {
         targetTool,
         clouds,
         projectIds,
-        issues: groupIssues,
+        issues: sortedGroup,
       },
       promptMarkdown: renderTaskPromptMarkdown({
         title,
         severity,
-        issues: groupIssues,
+        issues: sortedGroup,
         remediationMode,
       }),
     };

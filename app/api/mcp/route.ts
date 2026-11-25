@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   getHandoffTask,
+  getHandoffTaskSummary,
   listHandoffTasks,
   resolveHandoffActor,
   updateHandoffTask,
@@ -42,6 +43,13 @@ function createServerTaskClient(userEmail: string): McpTaskClient {
         severity: params.severity,
         tool: params.tool,
         limit: params.limit,
+      }),
+    getTaskSummary: (params) =>
+      getHandoffTaskSummary({
+        userEmail,
+        status: params.status,
+        severity: params.severity,
+        tool: params.tool,
       }),
     getTask: (taskId) => getHandoffTask(userEmail, taskId),
     updateTask: (params) =>

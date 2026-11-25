@@ -112,6 +112,13 @@ function batchReason(category: RemediationBatchCategory): string {
   return "These issues are better handled in a smaller dedicated batch.";
 }
 
+const TARGET_SEVERITY_RANK: Record<SecurityFindingSeverity, number> = {
+  critical: 4,
+  high: 3,
+  medium: 2,
+  low: 1,
+};
+
 export function buildRemediationBatchSuggestions(targets: RemediationTarget[]): RemediationBatchSuggestion[] {
   const grouped = new Map<RemediationBatchCategory, RemediationTarget[]>();
 
@@ -126,9 +133,12 @@ export function buildRemediationBatchSuggestions(targets: RemediationTarget[]): 
     .filter(([, groupedTargets]) => groupedTargets.length > 0)
     .sort((a, b) => b[1].length - a[1].length)
     .flatMap(([category, groupedTargets]) => {
-      const totalChunks = Math.ceil(groupedTargets.length / MAX_BATCH_TARGETS);
+      const sortedTargets = [...groupedTargets].sort(
+        (a, b) => (TARGET_SEVERITY_RANK[b.severity] ?? 0) - (TARGET_SEVERITY_RANK[a.severity] ?? 0)
+      );
+      const totalChunks = Math.ceil(sortedTargets.length / MAX_BATCH_TARGETS);
       return Array.from({ length: totalChunks }, (_, index) => {
-        const chunkTargets = groupedTargets.slice(index * MAX_BATCH_TARGETS, (index + 1) * MAX_BATCH_TARGETS);
+        const chunkTargets = sortedTargets.slice(index * MAX_BATCH_TARGETS, (index + 1) * MAX_BATCH_TARGETS);
         const chunkSuffix = totalChunks > 1 ? ` ${index + 1}/${totalChunks}` : "";
         return {
           id: `${category}:${chunkTargets.map((target) => target.id).join(",")}`,
