@@ -19,7 +19,16 @@ import {
   GitPullRequest,
   Terminal,
 } from "lucide-react";
-import { filterLatestPerApplication, getApplicationKey, type ImageScanResult, type ContainerVulnerability, type CveSeverity, type ImageRegistry } from "@/lib/container-scanning";
+import {
+  deduplicateImagesAcrossEnvironments,
+  filterLatestPerApplication,
+  getApplicationKey,
+  getApplicationShortName,
+  type ImageScanResult,
+  type ContainerVulnerability,
+  type CveSeverity,
+  type ImageRegistry,
+} from "@/lib/container-scanning";
 import type { GcpScanWarning } from "@/lib/gcp/types";
 import { cn } from "@/lib/utils";
 import { getActiveBrowserAIKey } from "@/lib/ai/browser-ai-keys";
@@ -53,15 +62,6 @@ const SEV_STYLES: Record<CveSeverity, { label: string; color: string; border: st
 };
 
 const SEVERITY_ORDER: CveSeverity[] = ["critical", "high", "medium", "low", "negligible"];
-
-function getApplicationShortName(
-  result: Pick<ImageScanResult, "imageRef" | "imageName">
-): string {
-  const ref = (result.imageRef || result.imageName || "").trim().replace(/^https?:\/\//i, "");
-  const parts = ref.split("/").filter(Boolean);
-  const last = parts[parts.length - 1] ?? result.imageName ?? "";
-  return last.split("@")[0].split(":")[0] || last || result.imageName;
-}
 
 type SelectableSeverity = "critical" | "high" | "medium" | "low";
 
@@ -417,7 +417,8 @@ function ImageCard({
     !searchNeedle ||
     matchesSearchText(result.imageName, searchNeedle) ||
     matchesSearchText(result.imageRef, searchNeedle) ||
-    matchesSearchText(result.accountId, searchNeedle);
+    matchesSearchText(result.accountId, searchNeedle) ||
+    Boolean(result.duplicates?.some((d) => matchesSearchText(d.accountId, searchNeedle) || matchesSearchText(d.imageName, searchNeedle) || matchesSearchText(d.imageRef, searchNeedle)));
 
   const filteredVulns = result.vulnerabilities.filter((v) =>
     cveMatchesFilters(v, selectedSeverities, imageLevelMatch ? "" : searchNeedle)
@@ -513,6 +514,24 @@ function ImageCard({
                   SCAN FAILED
                 </span>
               )}
+              {result.duplicates && result.duplicates.length > 1 && (() => {
+                const envs = [...new Set(result.duplicates.map((d) => d.accountId).filter(Boolean))];
+                return (
+                  <span
+                    style={{
+                      fontSize: 9,
+                      color: "#34d399",
+                      fontFamily: "monospace",
+                      border: "1px solid rgba(52,211,153,0.4)",
+                      background: "rgba(16,185,129,0.08)",
+                      padding: "0 5px",
+                    }}
+                    title={result.duplicates.map((d) => `${d.accountId}: ${d.imageRef}`).join("\n")}
+                  >
+                    {envs.length > 1 ? `${envs.length} ENVS: ${envs.join(" + ")}` : `${result.duplicates.length} IDENTICAL`}
+                  </span>
+                );
+              })()}
               {result.scanner === "trivy" && (
                 <span style={{ fontSize: 9, color: "#38bdf8", fontFamily: "monospace", border: "1px solid #38bdf833", padding: "0 5px" }}>
                   TRIVY
@@ -560,19 +579,22 @@ function ImageCard({
             <>
               <button
                 type="button"
-                onClick={() =>
+                onClick={() => {
+                  const envAccounts = result.duplicates?.length
+                    ? [...new Set(result.duplicates.map((d) => d.accountId).filter(Boolean))]
+                    : [result.accountId];
                   onSendToCli(
                     sortedVulns.map((cve) =>
                       handoffIssueFromContainerCve({
                         imageRef: result.imageRef,
                         imageName: result.imageName,
                         cloud: result.cloud,
-                        accountId: result.accountId,
+                        accountId: envAccounts.join(", "),
                         cve,
                       })
                     )
-                  )
-                }
+                  );
+                }}
                 className="flex items-center gap-1 px-2 py-1 text-[10px] font-mono uppercase tracking-wider border border-emerald-500/35 text-emerald-300 rounded hover:bg-emerald-500/10 transition-colors"
                 title="Send this image's CVEs to AI / CLI Queue"
               >
@@ -581,20 +603,23 @@ function ImageCard({
               </button>
               <button
                 type="button"
-                onClick={() =>
+                onClick={() => {
+                  const envAccounts = result.duplicates?.length
+                    ? [...new Set(result.duplicates.map((d) => d.accountId).filter(Boolean))]
+                    : [result.accountId];
                   onSendToCli(
                     sortedVulns.map((cve) =>
                       handoffIssueFromContainerCve({
                         imageRef: result.imageRef,
                         imageName: result.imageName,
                         cloud: result.cloud,
-                        accountId: result.accountId,
+                        accountId: envAccounts.join(", "),
                         cve,
                       })
                     ),
                     "shirudo_shield"
-                  )
-                }
+                  );
+                }}
                 className="flex items-center gap-1 px-2 py-1 text-[10px] font-mono uppercase tracking-wider border border-violet-500/35 text-violet-300 rounded hover:bg-violet-500/10 transition-colors"
                 title="Generate a Shirudo live shield (upatch) for this image's CVEs via CLI"
               >
@@ -714,6 +739,7 @@ export default function ContainerScanPage() {
   const [appFilter, setAppFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [latestOnly, setLatestOnly] = useState(false);
+  const [dedupEnvs, setDedupEnvs] = useState(false);
   const [dateRange, setDateRange] = useState<DateRangeFilter>("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -810,7 +836,7 @@ export default function ContainerScanPage() {
   // Reset to page 1 when filters or sort change
   useEffect(() => {
     setPage(1);
-  }, [search, selectedSeverities, cloudFilter, appFilter, statusFilter, latestOnly, dateRange, dateFrom, dateTo, sortBy, pageSize]);
+  }, [search, selectedSeverities, cloudFilter, appFilter, statusFilter, latestOnly, dedupEnvs, dateRange, dateFrom, dateTo, sortBy, pageSize]);
 
   // When Trivy is active, managed Container Analysis 403/disabled is optional non-blocking noise.
   const actionableWarnings = useMemo(() => {
@@ -825,7 +851,13 @@ export default function ContainerScanPage() {
   }, [warnings, trivyAvailable]);
 
   const latestResults = useMemo(() => filterLatestPerApplication(results), [results]);
-  const scopedResults = latestOnly ? latestResults : results;
+  const baseScopedResults = latestOnly ? latestResults : results;
+  const dedupedResults = useMemo(
+    () => deduplicateImagesAcrossEnvironments(baseScopedResults),
+    [baseScopedResults]
+  );
+  const duplicateCount = Math.max(0, baseScopedResults.length - dedupedResults.length);
+  const scopedResults = dedupEnvs ? dedupedResults : baseScopedResults;
 
   const appPool = useMemo(
     () => (cloudFilter === "all" ? scopedResults : scopedResults.filter((r) => r.cloud === cloudFilter)),
@@ -928,7 +960,8 @@ export default function ContainerScanPage() {
         const imageMatch =
           matchesSearchText(r.imageName, searchNeedle) ||
           matchesSearchText(r.imageRef, searchNeedle) ||
-          matchesSearchText(r.accountId, searchNeedle);
+          matchesSearchText(r.accountId, searchNeedle) ||
+          Boolean(r.duplicates?.some((d) => matchesSearchText(d.accountId, searchNeedle) || matchesSearchText(d.imageName, searchNeedle) || matchesSearchText(d.imageRef, searchNeedle)));
         const cveMatch = r.vulnerabilities.some((v) =>
           cveMatchesFilters(v, selectedSeverities, searchNeedle)
         );
@@ -983,7 +1016,8 @@ export default function ContainerScanPage() {
         !searchNeedle ||
         matchesSearchText(r.imageName, searchNeedle) ||
         matchesSearchText(r.imageRef, searchNeedle) ||
-        matchesSearchText(r.accountId, searchNeedle);
+        matchesSearchText(r.accountId, searchNeedle) ||
+        Boolean(r.duplicates?.some((d) => matchesSearchText(d.accountId, searchNeedle) || matchesSearchText(d.imageName, searchNeedle) || matchesSearchText(d.imageRef, searchNeedle)));
       for (const cve of r.vulnerabilities) {
         if (cveMatchesFilters(cve, selectedSeverities, imageMatch ? "" : searchNeedle)) {
           pairs.push({ result: r, cve });
@@ -1004,6 +1038,7 @@ export default function ContainerScanPage() {
     appFilter !== "all" ||
     statusFilter !== "all" ||
     latestOnly ||
+    dedupEnvs ||
     dateRange !== "all";
 
   function clearFilters() {
@@ -1013,6 +1048,7 @@ export default function ContainerScanPage() {
     setAppFilter("all");
     setStatusFilter("all");
     setLatestOnly(false);
+    setDedupEnvs(false);
     setDateRange("all");
     setDateFrom("");
     setDateTo("");
@@ -1041,15 +1077,19 @@ export default function ContainerScanPage() {
               type="button"
               onClick={() =>
                 setRemediateTargets(
-                  visibleCvePairs.slice(0, 40).map(({ result, cve }) =>
-                    remediationTargetFromContainerCve({
+                  visibleCvePairs.slice(0, 40).map(({ result, cve }) => {
+                    const envAccounts = result.duplicates?.length
+                      ? [...new Set(result.duplicates.map((d) => d.accountId).filter(Boolean))]
+                      : [result.accountId];
+                    return remediationTargetFromContainerCve({
                       imageRef: result.imageRef,
                       imageName: result.imageName,
                       cloud: result.cloud,
                       accountId: result.accountId,
+                      projectIds: envAccounts,
                       cve,
-                    })
-                  )
+                    });
+                  })
                 )
               }
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs uppercase tracking-widest border border-violet-500/40 text-violet-300 hover:bg-violet-500/10 transition-all"
@@ -1065,15 +1105,18 @@ export default function ContainerScanPage() {
                 type="button"
                 onClick={() =>
                   setCliModalState({
-                    issues: visibleCvePairs.map(({ result, cve }) =>
-                      handoffIssueFromContainerCve({
+                    issues: visibleCvePairs.map(({ result, cve }) => {
+                      const envAccounts = result.duplicates?.length
+                        ? [...new Set(result.duplicates.map((d) => d.accountId).filter(Boolean))]
+                        : [result.accountId];
+                      return handoffIssueFromContainerCve({
                         imageRef: result.imageRef,
                         imageName: result.imageName,
                         cloud: result.cloud,
-                        accountId: result.accountId,
+                        accountId: envAccounts.join(", "),
                         cve,
-                      })
-                    ),
+                      });
+                    }),
                     defaultRemediationMode: "iac",
                   })
                 }
@@ -1087,15 +1130,18 @@ export default function ContainerScanPage() {
                 type="button"
                 onClick={() =>
                   setCliModalState({
-                    issues: visibleCvePairs.map(({ result, cve }) =>
-                      handoffIssueFromContainerCve({
+                    issues: visibleCvePairs.map(({ result, cve }) => {
+                      const envAccounts = result.duplicates?.length
+                        ? [...new Set(result.duplicates.map((d) => d.accountId).filter(Boolean))]
+                        : [result.accountId];
+                      return handoffIssueFromContainerCve({
                         imageRef: result.imageRef,
                         imageName: result.imageName,
                         cloud: result.cloud,
-                        accountId: result.accountId,
+                        accountId: envAccounts.join(", "),
                         cve,
-                      })
-                    ),
+                      });
+                    }),
                     defaultRemediationMode: "shirudo_shield",
                   })
                 }
@@ -1313,6 +1359,21 @@ export default function ContainerScanPage() {
                 }}
               >
                 Latest per app ({latestResults.length})
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setDedupEnvs((v) => !v)}
+                aria-pressed={dedupEnvs}
+                title="Deduplicate identical images across environments (e.g. prod and dev)"
+                className="px-2.5 py-1.5 text-xs font-mono transition-colors whitespace-nowrap"
+                style={{
+                  border: dedupEnvs ? "1px solid var(--green)" : "1px solid var(--border-dim)",
+                  color: dedupEnvs ? "var(--green)" : "var(--text-muted)",
+                  background: dedupEnvs ? "rgba(0, 255, 65, 0.08)" : "#09090b",
+                }}
+              >
+                Dedup envs ({duplicateCount})
               </button>
 
               {hasActiveFilters && (

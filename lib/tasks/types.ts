@@ -20,6 +20,20 @@ export type BackgroundTaskKind =
   | "terraform_pr"
   | "verify_fix";
 
+export interface MirrorRepoTarget {
+  repoFullName: string;
+  defaultBranch: string;
+}
+
+export interface MirrorRepoPrResult {
+  repoFullName: string;
+  defaultBranch: string;
+  status: "created" | "skipped" | "failed";
+  prUrl?: string;
+  prNumber?: number;
+  reason?: string;
+}
+
 export interface TaskResultMap {
   gcp_scan: {
     ok: boolean;
@@ -62,6 +76,7 @@ export interface TaskResultMap {
     defaultBranch: string;
     prUrl?: string;
     prNumber?: number;
+    mirrorResults?: MirrorRepoPrResult[];
     patchCount: number;
     message?: string;
     failures: RemediationFileFailure[];
@@ -115,6 +130,7 @@ export interface TaskParamsMap {
     repoFullName: string;
     defaultBranch: string;
     targets: RemediationTarget[];
+    additionalRepos?: MirrorRepoTarget[];
   };
   verify_fix: {
     sourceTaskId?: string;

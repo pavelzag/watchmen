@@ -335,9 +335,15 @@ export function remediationTargetFromContainerCve(params: {
   imageName: string;
   cloud: string;
   accountId: string;
+  projectIds?: string[];
   cve: ContainerVulnerability;
 }): RemediationTarget {
-  const { imageRef, imageName, cloud, accountId, cve } = params;
+  const { imageRef, imageName, cloud, accountId, projectIds, cve } = params;
+  const allProjectIds = projectIds && projectIds.length > 0
+    ? [...new Set(projectIds.filter(Boolean))]
+    : accountId
+      ? [accountId]
+      : [];
   const severity: SecurityFindingSeverity =
     cve.severity === "negligible" ? "low" : cve.severity;
   const fixText = cve.fixedVersion
@@ -349,15 +355,15 @@ export function remediationTargetFromContainerCve(params: {
     kind: "container_cve",
     severity,
     title: `${cve.cveId}: ${cve.packageName} ${cve.installedVersion} in ${imageName}`,
-    description: `${cve.description || cve.cveId} (Image: ${imageRef})`,
+    description: `${cve.description || cve.cveId} (Image: ${imageRef}${allProjectIds.length > 1 ? `; Environments: ${allProjectIds.join(", ")}` : ""})`,
     mitigations: [fixText],
-    projectIds: accountId ? [accountId] : [],
+    projectIds: allProjectIds,
     resourceType: "container_image",
     resourceName: imageName,
     searchTerms: collectTerms(
       imageName,
       imageRef,
-      accountId,
+      ...allProjectIds,
       cve.cveId,
       cve.packageName,
       cve.installedVersion,
@@ -365,6 +371,7 @@ export function remediationTargetFromContainerCve(params: {
     ),
     promptDetails: [
       `    - [container_image] ${imageName} (${imageRef})`,
+      ...(allProjectIds.length > 1 ? [`    - Environments: ${allProjectIds.join(", ")}`] : []),
       `    - CVE: ${cve.cveId} (${cve.severity.toUpperCase()})`,
       `    - Package: ${cve.packageName} installed=${cve.installedVersion}${cve.fixedVersion ? ` fixed=${cve.fixedVersion}` : ""}`,
       `    - Action: ${fixText}`,
@@ -378,12 +385,18 @@ export function remediationTargetsFromContainerImage(
   cves?: ContainerVulnerability[]
 ): RemediationTarget[] {
   const list = cves ?? result.vulnerabilities;
+  const projectIds = result.duplicates?.length
+    ? [...new Set(result.duplicates.map((d) => d.accountId).filter(Boolean))]
+    : result.accountId
+      ? [result.accountId]
+      : [];
   return list.map((cve) =>
     remediationTargetFromContainerCve({
       imageRef: result.imageRef,
       imageName: result.imageName,
       cloud: result.cloud,
       accountId: result.accountId,
+      projectIds,
       cve,
     })
   );

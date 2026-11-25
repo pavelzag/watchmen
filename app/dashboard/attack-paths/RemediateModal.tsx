@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { X, ChevronRight, Loader2, ExternalLink, AlertTriangle, Check } from "lucide-react";
 import { type RemediationTarget } from "@/lib/github/remediation-targets";
 import type { RemediationProgressEvent, TfFilePatch } from "@/lib/github/terraform-remediation";
+import type { MirrorRepoPrResult, MirrorRepoTarget } from "@/lib/tasks/types";
 import CopyTextButton from "@/components/CopyTextButton";
 import { useTaskCenter } from "@/components/TaskCenterProvider";
 import Link from "next/link";
@@ -158,6 +159,8 @@ export default function RemediateModal({ targets, onClose, autoCreatePr = false 
   const [repoSearch, setRepoSearch] = useState("");
   const [selectedRepo, setSelectedRepo] = useState<GhRepo | null>(null);
   const [selectedBranch, setSelectedBranch] = useState("");
+  const [mirrorRepos, setMirrorRepos] = useState<MirrorRepoTarget[]>([]);
+  const [mirrorResults, setMirrorResults] = useState<MirrorRepoPrResult[]>([]);
   const [branches, setBranches] = useState<string[]>([]);
   const [branchesLoading, setBranchesLoading] = useState(false);
   const [repoError, setRepoError] = useState<string | null>(null);
@@ -278,6 +281,20 @@ export default function RemediateModal({ targets, onClose, autoCreatePr = false 
     }
   }
 
+  function toggleMirrorRepo(repo: GhRepo) {
+    setMirrorRepos((prev) =>
+      prev.some((m) => m.repoFullName === repo.full_name)
+        ? prev.filter((m) => m.repoFullName !== repo.full_name)
+        : [...prev, { repoFullName: repo.full_name, defaultBranch: repo.default_branch }]
+    );
+  }
+
+  function updateMirrorBranch(repoFullName: string, branch: string) {
+    setMirrorRepos((prev) =>
+      prev.map((m) => (m.repoFullName === repoFullName ? { ...m, defaultBranch: branch } : m))
+    );
+  }
+
   // ── Step 3: analyze ───────────────────────────────────────────────────────
 
   async function analyze() {
@@ -314,6 +331,7 @@ export default function RemediateModal({ targets, onClose, autoCreatePr = false 
     setNoChanges(false);
     setPrUrl(null);
     setPrNumber(null);
+    setMirrorResults([]);
     setErrorMsg(null);
     setCreationProgress([]);
     setCreationPercent(0);
@@ -322,6 +340,7 @@ export default function RemediateModal({ targets, onClose, autoCreatePr = false 
       repoFullName: selectedRepo.full_name,
       defaultBranch: selectedBranch || selectedRepo.default_branch,
       targets: selectedTargets,
+      ...(mirrorRepos.length > 0 ? { additionalRepos: mirrorRepos } : {}),
     });
     setCreationTaskId(taskId);
   }
@@ -352,6 +371,7 @@ export default function RemediateModal({ targets, onClose, autoCreatePr = false 
       setSelectedBranch("");
       return;
     }
+    setMirrorRepos((prev) => prev.filter((m) => m.repoFullName !== selectedRepo.full_name));
     void loadBranches(selectedRepo);
   }, [selectedRepo, githubDefaults?.repoFullName, githubDefaults?.defaultBranch]);
 
@@ -435,6 +455,7 @@ export default function RemediateModal({ targets, onClose, autoCreatePr = false 
         } else {
           setPrUrl(result.prUrl ?? null);
           setPrNumber(result.prNumber ?? null);
+          setMirrorResults(result.mirrorResults ?? []);
           setCreationSummary(result.prNumber ? `Pull request #${result.prNumber} created` : null);
         }
         setIsCreatingPr(false);
@@ -620,6 +641,70 @@ export default function RemediateModal({ targets, onClose, autoCreatePr = false 
                       </a>
                     </div>
                   )}
+
+                  {mirrorResults.length > 0 && (
+                    <div className="space-y-2">
+                      <p style={{ fontFamily: "monospace", fontSize: 10, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 1.5 }}>
+                        Mirrored repositories ({mirrorResults.length})
+                      </p>
+                      {mirrorResults.map((mirror) => (
+                        <div
+                          key={mirror.repoFullName}
+                          className="p-3 space-y-1.5"
+                          style={{
+                            border: mirror.status === "created"
+                              ? "1px solid rgba(0,170,43,0.4)"
+                              : mirror.status === "skipped"
+                                ? "1px solid rgba(245,158,11,0.35)"
+                                : "1px solid rgba(239,68,68,0.35)",
+                            background: mirror.status === "created"
+                              ? "rgba(0,170,43,0.04)"
+                              : mirror.status === "skipped"
+                                ? "rgba(245,158,11,0.05)"
+                                : "rgba(239,68,68,0.05)",
+                          }}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span style={{ fontFamily: "monospace", fontSize: 11, color: "#e5e7eb" }}>
+                              {mirror.repoFullName} ({mirror.defaultBranch})
+                            </span>
+                            <span
+                              style={{
+                                fontFamily: "monospace",
+                                fontSize: 9,
+                                letterSpacing: 1,
+                                textTransform: "uppercase",
+                                color: mirror.status === "created"
+                                  ? "var(--green)"
+                                  : mirror.status === "skipped"
+                                    ? "#fbbf24"
+                                    : "#f87171",
+                              }}
+                            >
+                              {mirror.status === "created" ? `PR #${mirror.prNumber}` : mirror.status}
+                            </span>
+                          </div>
+                          {mirror.prUrl && (
+                            <a
+                              href={mirror.prUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-2 text-xs font-mono transition-opacity hover:opacity-80"
+                              style={{ color: "#60a5fa", textDecoration: "underline" }}
+                            >
+                              <ExternalLink className="w-3 h-3" />
+                              {mirror.prUrl}
+                            </a>
+                          )}
+                          {mirror.reason && (
+                            <p style={{ fontFamily: "monospace", fontSize: 10, color: "#9ca3af" }}>
+                              {mirror.reason}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -796,6 +881,67 @@ export default function RemediateModal({ targets, onClose, autoCreatePr = false 
                           </select>
                         </div>
                       </div>
+                      {repos.length > 1 && (
+                        <div className="pt-3 border-t border-slate-800/80 space-y-2">
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <p style={{ fontFamily: "monospace", fontSize: 10, color: "var(--text-muted)" }}>
+                              Also push identical fix to mirror repo(s) (optional)
+                            </p>
+                            {mirrorRepos.length > 0 && (
+                              <span style={{ fontFamily: "monospace", fontSize: 10, color: "var(--green)" }}>
+                                {mirrorRepos.length} selected · pushes only if code inside is identical
+                              </span>
+                            )}
+                          </div>
+                          <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
+                            {repos
+                              .filter(
+                                (r) =>
+                                  r.full_name !== selectedRepo.full_name &&
+                                  (!repoSearch || r.full_name.toLowerCase().includes(repoSearch.toLowerCase()))
+                              )
+                              .map((mirror) => {
+                                const selectedMirror = mirrorRepos.find((m) => m.repoFullName === mirror.full_name);
+                                return (
+                                  <div
+                                    key={mirror.full_name}
+                                    className="flex items-center justify-between gap-2 px-2.5 py-1.5"
+                                    style={{
+                                      border: "1px solid",
+                                      borderColor: selectedMirror ? "rgba(0,170,43,0.45)" : "var(--border-dim)",
+                                      background: selectedMirror ? "rgba(0,170,43,0.06)" : "transparent",
+                                    }}
+                                  >
+                                    <label className="flex items-center gap-2 cursor-pointer flex-1 min-w-0">
+                                      <input
+                                        type="checkbox"
+                                        checked={Boolean(selectedMirror)}
+                                        onChange={() => toggleMirrorRepo(mirror)}
+                                        className="accent-green-500"
+                                      />
+                                      <span className="truncate" style={{ fontFamily: "monospace", fontSize: 11, color: "#e5e7eb" }}>
+                                        {mirror.full_name}
+                                      </span>
+                                    </label>
+                                    {selectedMirror ? (
+                                      <input
+                                        type="text"
+                                        value={selectedMirror.defaultBranch}
+                                        onChange={(e) => updateMirrorBranch(mirror.full_name, e.target.value)}
+                                        aria-label={`Target branch for ${mirror.full_name}`}
+                                        className="w-24 px-1.5 py-0.5 bg-black/50 border border-slate-700 text-[10px] font-mono text-slate-200"
+                                      />
+                                    ) : (
+                                      <span style={{ fontSize: 9, color: "var(--border-dim)", fontFamily: "monospace" }}>
+                                        {mirror.default_branch}
+                                      </span>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </>
@@ -866,7 +1012,10 @@ export default function RemediateModal({ targets, onClose, autoCreatePr = false 
                       Confirm PR creation
                     </p>
                     <p style={{ fontFamily: "monospace", fontSize: 10, color: "#9ca3af", lineHeight: 1.6 }}>
-                      Watchmen will open a PR in {selectedRepo?.full_name ?? "the selected repository"} targeting branch {selectedBranch || selectedRepo?.default_branch || "default"}.
+                      Watchmen will open a PR in {selectedRepo?.full_name ?? "the selected repository"} targeting branch {selectedBranch || selectedRepo?.default_branch || "default"}
+                      {mirrorRepos.length > 0
+                        ? `, and verify identical file contents before pushing the same fix to ${mirrorRepos.map((m) => `${m.repoFullName} (${m.defaultBranch})`).join(", ")}.`
+                        : "."}
                     </p>
                   </div>
                 </div>

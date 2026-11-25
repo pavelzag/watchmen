@@ -7,7 +7,7 @@ import { remediationTargetFromAttackPath, remediationTargetFromFinding, type Rem
 import { executeTerraformPrFlow } from "@/lib/github/terraform-pr-flow";
 import { isTerraformVerboseEnabled, logTerraformError, logTerraformInfo, logTerraformWarn } from "@/lib/github/terraform-logging";
 import { createBackgroundTask, getBackgroundTask, upsertBackgroundTask } from "@/lib/tasks/store";
-import type { TaskResultMap } from "@/lib/tasks/types";
+import type { MirrorRepoTarget, TaskResultMap } from "@/lib/tasks/types";
 import type { AttackPath } from "@/lib/gcp/attack-paths";
 import type { SecurityFinding } from "@/lib/gcp/types";
 
@@ -20,6 +20,7 @@ interface RequestBody {
   paths?: AttackPath[];
   findings?: SecurityFinding[];
   targets?: RemediationTarget[];
+  additionalRepos?: MirrorRepoTarget[];
   stream?: boolean;
 }
 
@@ -231,10 +232,18 @@ export async function POST(req: NextRequest) {
     taskId: body.taskId,
   });
 
+  const additionalRepos = Array.isArray(body.additionalRepos)
+    ? body.additionalRepos.filter(
+        (r): r is MirrorRepoTarget =>
+          Boolean(r && typeof r.repoFullName === "string" && r.repoFullName.includes("/"))
+      )
+    : [];
+
   const task = createBackgroundTask("terraform_pr", {
     repoFullName,
     defaultBranch: body.defaultBranch,
     targets,
+    ...(additionalRepos.length > 0 ? { additionalRepos } : {}),
   }, {
     id: body.taskId,
     status: "queued",
@@ -276,7 +285,7 @@ export async function POST(req: NextRequest) {
         });
 
         const [ownerName, repoName] = repoFullName.split("/");
-        const { remediationPlan, pr } = await executeTerraformPrFlow(
+        const { remediationPlan, pr, mirrorResults } = await executeTerraformPrFlow(
           {
             email,
             token: creds.token,
@@ -285,6 +294,7 @@ export async function POST(req: NextRequest) {
             repoFullName,
             defaultBranch: body.defaultBranch,
             targets,
+            additionalRepos,
             aiKey: {
               provider: ai.provider,
               key: ai.key,
@@ -330,6 +340,7 @@ export async function POST(req: NextRequest) {
             defaultBranch: body.defaultBranch,
             prUrl: pr.html_url,
             prNumber: pr.number,
+            mirrorResults,
             patchCount: remediationPlan.patches.length,
             message: pr.html_url
               ? `Pull request #${pr.number} created`

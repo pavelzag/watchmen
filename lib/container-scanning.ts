@@ -34,6 +34,13 @@ export type ImageRegistry = "gcp" | "aws" | "ghcr" | "dockerhub";
 
 export type GcpImageScanStatus = "scanned" | "clean" | "unscanned" | "failed";
 
+export interface ImageScanDuplicate {
+  imageRef: string;
+  imageName: string;
+  cloud: ImageRegistry;
+  accountId: string;
+}
+
 export interface ImageScanResult {
   /** Full image reference, e.g. us-docker.pkg.dev/my-project/repo/image:tag */
   imageRef: string;
@@ -60,6 +67,8 @@ export interface ImageScanResult {
   scanStatusMessage?: string;
   /** Which scanner produced the result (e.g. "gcp", "trivy", "aws", "ghcr", "dockerhub") */
   scanner?: string;
+  /** Other environment/tag entries deduplicated into this image */
+  duplicates?: ImageScanDuplicate[];
 }
 
 // ─── Mock data ────────────────────────────────────────────────────────────────
@@ -271,6 +280,76 @@ function compareApplicationVersions(a: ImageScanResult, b: ImageScanResult): num
   const aScanned = a.scanStatus && a.scanStatus !== "unscanned" ? 1 : 0;
   const bScanned = b.scanStatus && b.scanStatus !== "unscanned" ? 1 : 0;
   return bScanned - aScanned;
+}
+
+export function getApplicationShortName(
+  result: Pick<ImageScanResult, "imageRef" | "imageName">
+): string {
+  const ref = (result.imageRef || result.imageName || "").trim().replace(/^https?:\/\//i, "");
+  const parts = ref.split("/").filter(Boolean);
+  const last = parts[parts.length - 1] ?? result.imageName ?? "";
+  return last.split("@")[0].split(":")[0] || last || result.imageName;
+}
+
+function extractImageDigest(imageRef: string): string | null {
+  const match = imageRef.match(/@(sha256:[a-f0-9]+)/i);
+  return match ? match[1].toLowerCase() : null;
+}
+
+function buildEnvironmentDedupKey(result: ImageScanResult): string {
+  const appName = getApplicationShortName(result).toLowerCase();
+  const digest = extractImageDigest(result.imageRef);
+  if (digest) {
+    return `${result.cloud}::${appName}::digest::${digest}`;
+  }
+  if (result.scanStatus !== "unscanned") {
+    const vulnSig = result.vulnerabilities
+      .map((v) => `${v.cveId}:${v.packageName}:${v.installedVersion}:${v.fixedVersion ?? ""}`)
+      .sort()
+      .join("|");
+    return `${result.cloud}::${appName}::vulns::${result.scanStatus ?? "scanned"}::${vulnSig}`;
+  }
+  return `${getApplicationKey(result)}::${result.imageRef}`;
+}
+
+function compareDedupRepresentative(a: ImageScanResult, b: ImageScanResult): number {
+  const aProd = /(^|[-_])prod($|[-_])/i.test(a.accountId) ? 1 : 0;
+  const bProd = /(^|[-_])prod($|[-_])/i.test(b.accountId) ? 1 : 0;
+  if (bProd !== aProd) return bProd - aProd;
+  return compareApplicationVersions(a, b);
+}
+
+/**
+ * Deduplicate identical container images across environments (e.g. prod and dev)
+ * by matching registry digest or identical app + vulnerability signature.
+ */
+export function deduplicateImagesAcrossEnvironments(results: ImageScanResult[]): ImageScanResult[] {
+  const groups = new Map<string, ImageScanResult[]>();
+  for (const item of results) {
+    const key = buildEnvironmentDedupKey(item);
+    const list = groups.get(key);
+    if (list) {
+      list.push(item);
+    } else {
+      groups.set(key, [item]);
+    }
+  }
+
+  return Array.from(groups.values()).map((group) => {
+    if (group.length === 1) return group[0];
+    const sorted = [...group].sort(compareDedupRepresentative);
+    const primary = sorted[0];
+    const duplicates: ImageScanDuplicate[] = sorted.map((item) => ({
+      imageRef: item.imageRef,
+      imageName: item.imageName,
+      cloud: item.cloud,
+      accountId: item.accountId,
+    }));
+    return {
+      ...primary,
+      duplicates,
+    };
+  });
 }
 
 export function filterLatestPerApplication(results: ImageScanResult[]): ImageScanResult[] {

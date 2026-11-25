@@ -1,11 +1,16 @@
 import { sql } from "@/lib/db";
-import { getDefaultBranchSha, createBranch, createFile, updateFile, createPullRequest } from "@/lib/github/client";
+import { getDefaultBranchSha, getFileContent, createBranch, createFile, updateFile, createPullRequest } from "@/lib/github/client";
 import { buildRemediationPlan, type RemediationPlan, type RemediationProgressEvent } from "@/lib/github/terraform-remediation";
 import { debugLog, withDebugTiming } from "@/lib/debug";
 import { logTerraformError, logTerraformInfo, logTerraformWarn } from "@/lib/github/terraform-logging";
 import { postToSlack } from "@/lib/alerting";
 import type { AIProvider } from "@/lib/ai/client";
 import type { RemediationTarget } from "@/lib/github/remediation-targets";
+import type { MirrorRepoPrResult, MirrorRepoTarget } from "@/lib/tasks/types";
+
+export function normalizeCodeForComparison(content: string): string {
+  return content.replace(/\r\n/g, "\n");
+}
 
 export class IncompleteRemediationError extends Error {
   statusCode = 422;
@@ -21,10 +26,11 @@ export async function executeTerraformPrFlow(
     defaultBranch: string;
     targets: RemediationTarget[];
     aiKey: { provider: AIProvider; key: string };
+    additionalRepos?: MirrorRepoTarget[];
   },
   onProgress?: (progress: RemediationProgressEvent) => void
-): Promise<{ remediationPlan: RemediationPlan; pr: { html_url: string; number: number } }> {
-  const { email, token, owner, repo, repoFullName, defaultBranch, targets, aiKey } = params;
+): Promise<{ remediationPlan: RemediationPlan; pr: { html_url: string; number: number }; mirrorResults: MirrorRepoPrResult[] }> {
+  const { email, token, owner, repo, repoFullName, defaultBranch, targets, aiKey, additionalRepos = [] } = params;
   const scope = "api/github/terraform-pr:POST";
 
   logTerraformInfo(scope, "flow_start", {
@@ -73,7 +79,7 @@ export async function executeTerraformPrFlow(
       targetCount: targets.length,
       failureCount: remediationPlan.failures.length,
     });
-    return { remediationPlan, pr: { html_url: "", number: 0 } };
+    return { remediationPlan, pr: { html_url: "", number: 0 }, mirrorResults: [] };
   }
 
   if (!remediationPlan.fullyAddressed) {
@@ -262,11 +268,185 @@ ${targetDetails}
     prUrl: pr.html_url,
   });
 
+  const uniqueMirrors = additionalRepos.filter((mirror, idx, list) => {
+    if (!mirror.repoFullName || mirror.repoFullName === repoFullName) return false;
+    return list.findIndex((other) => other.repoFullName === mirror.repoFullName) === idx;
+  });
+
+  const mirrorResults: MirrorRepoPrResult[] = [];
+  for (const mirror of uniqueMirrors) {
+    const [mirrorOwner, mirrorRepo] = mirror.repoFullName.split("/");
+    const mirrorBaseBranch = mirror.defaultBranch || "main";
+    if (!mirrorOwner || !mirrorRepo) {
+      mirrorResults.push({
+        repoFullName: mirror.repoFullName,
+        defaultBranch: mirrorBaseBranch,
+        status: "failed",
+        reason: "Invalid repository name (expected owner/repo).",
+      });
+      continue;
+    }
+
+    onProgress?.({
+      stage: "commit_files",
+      message: `Verifying identical code in ${mirror.repoFullName}`,
+      percent: 95,
+      metadata: { mirrorRepo: mirror.repoFullName },
+    });
+
+    try {
+      const preparedPatches: Array<{
+        patch: (typeof remediationPlan.patches)[number];
+        mirrorSha?: string;
+        alreadyPresent?: boolean;
+      }> = [];
+      let skipReason: string | null = null;
+
+      for (const patch of remediationPlan.patches) {
+        if (patch.isNewFile) {
+          try {
+            const existing = await getFileContent(token, mirrorOwner, mirrorRepo, patch.path, mirrorBaseBranch);
+            if (normalizeCodeForComparison(existing.content) === normalizeCodeForComparison(patch.fixedContent)) {
+              preparedPatches.push({ patch, alreadyPresent: true });
+            } else {
+              skipReason = `File ${patch.path} already exists in ${mirror.repoFullName} with different content.`;
+              break;
+            }
+          } catch {
+            preparedPatches.push({ patch });
+          }
+        } else {
+          let mirrorFile: { content: string; sha: string };
+          try {
+            mirrorFile = await getFileContent(token, mirrorOwner, mirrorRepo, patch.path, mirrorBaseBranch);
+          } catch {
+            skipReason = `File ${patch.path} was not found in ${mirror.repoFullName} (${mirrorBaseBranch}).`;
+            break;
+          }
+
+          if (normalizeCodeForComparison(mirrorFile.content) !== normalizeCodeForComparison(patch.originalContent)) {
+            skipReason = `Code in ${patch.path} differs from ${repoFullName}; skipped to avoid overwriting environment-specific code.`;
+            break;
+          }
+          preparedPatches.push({ patch, mirrorSha: mirrorFile.sha });
+        }
+      }
+
+      if (skipReason) {
+        logTerraformWarn(scope, "mirror_skipped_not_identical", {
+          primaryRepo: repoFullName,
+          mirrorRepo: mirror.repoFullName,
+          reason: skipReason,
+        });
+        mirrorResults.push({
+          repoFullName: mirror.repoFullName,
+          defaultBranch: mirrorBaseBranch,
+          status: "skipped",
+          reason: skipReason,
+        });
+        continue;
+      }
+
+      const patchesToApply = preparedPatches.filter((item) => !item.alreadyPresent);
+      if (patchesToApply.length === 0) {
+        mirrorResults.push({
+          repoFullName: mirror.repoFullName,
+          defaultBranch: mirrorBaseBranch,
+          status: "skipped",
+          reason: "Target files already match the remediated code.",
+        });
+        continue;
+      }
+
+      const mirrorHeadSha = await getDefaultBranchSha(token, mirrorOwner, mirrorRepo, mirrorBaseBranch);
+      const mirrorBranchName = `watchmen-fix-${Date.now()}`;
+      await createBranch(token, mirrorOwner, mirrorRepo, mirrorBranchName, mirrorHeadSha);
+
+      for (const { patch, mirrorSha } of patchesToApply) {
+        if (patch.isNewFile) {
+          await createFile(
+            token,
+            mirrorOwner,
+            mirrorRepo,
+            patch.path,
+            patch.fixedContent,
+            `fix: generate ${patch.path} to remediate "${targetTitles}"`,
+            mirrorBranchName
+          );
+        } else {
+          if (patch.path.toLowerCase().endsWith(".tf")) {
+            const rootDir = patch.path.includes("/") ? patch.path.slice(0, patch.path.lastIndexOf("/") + 1) : "";
+            const filename = patch.path.slice(rootDir.length).replace(/-faulty(\.tf)$/, "$1").replace(/\.tf$/, "-faulty.tf");
+            const faultyPath = `${rootDir}.terraform-originals/${filename}`;
+            await createFile(
+              token,
+              mirrorOwner,
+              mirrorRepo,
+              faultyPath,
+              patch.originalContent,
+              `chore: preserve original ${patch.path} as ${faultyPath}`,
+              mirrorBranchName
+            );
+          }
+          await updateFile(
+            token,
+            mirrorOwner,
+            mirrorRepo,
+            patch.path,
+            patch.fixedContent,
+            mirrorSha!,
+            `fix: remediate "${targetTitles}" in ${patch.path}`,
+            mirrorBranchName
+          );
+        }
+      }
+
+      const mirrorPrBody = `${prBody}\n\n> **Mirrored Fix:** Generated once from \`${repoFullName}\` (${pr.html_url}) and applied after verifying identical file contents in \`${mirror.repoFullName}\`.`;
+      const mirrorPr = await createPullRequest(
+        token,
+        mirrorOwner,
+        mirrorRepo,
+        `fix(security): remediate ${targets.length} security item${targets.length === 1 ? "" : "s"} [Watchmen]`,
+        mirrorPrBody,
+        mirrorBranchName,
+        mirrorBaseBranch
+      );
+
+      logTerraformInfo(scope, "mirror_pr_created", {
+        primaryRepo: repoFullName,
+        mirrorRepo: mirror.repoFullName,
+        prNumber: mirrorPr.number,
+        prUrl: mirrorPr.html_url,
+      });
+
+      mirrorResults.push({
+        repoFullName: mirror.repoFullName,
+        defaultBranch: mirrorBaseBranch,
+        status: "created",
+        prUrl: mirrorPr.html_url,
+        prNumber: mirrorPr.number,
+      });
+    } catch (mirrorErr) {
+      const reason = mirrorErr instanceof Error ? mirrorErr.message : "Failed to push mirrored PR";
+      logTerraformWarn(scope, "mirror_pr_failed", {
+        primaryRepo: repoFullName,
+        mirrorRepo: mirror.repoFullName,
+        reason,
+      });
+      mirrorResults.push({
+        repoFullName: mirror.repoFullName,
+        defaultBranch: mirrorBaseBranch,
+        status: "failed",
+        reason,
+      });
+    }
+  }
+
   onProgress?.({
     stage: "notify",
     message: "Sending notifications",
     percent: 97,
-    metadata: { prNumber: pr.number },
+    metadata: { prNumber: pr.number, mirrorCount: mirrorResults.length },
   });
   try {
     const alertResult = await sql`
@@ -330,5 +510,5 @@ ${targetDetails}
     failureCount: remediationPlan.failures.length,
   });
 
-  return { remediationPlan, pr };
+  return { remediationPlan, pr, mirrorResults };
 }
