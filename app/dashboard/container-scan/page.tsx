@@ -20,7 +20,6 @@ import {
   Terminal,
 } from "lucide-react";
 import {
-  deduplicateImagesAcrossEnvironments,
   filterLatestPerApplication,
   getApplicationKey,
   getApplicationShortName,
@@ -761,7 +760,6 @@ export default function ContainerScanPage() {
   const [accountFilter, setAccountFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [latestOnly, setLatestOnly] = useState(false);
-  const [dedupEnvs, setDedupEnvs] = useState(false);
   const [dateRange, setDateRange] = useState<DateRangeFilter>("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -858,7 +856,7 @@ export default function ContainerScanPage() {
   // Reset to page 1 when filters or sort change
   useEffect(() => {
     setPage(1);
-  }, [search, selectedSeverities, cloudFilter, accountFilter, appFilter, statusFilter, latestOnly, dedupEnvs, dateRange, dateFrom, dateTo, sortBy, pageSize]);
+  }, [search, selectedSeverities, cloudFilter, accountFilter, appFilter, statusFilter, latestOnly, dateRange, dateFrom, dateTo, sortBy, pageSize]);
 
   // When Trivy is active, managed Container Analysis 403/disabled is optional non-blocking noise.
   const actionableWarnings = useMemo(() => {
@@ -873,13 +871,7 @@ export default function ContainerScanPage() {
   }, [warnings, trivyAvailable]);
 
   const latestResults = useMemo(() => filterLatestPerApplication(results), [results]);
-  const baseScopedResults = latestOnly ? latestResults : results;
-  const dedupedResults = useMemo(
-    () => deduplicateImagesAcrossEnvironments(baseScopedResults),
-    [baseScopedResults]
-  );
-  const duplicateCount = Math.max(0, baseScopedResults.length - dedupedResults.length);
-  const scopedResults = dedupEnvs ? dedupedResults : baseScopedResults;
+  const scopedResults = latestOnly ? latestResults : results;
 
   const accountPool = useMemo(
     () => (cloudFilter === "all" ? scopedResults : scopedResults.filter((r) => r.cloud === cloudFilter)),
@@ -1104,7 +1096,6 @@ export default function ContainerScanPage() {
     appFilter !== "all" ||
     statusFilter !== "all" ||
     latestOnly ||
-    dedupEnvs ||
     dateRange !== "all";
 
   function clearFilters() {
@@ -1115,7 +1106,6 @@ export default function ContainerScanPage() {
     setAppFilter("all");
     setStatusFilter("all");
     setLatestOnly(false);
-    setDedupEnvs(false);
     setDateRange("all");
     setDateFrom("");
     setDateTo("");
@@ -1438,21 +1428,6 @@ export default function ContainerScanPage() {
                 }}
               >
                 Latest per app ({latestResults.length})
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setDedupEnvs((v) => !v)}
-                aria-pressed={dedupEnvs}
-                title="Deduplicate identical images across environments (e.g. prod and dev)"
-                className="px-2.5 py-1.5 text-xs font-mono transition-colors whitespace-nowrap"
-                style={{
-                  border: dedupEnvs ? "1px solid var(--green)" : "1px solid var(--border-dim)",
-                  color: dedupEnvs ? "var(--green)" : "var(--text-muted)",
-                  background: dedupEnvs ? "rgba(0, 255, 65, 0.08)" : "#09090b",
-                }}
-              >
-                Dedup envs ({duplicateCount})
               </button>
 
               {hasActiveFilters && (
