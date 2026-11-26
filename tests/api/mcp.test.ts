@@ -245,7 +245,7 @@ describe("Watchmen MCP endpoint (/api/mcp)", () => {
     mockGetCloudSnapshotForMcp.mockResolvedValueOnce({
       cloud: "gcp",
       resourceType: "vms",
-      gcp: { projects: ["theinsite-dev", "theinsite-prod"], vms: [{ name: "cms-prod-vm", projectId: "theinsite-prod" }] },
+      gcp: { projects: ["acme-dev", "acme-prod"], vms: [{ name: "cms-prod-vm", projectId: "acme-prod" }] },
     });
     const snapCall = await postMcp(
       new NextRequest("http://localhost:3000/api/mcp", {
@@ -257,7 +257,7 @@ describe("Watchmen MCP endpoint (/api/mcp)", () => {
           method: "tools/call",
           params: {
             name: "watchmen_get_cloud_snapshot",
-            arguments: { cloud: "gcp", projectId: "theinsite-prod", resourceType: "vms" },
+            arguments: { cloud: "gcp", projectId: "acme-prod", resourceType: "vms" },
           },
         }),
       })
@@ -272,12 +272,12 @@ describe("Watchmen MCP endpoint (/api/mcp)", () => {
       countsBySeverity: { critical: 1 },
       findings: [
         {
-          id: "public_firewall:theinsite-dev:cms-dev-allow-http-https",
+          id: "public_firewall:acme-dev:cms-dev-allow-http-https",
           cloud: "gcp",
           severity: "critical",
           title: "Firewall Rule Open to the Internet",
           description: "Allows 0.0.0.0/0",
-          projectOrAccountId: "theinsite-dev",
+          projectOrAccountId: "acme-dev",
           resourceName: "cms-dev-allow-http-https",
           resourceType: "firewall_rule",
           remediationHint: "Restrict source ranges",
@@ -294,7 +294,7 @@ describe("Watchmen MCP endpoint (/api/mcp)", () => {
           method: "tools/call",
           params: {
             name: "watchmen_list_findings",
-            arguments: { cloud: "gcp", projectId: "theinsite-dev", severity: "critical" },
+            arguments: { cloud: "gcp", projectId: "acme-dev", severity: "critical" },
           },
         }),
       })

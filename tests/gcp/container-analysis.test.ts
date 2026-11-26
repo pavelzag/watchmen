@@ -73,8 +73,8 @@ describe("GCP Artifact Registry & Container Analysis scanning", () => {
     mockLocationsList.mockResolvedValue({
       data: {
         locations: [
-          { name: "projects/theinsite-prod/locations/europe-west3", locationId: "europe-west3" },
-          { name: "projects/theinsite-prod/locations/us-central1", locationId: "us-central1" },
+          { name: "projects/acme-prod/locations/europe-west3", locationId: "europe-west3" },
+          { name: "projects/acme-prod/locations/us-central1", locationId: "us-central1" },
         ],
       },
     });
@@ -86,11 +86,11 @@ describe("GCP Artifact Registry & Container Analysis scanning", () => {
           data: {
             repositories: [
               {
-                name: "projects/theinsite-prod/locations/europe-west3/repositories/cms",
+                name: "projects/acme-prod/locations/europe-west3/repositories/cms",
                 format: "DOCKER",
               },
               {
-                name: "projects/theinsite-prod/locations/europe-west3/repositories/npm-libs",
+                name: "projects/acme-prod/locations/europe-west3/repositories/npm-libs",
                 format: "NPM",
               },
             ],
@@ -104,14 +104,14 @@ describe("GCP Artifact Registry & Container Analysis scanning", () => {
       data: {
         dockerImages: [
           {
-            name: "projects/theinsite-prod/locations/europe-west3/repositories/cms/dockerImages/cms-web@sha256:aaa",
-            uri: "europe-west3-docker.pkg.dev/theinsite-prod/cms/cms-web@sha256:aaa",
+            name: "projects/acme-prod/locations/europe-west3/repositories/cms/dockerImages/cms-web@sha256:aaa",
+            uri: "europe-west3-docker.pkg.dev/acme-prod/cms/cms-web@sha256:aaa",
             tags: ["latest", "v1.4.0"],
             updateTime: "2026-11-20T12:00:00Z",
           },
           {
-            name: "projects/theinsite-prod/locations/europe-west3/repositories/cms/dockerImages/cms-worker@sha256:bbb",
-            uri: "europe-west3-docker.pkg.dev/theinsite-prod/cms/cms-worker@sha256:bbb",
+            name: "projects/acme-prod/locations/europe-west3/repositories/cms/dockerImages/cms-worker@sha256:bbb",
+            uri: "europe-west3-docker.pkg.dev/acme-prod/cms/cms-worker@sha256:bbb",
             tags: ["v2.0.0"],
             uploadTime: "2026-11-21T12:00:00Z",
           },
@@ -125,7 +125,7 @@ describe("GCP Artifact Registry & Container Analysis scanning", () => {
         data: {
           occurrences: [
             {
-              resourceUri: "https://europe-west3-docker.pkg.dev/theinsite-prod/cms/cms-web@sha256:aaa",
+              resourceUri: "https://europe-west3-docker.pkg.dev/acme-prod/cms/cms-web@sha256:aaa",
               discovery: {
                 analysisStatus: "FINISHED_SUCCESS",
                 lastScanTime: "2026-11-20T12:05:00Z",
@@ -135,26 +135,26 @@ describe("GCP Artifact Registry & Container Analysis scanning", () => {
         },
       }); // DISCOVERY
 
-    const results = await getGcpContainerVulnerabilities("theinsite-prod");
+    const results = await getGcpContainerVulnerabilities("acme-prod");
 
     expect(mockLocationsList).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "projects/theinsite-prod" })
+      expect.objectContaining({ name: "projects/acme-prod" })
     );
     expect(mockRepositoriesList).toHaveBeenCalledTimes(2);
     expect(mockDockerImagesList).toHaveBeenCalledTimes(1);
     expect(mockDockerImagesList).toHaveBeenCalledWith(
       expect.objectContaining({
-        parent: "projects/theinsite-prod/locations/europe-west3/repositories/cms",
+        parent: "projects/acme-prod/locations/europe-west3/repositories/cms",
       })
     );
     expect(results).toHaveLength(2);
 
     const web = results.find((r) => r.imageName === "cms-web:v1.4.0");
     expect(web).toMatchObject({
-      imageRef: "europe-west3-docker.pkg.dev/theinsite-prod/cms/cms-web@sha256:aaa",
+      imageRef: "europe-west3-docker.pkg.dev/acme-prod/cms/cms-web@sha256:aaa",
       imageName: "cms-web:v1.4.0",
       cloud: "gcp",
-      accountId: "theinsite-prod",
+      accountId: "acme-prod",
       scanStatus: "clean",
       scannedAt: "2026-11-20T12:05:00Z",
       vulnerabilities: [],
@@ -163,7 +163,7 @@ describe("GCP Artifact Registry & Container Analysis scanning", () => {
 
     const worker = results.find((r) => r.imageName === "cms-worker:v2.0.0");
     expect(worker).toMatchObject({
-      imageRef: "europe-west3-docker.pkg.dev/theinsite-prod/cms/cms-worker@sha256:bbb",
+      imageRef: "europe-west3-docker.pkg.dev/acme-prod/cms/cms-worker@sha256:bbb",
       scanStatus: "unscanned",
       vulnerabilities: [],
     });
@@ -173,14 +173,14 @@ describe("GCP Artifact Registry & Container Analysis scanning", () => {
   it("merges Artifact Registry images with Container Analysis vulnerabilities by normalizing https:// URIs", async () => {
     mockLocationsList.mockResolvedValue({
       data: {
-        locations: [{ name: "projects/theinsite-prod/locations/us-central1" }],
+        locations: [{ name: "projects/acme-prod/locations/us-central1" }],
       },
     });
     mockRepositoriesList.mockResolvedValue({
       data: {
         repositories: [
           {
-            name: "projects/theinsite-prod/locations/us-central1/repositories/services",
+            name: "projects/acme-prod/locations/us-central1/repositories/services",
             format: "DOCKER",
           },
         ],
@@ -191,7 +191,7 @@ describe("GCP Artifact Registry & Container Analysis scanning", () => {
       data: {
         dockerImages: [
           {
-            uri: "us-central1-docker.pkg.dev/theinsite-prod/services/api@sha256:1234",
+            uri: "us-central1-docker.pkg.dev/acme-prod/services/api@sha256:1234",
             tags: ["prod-2.1.0"],
             updateTime: "2026-11-22T09:00:00Z",
           },
@@ -204,7 +204,7 @@ describe("GCP Artifact Registry & Container Analysis scanning", () => {
         data: {
           occurrences: [
             {
-              resourceUri: "https://us-central1-docker.pkg.dev/theinsite-prod/services/api@sha256:1234",
+              resourceUri: "https://us-central1-docker.pkg.dev/acme-prod/services/api@sha256:1234",
               noteName: "projects/goog-vulnz/notes/CVE-2025-9999",
               createTime: "2026-11-22T09:05:00Z",
               vulnerability: {
@@ -222,7 +222,7 @@ describe("GCP Artifact Registry & Container Analysis scanning", () => {
               },
             },
             {
-              resourceUri: "https://us-central1-docker.pkg.dev/theinsite-prod/services/api@sha256:1234",
+              resourceUri: "https://us-central1-docker.pkg.dev/acme-prod/services/api@sha256:1234",
               noteName: "projects/goog-vulnz/notes/CVE-2025-1111",
               vulnerability: {
                 shortDescription: "CVE-2025-1111",
@@ -244,14 +244,14 @@ describe("GCP Artifact Registry & Container Analysis scanning", () => {
       })
       .mockResolvedValueOnce({ data: { occurrences: [] } });
 
-    const results = await getGcpContainerVulnerabilities("theinsite-prod");
+    const results = await getGcpContainerVulnerabilities("acme-prod");
 
     expect(results).toHaveLength(1);
     expect(results[0]).toMatchObject({
-      imageRef: "us-central1-docker.pkg.dev/theinsite-prod/services/api@sha256:1234",
+      imageRef: "us-central1-docker.pkg.dev/acme-prod/services/api@sha256:1234",
       imageName: "api:prod-2.1.0",
       cloud: "gcp",
-      accountId: "theinsite-prod",
+      accountId: "acme-prod",
       scanStatus: "scanned",
       summary: { critical: 1, high: 1, medium: 0, low: 0, negligible: 0 },
     });
@@ -280,14 +280,14 @@ describe("GCP Artifact Registry & Container Analysis scanning", () => {
   it("still returns Artifact Registry images and records a warning when Container Analysis API is disabled or denied", async () => {
     mockLocationsList.mockResolvedValue({
       data: {
-        locations: [{ name: "projects/theinsite-dev/locations/europe-west3" }],
+        locations: [{ name: "projects/acme-dev/locations/europe-west3" }],
       },
     });
     mockRepositoriesList.mockResolvedValue({
       data: {
         repositories: [
           {
-            name: "projects/theinsite-dev/locations/europe-west3/repositories/apps",
+            name: "projects/acme-dev/locations/europe-west3/repositories/apps",
             format: "DOCKER",
           },
         ],
@@ -297,7 +297,7 @@ describe("GCP Artifact Registry & Container Analysis scanning", () => {
       data: {
         dockerImages: [
           {
-            uri: "europe-west3-docker.pkg.dev/theinsite-dev/apps/gateway@sha256:deadbeef",
+            uri: "europe-west3-docker.pkg.dev/acme-dev/apps/gateway@sha256:deadbeef",
             tags: ["dev"],
             updateTime: "2026-11-22T10:00:00Z",
           },
@@ -306,10 +306,10 @@ describe("GCP Artifact Registry & Container Analysis scanning", () => {
     });
     mockOccurrencesList.mockRejectedValue({
       code: 403,
-      message: "Container Analysis API has not been used in project theinsite-dev before or it is disabled.",
+      message: "Container Analysis API has not been used in project acme-dev before or it is disabled.",
     });
 
-    const results = await getGcpContainerVulnerabilities("theinsite-dev");
+    const results = await getGcpContainerVulnerabilities("acme-dev");
     const warnings = getGcpScanWarnings();
 
     expect(results).toHaveLength(1);
@@ -320,10 +320,10 @@ describe("GCP Artifact Registry & Container Analysis scanning", () => {
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toMatchObject({
       service: "containeranalysis",
-      projectId: "theinsite-dev",
+      projectId: "acme-dev",
       code: "api_not_enabled",
       requiredApi: "containeranalysis.googleapis.com",
-      enableApiCommand: "gcloud services enable containeranalysis.googleapis.com --project=theinsite-dev",
+      enableApiCommand: "gcloud services enable containeranalysis.googleapis.com --project=acme-dev",
     });
   });
 
@@ -337,7 +337,7 @@ describe("GCP Artifact Registry & Container Analysis scanning", () => {
         data: {
           occurrences: [
             {
-              resourceUri: "https://gcr.io/theinsite-prod/legacy-svc@sha256:999",
+              resourceUri: "https://gcr.io/acme-prod/legacy-svc@sha256:999",
               vulnerability: {
                 shortDescription: "CVE-2024-0001",
                 severity: "HIGH",
@@ -349,15 +349,15 @@ describe("GCP Artifact Registry & Container Analysis scanning", () => {
       })
       .mockResolvedValueOnce({ data: { occurrences: [] } });
 
-    const results = await getGcpContainerVulnerabilities("theinsite-prod");
+    const results = await getGcpContainerVulnerabilities("acme-prod");
     const warnings = getGcpScanWarnings();
 
     expect(results).toHaveLength(1);
-    expect(results[0].imageRef).toBe("https://gcr.io/theinsite-prod/legacy-svc@sha256:999");
+    expect(results[0].imageRef).toBe("https://gcr.io/acme-prod/legacy-svc@sha256:999");
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toMatchObject({
       service: "artifactregistry",
-      projectId: "theinsite-prod",
+      projectId: "acme-prod",
       code: "permission_denied",
       requiredRoles: ["roles/artifactregistry.reader"],
     });
@@ -366,14 +366,14 @@ describe("GCP Artifact Registry & Container Analysis scanning", () => {
   it("skips querying Container Analysis when skipContainerAnalysis is true (Trivy mode)", async () => {
     mockLocationsList.mockResolvedValue({
       data: {
-        locations: [{ name: "projects/theinsite-dev/locations/europe-west3" }],
+        locations: [{ name: "projects/acme-dev/locations/europe-west3" }],
       },
     });
     mockRepositoriesList.mockResolvedValue({
       data: {
         repositories: [
           {
-            name: "projects/theinsite-dev/locations/europe-west3/repositories/apps",
+            name: "projects/acme-dev/locations/europe-west3/repositories/apps",
             format: "DOCKER",
           },
         ],
@@ -383,7 +383,7 @@ describe("GCP Artifact Registry & Container Analysis scanning", () => {
       data: {
         dockerImages: [
           {
-            uri: "europe-west3-docker.pkg.dev/theinsite-dev/apps/gateway@sha256:deadbeef",
+            uri: "europe-west3-docker.pkg.dev/acme-dev/apps/gateway@sha256:deadbeef",
             tags: ["dev"],
             updateTime: "2026-11-22T10:00:00Z",
           },
@@ -391,7 +391,7 @@ describe("GCP Artifact Registry & Container Analysis scanning", () => {
       },
     });
 
-    const results = await getGcpContainerVulnerabilities("theinsite-dev", {
+    const results = await getGcpContainerVulnerabilities("acme-dev", {
       skipContainerAnalysis: true,
     });
     const warnings = getGcpScanWarnings();

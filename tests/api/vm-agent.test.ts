@@ -23,7 +23,7 @@ describe("GCE VM eBPF agent endpoints", () => {
   it("validates required fields on POST /api/agents/vm/register", async () => {
     const req = new NextRequest("http://localhost:3000/api/agents/vm/register", {
       method: "POST",
-      body: JSON.stringify({ projectId: "theinsite-dev" }),
+      body: JSON.stringify({ projectId: "acme-dev" }),
     });
     const res = await registerVm(req);
     expect(res.status).toBe(400);
@@ -33,7 +33,7 @@ describe("GCE VM eBPF agent endpoints", () => {
     const req = new NextRequest("http://localhost:3000/api/agents/vm/register", {
       method: "POST",
       body: JSON.stringify({
-        projectId: "theinsite-dev",
+        projectId: "acme-dev",
         zone: "europe-west3-b",
         instanceName: "cms-dev-vm",
         agentSecret: "super-secret-value",
@@ -43,13 +43,13 @@ describe("GCE VM eBPF agent endpoints", () => {
     const res = await registerVm(req);
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body).toEqual({ ok: true, agentId: "vm:theinsite-dev:cms-dev-vm" });
+    expect(body).toEqual({ ok: true, agentId: "vm:acme-dev:cms-dev-vm" });
     expect(mockSql).toHaveBeenCalledTimes(1);
   });
 
   it("renders a systemd installer script from GET /api/agents/vm/install", async () => {
     const req = new NextRequest(
-      "https://watchmen.theinsite.dev/api/agents/vm/install?project=theinsite-dev&zone=europe-west3-b&instance=cms-dev-vm",
+      "https://watchmen.acme.dev/api/agents/vm/install?project=acme-dev&zone=europe-west3-b&instance=cms-dev-vm",
     );
     const res = await installVmScript(req);
     expect(res.status).toBe(200);
@@ -65,10 +65,10 @@ describe("GCE VM eBPF agent endpoints", () => {
       .mockResolvedValueOnce({
         rows: [
           {
-            id: "vm:theinsite-dev:cms-dev-vm",
-            user_email: "pavel@theinsite.dev",
+            id: "vm:acme-dev:cms-dev-vm",
+            user_email: "pavel@acme.dev",
             provider: "gcp_vm",
-            project_id: "theinsite-dev",
+            project_id: "acme-dev",
             instance_name: "cms-dev-vm",
             cluster_name: null,
           },
@@ -78,12 +78,12 @@ describe("GCE VM eBPF agent endpoints", () => {
       .mockResolvedValue({ rows: [] });
 
     const received: LiveTraceIngressEvent[] = [];
-    const unsub = subscribeLiveTraceEvents("pavel@theinsite.dev", (ev) => received.push(ev));
+    const unsub = subscribeLiveTraceEvents("pavel@acme.dev", (ev) => received.push(ev));
 
     const req = new NextRequest("http://localhost:3000/api/agents/events", {
       method: "POST",
       headers: {
-        "x-watchmen-agent-id": "vm:theinsite-dev:cms-dev-vm",
+        "x-watchmen-agent-id": "vm:acme-dev:cms-dev-vm",
         "x-watchmen-agent-secret": "vm-secret",
       },
       body: JSON.stringify({

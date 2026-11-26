@@ -320,7 +320,7 @@ export const WATCHMEN_MCP_TOOLS: McpToolDefinition[] = [
         },
         projectId: {
           type: "string",
-          description: "Optional GCP project ID filter (e.g. theinsite-dev or theinsite-prod).",
+          description: "Optional GCP project ID filter (e.g. acme-dev or acme-prod).",
         },
         resourceType: {
           type: "string",

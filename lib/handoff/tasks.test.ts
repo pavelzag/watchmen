@@ -246,10 +246,10 @@ describe("lib/handoff/tasks", () => {
   it("sorts mixed-severity container CVEs highest-first across batches and prints Severity Breakdown", () => {
     const lowIssues = Array.from({ length: 10 }, (_, idx) =>
       handoffIssueFromContainerCve({
-        imageRef: "europe-west3-docker.pkg.dev/theinsite-dev/app/sneakpeek-processor:e9b3fe3e",
+        imageRef: "europe-west3-docker.pkg.dev/acme-dev/app/sneakpeek-processor:e9b3fe3e",
         imageName: "sneakpeek-processor:e9b3fe3e",
         cloud: "gcp",
-        accountId: "theinsite-dev",
+        accountId: "acme-dev",
         cve: {
           cveId: `CVE-2026-00${idx}`,
           packageName: `pkg-low-${idx}`,
@@ -260,10 +260,10 @@ describe("lib/handoff/tasks", () => {
       })
     );
     const critIssue = handoffIssueFromContainerCve({
-      imageRef: "europe-west3-docker.pkg.dev/theinsite-dev/app/sneakpeek-processor:e9b3fe3e",
+      imageRef: "europe-west3-docker.pkg.dev/acme-dev/app/sneakpeek-processor:e9b3fe3e",
       imageName: "sneakpeek-processor:e9b3fe3e",
       cloud: "gcp",
-      accountId: "theinsite-dev",
+      accountId: "acme-dev",
       cve: {
         cveId: "CVE-2026-9999",
         packageName: "openssl",
@@ -274,10 +274,10 @@ describe("lib/handoff/tasks", () => {
       },
     });
     const medIssue = handoffIssueFromContainerCve({
-      imageRef: "europe-west3-docker.pkg.dev/theinsite-dev/app/sneakpeek-processor:e9b3fe3e",
+      imageRef: "europe-west3-docker.pkg.dev/acme-dev/app/sneakpeek-processor:e9b3fe3e",
       imageName: "sneakpeek-processor:e9b3fe3e",
       cloud: "gcp",
-      accountId: "theinsite-dev",
+      accountId: "acme-dev",
       cve: {
         cveId: "CVE-2026-5555",
         packageName: "curl",

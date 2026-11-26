@@ -1,8 +1,8 @@
 name: Sync dev branch
 
-# Fast-forwards the dev branch to master after every push so the Vercel demo
-# deployment (watchmen-git-dev-<scope>.vercel.app) rebuilds automatically and
-# always matches production (watchmen.theinsite.dev).
+# Fast-forwards the dev branch to master after every push so the branch
+# preview deployment on Vercel rebuilds automatically and always matches
+# the production deployment.
 
 on:
   push:

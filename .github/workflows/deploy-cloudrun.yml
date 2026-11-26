@@ -1,17 +1,9 @@
-name: Deploy to Cloud Run (production)
+name: Deploy (production)
 
-# Keyless push-to-deploy for watchmen.theinsite.dev:
-#   1. Type-check gate
-#   2. Authenticate to GCP via Workload Identity Federation (no SA keys)
-#   3. Cloud Build the image tagged with the commit SHA (baked into the UI
-#      build badge via cloudbuild.yaml's GIT_SHA build arg)
-#   4. gcloud run deploy (preserves existing env, secrets, VPC egress)
-#   5. Health check
-#
-# Provisioned by watchmen-infra stacks/github-actions-deploy.
-# Database migrations are intentionally NOT automated — run
-# watchmen-infra stacks/static-studio-host/migrate-db.sh manually when a
-# change touches scripts/migrate.sql.
+# Generic caller: all deployment logic and environment specifics live in the
+# watchmen-infra repository and are executed by its reusable workflow.
+# Keeping this file environment-agnostic means the app repo carries no
+# cloud project, domain, or service account details.
 
 on:
   push:
@@ -21,83 +13,12 @@ on:
 # A newer push supersedes the in-flight deploy; only the newest master
 # commit should end up serving production.
 concurrency:
-  group: deploy-cloudrun
+  group: deploy-production
   cancel-in-progress: true
-
-env:
-  PROJECT_ID: theinsite-watchmen
-  REGION: europe-west3
-  SERVICE: watchmen
-  IMAGE_NAME: europe-west3-docker.pkg.dev/theinsite-watchmen/watchmen/app
-  WIF_PROVIDER: projects/159171566143/locations/global/workloadIdentityPools/github-actions/providers/watchmen-repo
-  DEPLOY_SA: watchmen-github-deploy@theinsite-watchmen.iam.gserviceaccount.com
-  # Regional Cloud Build requires the full SA resource name, not a bare email.
-  BUILD_SA: projects/theinsite-watchmen/serviceAccounts/watchmen-build@theinsite-watchmen.iam.gserviceaccount.com
 
 jobs:
   deploy:
-    name: Build & deploy
-    runs-on: ubuntu-latest
+    uses: pavelzag/watchmen-infra/.github/workflows/deploy-watchmen.yml@master
     permissions:
-      id-token: write # mint the GitHub OIDC token for GCP WIF
+      id-token: write # let the reusable workflow mint the GCP WIF token
       contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Type-check gate
-        run: |
-          npm ci
-          npm run type-check
-
-      - name: Authenticate to GCP (keyless WIF)
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ env.WIF_PROVIDER }}
-          service_account: ${{ env.DEPLOY_SA }}
-
-      - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
-
-      - name: Compute image tag
-        id: meta
-        run: echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Build image via Cloud Build
-        run: |
-          gcloud builds submit . \
-            --project="$PROJECT_ID" \
-            --region="$REGION" \
-            --config=cloudbuild.yaml \
-            --substitutions=_GIT_SHA=${{ steps.meta.outputs.sha }},_IMAGE="${IMAGE_NAME}:${{ steps.meta.outputs.sha }}" \
-            --service-account="$BUILD_SA" \
-            --gcs-source-staging-dir="gs://${PROJECT_ID}-build/source" \
-            --gcs-log-dir="gs://${PROJECT_ID}-build/logs"
-
-      - name: Deploy to Cloud Run
-        run: |
-          gcloud run deploy "$SERVICE" \
-            --image="${IMAGE_NAME}:${{ steps.meta.outputs.sha }}" \
-            --project="$PROJECT_ID" \
-            --region="$REGION" \
-            --allow-unauthenticated
-
-      - name: Health check
-        run: |
-          set -euo pipefail
-          for i in 1 2 3 4 5 6; do
-            if curl -fsS --max-time 30 "https://watchmen.theinsite.dev/api/health" >/dev/null; then
-              echo "Production healthy on build ${{ steps.meta.outputs.sha }}"
-              exit 0
-            fi
-            echo "health check failed; retrying in 20s…"
-            sleep 20
-          done
-          echo "::error::Production health check failed after deploying ${{ steps.meta.outputs.sha }}"
-          exit 1

@@ -18,7 +18,7 @@ func TestSenderSanitizePrivacy(t *testing.T) {
 		Path:     "/preview?token=secret123&page=home&sig=abc999",
 		SourceIP: "203.0.113.42",
 		DestIP:   "10.52.0.2",
-		Data:     "GET /preview?token=secret123&page=home&sig=abc999 HTTP/1.1\r\nHost: cms.theinsite.dev\r\nAuthorization: Bearer top-secret-jwt\r\nCookie: sid=xyz\r\n",
+		Data:     "GET /preview?token=secret123&page=home&sig=abc999 HTTP/1.1\r\nHost: cms.acme.dev\r\nAuthorization: Bearer top-secret-jwt\r\nCookie: sid=xyz\r\n",
 	}
 
 	got := s.sanitize(ev)

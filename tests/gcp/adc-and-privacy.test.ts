@@ -56,7 +56,7 @@ describe("Pub/Sub OIDC verification", () => {
   it("rejects missing bearer token when GCP_PUBSUB_REQUIRE_OIDC=true", async () => {
     process.env.GCP_PUBSUB_REQUIRE_OIDC = "true";
     const res = await verifyPubsubPushRequest({
-      url: "https://watchmen.theinsite.dev/api/ingest/gcp/pubsub",
+      url: "https://watchmen.acme.dev/api/ingest/gcp/pubsub",
       headers: new Headers(),
     });
     expect(res.ok).toBe(false);
@@ -65,14 +65,14 @@ describe("Pub/Sub OIDC verification", () => {
 
   it("rejects mismatched push service account email with 403", async () => {
     process.env.GCP_PUBSUB_REQUIRE_OIDC = "true";
-    process.env.GCP_PUBSUB_PUSH_EMAIL = "expected-push@theinsite-prod.iam.gserviceaccount.com";
+    process.env.GCP_PUBSUB_PUSH_EMAIL = "expected-push@acme-prod.iam.gserviceaccount.com";
     setPubsubTokenVerifierForTests(async () => ({
       email: "attacker@other-project.iam.gserviceaccount.com",
       email_verified: true,
     }));
 
     const res = await verifyPubsubPushRequest({
-      url: "https://watchmen.theinsite.dev/api/ingest/gcp/pubsub",
+      url: "https://watchmen.acme.dev/api/ingest/gcp/pubsub",
       headers: new Headers({ Authorization: "Bearer fake-jwt" }),
     });
     expect(res.ok).toBe(false);
@@ -81,22 +81,22 @@ describe("Pub/Sub OIDC verification", () => {
 
   it("accepts verified token from configured push service account", async () => {
     process.env.GCP_PUBSUB_REQUIRE_OIDC = "true";
-    process.env.GCP_PUBSUB_PUSH_EMAIL = "watchmen-live-trace-push@theinsite-prod.iam.gserviceaccount.com";
-    process.env.GCP_PUBSUB_PUSH_AUDIENCE = "https://watchmen.theinsite.dev/api/ingest/gcp/pubsub";
+    process.env.GCP_PUBSUB_PUSH_EMAIL = "watchmen-live-trace-push@acme-prod.iam.gserviceaccount.com";
+    process.env.GCP_PUBSUB_PUSH_AUDIENCE = "https://watchmen.acme.dev/api/ingest/gcp/pubsub";
     setPubsubTokenVerifierForTests(async (_token, audience) => {
-      expect(audience).toEqual(["https://watchmen.theinsite.dev/api/ingest/gcp/pubsub"]);
+      expect(audience).toEqual(["https://watchmen.acme.dev/api/ingest/gcp/pubsub"]);
       return {
-        email: "watchmen-live-trace-push@theinsite-prod.iam.gserviceaccount.com",
+        email: "watchmen-live-trace-push@acme-prod.iam.gserviceaccount.com",
         email_verified: true,
       };
     });
 
     const res = await verifyPubsubPushRequest({
-      url: "https://watchmen.theinsite.dev/api/ingest/gcp/pubsub",
+      url: "https://watchmen.acme.dev/api/ingest/gcp/pubsub",
       headers: new Headers({ Authorization: "Bearer valid-jwt" }),
     });
     expect(res.ok).toBe(true);
-    expect(res.email).toBe("watchmen-live-trace-push@theinsite-prod.iam.gserviceaccount.com");
+    expect(res.email).toBe("watchmen-live-trace-push@acme-prod.iam.gserviceaccount.com");
   });
 });
 
@@ -120,7 +120,7 @@ describe("privacy redaction & IP truncation", () => {
   it("redacts Authorization and Cookie headers in raw HTTP payloads", () => {
     const raw = [
       "GET /admin?jwt=my-jwt&view=1 HTTP/1.1",
-      "Host: cms.theinsite.dev",
+      "Host: cms.acme.dev",
       "Authorization: Bearer super-secret-token",
       "Cookie: session=abc123",
     ].join("\n");
@@ -147,9 +147,9 @@ describe("trace source Terraform exclusion filters", () => {
     const bundle = generateGcpTraceSourceBundle({
       ...DEFAULT_GCP_TRACE_SOURCE_CONFIG,
       mode: "streaming",
-      projectId: "theinsite-prod",
+      projectId: "acme-prod",
       region: "europe-west3",
-      pushEndpoint: "https://watchmen.theinsite.dev/api/ingest/gcp/pubsub",
+      pushEndpoint: "https://watchmen.acme.dev/api/ingest/gcp/pubsub",
       excludeRequestLogServices: ["cms-prod-sneakpeek", "cms-prod-onboarding"],
     });
 
@@ -173,7 +173,7 @@ describe("Cloud Run v2 Jobs findings", () => {
       cloudRunJobs: [
         {
           name: "cms-dev-sneakpeek-job",
-          projectId: "theinsite-dev",
+          projectId: "acme-dev",
           region: "europe-west3",
           status: "READY",
           iamPolicy: { bindings: [] },
@@ -192,6 +192,6 @@ describe("Cloud Run v2 Jobs findings", () => {
     };
 
     const findings = computeFindings(snapshot);
-    expect(findings.some((f) => f.id.startsWith("secret_in_env:cloudrun-job:theinsite-dev:cms-dev-sneakpeek-job:"))).toBe(true);
+    expect(findings.some((f) => f.id.startsWith("secret_in_env:cloudrun-job:acme-dev:cms-dev-sneakpeek-job:"))).toBe(true);
   });
 });

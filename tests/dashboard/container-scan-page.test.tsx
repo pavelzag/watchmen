@@ -49,22 +49,22 @@ describe("ContainerScanPage", () => {
     mockFetchByRoute({
       containerScan: () => ({
         results: [],
-        gcpProjects: ["theinsite-prod"],
+        gcpProjects: ["acme-prod"],
         gcpAuthConfigured: true,
         trivyAvailable: false,
         scannedAt: "2026-11-23T15:30:00.000Z",
         warnings: [
           {
             service: "containeranalysis",
-            projectId: "theinsite-prod",
+            projectId: "acme-prod",
             code: "api_not_enabled",
             retryable: false,
-            message: "containeranalysis skipped for theinsite-prod: API not enabled.",
+            message: "containeranalysis skipped for acme-prod: API not enabled.",
             detail:
               "Error: Container Analysis API has not been used in project 159171566143 before or it is disabled.",
             requiredApi: "containeranalysis.googleapis.com",
             enableApiCommand:
-              "gcloud services enable containeranalysis.googleapis.com --project=theinsite-prod",
+              "gcloud services enable containeranalysis.googleapis.com --project=acme-prod",
           },
         ],
       }),
@@ -84,7 +84,7 @@ describe("ContainerScanPage", () => {
     });
     const copiedAll = (writeTextMock.mock.calls[0] as unknown[])[0] as string;
     expect(copiedAll).toContain("gcloud services enable containeranalysis.googleapis.com --project=159171566143");
-    expect(copiedAll).toContain("gcloud services enable containeranalysis.googleapis.com --project=theinsite-prod");
+    expect(copiedAll).toContain("gcloud services enable containeranalysis.googleapis.com --project=acme-prod");
   });
 
   it("hides optional Container Analysis warnings completely when Trivy is available", async () => {
@@ -94,13 +94,13 @@ describe("ContainerScanPage", () => {
         warnings: [
           {
             service: "containeranalysis",
-            projectId: "theinsite-dev",
+            projectId: "acme-dev",
             code: "permission_denied",
             retryable: false,
-            message: "containeranalysis skipped for theinsite-dev: permission denied",
+            message: "containeranalysis skipped for acme-dev: permission denied",
           },
         ],
-        gcpProjects: ["theinsite-dev"],
+        gcpProjects: ["acme-dev"],
         gcpAuthConfigured: true,
         trivyAvailable: true,
         scannedAt: "2026-11-23T15:30:00.000Z",
@@ -121,10 +121,10 @@ describe("ContainerScanPage", () => {
   it("filters by name/CVE/date/severity, paginates results, and opens Send to CLI & Create PR modals", async () => {
     const now = Date.now();
     const images = Array.from({ length: 12 }, (_, idx) => ({
-      imageRef: `europe-west3-docker.pkg.dev/theinsite-prod/cms/svc-${idx + 1}@sha256:${idx + 1}`,
+      imageRef: `europe-west3-docker.pkg.dev/acme-prod/cms/svc-${idx + 1}@sha256:${idx + 1}`,
       imageName: `svc-${idx + 1}:v1.0.${idx}`,
       cloud: "gcp" as const,
-      accountId: "theinsite-prod",
+      accountId: "acme-prod",
       scannedAt: new Date(now - idx * 86400_000).toISOString(),
       scanner: "trivy",
       scanStatus: "scanned" as const,
@@ -159,7 +159,7 @@ describe("ContainerScanPage", () => {
       containerScan: () => ({
         results: images,
         warnings: [],
-        gcpProjects: ["theinsite-prod"],
+        gcpProjects: ["acme-prod"],
         gcpAuthConfigured: true,
         trivyAvailable: true,
         scannedAt: new Date(now).toISOString(),
@@ -203,10 +203,10 @@ describe("ContainerScanPage", () => {
       containerScan: () => ({
         results: [
           {
-            imageRef: "europe-west3-docker.pkg.dev/theinsite-dev/cms/app@sha256:aaa",
+            imageRef: "europe-west3-docker.pkg.dev/acme-dev/cms/app@sha256:aaa",
             imageName: "app:dev",
             cloud: "gcp",
-            accountId: "theinsite-dev",
+            accountId: "acme-dev",
             scannedAt: "2026-11-23T15:00:00.000Z",
             vulnerabilities: [],
             summary: { critical: 0, high: 0, medium: 0, low: 0, negligible: 0 },
@@ -214,7 +214,7 @@ describe("ContainerScanPage", () => {
           },
         ],
         warnings: [],
-        gcpProjects: ["theinsite-dev"],
+        gcpProjects: ["acme-dev"],
         gcpAuthConfigured: true,
         trivyAvailable: true,
         scannedAt: "2026-11-23T15:30:00.000Z",
@@ -222,10 +222,10 @@ describe("ContainerScanPage", () => {
       containerScanPost: () => ({
         scanned: [
           {
-            imageRef: "europe-west3-docker.pkg.dev/theinsite-dev/cms/app@sha256:aaa",
+            imageRef: "europe-west3-docker.pkg.dev/acme-dev/cms/app@sha256:aaa",
             imageName: "app:dev",
             cloud: "gcp",
-            accountId: "theinsite-dev",
+            accountId: "acme-dev",
             scannedAt: "2026-11-23T15:35:00.000Z",
             scanner: "trivy",
             scanStatus: "scanned",
@@ -268,10 +268,10 @@ describe("ContainerScanPage", () => {
         results: [
           {
             // Older app image pushed 10 days ago, but Trivy-scanned 1 minute ago
-            imageRef: "europe-west3-docker.pkg.dev/theinsite-prod/cms/web@sha256:old1",
+            imageRef: "europe-west3-docker.pkg.dev/acme-prod/cms/web@sha256:old1",
             imageName: "web:v1.0.0",
             cloud: "gcp",
-            accountId: "theinsite-prod",
+            accountId: "acme-prod",
             imageUpdatedAt: "2026-11-14T10:00:00.000Z",
             scannedAt: "2026-11-24T10:00:00.000Z",
             scanner: "trivy",
@@ -289,10 +289,10 @@ describe("ContainerScanPage", () => {
           },
           {
             // Newer version of the same app pushed yesterday
-            imageRef: "europe-west3-docker.pkg.dev/theinsite-prod/cms/web@sha256:new2",
+            imageRef: "europe-west3-docker.pkg.dev/acme-prod/cms/web@sha256:new2",
             imageName: "web:v2.0.0",
             cloud: "gcp",
-            accountId: "theinsite-prod",
+            accountId: "acme-prod",
             imageUpdatedAt: "2026-11-23T10:00:00.000Z",
             scannedAt: "2026-11-23T10:00:00.000Z",
             scanStatus: "clean",
@@ -301,10 +301,10 @@ describe("ContainerScanPage", () => {
           },
           {
             // Different project (dev) for same app name
-            imageRef: "europe-west3-docker.pkg.dev/theinsite-dev/cms/web@sha256:dev1",
+            imageRef: "europe-west3-docker.pkg.dev/acme-dev/cms/web@sha256:dev1",
             imageName: "web:dev-latest",
             cloud: "gcp",
-            accountId: "theinsite-dev",
+            accountId: "acme-dev",
             imageUpdatedAt: "2026-11-22T10:00:00.000Z",
             scannedAt: "2026-11-22T10:00:00.000Z",
             scanStatus: "unscanned",
@@ -313,7 +313,7 @@ describe("ContainerScanPage", () => {
           },
         ],
         warnings: [],
-        gcpProjects: ["theinsite-prod", "theinsite-dev"],
+        gcpProjects: ["acme-prod", "acme-dev"],
         gcpAuthConfigured: true,
         trivyAvailable: true,
         scannedAt: "2026-11-24T10:00:00.000Z",
@@ -347,10 +347,10 @@ describe("ContainerScanPage", () => {
       containerScan: () => ({
         results: [
           {
-            imageRef: "europe-west3-docker.pkg.dev/theinsite-prod/cms/api-gateway@sha256:1",
+            imageRef: "europe-west3-docker.pkg.dev/acme-prod/cms/api-gateway@sha256:1",
             imageName: "api-gateway:1.0.0",
             cloud: "gcp",
-            accountId: "theinsite-prod",
+            accountId: "acme-prod",
             scannedAt: "2026-11-24T10:00:00.000Z",
             scanner: "trivy",
             scanStatus: "scanned",
@@ -366,10 +366,10 @@ describe("ContainerScanPage", () => {
             summary: { critical: 1, high: 0, medium: 0, low: 0, negligible: 0 },
           },
           {
-            imageRef: "europe-west3-docker.pkg.dev/theinsite-prod/cms/worker@sha256:2",
+            imageRef: "europe-west3-docker.pkg.dev/acme-prod/cms/worker@sha256:2",
             imageName: "worker:2.0.0",
             cloud: "gcp",
-            accountId: "theinsite-prod",
+            accountId: "acme-prod",
             scannedAt: "2026-11-24T10:00:00.000Z",
             scanner: "trivy",
             scanStatus: "scanned",
@@ -385,10 +385,10 @@ describe("ContainerScanPage", () => {
             summary: { critical: 0, high: 1, medium: 0, low: 0, negligible: 0 },
           },
           {
-            imageRef: "europe-west3-docker.pkg.dev/theinsite-dev/cms/worker@sha256:3",
+            imageRef: "europe-west3-docker.pkg.dev/acme-dev/cms/worker@sha256:3",
             imageName: "worker:dev",
             cloud: "gcp",
-            accountId: "theinsite-dev",
+            accountId: "acme-dev",
             scannedAt: "2026-11-24T10:00:00.000Z",
             scanner: "trivy",
             scanStatus: "clean",
@@ -397,7 +397,7 @@ describe("ContainerScanPage", () => {
           },
         ],
         warnings: [],
-        gcpProjects: ["theinsite-prod", "theinsite-dev"],
+        gcpProjects: ["acme-prod", "acme-dev"],
         gcpAuthConfigured: true,
         trivyAvailable: true,
         scannedAt: "2026-11-24T10:00:00.000Z",
@@ -413,10 +413,10 @@ describe("ContainerScanPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Filter by image app" }));
     expect(screen.getByRole("option", { name: "All apps (3)" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "api-gateway (1)" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "worker (theinsite-prod) (1)" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "worker (theinsite-dev) (1)" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "worker (acme-prod) (1)" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "worker (acme-dev) (1)" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("option", { name: "worker (theinsite-prod) (1)" }));
+    fireEvent.click(screen.getByRole("option", { name: "worker (acme-prod) (1)" }));
     expect(screen.getByText("worker:2.0.0")).toBeInTheDocument();
     expect(screen.queryByText("api-gateway:1.0.0")).not.toBeInTheDocument();
     expect(screen.queryByText("worker:dev")).not.toBeInTheDocument();
@@ -430,10 +430,10 @@ describe("ContainerScanPage", () => {
       containerScan: () => ({
         results: [
           {
-            imageRef: "europe-west3-docker.pkg.dev/theinsite-prod/cms/crit-img@sha256:1",
+            imageRef: "europe-west3-docker.pkg.dev/acme-prod/cms/crit-img@sha256:1",
             imageName: "crit-img:1.0",
             cloud: "gcp",
-            accountId: "theinsite-prod",
+            accountId: "acme-prod",
             scannedAt: "2026-11-24T10:00:00.000Z",
             scanner: "trivy",
             scanStatus: "scanned",
@@ -456,10 +456,10 @@ describe("ContainerScanPage", () => {
             summary: { critical: 1, high: 0, medium: 0, low: 1, negligible: 0 },
           },
           {
-            imageRef: "europe-west3-docker.pkg.dev/theinsite-prod/cms/med-img@sha256:2",
+            imageRef: "europe-west3-docker.pkg.dev/acme-prod/cms/med-img@sha256:2",
             imageName: "med-img:1.0",
             cloud: "gcp",
-            accountId: "theinsite-prod",
+            accountId: "acme-prod",
             scannedAt: "2026-11-24T10:00:00.000Z",
             scanner: "trivy",
             scanStatus: "scanned",
@@ -475,10 +475,10 @@ describe("ContainerScanPage", () => {
             summary: { critical: 0, high: 0, medium: 1, low: 0, negligible: 0 },
           },
           {
-            imageRef: "europe-west3-docker.pkg.dev/theinsite-prod/cms/low-img@sha256:3",
+            imageRef: "europe-west3-docker.pkg.dev/acme-prod/cms/low-img@sha256:3",
             imageName: "low-img:1.0",
             cloud: "gcp",
-            accountId: "theinsite-prod",
+            accountId: "acme-prod",
             scannedAt: "2026-11-24T10:00:00.000Z",
             scanner: "trivy",
             scanStatus: "scanned",
@@ -495,7 +495,7 @@ describe("ContainerScanPage", () => {
           },
         ],
         warnings: [],
-        gcpProjects: ["theinsite-prod"],
+        gcpProjects: ["acme-prod"],
         gcpAuthConfigured: true,
         trivyAvailable: true,
         scannedAt: "2026-11-24T10:00:00.000Z",

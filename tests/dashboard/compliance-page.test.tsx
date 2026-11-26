@@ -42,7 +42,7 @@ describe("CompliancePage PR & CLI handoff", () => {
                     description: "Buckets must not grant public IAM access.",
                     status: "fail",
                     impact: "critical",
-                    evidence: [{ name: "public-assets", projectId: "theinsite-prod" }],
+                    evidence: [{ name: "public-assets", projectId: "acme-prod" }],
                     remediationHint: "Remove allUsers from bucket IAM bindings.",
                   },
                 ],

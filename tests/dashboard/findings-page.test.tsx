@@ -38,7 +38,7 @@ describe("FindingsPage", () => {
       title: idx === 0 ? "Alpha Open Bucket" : `GCP Finding ${idx + 1}`,
       description: `Description for GCP finding ${idx + 1}`,
       resourceName: `bucket-${idx + 1}`,
-      projectId: idx % 2 === 0 ? "theinsite-prod" : "theinsite-dev",
+      projectId: idx % 2 === 0 ? "acme-prod" : "acme-dev",
       resourceType: idx === 0 ? "storage_bucket" : "firewall_rule",
       remediationHint: "Restrict public access",
     }));
@@ -125,7 +125,7 @@ describe("FindingsPage", () => {
 
     // Filter by project
     fireEvent.click(screen.getByRole("button", { name: "Filter by project or account" }));
-    fireEvent.click(screen.getByRole("option", { name: "theinsite-dev" }));
+    fireEvent.click(screen.getByRole("option", { name: "acme-dev" }));
     expect(screen.getByText("Showing 1–5 of 5")).toBeInTheDocument();
 
     // Filter by severity

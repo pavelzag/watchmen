@@ -20,7 +20,7 @@ describe("Trivy scanner", () => {
 
   it("validates container image references strictly", () => {
     expect(
-      isValidImageRef("europe-west3-docker.pkg.dev/theinsite-prod/cms/app@sha256:abc123")
+      isValidImageRef("europe-west3-docker.pkg.dev/acme-prod/cms/app@sha256:abc123")
     ).toBe(true);
     expect(isValidImageRef("--help")).toBe(false);
     expect(isValidImageRef("repo/img; rm -rf /")).toBe(false);
@@ -106,14 +106,14 @@ describe("Trivy scanner", () => {
       expect(bin).toBe("trivy");
       expect(args).toContain("--scanners");
       expect(args).toContain("vuln");
-      expect(args[args.length - 1]).toBe("europe-west3-docker.pkg.dev/theinsite-dev/cms/web@sha256:aaa");
+      expect(args[args.length - 1]).toBe("europe-west3-docker.pkg.dev/acme-dev/cms/web@sha256:aaa");
       expect(opts.env.TRIVY_USERNAME).toBe("oauth2accesstoken");
       expect(opts.env.TRIVY_PASSWORD).toBe("gcp-access-token");
       cb(null, { stdout: JSON.stringify({ Results: [] }), stderr: "" });
     });
 
     const out = await scanImageWithTrivy({
-      imageRef: "https://europe-west3-docker.pkg.dev/theinsite-dev/cms/web@sha256:aaa",
+      imageRef: "https://europe-west3-docker.pkg.dev/acme-dev/cms/web@sha256:aaa",
       accessToken: "gcp-access-token",
     });
 

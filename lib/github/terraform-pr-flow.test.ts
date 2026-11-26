@@ -87,7 +87,7 @@ describe("lib/github/terraform-pr-flow multi-repo mirror", () => {
       .mockResolvedValueOnce({ number: 202, html_url: "https://github.com/org/app-prod/pull/202" });
 
     const result = await executeTerraformPrFlow({
-      email: "pavel@theinsite.dev",
+      email: "pavel@acme.dev",
       token: "ghp_test",
       owner: "org",
       repo: "app-dev",
@@ -101,7 +101,7 @@ describe("lib/github/terraform-pr-flow multi-repo mirror", () => {
           title: "CVE-2026-1001: openssl",
           description: "Critical OpenSSL flaw",
           mitigations: ["Upgrade openssl"],
-          projectIds: ["theinsite-dev", "theinsite-prod"],
+          projectIds: ["acme-dev", "acme-prod"],
           resourceType: "container_image",
           resourceName: "web:v1",
           searchTerms: ["Dockerfile"],

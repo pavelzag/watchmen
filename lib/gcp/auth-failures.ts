@@ -29,7 +29,7 @@ async function getMockAuthFailures(): Promise<GcpAuthFailure[]> {
       timestamp: new Date(now - 34 * 60 * 1000).toISOString(),
       principal: "unknown",
       method: "google.storage.v1.GetObject",
-      resource: "projects/_/buckets/theinsite-scraped-images",
+      resource: "projects/_/buckets/acme-scraped-images",
       projectId: "my-project",
       errorCode: "UNAUTHENTICATED",
       statusMessage: "Request is missing required authentication credential.",

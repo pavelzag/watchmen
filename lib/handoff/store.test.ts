@@ -45,7 +45,7 @@ describe("lib/handoff/store", () => {
     });
 
     const tasks = await listHandoffTasks({
-      userEmail: "pavel@theinsite.dev",
+      userEmail: "pavel@acme.dev",
       status: "open,claimed,in_progress",
       severity: "critical,medium",
       tool: "all",
@@ -61,7 +61,7 @@ describe("lib/handoff/store", () => {
     expect(queryText).toContain("WHEN 'critical' THEN 4");
     expect(queryText).toContain("status = ANY(string_to_array");
     expect(queryText).toContain("severity = ANY(string_to_array");
-    expect(values).toContain("pavel@theinsite.dev");
+    expect(values).toContain("pavel@acme.dev");
     expect(values).toContain("open,claimed,in_progress");
     expect(values).toContain("critical,medium");
   });
@@ -77,7 +77,7 @@ describe("lib/handoff/store", () => {
     });
 
     const summary = await getHandoffTaskSummary({
-      userEmail: "pavel@theinsite.dev",
+      userEmail: "pavel@acme.dev",
       status: "open",
     });
 

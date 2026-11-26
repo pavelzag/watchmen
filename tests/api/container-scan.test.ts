@@ -121,22 +121,22 @@ describe("GET /api/container-scan", () => {
 
   it("uses per-user GCP service account credentials and falls back to SA project_id when GCP_PROJECTS is unset", async () => {
     mockAuth.mockResolvedValue({
-      user: { email: "pavel@theinsite.dev" },
+      user: { email: "pavel@acme.dev" },
     });
     mockGetUserCloudCredentials.mockResolvedValue({
       serviceAccountKey: JSON.stringify({
         type: "service_account",
-        project_id: "theinsite-prod",
-        client_email: "watchmen@theinsite-prod.iam.gserviceaccount.com",
+        project_id: "acme-prod",
+        client_email: "watchmen@acme-prod.iam.gserviceaccount.com",
         private_key: "-----BEGIN PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----\n",
       }),
     });
     mockGetGcpContainerVulnerabilities.mockResolvedValue([
       {
-        imageRef: "europe-west3-docker.pkg.dev/theinsite-prod/cms/app@sha256:123",
+        imageRef: "europe-west3-docker.pkg.dev/acme-prod/cms/app@sha256:123",
         imageName: "app:v1.0.0",
         cloud: "gcp",
-        accountId: "theinsite-prod",
+        accountId: "acme-prod",
         scannedAt: "2026-11-23T08:00:00Z",
         vulnerabilities: [],
         summary: { critical: 0, high: 0, medium: 0, low: 0, negligible: 0 },
@@ -148,9 +148,9 @@ describe("GET /api/container-scan", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
 
-    expect(mockGetUserCloudCredentials).toHaveBeenCalledWith("pavel@theinsite.dev", "gcp");
-    expect(mockGetGcpContainerVulnerabilities).toHaveBeenCalledWith("theinsite-prod");
-    expect(body.gcpProjects).toEqual(["theinsite-prod"]);
+    expect(mockGetUserCloudCredentials).toHaveBeenCalledWith("pavel@acme.dev", "gcp");
+    expect(mockGetGcpContainerVulnerabilities).toHaveBeenCalledWith("acme-prod");
+    expect(body.gcpProjects).toEqual(["acme-prod"]);
     expect(body.gcpAuthConfigured).toBe(true);
     expect(body.results).toHaveLength(1);
     expect(body.results[0].imageName).toBe("app:v1.0.0");
@@ -158,19 +158,19 @@ describe("GET /api/container-scan", () => {
 
   it("merges cached Trivy scans onto unscanned Artifact Registry images and exposes trivyAvailable", async () => {
     process.env.GCP_USE_ADC = "true";
-    process.env.GCP_PROJECTS = "theinsite-dev";
+    process.env.GCP_PROJECTS = "acme-dev";
     process.env.POSTGRES_URL = "postgresql://localhost/watchmen";
     mockIsTrivyAvailable.mockResolvedValue(true);
 
     mockAuth.mockResolvedValue({
-      user: { email: "pavel@theinsite.dev" },
+      user: { email: "pavel@acme.dev" },
     });
     mockGetGcpContainerVulnerabilities.mockResolvedValue([
       {
-        imageRef: "europe-west3-docker.pkg.dev/theinsite-dev/cms/web@sha256:aaa",
+        imageRef: "europe-west3-docker.pkg.dev/acme-dev/cms/web@sha256:aaa",
         imageName: "web:dev",
         cloud: "gcp",
-        accountId: "theinsite-dev",
+        accountId: "acme-dev",
         scannedAt: "2026-11-23T08:00:00Z",
         vulnerabilities: [],
         summary: { critical: 0, high: 0, medium: 0, low: 0, negligible: 0 },
@@ -180,9 +180,9 @@ describe("GET /api/container-scan", () => {
     mockSql.mockResolvedValueOnce({
       rows: [
         {
-          image_ref: "europe-west3-docker.pkg.dev/theinsite-dev/cms/web@sha256:aaa",
+          image_ref: "europe-west3-docker.pkg.dev/acme-dev/cms/web@sha256:aaa",
           cloud: "gcp",
-          account_id: "theinsite-dev",
+          account_id: "acme-dev",
           scanner: "trivy",
           vulnerabilities: [
             {
@@ -205,7 +205,7 @@ describe("GET /api/container-scan", () => {
     const body = await res.json();
 
     expect(body.trivyAvailable).toBe(true);
-    expect(mockGetGcpContainerVulnerabilities).toHaveBeenCalledWith("theinsite-dev", {
+    expect(mockGetGcpContainerVulnerabilities).toHaveBeenCalledWith("acme-dev", {
       skipContainerAnalysis: true,
     });
     expect(body.results[0]).toMatchObject({
@@ -218,10 +218,10 @@ describe("GET /api/container-scan", () => {
 
   it("suppresses optional containeranalysis permission warnings when Trivy is available", async () => {
     process.env.GCP_USE_ADC = "true";
-    process.env.GCP_PROJECTS = "theinsite-dev";
+    process.env.GCP_PROJECTS = "acme-dev";
     mockIsTrivyAvailable.mockResolvedValue(true);
     mockAuth.mockResolvedValue({
-      user: { email: "pavel@theinsite.dev" },
+      user: { email: "pavel@acme.dev" },
     });
     mockGetGcpContainerVulnerabilities.mockImplementation(async (pid: string) => {
       logFetchWarning("containeranalysis", pid, { code: 403, message: "Permission denied" });
@@ -241,13 +241,13 @@ describe("GET /api/container-scan", () => {
     process.env.POSTGRES_URL = "postgresql://localhost/watchmen";
 
     mockAuth.mockResolvedValue({
-      user: { email: "pavel@theinsite.dev" },
+      user: { email: "pavel@acme.dev" },
     });
     mockSql.mockResolvedValue({
       rows: [
         {
           snapshot: {
-            projects: [{ projectId: "theinsite-dev" }, { projectId: "theinsite-prod" }],
+            projects: [{ projectId: "acme-dev" }, { projectId: "acme-prod" }],
           },
         },
       ],
@@ -258,17 +258,17 @@ describe("GET /api/container-scan", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
 
-    expect(mockGetGcpContainerVulnerabilities).toHaveBeenCalledWith("theinsite-dev");
-    expect(mockGetGcpContainerVulnerabilities).toHaveBeenCalledWith("theinsite-prod");
-    expect(body.gcpProjects).toEqual(["theinsite-dev", "theinsite-prod"]);
+    expect(mockGetGcpContainerVulnerabilities).toHaveBeenCalledWith("acme-dev");
+    expect(mockGetGcpContainerVulnerabilities).toHaveBeenCalledWith("acme-prod");
+    expect(body.gcpProjects).toEqual(["acme-dev", "acme-prod"]);
   });
 
   it("returns GCP scan warnings in the response payload when Artifact Registry or Container Analysis is blocked", async () => {
     process.env.GCP_USE_ADC = "true";
-    process.env.GCP_PROJECTS = "theinsite-prod";
+    process.env.GCP_PROJECTS = "acme-prod";
 
     mockAuth.mockResolvedValue({
-      user: { email: "pavel@theinsite.dev" },
+      user: { email: "pavel@acme.dev" },
     });
     mockGetGcpContainerVulnerabilities.mockImplementation(async (pid: string) => {
       logFetchWarning("artifactregistry", pid, { code: 403, message: "Permission denied" });
@@ -283,7 +283,7 @@ describe("GET /api/container-scan", () => {
     expect(body.warnings).toHaveLength(1);
     expect(body.warnings[0]).toMatchObject({
       service: "artifactregistry",
-      projectId: "theinsite-prod",
+      projectId: "acme-prod",
       code: "permission_denied",
       requiredRoles: ["roles/artifactregistry.reader"],
     });
@@ -292,7 +292,7 @@ describe("GET /api/container-scan", () => {
   it("returns GCP mock scan results when USE_MOCK_DATA=true even if USE_MOCK_AWS_DATA is false", async () => {
     process.env.USE_MOCK_DATA = "true";
     mockAuth.mockResolvedValue({
-      user: { email: "pavel@theinsite.dev" },
+      user: { email: "pavel@acme.dev" },
     });
 
     const res = await GET();
@@ -306,18 +306,18 @@ describe("GET /api/container-scan", () => {
   describe("POST /api/container-scan/scan", () => {
     it("scans authorized Artifact Registry images with Trivy and persists to cache", async () => {
       process.env.GCP_USE_ADC = "true";
-      process.env.GCP_PROJECTS = "theinsite-dev";
+      process.env.GCP_PROJECTS = "acme-dev";
       process.env.POSTGRES_URL = "postgresql://localhost/watchmen";
       mockIsTrivyAvailable.mockResolvedValue(true);
       mockAuth.mockResolvedValue({
-        user: { email: "pavel@theinsite.dev" },
+        user: { email: "pavel@acme.dev" },
       });
       mockGetGcpContainerVulnerabilities.mockResolvedValue([
         {
-          imageRef: "europe-west3-docker.pkg.dev/theinsite-dev/cms/api@sha256:111",
+          imageRef: "europe-west3-docker.pkg.dev/acme-dev/cms/api@sha256:111",
           imageName: "api:dev",
           cloud: "gcp",
-          accountId: "theinsite-dev",
+          accountId: "acme-dev",
           scannedAt: "2026-11-23T08:00:00Z",
           vulnerabilities: [],
           summary: { critical: 0, high: 0, medium: 0, low: 0, negligible: 0 },
@@ -342,7 +342,7 @@ describe("GET /api/container-scan", () => {
       const req = new NextRequest("http://localhost:3000/api/container-scan/scan", {
         method: "POST",
         body: JSON.stringify({
-          imageRefs: ["europe-west3-docker.pkg.dev/theinsite-dev/cms/api@sha256:111"],
+          imageRefs: ["europe-west3-docker.pkg.dev/acme-dev/cms/api@sha256:111"],
         }),
       });
 
@@ -351,7 +351,7 @@ describe("GET /api/container-scan", () => {
       const body = await res.json();
 
       expect(mockScanImageWithTrivy).toHaveBeenCalledWith({
-        imageRef: "europe-west3-docker.pkg.dev/theinsite-dev/cms/api@sha256:111",
+        imageRef: "europe-west3-docker.pkg.dev/acme-dev/cms/api@sha256:111",
         accessToken: "mock-gcp-token",
       });
       expect(mockSql).toHaveBeenCalled();
@@ -365,10 +365,10 @@ describe("GET /api/container-scan", () => {
 
     it("rejects arbitrary imageRefs not present in authorized GCP projects with 404", async () => {
       process.env.GCP_USE_ADC = "true";
-      process.env.GCP_PROJECTS = "theinsite-dev";
+      process.env.GCP_PROJECTS = "acme-dev";
       mockIsTrivyAvailable.mockResolvedValue(true);
       mockAuth.mockResolvedValue({
-        user: { email: "pavel@theinsite-dev" },
+        user: { email: "pavel@acme-dev" },
       });
       mockGetGcpContainerVulnerabilities.mockResolvedValue([]);
 

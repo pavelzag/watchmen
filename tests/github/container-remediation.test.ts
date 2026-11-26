@@ -36,10 +36,10 @@ describe("Container CVE remediation targets & GitHub PR planning", () => {
     };
 
     const target = remediationTargetFromContainerCve({
-      imageRef: "europe-west3-docker.pkg.dev/theinsite-prod/cms/api@sha256:abc",
+      imageRef: "europe-west3-docker.pkg.dev/acme-prod/cms/api@sha256:abc",
       imageName: "api:v1.2.0",
       cloud: "gcp",
-      accountId: "theinsite-prod",
+      accountId: "acme-prod",
       cve,
     });
     expect(target.kind).toBe("container_cve");
@@ -47,10 +47,10 @@ describe("Container CVE remediation targets & GitHub PR planning", () => {
     expect(target.searchTerms).toContain("openssl");
 
     const handoff = handoffIssueFromContainerCve({
-      imageRef: "europe-west3-docker.pkg.dev/theinsite-prod/cms/api@sha256:abc",
+      imageRef: "europe-west3-docker.pkg.dev/acme-prod/cms/api@sha256:abc",
       imageName: "api:v1.2.0",
       cloud: "gcp",
-      accountId: "theinsite-prod",
+      accountId: "acme-prod",
       cve,
       aiRecommendation: "Upgrade base image",
     });
@@ -79,10 +79,10 @@ describe("Container CVE remediation targets & GitHub PR planning", () => {
     mockCallAI.mockResolvedValueOnce("```dockerfile\nFROM node:22.11-alpine\nWORKDIR /app\nCOPY . .\n```");
 
     const target = remediationTargetFromContainerCve({
-      imageRef: "europe-west3-docker.pkg.dev/theinsite-prod/cms/api@sha256:abc",
+      imageRef: "europe-west3-docker.pkg.dev/acme-prod/cms/api@sha256:abc",
       imageName: "api:v1.2.0",
       cloud: "gcp",
-      accountId: "theinsite-prod",
+      accountId: "acme-prod",
       cve: {
         cveId: "CVE-2026-1234",
         severity: "critical",
