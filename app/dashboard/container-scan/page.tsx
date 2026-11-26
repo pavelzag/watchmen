@@ -81,6 +81,26 @@ type StatusFilter = "all" | "vulnerable" | "clean" | "unscanned";
 type DateRangeFilter = "all" | "24h" | "7d" | "30d" | "custom";
 type SortOption = "critical" | "total_cves" | "newest" | "oldest" | "name_asc";
 
+/** Registry display order used by the PROJ: dropdown (mirrors the REG: dropdown). */
+const CLOUD_ORDER: ImageRegistry[] = ["gcp", "aws", "ghcr", "dockerhub"];
+
+function cloudSortIndex(cloud: ImageRegistry): number {
+  const i = CLOUD_ORDER.indexOf(cloud);
+  return i === -1 ? CLOUD_ORDER.length : i;
+}
+
+/**
+ * All cloud "project" keys an image belongs to — GCP project, AWS account,
+ * GHCR org, or Docker Hub namespace — including environments deduplicated
+ * into it. Key format: `${cloud}:${accountId}`.
+ */
+function resultAccountKeys(
+  result: Pick<ImageScanResult, "cloud" | "accountId" | "duplicates">
+): string[] {
+  const entries = [result, ...(result.duplicates ?? [])];
+  return [...new Set(entries.filter((e) => e.accountId).map((e) => `${e.cloud}:${e.accountId}`))];
+}
+
 interface RecState {
   loading: boolean;
   text: string | null;
@@ -737,6 +757,8 @@ export default function ContainerScanPage() {
   const [selectedSeverities, setSelectedSeverities] = useState<SelectableSeverity[]>([]);
   const [cloudFilter, setCloudFilter] = useState<CloudFilter>("all");
   const [appFilter, setAppFilter] = useState<string>("all");
+  /** `${cloud}:${accountId}` of the selected project/account; "all" shows everything. */
+  const [accountFilter, setAccountFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [latestOnly, setLatestOnly] = useState(false);
   const [dedupEnvs, setDedupEnvs] = useState(false);
@@ -836,7 +858,7 @@ export default function ContainerScanPage() {
   // Reset to page 1 when filters or sort change
   useEffect(() => {
     setPage(1);
-  }, [search, selectedSeverities, cloudFilter, appFilter, statusFilter, latestOnly, dedupEnvs, dateRange, dateFrom, dateTo, sortBy, pageSize]);
+  }, [search, selectedSeverities, cloudFilter, accountFilter, appFilter, statusFilter, latestOnly, dedupEnvs, dateRange, dateFrom, dateTo, sortBy, pageSize]);
 
   // When Trivy is active, managed Container Analysis 403/disabled is optional non-blocking noise.
   const actionableWarnings = useMemo(() => {
@@ -859,9 +881,17 @@ export default function ContainerScanPage() {
   const duplicateCount = Math.max(0, baseScopedResults.length - dedupedResults.length);
   const scopedResults = dedupEnvs ? dedupedResults : baseScopedResults;
 
-  const appPool = useMemo(
+  const accountPool = useMemo(
     () => (cloudFilter === "all" ? scopedResults : scopedResults.filter((r) => r.cloud === cloudFilter)),
     [scopedResults, cloudFilter]
+  );
+
+  const appPool = useMemo(
+    () =>
+      accountFilter === "all"
+        ? accountPool
+        : accountPool.filter((r) => resultAccountKeys(r).includes(accountFilter)),
+    [accountPool, accountFilter]
   );
 
   const appOptions = useMemo(() => {
@@ -905,6 +935,40 @@ export default function ContainerScanPage() {
       .map(({ value, label }) => ({ value, label }));
   }, [appPool]);
 
+  // Cloud "project" options: GCP projects, AWS accounts, GHCR orgs, Docker Hub namespaces.
+  // Includes environments folded into deduped representatives so they stay selectable.
+  const accountOptions = useMemo(() => {
+    const byAccount = new Map<string, { cloud: ImageRegistry; accountId: string; count: number }>();
+    for (const r of accountPool) {
+      for (const entry of [r, ...(r.duplicates ?? [])]) {
+        if (!entry.accountId) continue;
+        const key = `${entry.cloud}:${entry.accountId}`;
+        const existing = byAccount.get(key);
+        if (existing) {
+          existing.count += 1;
+        } else {
+          byAccount.set(key, { cloud: entry.cloud, accountId: entry.accountId, count: 1 });
+        }
+      }
+    }
+
+    return Array.from(byAccount.values())
+      .sort(
+        (a, b) =>
+          cloudSortIndex(a.cloud) - cloudSortIndex(b.cloud) || a.accountId.localeCompare(b.accountId)
+      )
+      .map(({ cloud, accountId, count }) => ({
+        value: `${cloud}:${accountId}`,
+        label: `${cloud}/${accountId} (${count})`,
+      }));
+  }, [accountPool]);
+
+  useEffect(() => {
+    if (accountFilter !== "all" && !accountOptions.some((opt) => opt.value === accountFilter)) {
+      setAccountFilter("all");
+    }
+  }, [accountFilter, accountOptions]);
+
   useEffect(() => {
     if (appFilter !== "all" && !appOptions.some((opt) => opt.value === appFilter)) {
       setAppFilter("all");
@@ -932,6 +996,7 @@ export default function ContainerScanPage() {
 
     return scopedResults.filter((r) => {
       if (cloudFilter !== "all" && r.cloud !== cloudFilter) return false;
+      if (accountFilter !== "all" && !resultAccountKeys(r).includes(accountFilter)) return false;
       if (appFilter !== "all" && getApplicationKey(r) !== appFilter) return false;
 
       if (statusFilter === "vulnerable" && r.vulnerabilities.length === 0) return false;
@@ -950,7 +1015,7 @@ export default function ContainerScanPage() {
 
       return true;
     });
-  }, [scopedResults, cloudFilter, appFilter, statusFilter, dateRange, dateFrom, dateTo]);
+  }, [scopedResults, cloudFilter, accountFilter, appFilter, statusFilter, dateRange, dateFrom, dateTo]);
 
   const filteredAndSorted = useMemo(() => {
     const filtered = nonSeverityFiltered.filter((r) => {
@@ -1035,6 +1100,7 @@ export default function ContainerScanPage() {
     Boolean(search) ||
     selectedSeverities.length > 0 ||
     cloudFilter !== "all" ||
+    accountFilter !== "all" ||
     appFilter !== "all" ||
     statusFilter !== "all" ||
     latestOnly ||
@@ -1045,6 +1111,7 @@ export default function ContainerScanPage() {
     setSearch("");
     setSelectedSeverities([]);
     setCloudFilter("all");
+    setAccountFilter("all");
     setAppFilter("all");
     setStatusFilter("all");
     setLatestOnly(false);
@@ -1287,6 +1354,18 @@ export default function ContainerScanPage() {
                   { value: "aws", label: "AWS ECR" },
                   { value: "ghcr", label: "GitHub (GHCR)" },
                   { value: "dockerhub", label: "Docker Hub" },
+                ]}
+              />
+
+              <TerminalSelect
+                value={accountFilter}
+                onChange={setAccountFilter}
+                ariaLabel="Filter by cloud project or account"
+                prefix="PROJ:"
+                active={accountFilter !== "all"}
+                options={[
+                  { value: "all", label: `All projects (${accountOptions.length})` },
+                  ...accountOptions,
                 ]}
               />
 
