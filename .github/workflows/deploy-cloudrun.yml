@@ -1,9 +1,17 @@
 name: Deploy (production)
 
-# Generic caller: all deployment logic and environment specifics live in the
-# watchmen-infra repository and are executed by its reusable workflow.
-# Keeping this file environment-agnostic means the app repo carries no
-# cloud project, domain, or service account details.
+# Production deploy pipeline. This file is deliberately environment-agnostic:
+# every project, image, identity, and URL value comes from GitHub Actions
+# repository variables (Settings → Secrets and variables → Actions →
+# Variables), so the repository content carries no environment specifics.
+#
+# Flow: type-check gate → keyless GCP auth via workload identity federation →
+# Cloud Build (SHA-tagged image; the SHA is baked into the UI build badge via
+# the Dockerfile GIT_SHA build arg) → Cloud Run deploy → health check.
+# The federated identity and service accounts are provisioned by the
+# watchmen-infra repository. Database migrations are intentionally NOT
+# automated — run watchmen-infra's migrate-db.sh manually when a change
+# touches scripts/migrate.sql.
 
 on:
   push:
@@ -16,9 +24,80 @@ concurrency:
   group: deploy-production
   cancel-in-progress: true
 
+env:
+  PROJECT_ID: ${{ vars.DEPLOY_PROJECT_ID }}
+  REGION: ${{ vars.DEPLOY_REGION }}
+  SERVICE: ${{ vars.DEPLOY_SERVICE }}
+  IMAGE_NAME: ${{ vars.DEPLOY_IMAGE_NAME }}
+  WIF_PROVIDER: ${{ vars.DEPLOY_WIF_PROVIDER }}
+  DEPLOY_SA: ${{ vars.DEPLOY_SA }}
+  BUILD_SA: ${{ vars.DEPLOY_BUILD_SA }}
+  HEALTH_URL: ${{ vars.DEPLOY_HEALTH_URL }}
+
 jobs:
   deploy:
-    uses: pavelzag/watchmen-infra/.github/workflows/deploy-watchmen.yml@master
+    name: Build & deploy
+    runs-on: ubuntu-latest
     permissions:
-      id-token: write # let the reusable workflow mint the GCP WIF token
+      id-token: write # mint the GitHub OIDC token for GCP WIF
       contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Type-check gate
+        run: |
+          npm ci
+          npm run type-check
+
+      - name: Authenticate to GCP (keyless WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SA }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Compute image tag
+        id: meta
+        run: echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Build image via Cloud Build
+        run: |
+          gcloud builds submit . \
+            --project="$PROJECT_ID" \
+            --region="$REGION" \
+            --config=cloudbuild.yaml \
+            --substitutions=_GIT_SHA=${{ steps.meta.outputs.sha }},_IMAGE="${IMAGE_NAME}:${{ steps.meta.outputs.sha }}" \
+            --service-account="$BUILD_SA" \
+            --gcs-source-staging-dir="gs://${PROJECT_ID}-build/source" \
+            --gcs-log-dir="gs://${PROJECT_ID}-build/logs"
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --image="${IMAGE_NAME}:${{ steps.meta.outputs.sha }}" \
+            --project="$PROJECT_ID" \
+            --region="$REGION" \
+            --allow-unauthenticated
+
+      - name: Health check
+        run: |
+          set -euo pipefail
+          for i in 1 2 3 4 5 6; do
+            if curl -fsS --max-time 30 "$HEALTH_URL" >/dev/null; then
+              echo "Production healthy on build ${{ steps.meta.outputs.sha }}"
+              exit 0
+            fi
+            echo "health check attempt $i failed; retrying in 20s…"
+            sleep 20
+          done
+          echo "::error::Production health check failed after deploying ${{ steps.meta.outputs.sha }}"
+          exit 1

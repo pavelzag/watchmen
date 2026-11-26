@@ -1,0 +1,20 @@
+# Cloud Build config for the Watchmen app image. Generic and environment-free:
+# real values are always passed by the caller (deploy workflow or build-image.sh
+# in watchmen-infra) via --substitutions. Bakes the exact source commit into the
+# image (GIT_SHA build arg) so the UI can show which build is running.
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --build-arg
+      - GIT_SHA=${_GIT_SHA}
+      - -t
+      - ${_IMAGE}
+      - .
+
+substitutions:
+  _GIT_SHA: local
+  _IMAGE: watchmen:local
+
+images:
+  - ${_IMAGE}
