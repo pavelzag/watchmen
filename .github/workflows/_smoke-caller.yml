@@ -1,0 +1,13 @@
+name: Smoke caller
+
+# Temporary probe: dispatch-only workflow calling a minimal reusable workflow
+# in watchmen-infra to isolate the cross-repo caller failure. Safe to delete.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    uses: pavelzag/watchmen-infra/.github/workflows/_smoke-reusable.yml@master
+    permissions:
+      contents: read
