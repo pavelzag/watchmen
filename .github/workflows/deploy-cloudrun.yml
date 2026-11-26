@@ -31,7 +31,8 @@ env:
   IMAGE_NAME: europe-west3-docker.pkg.dev/theinsite-watchmen/watchmen/app
   WIF_PROVIDER: projects/159171566143/locations/global/workloadIdentityPools/github-actions/providers/watchmen-repo
   DEPLOY_SA: watchmen-github-deploy@theinsite-watchmen.iam.gserviceaccount.com
-  BUILD_SA: watchmen-build@theinsite-watchmen.iam.gserviceaccount.com
+  # Regional Cloud Build requires the full SA resource name, not a bare email.
+  BUILD_SA: projects/theinsite-watchmen/serviceAccounts/watchmen-build@theinsite-watchmen.iam.gserviceaccount.com
 
 jobs:
   deploy:
