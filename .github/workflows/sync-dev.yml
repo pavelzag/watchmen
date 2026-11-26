@@ -1,0 +1,35 @@
+name: Sync dev branch
+
+# Fast-forwards the dev branch to master after every push so the Vercel demo
+# deployment (watchmen-git-dev-<scope>.vercel.app) rebuilds automatically and
+# always matches production (watchmen.theinsite.dev).
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync-dev:
+    name: Fast-forward dev to master
+    runs-on: ubuntu-latest
+    steps:
+      - name: Push master to dev
+        run: |
+          set -euo pipefail
+          git clone --quiet "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" repo
+          cd repo
+          git fetch --quiet origin master dev
+          if ! git merge-base --is-ancestor origin/dev origin/master; then
+            echo "::error::dev has diverged from master — merge master into dev manually to unblock the demo deployment."
+            exit 1
+          fi
+          if [ "$(git rev-parse origin/dev)" = "$(git rev-parse origin/master)" ]; then
+            echo "dev is already up to date with master."
+            exit 0
+          fi
+          git push origin origin/master:refs/heads/dev
+          echo "dev fast-forwarded to master."

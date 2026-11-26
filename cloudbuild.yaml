@@ -1,0 +1,19 @@
+# Cloud Build config used by watchmen-infra stacks/static-studio-host/build-image.sh.
+# Bakes the exact source commit into the image (GIT_SHA build arg) so the UI
+# can show which build is running (see components/BuildShaBadge.tsx).
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --build-arg
+      - GIT_SHA=${_GIT_SHA}
+      - -t
+      - ${_IMAGE}
+      - .
+
+substitutions:
+  _GIT_SHA: local
+  _IMAGE: europe-west3-docker.pkg.dev/theinsite-watchmen/watchmen/app:local
+
+images:
+  - ${_IMAGE}

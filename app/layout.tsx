@@ -6,6 +6,7 @@ import CommandPalette from "@/components/CommandPalette";
 import GlobalKeyNav from "@/components/GlobalKeyNav";
 import GlobalSearch from "@/components/GlobalSearch";
 import PageTransition from "@/components/PageTransition";
+import BuildShaBadge from "@/components/BuildShaBadge";
 
 export const metadata: Metadata = {
   title: "WATCHMEN // CLOUD SECURITY EXPLORER",
@@ -28,6 +29,8 @@ export default function RootLayout({
         <GlobalSearch />
         {/* Global Up/Down/Enter keyboard navigation */}
         <GlobalKeyNav />
+        {/* Exact build SHA of this deployment, bottom-left corner */}
+        <BuildShaBadge />
         <Toaster
           toastOptions={{
             style: {

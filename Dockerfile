@@ -11,6 +11,9 @@ RUN npm ci
 FROM node:22-alpine AS builder
 
 WORKDIR /app
+# Exact source commit, passed by cloudbuild.yaml (or docker --build-arg).
+# Baked into the client bundle so the UI can show which build is running.
+ARG GIT_SHA=""
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
@@ -18,6 +21,7 @@ COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NEXT_SKIP_BUILD_VALIDATION=1
 ENV NODE_OPTIONS=--max-old-space-size=1536
+ENV NEXT_PUBLIC_GIT_SHA=${GIT_SHA}
 
 # next.config.ts sets output: "standalone" — this produces .next/standalone/server.js
 RUN npm run build
