@@ -23,6 +23,7 @@ import {
   filterLatestPerApplication,
   getApplicationKey,
   getApplicationShortName,
+  MAX_SCAN_API_BATCH as SCAN_API_BATCH,
   type ImageScanResult,
   type ContainerVulnerability,
   type CveSeverity,
@@ -843,7 +844,11 @@ export default function ContainerScanPage() {
     if (refs.length === 0) return;
     setScanningAll(true);
     try {
-      await runTrivyScan(refs, false);
+      // The scan API processes at most SCAN_API_BATCH images per request — scan
+      // in sequential batches until every unscanned image has been covered.
+      for (let i = 0; i < refs.length; i += SCAN_API_BATCH) {
+        await runTrivyScan(refs.slice(i, i + SCAN_API_BATCH), false);
+      }
     } finally {
       setScanningAll(false);
     }

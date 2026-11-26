@@ -41,6 +41,13 @@ export interface ImageScanDuplicate {
   accountId: string;
 }
 
+/**
+ * Max images processed per /api/container-scan/scan request (guards the
+ * Cloud Run request timeout — Trivy scans images sequentially). Clients that
+ * need to scan more must send sequential batches of this size.
+ */
+export const MAX_SCAN_API_BATCH = 15;
+
 export interface ImageScanResult {
   /** Full image reference, e.g. us-docker.pkg.dev/my-project/repo/image:tag */
   imageRef: string;

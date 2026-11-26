@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { getMockScanResults, type ImageScanResult } from "@/lib/container-scanning";
+import { getMockScanResults, MAX_SCAN_API_BATCH, type ImageScanResult } from "@/lib/container-scanning";
 import {
   useMockData as useGcpMockData,
   getGcpScanWarnings,

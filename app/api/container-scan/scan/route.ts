@@ -6,8 +6,7 @@ import { getGcpContainerVulnerabilities, normalizeImageUri } from "@/lib/gcp/con
 import { resolveGcpContainerScanContext } from "@/lib/gcp/container-scan-auth";
 import { getCachedContainerScans, saveCachedContainerScan } from "@/lib/container-scan-cache";
 import { isTrivyAvailable, scanImageWithTrivy } from "@/lib/trivy/scanner";
-
-const MAX_IMAGES_PER_REQUEST = 15;
+import { MAX_SCAN_API_BATCH } from "@/lib/container-scanning";
 
 export async function POST(req: NextRequest) {
   const session = await auth();
@@ -84,7 +83,7 @@ export async function POST(req: NextRequest) {
       targets = allGcpImages.filter((img) => img.scanStatus === "unscanned");
     }
 
-    targets = targets.slice(0, MAX_IMAGES_PER_REQUEST);
+    targets = targets.slice(0, MAX_SCAN_API_BATCH);
 
     const cachedMap = force
       ? new Map()
